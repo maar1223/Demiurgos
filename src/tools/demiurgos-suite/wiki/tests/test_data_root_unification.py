@@ -17,7 +17,11 @@ re-asserting the resolver.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
+import textwrap
 import types
 from pathlib import Path
 
@@ -126,3 +130,132 @@ def test_plugin_handler_and_api_resolve_the_same_folder(tmp_path: Path,
     # cached seam so this test's environment is the one it resolves.
     monkeypatch.setattr(api_server, "PROJECT_ROOT", None, raising=True)
     assert api_server._project_root() == resolved
+
+
+def test_plugin_register_succeeds_without_platformdirs(tmp_path: Path) -> None:
+    """REQ-PLR-1/6: genuine ``platformdirs`` absence in a child interpreter.
+
+    Reproduces the real gateway failure end-to-end. The child installs a
+    ``sys.meta_path`` finder that raises ``ModuleNotFoundError`` for
+    ``platformdirs`` (and submodules), then imports ``data_root`` — proving the
+    stdlib fallback locates the XDG pointer — and loads the REAL plugin the way
+    Hermes does, calling the real ``register(RecordingCtx())``. Both
+    unconditional hooks must register and no ``Failed to load plugin`` may
+    appear. The failure cannot be reproduced in-process, where the suite has
+    already imported the real ``data_root`` module identity.
+    """
+    data_root_dir = tmp_path / "data-root"
+    data_root_dir.mkdir()
+    _data_root_layout(data_root_dir, capture_mode="ai")
+
+    config_home = tmp_path / "config-home"
+    cfg_dir = config_home / "demiurgos"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "data-root.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "data_root": str(data_root_dir.resolve()),
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = textwrap.dedent(
+        """
+        import importlib.util
+        import sys
+        import types
+        from pathlib import Path
+
+
+        class _BlockPlatformdirs:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "platformdirs" or fullname.startswith("platformdirs."):
+                    raise ModuleNotFoundError(
+                        "No module named " + repr(fullname), name=fullname
+                    )
+                return None
+
+
+        sys.meta_path.insert(0, _BlockPlatformdirs())
+        sys.modules.pop("platformdirs", None)
+
+        repo_root = Path(__REPO_ROOT__)
+        wiki = repo_root / "src" / "tools" / "demiurgos-suite" / "wiki"
+        sys.path.insert(0, str(wiki))
+
+        import data_root
+
+        assert data_root._HAS_PLATFORMDIRS is False, "platformdirs was not blocked"
+        expected_pointer = Path(__CFG_DIR__) / "data-root.json"
+        assert data_root.pointer_path() == expected_pointer, data_root.pointer_path()
+        resolved = data_root.resolve_data_root()
+        assert resolved == Path(__DATA_ROOT__), resolved
+
+        plugin_path = (
+            repo_root / ".hermes" / "plugins" / "demiurgos-idea-capture" / "__init__.py"
+        )
+        module_name = "hermes_plugins.demiurgos_idea_capture"
+        if "hermes_plugins" not in sys.modules:
+            ns_pkg = types.ModuleType("hermes_plugins")
+            ns_pkg.__path__ = []
+            ns_pkg.__package__ = "hermes_plugins"
+            sys.modules["hermes_plugins"] = ns_pkg
+        spec = importlib.util.spec_from_file_location(
+            module_name, plugin_path, submodule_search_locations=[str(plugin_path.parent)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        module.__package__ = module_name
+        module.__path__ = [str(plugin_path.parent)]
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+
+
+        class RecordingCtx:
+            def __init__(self):
+                self.hooks = []
+
+            def register_hook(self, name, callback):
+                self.hooks.append(name)
+
+            def register_tool(self, **kwargs):
+                pass
+
+            def register_platform(self, **kwargs):
+                pass
+
+
+        ctx = RecordingCtx()
+        module.register(ctx)
+        assert "pre_tool_call" in ctx.hooks, ctx.hooks
+        assert "pre_llm_call" in ctx.hooks, ctx.hooks
+        print("OK:" + ",".join(sorted(set(ctx.hooks))))
+        """
+    )
+    script = (
+        script.replace("__REPO_ROOT__", repr(str(_REPO_ROOT)))
+        .replace("__CFG_DIR__", repr(str(cfg_dir)))
+        .replace("__DATA_ROOT__", repr(str(data_root_dir.resolve())))
+    )
+
+    env = dict(os.environ)
+    env["XDG_CONFIG_HOME"] = str(config_home)
+    env.pop("DEMIURGOS_DATA_ROOT", None)
+    env.pop("DEMIURGOS_IDEA_CAPTURE_MODE", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "Failed to load plugin" not in combined
+    assert result.returncode == 0, combined
+    assert "OK:" in result.stdout
+    assert "pre_tool_call" in result.stdout
+    assert "pre_llm_call" in result.stdout
