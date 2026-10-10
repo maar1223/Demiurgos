@@ -8576,7 +8576,6 @@ from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from hermes_runtime_probe import HermesGatewayProbe  # noqa: E402
-from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
@@ -9217,13 +9216,6 @@ app.include_router(
         # revision, so a server restart no longer degrades "Activo" to a lie.
         runtime_state_resolver=_resolve_assistant_runtime_state,
         runtime_liveness=lambda: _assistant_gateway_probe().is_running(),
-    ),
-)
-
-app.include_router(
-    create_telegram_settings_router(
-        require_principal=lambda request: _resolve_principal(request),
-        registry=lambda: _local_state(),
     ),
 )
 
