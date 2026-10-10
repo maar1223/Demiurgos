@@ -14,6 +14,7 @@ stdlib fallback (REQ-PLR-3/4/5). Those tests inject the resolver's own seams
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -133,6 +134,10 @@ def test_pointer_path_defaults_to_platformdirs_config_dir():
 # the preserved failure/atomic contract (REQ-PLR-5) when it is absent.
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX XDG/~/.config fallback; Windows uses %APPDATA%",
+)
 def test_pointer_path_falls_back_to_xdg_config_home_without_platformdirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -147,6 +152,10 @@ def test_pointer_path_falls_back_to_xdg_config_home_without_platformdirs(
     )
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX XDG/~/.config fallback; Windows uses %APPDATA%",
+)
 @pytest.mark.parametrize("xdg_value", [None, "", "   "])
 def test_pointer_path_falls_back_to_home_config_without_xdg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, xdg_value: str | None
