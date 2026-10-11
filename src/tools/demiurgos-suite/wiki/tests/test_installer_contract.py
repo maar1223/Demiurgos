@@ -1764,11 +1764,15 @@ def _stop_ps_launcher_and_assert_clean(
     """Teardown contract (incident parity): stop the PS launcher, then assert
     NO leftover listener on the test port."""
     launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
-    stop = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-File", str(launcher), "stop"],
-        env=env, capture_output=True, text=True, timeout=60,
-    )
-    assert stop.returncode == 0, stop.stderr
+    stop_out = install_root / "logs" / "launcher.stop.out.log"
+    stop_err = install_root / "logs" / "launcher.stop.err.log"
+    stop_out.parent.mkdir(parents=True, exist_ok=True)
+    with open(stop_out, "wb") as _so, open(stop_err, "wb") as _se:
+        stop = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-File", str(launcher), "stop"],
+            env=env, stdin=subprocess.DEVNULL, stdout=_so, stderr=_se, timeout=60,
+        )
+    assert stop.returncode == 0, stop_err.read_text(encoding="utf-8", errors="replace")
     for _ in range(20):
         if not _port_listening(api_port):
             break
