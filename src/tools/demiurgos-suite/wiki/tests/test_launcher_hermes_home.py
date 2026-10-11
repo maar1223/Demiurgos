@@ -100,7 +100,10 @@ def test_launcher_never_creates_active_profile():
     assert "active_profile" not in _text(PORTABLE_LAUNCHER)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
+)
 def test_launcher_sourcing_hermes_home_export_when_provisioned(tmp_path: Path):
     """Behavioural, hermetic (spec 'Export when provisioned'): source the real
     script with an unknown action, then drive the conditional-export function
@@ -132,7 +135,10 @@ def test_launcher_sourcing_hermes_home_export_when_provisioned(tmp_path: Path):
     assert result.stdout == f"HH={root}|PHH={root}"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
+)
 def test_launcher_sourcing_hermes_home_unset_when_unprovisioned(tmp_path: Path):
     """Behavioural, hermetic (spec 'No export when unprovisioned' + 'Graceful
     fallback when unprovisioned'): with a temp dedicated root that has NO
@@ -163,7 +169,10 @@ def test_launcher_sourcing_hermes_home_unset_when_unprovisioned(tmp_path: Path):
     assert "not provisioned" in result.stderr.lower()
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
+)
 def test_launcher_sourcing_default_chain_without_overrides(tmp_path: Path):
     """Behavioural, hermetic (spec 'Default path with no DEMIURGOS_HOME'): with
     neither override set, PRODUCT_HERMES_HOME resolves to $HOME/.demiurgos/hermes

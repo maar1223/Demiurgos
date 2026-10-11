@@ -22,6 +22,7 @@ anything — no server, no gateway, no port binding, no pointer write.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -116,7 +117,10 @@ def test_powershell_standalone_launchers_resolve_data_root_portably():
     assert "Get-Command hermes" in gateway
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe: on Windows a bare `bash` is the WSL stub",
+)
 def test_portable_launcher_sourcing_exposes_app_root_and_interpreter():
     """Behavioural, hermetic: source the real script with an unknown action.
 

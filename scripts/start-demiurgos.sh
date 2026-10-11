@@ -160,11 +160,18 @@ pid_file() {
 # ownership match below would silently fail. /proc/<pid>/cmdline is a Linux
 # fast path only, never assumed present on macOS.
 command_of_pid() {
-    local pid="$1"
+    local pid="$1" out
     if [ "$OS" = "Linux" ] && [ -r "/proc/$pid/cmdline" ]; then
         tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
     else
-        ps -ww -o command= -p "$pid" 2>/dev/null || true
+        # macOS/BSD: `-ww` is mandatory (macOS truncates the command line
+        # otherwise and the ownership match below would silently fail). Try the
+        # common forms in order; an empty result would make BOTH the pid-file
+        # ownership gate and the port-owner gate fail and leak the process.
+        out="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+        [ -n "$out" ] || out="$(ps -p "$pid" -ww -o command= 2>/dev/null || true)"
+        [ -n "$out" ] || out="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        printf '%s' "$out"
     fi
 }
 
@@ -179,7 +186,7 @@ owned_pid() {
     cmdline="$(command_of_pid "$pid")"
     [ -n "$cmdline" ] || return 1
     case "$name" in
-        api) [[ "$cmdline" == *"$PYTHON_BIN"* && "$cmdline" == *"uvicorn api_server:app"* ]] ;;
+        api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] ;;
         *) return 1 ;;
     esac
@@ -217,14 +224,18 @@ port_owner_pid() {
 
 # Verify that pid's cmdline identifies it as the named Demiurgos component.
 # Shared by adopt_existing_component and the stop_component port fallback so
-# both gate on the exact same matching. The API gate pins the layout venv
-# python plus the uvicorn module — never adopt/kill an arbitrary `uvicorn`
-# from another project or an unrelated port squatter.
+# both gate on the exact same matching. The API gate is the Demiurgos app
+# module `uvicorn api_server:app` — the SAME discriminator the Windows launcher
+# uses. It must NOT also pin the layout venv interpreter path: on macOS the
+# venv `python` re-execs as the framework interpreter, so argv[0] is
+# `/Library/Frameworks/.../Python` and a venv-path requirement would fail to
+# recognise our OWN process and leak it. `api_server:app` is specific enough to
+# never match an arbitrary `uvicorn` from another project.
 _validate_cmdline_for_name() {
     local name="$1" pid="$2" cmdline
     cmdline="$(command_of_pid "$pid")"
     case "$name" in
-        api) [[ ( "$cmdline" == *"$PYTHON_BIN"* && "$cmdline" == *"uvicorn api_server:app"* ) || "$cmdline" == *"$API_DIR"* ]] || return 1 ;;
+        api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] || return 1 ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
     esac
@@ -423,8 +434,8 @@ stop_component() {
         return 0
     fi
     if ! _validate_cmdline_for_name "$name" "$pid"; then
-        printf 'Skipped %s: port %s owner is not a Demiurgos process (pid %s)\n' \
-            "$name" "$port" "$pid" >&2
+        printf 'Skipped %s: port %s owner is not a Demiurgos process (pid %s, cmd: %s)\n' \
+            "$name" "$port" "$pid" "$(command_of_pid "$pid")" >&2
         remove_pid_file "$name"
         return 1
     fi
@@ -627,4 +638,13 @@ main() {
     esac
 }
 
-main "$@"
+# Execute the entry point only when this file is RUN, not when it is SOURCED.
+# The hermetic layout probe sources this script to read the derived APP_ROOT /
+# PYTHON_BIN; running `main` there would treat the probe's argument as an action
+# (usage + non-zero), and under `set -e` that aborts the probing shell on bash
+# 3.2 (macOS) and git-bash (Windows) before it can read the paths. `BASH_SOURCE`
+# is an array whose [0] is the sourced-or-run file; it equals `$0` only for the
+# executed script (bash 3.2+), which is exactly the run-vs-source discriminator.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

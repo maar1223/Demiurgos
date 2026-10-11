@@ -134,6 +134,10 @@ def _delete_json(client: TestClient, url: str, payload: dict):
     return client.request("DELETE", url, json=payload)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="runs the POSIX installer core through bash (not available on Windows)",
+)
 class TestInstallAuthGatedWrite:
     def test_fresh_install_gated_write_is_2xx_not_401(
         self,

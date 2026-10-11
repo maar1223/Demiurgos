@@ -19,6 +19,7 @@ the ``_kill_descendants`` self-kill guard preserved verbatim.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -134,7 +135,10 @@ class TestLayoutContract:
         assert _KILL_DESCENDANTS in text
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe: on Windows a bare `bash` is the WSL stub",
+)
 def test_sourcing_probe_derives_layout_and_has_no_side_effects():
     """Hermetic: source the real script with an unknown action.
 

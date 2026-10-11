@@ -19,6 +19,7 @@ Covered scenarios:
 
 from __future__ import annotations
 
+import os
 import textwrap
 from pathlib import Path
 
@@ -181,6 +182,10 @@ def test_scalar_skills_value_replaced_with_mapping(tmp_path):
     assert data["skills"]["external_dirs"] == [str(skills.resolve())]
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX ~ expansion via $HOME; Windows expanduser ignores HOME",
+)
 def test_registered_entry_is_resolved_absolute_path(tmp_path, monkeypatch):
     """Spec 'Folder path is registered in the product profile': the entry is the
     expanded, resolved absolute path even for a ~-containing input."""
