@@ -1718,8 +1718,11 @@ def _run_ps_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
     """Start the installed Windows launcher headless and return the API port."""
     api_port = _free_port()
-    env = {**env, "DEMIURGOS_API_PORT": str(api_port),
-           "DEMIURGOS_GATEWAY_PORT": str(_free_port())}
+    # Mutate the CALLER's env (not a copy): the teardown's `stop` must target the
+    # SAME port this boot used, else it polls the launcher default and leaks the
+    # API (the env-mismatch leak).
+    env["DEMIURGOS_API_PORT"] = str(api_port)
+    env["DEMIURGOS_GATEWAY_PORT"] = str(_free_port())
     launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
     err_log = install_root / "logs" / "demiurgos-api.err.log"
 
@@ -1778,7 +1781,9 @@ def _stop_ps_launcher_and_assert_clean(
             break
         time.sleep(0.25)
     assert not _port_listening(api_port), (
-        f"port {api_port} still listening after stop: leaked launcher process"
+        f"port {api_port} still listening after stop: leaked launcher process\n"
+        f"--- stop stdout ---\n{stop_out.read_text(encoding='utf-8', errors='replace')}\n"
+        f"--- stop stderr ---\n{stop_err.read_text(encoding='utf-8', errors='replace')}"
     )
 
 
