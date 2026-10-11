@@ -1491,7 +1491,8 @@ switch ($cmd) {
     # python with system-site-packages so the staged app genuinely boots; the
     # .pth makes the repo venv's site-packages visible to the staged venv
     # regardless of APPDATA isolation (real uv pip install puts wheels into
-    # the venv itself - CI-owned, not-run here).
+    # the venv itself - CI-owned, not-run here). The .pth is a FILE (not an env
+    # seam): no PYTHONPATH injection, so it cannot reintroduce the Windows hang.
     $dest = $null
     foreach ($a in $args[1..($args.Length - 1)]) {
       if ($a -notlike "-*" -and $a -ne "3.12") { $dest = $a }
@@ -1499,11 +1500,22 @@ switch ($cmd) {
     if (-not $dest) { Write-Error "stub uv: venv missing dest"; exit 2 }
     & $env:DEMIURGOS_STUB_PYTHON -m venv --system-site-packages $dest
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $repoSite = & $env:DEMIURGOS_STUB_PYTHON -c "import site; print(site.getsitepackages()[0])" 2>$null
-    if ($repoSite) {
+    # Derive the repo venv's site-packages from the interpreter PATH
+    # (<venv>\Scripts\python.exe -> <venv>\Lib\site-packages). Do NOT use
+    # site.getsitepackages()[0]: on Windows site.py appends the venv PREFIX
+    # BEFORE its Lib\site-packages (the os.sep=='\\' branch), so index 0 is the
+    # venv ROOT - the .pth then pointed at a directory with no top-level
+    # packages and the staged interpreter still raised 'No module named
+    # uvicorn' (issue #2). A derived absolute path is deterministic and needs
+    # no subprocess.
+    $repoVenv = Split-Path -Parent (Split-Path -Parent $env:DEMIURGOS_STUB_PYTHON)
+    $repoSite = Join-Path $repoVenv "Lib\site-packages"
+    if (Test-Path -LiteralPath $repoSite) {
       $pthDir = Join-Path $dest "Lib\site-packages"
       New-Item -ItemType Directory -Force -Path $pthDir | Out-Null
       Set-Content -LiteralPath (Join-Path $pthDir "demiurgos-repo.pth") -Value $repoSite -Encoding ASCII
+    } else {
+      Write-Warning "stub uv: repo site-packages not found at $repoSite"
     }
     exit 0
   }
