@@ -6745,6 +6745,411 @@ class TestReadinessTruthfulness:
 
 
 # ---------------------------------------------------------------------------
+# assistant-activation-status (WU-2a) — the Telegram probe + token lifecycle
+# moved onto the idea-capture path (the token owner). Additive slice: the
+# legacy TestTelegramSettings class below stays green until retirement (WU-2b).
+# ---------------------------------------------------------------------------
+
+
+class _SpyRegistry:
+    """LocalState-like spy capturing evidence commits for injection tests."""
+
+    def __init__(self) -> None:
+        self._state: dict = {}
+        self.commits: list[dict] = []
+
+    def snapshot(self) -> dict:
+        return dict(self._state)
+
+    def atomic_commit(self, next_state) -> int:
+        self._state = dict(next_state)
+        self.commits.append(dict(next_state))
+        return len(self.commits)
+
+
+class TestIdeaCaptureProbe:
+    """WU-2a — POST /api/idea-capture/test-connection (probe relocated)."""
+
+    SECRET = "123456789:AA-test-secret"
+
+    def _authed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _principal(monkeypatch)
+
+    def _save_token(self, client: TestClient, token: str | None = None):
+        return client.post("/api/idea-capture/token",
+                           json={"token": self.SECRET if token is None else token})
+
+    def _probe(self, client: TestClient):
+        return client.post("/api/idea-capture/test-connection")
+
+    def _evidence(self) -> dict | None:
+        return api_server._local_state().snapshot().get("telegram_evidence")
+
+    def test_probe_fails_closed_without_principal(self, empty_client: TestClient):
+        assert self._probe(empty_client).status_code == 401
+
+    def test_probe_success_commits_configured_evidence(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        seen_urls: list[str] = []
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123, "username": "demo_bot"}}
+
+        def _get(url, *args, **kwargs):
+            seen_urls.append(url)
+            return _Resp()
+
+        monkeypatch.setattr(telegram_settings.requests, "get", _get)
+
+        resp = self._probe(empty_client)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "configured"
+        assert body["has_token"] is True
+        assert body["error_code"] == ""
+        datetime.fromisoformat(body["tested_at"])
+        assert self.SECRET not in resp.text
+
+        # The pure helper ran against the STORED token (read server-side).
+        assert seen_urls and self.SECRET in seen_urls[0]
+
+        # Committed evidence reuses the EXACT {state, tested_at, error_code} shape.
+        evidence = self._evidence()
+        assert set(evidence) == {"state", "tested_at", "error_code"}
+        assert evidence["state"] == "configured"
+        assert evidence["error_code"] == ""
+        datetime.fromisoformat(evidence["tested_at"])
+
+        # The authoritative readiness projector agrees.
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "configured"
+
+    def test_probe_offline_maps_to_requires_connection(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        def _offline(*args, **kwargs):
+            raise requests.ConnectionError("offline")
+
+        monkeypatch.setattr(telegram_settings.requests, "get", _offline)
+        resp = self._probe(empty_client)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "requires_connection"
+        assert body["error_code"] == "network"
+        assert self._evidence()["state"] == "requires_connection"
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "requires_connection"
+
+    def test_probe_invalid_token_maps_to_error(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        class _Resp:
+            status_code = 401
+
+            def json(self):
+                return {"ok": False, "error_code": 401, "description": "Unauthorized"}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        resp = self._probe(empty_client)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "error"
+        assert body["error_code"] == "invalid_token"
+        assert self._evidence()["state"] == "error"
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "error"
+
+    def test_probe_without_token_returns_409_without_probe_or_evidence(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        calls = {"n": 0}
+
+        def _boom(*args, **kwargs):
+            calls["n"] += 1
+            raise AssertionError("no Telegram call is allowed without a token")
+
+        monkeypatch.setattr(telegram_settings.requests, "get", _boom)
+        resp = self._probe(empty_client)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "no_token"
+        assert calls["n"] == 0
+        assert self._evidence() is None
+
+    def test_injected_registry_receives_evidence_not_the_global(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        from fastapi import FastAPI
+
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+        before = self._evidence()
+
+        spy = _SpyRegistry()
+        probe_app = FastAPI()
+        probe_app.include_router(
+            idea_capture_ui.create_idea_capture_router(
+                require_principal=lambda request: api_server.EditPrincipal("tester"),
+                registry=lambda: spy,
+            )
+        )
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 1}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        resp = TestClient(probe_app).post("/api/idea-capture/test-connection")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["state"] == "configured"
+        assert spy.commits, "the injected registry must receive the commit"
+        assert spy.commits[-1]["telegram_evidence"]["state"] == "configured"
+        # The module-global registry was NOT touched by the injected probe.
+        assert self._evidence() == before
+
+    def test_unwired_registry_fails_loudly(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        from fastapi import FastAPI
+
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        probe_app = FastAPI()
+        probe_app.include_router(
+            idea_capture_ui.create_idea_capture_router(
+                require_principal=lambda request: api_server.EditPrincipal("tester"),
+            )
+        )
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 1}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        client = TestClient(probe_app, raise_server_exceptions=False)
+        resp = client.post("/api/idea-capture/test-connection")
+        assert resp.status_code == 500
+
+    def test_evidence_survives_restart(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        self._probe(empty_client)
+
+        # Simulate a process restart: a fresh LocalState reads the same file.
+        api_server._LOCAL_STATE = None
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "configured"
+
+    def test_probe_token_never_logged(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        with caplog.at_level(logging.INFO):
+            self._probe(empty_client)
+        assert self.SECRET not in caplog.text
+
+
+class TestIdeaCaptureTokenLifecycle:
+    """WU-2a (corrective) — token save/delete own the evidence lifecycle."""
+
+    SECRET = "123456789:AA-test-secret"
+
+    def _authed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _principal(monkeypatch)
+
+    def _save_token(self, client: TestClient, token: str | None = None):
+        return client.post("/api/idea-capture/token",
+                           json={"token": self.SECRET if token is None else token})
+
+    def _delete_token(self, client: TestClient):
+        return client.delete("/api/idea-capture/token")
+
+    def _evidence(self) -> dict | None:
+        return api_server._local_state().snapshot().get("telegram_evidence")
+
+    def _card(self, client: TestClient) -> str:
+        return client.get("/api/onboarding/readiness").json()["cards"]["telegram"]
+
+    def test_save_commits_fresh_requires_connection_evidence(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        resp = self._save_token(empty_client)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"state": "requires_connection", "has_token": True}
+        assert self.SECRET not in resp.text
+        assert self._evidence() == {
+            "state": "requires_connection", "tested_at": None, "error_code": "",
+        }
+        assert self._card(empty_client) == "requires_connection"
+
+    def test_delete_pops_evidence_and_returns_pending(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._save_token(empty_client)
+        resp = self._delete_token(empty_client)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"state": "pending", "has_token": False}
+        env = (api_server.PROJECT_ROOT / ".env").read_text(encoding="utf-8")
+        assert "TELEGRAM_BOT_TOKEN" not in env
+        assert self._evidence() is None
+        assert self._card(empty_client) == "pending"
+
+    def test_invalid_token_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        for bad in ("", "   ", "abc def", "x" * 300):
+            resp = self._save_token(empty_client, token=bad)
+            assert resp.status_code == 400, resp.text
+        env = api_server.PROJECT_ROOT / ".env"
+        assert not env.exists() or "TELEGRAM_BOT_TOKEN" not in env.read_text(encoding="utf-8")
+        assert self._evidence() is None
+
+    def test_token_never_appears_in_responses_or_logs(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog):
+        self._authed(monkeypatch)
+        with caplog.at_level(logging.INFO):
+            save = self._save_token(empty_client)
+            delete = self._delete_token(empty_client)
+        assert self.SECRET not in save.text
+        assert self.SECRET not in delete.text
+        assert self.SECRET not in caplog.text
+
+    def test_stale_configured_cannot_survive_a_delete_and_resave(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        # Seed a token + stale configured evidence, as if an old probe succeeded.
+        idea_capture_ui.write_env_var(idea_capture_ui._ENV_TOKEN_NAME, self.SECRET)
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["telegram_evidence"] = {
+            "state": "configured",
+            "tested_at": "2026-01-01T00:00:00+00:00",
+            "error_code": "",
+        }
+        registry.atomic_commit(state)
+        assert self._card(empty_client) == "configured"  # precondition
+
+        # Save a fresh token → fresh untested evidence replaces the stale one.
+        resp = self._save_token(empty_client)
+        assert resp.json() == {"state": "requires_connection", "has_token": True}
+        assert self._card(empty_client) == "requires_connection"
+        assert self._card(empty_client) != "configured"
+
+        # Delete → evidence popped, card pending.
+        resp = self._delete_token(empty_client)
+        assert resp.json() == {"state": "pending", "has_token": False}
+        assert self._card(empty_client) == "pending"
+
+
+class TestIdeaCaptureMigratedTelegramGuarantees:
+    """WU-2a — parity port of the legacy TestTelegramSettings guarantees onto
+    the idea-capture routes, asserted through the readiness projector and the
+    save/delete/probe response bodies. Kept alongside TestTelegramSettings."""
+
+    SECRET = "123456789:AA-test-secret"
+
+    def _authed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _principal(monkeypatch)
+
+    def test_relocated_routes_fail_closed_without_principal(self, empty_client: TestClient):
+        assert empty_client.get("/api/idea-capture/status").status_code == 401
+        assert empty_client.post("/api/idea-capture/token",
+                                 json={"token": self.SECRET}).status_code == 401
+        assert empty_client.delete("/api/idea-capture/token").status_code == 401
+        assert empty_client.post("/api/idea-capture/test-connection").status_code == 401
+
+    def test_status_and_readiness_pending_without_token(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        status = empty_client.get("/api/idea-capture/status")
+        assert status.json()["has_token"] is False
+        assert self.SECRET not in status.text
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "pending"
+
+    def test_token_write_only_readiness_requires_connection(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        resp = empty_client.post("/api/idea-capture/token", json={"token": self.SECRET})
+        assert resp.status_code == 200, resp.text
+        assert self.SECRET not in resp.text
+        env = (api_server.PROJECT_ROOT / ".env").read_text(encoding="utf-8")
+        assert f"TELEGRAM_BOT_TOKEN={self.SECRET}" in env
+        status = empty_client.get("/api/idea-capture/status")
+        assert self.SECRET not in status.text
+        assert status.json()["has_token"] is True
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "requires_connection"
+
+    def test_probe_outcome_mapping_and_restart(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        empty_client.post("/api/idea-capture/token", json={"token": self.SECRET})
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        probe = empty_client.post("/api/idea-capture/test-connection")
+        assert probe.status_code == 200, probe.text
+        assert probe.json()["state"] == "configured"
+        assert self.SECRET not in probe.text
+        assert empty_client.get("/api/onboarding/readiness").json()["cards"]["telegram"] == "configured"
+
+        # Offline remaps to requires_connection (retryable).
+        def _offline(*args, **kwargs):
+            raise requests.ConnectionError("offline")
+
+        monkeypatch.setattr(telegram_settings.requests, "get", _offline)
+        probe = empty_client.post("/api/idea-capture/test-connection")
+        assert probe.json()["state"] == "requires_connection"
+        assert probe.json()["error_code"] == "network"
+
+        # Restart: a fresh LocalState reads the same file back.
+        api_server._LOCAL_STATE = None
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "requires_connection"
+
+
+# ---------------------------------------------------------------------------
 # ONB-3.3 — Telegram backend: write-only token, honest card states
 # (pending | requires_connection | configured | error). Token never echoed,
 # never logged; offline test → requires_connection.
