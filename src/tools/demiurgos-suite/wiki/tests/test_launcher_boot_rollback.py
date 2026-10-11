@@ -243,7 +243,14 @@ def _rollback_env(tmp_path: Path, install_root: Path, api_port: int) -> dict[str
         "DEMIURGOS_API_PORT": str(api_port),
         "DEMIURGOS_GATEWAY_PORT": str(_free_port()),
         "DEMIURGOS_NO_BROWSER": "1",
-        "DEMIURGOS_HEALTH_POLLS": "3",
+        # Readiness headroom (issue #3): the "good" stub is a plain `python3
+        # -c http.server` whose interpreter startup can exceed a sub-second
+        # budget on a loaded/slow CI runner (the aarch64/macOS flake), making the
+        # GOOD version look "not ready" and failing the rollback assertion. The
+        # launcher's budget is polls x interval = 50 x 0.1s = 5s: still bounded
+        # (a BROKEN version is only polled 5s before rollback) but ample for the
+        # good version to answer /health.
+        "DEMIURGOS_HEALTH_POLLS": "50",
         "DEMIURGOS_HEALTH_POLL_INTERVAL": "0.1",
     }
     env.pop("HERMES_BIN", None)
