@@ -4,6 +4,7 @@ import type {
   IdeaCaptureAuthorizeResult,
   IdeaCaptureConfig,
   IdeaCaptureStatus,
+  TelegramTestResult,
   TokenStatus,
 } from "@/api/types";
 
@@ -45,6 +46,18 @@ export function setIdeaCaptureToken(token: string): Promise<TokenStatus> {
 export function clearIdeaCaptureToken(): Promise<TokenStatus> {
   return apiFetch<TokenStatus>("/api/idea-capture/token", {
     method: "DELETE",
+    ...CREDENTIALS,
+  });
+}
+
+/** POST /api/idea-capture/test-connection — ask the server to probe the stored
+ *  token against Telegram (getMe). The token is read server-side and never
+ *  crosses the wire; the response reports the resulting Telegram card state.
+ *  Generous timeout: the probe performs a live Telegram round-trip. */
+export function testTelegramConnection(): Promise<TelegramTestResult> {
+  return apiFetch<TelegramTestResult>("/api/idea-capture/test-connection", {
+    method: "POST",
+    timeout: 20_000,
     ...CREDENTIALS,
   });
 }
