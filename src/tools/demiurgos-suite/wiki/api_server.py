@@ -8668,6 +8668,7 @@ def _register_import_gallery(world: str, src: Path, rel: str) -> None:
 app.include_router(
     create_idea_capture_router(
         require_principal=lambda request: _resolve_principal(request),
+        registry=lambda: _local_state(),
     ),
 )
 
