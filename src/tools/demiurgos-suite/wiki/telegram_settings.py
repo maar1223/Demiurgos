@@ -20,28 +20,22 @@ request payloads, never returned, never logged, and never stored in the local
 registry. The registry keeps only the test evidence (state, timestamp,
 machine-readable error code) under ``telegram_evidence``.
 
-Every route is gated on the trusted local principal (``require_principal``)
-and fails closed with 401 when absent.
+This module now exposes ONLY the pure helpers reused by the idea-capture path
+(``telegram_state``, ``has_token``, ``test_connection``, ``EVIDENCE_KEY``). The
+duplicate Telegram settings router was retired; the idea-capture probe
+(``POST /api/idea-capture/test-connection``) now owns connection testing.
 """
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 import requests
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from idea_capture_ui import (
     _ENV_TOKEN_NAME,
     read_env_var,
-    validate_token,
-    write_env_var,
 )
-
-logger = logging.getLogger("demiurgos-telegram")
 
 _TELEGRAM_API = "https://api.telegram.org"
 _CONNECTION_TIMEOUT = 15
@@ -125,144 +119,3 @@ def test_connection(token: str, api_base: str = _TELEGRAM_API) -> dict[str, Any]
         "error_code": "",
         "message": "Conexión verificada con Telegram.",
     }
-
-
-def _evidence(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-    evidence = snapshot.get(EVIDENCE_KEY)
-    return evidence if isinstance(evidence, dict) else {}
-
-
-def create_telegram_settings_router(
-    require_principal: Callable[[Request], Any],
-    registry: Callable[[], Any] | None = None,
-) -> APIRouter:
-    """Build authenticated /api/telegram routes.
-
-    ``require_principal`` must return a trusted principal for the request or
-    None; None maps to 401. ``registry`` returns the authoritative local
-    registry (``LocalState``-like with ``snapshot()`` and ``atomic_commit()``);
-    it defaults to a read-only snapshot so the router stays importable in
-    isolation, and api_server wires the real registry.
-    """
-    router = APIRouter(prefix="/api/telegram", tags=["telegram-settings"])
-
-    def _registry() -> Any:
-        if registry is None:
-            return _EmptyRegistry()
-        return registry()
-
-    def _guard(request: Request) -> None:
-        if require_principal(request) is None:
-            raise HTTPException(status_code=401, detail="Autenticación requerida")
-
-    def _commit_evidence(next_state: Mapping[str, Any]) -> None:
-        _registry().atomic_commit(dict(next_state))
-
-    def _status_payload(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-        present = has_token()
-        state = telegram_state(snapshot, present)
-        evidence = _evidence(snapshot)
-        return {
-            "state": state,
-            "has_token": present,
-            "tested_at": evidence.get("tested_at"),
-            "error_code": evidence.get("error_code", ""),
-        }
-
-    @router.get("/status")
-    def get_status(request: Request) -> dict[str, Any]:
-        _guard(request)
-        return _status_payload(_registry().snapshot())
-
-    @router.put("/token")
-    def put_token(request: Request, body: dict | None = None) -> dict[str, Any]:
-        """Store the bot token write-only; never echo or persist the value."""
-        _guard(request)
-        raw = (body if isinstance(body, dict) else {}).get("token")
-        try:
-            value = validate_token(raw)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        if not write_env_var(_ENV_TOKEN_NAME, value):
-            raise HTTPException(
-                status_code=500,
-                detail="No se pudo escribir .env (token no guardado)")
-        logger.info("telegram: token configurado (valor no expuesto)")
-        # A freshly stored token is untested: the card requires a connection
-        # check before it may ever be configured.
-        snapshot = _registry().snapshot()
-        next_state = dict(snapshot)
-        next_state[EVIDENCE_KEY] = {
-            "state": "requires_connection",
-            "tested_at": None,
-            "error_code": "",
-        }
-        _commit_evidence(next_state)
-        return {"state": "requires_connection", "has_token": True}
-
-    @router.delete("/token")
-    def clear_token(request: Request) -> dict[str, Any]:
-        """Remove the stored token; the card returns to pending."""
-        _guard(request)
-        write_env_var(_ENV_TOKEN_NAME, "")
-        logger.info("telegram: token eliminado (valor no expuesto)")
-        snapshot = _registry().snapshot()
-        next_state = dict(snapshot)
-        next_state.pop(EVIDENCE_KEY, None)
-        _commit_evidence(next_state)
-        return {"state": "pending", "has_token": False}
-
-    @router.post("/test-connection")
-    def run_test(request: Request) -> dict[str, Any]:
-        """Test the STORED token against Telegram; never accept one in body.
-
-        Offline/network failure -> requires_connection (retryable). Invalid
-        token or API failure -> error. Success -> configured. The token is
-        read server-side and never returned or logged.
-        """
-        _guard(request)
-        token = read_env_var(_ENV_TOKEN_NAME)
-        if not token:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "detail": "Todavía no hay token guardado. Guardá el token "
-                              "del bot antes de probar la conexión.",
-                    "code": "no_token",
-                })
-        result = test_connection(token)
-        snapshot = _registry().snapshot()
-        next_state = dict(snapshot)
-        next_state[EVIDENCE_KEY] = {
-            "state": result["state"],
-            "tested_at": datetime.now(timezone.utc).isoformat(),
-            "error_code": result["error_code"],
-        }
-        _commit_evidence(next_state)
-        logger.info("telegram: prueba de conexión finalizada (estado=%s, "
-                    "valor no expuesto)", result["state"])
-        evidence = next_state[EVIDENCE_KEY]
-        return {
-            "state": result["state"],
-            "has_token": True,
-            "tested_at": evidence["tested_at"],
-            "error_code": evidence["error_code"],
-            "message": result["message"],
-        }
-
-    return router
-
-
-class _EmptyRegistry:
-    """Read-only fallback registry so the router imports without a wired store.
-
-    api_server always wires the real local registry; this only guarantees the
-    module is importable standalone and fails loudly if a route is ever used
-    with it.
-    """
-
-    def snapshot(self) -> dict[str, Any]:
-        return {}
-
-    def atomic_commit(self, next_state: Mapping[str, Any]) -> int:
-        raise RuntimeError("telegram router used without a wired registry")
