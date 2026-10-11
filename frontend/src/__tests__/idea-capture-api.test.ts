@@ -6,6 +6,7 @@ import {
   getIdeaCaptureStatus,
   saveIdeaCaptureConfig,
   setIdeaCaptureToken,
+  testTelegramConnection,
 } from "@/api/ideaCapture";
 import type { IdeaCaptureConfig, IdeaCaptureStatus } from "@/api/types";
 
@@ -169,5 +170,37 @@ describe("idea capture API", () => {
         }),
       }),
     );
+  });
+
+  it("probes the stored token over POST with same-origin credentials and a generous timeout", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        state: "configured",
+        has_token: true,
+        tested_at: "2026-10-10T12:00:00+00:00",
+        error_code: "",
+        message: "Conexión verificada con Telegram.",
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await testTelegramConnection();
+
+    // apiFetch turns the timeout option into an AbortController signal.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/idea-capture/test-connection",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(result.state).toBe("configured");
+
+    // The probe never sends the token: the request has no body, and the
+    // response contract exposes only the boolean presence + card state.
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBeUndefined();
+    expect(result).not.toHaveProperty("token");
   });
 });
