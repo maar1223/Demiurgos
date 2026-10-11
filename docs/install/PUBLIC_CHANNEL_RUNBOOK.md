@@ -9,8 +9,13 @@
 - El código del pipeline existe (`.github/workflows/release.yml`), pero el paso
   de publicación está **guardado por tag**: no hace nada mientras no se empuje
   un tag `vX.Y.Z`.
-- Las claves del canal son **placeholders**. El consumidor verifica la firma
-  *fail-closed*: sin clave real, la instalación se rechaza (a propósito).
+- La clave **pública** del canal ya está embebida en los cuatro archivos que la
+  llevan (ver paso 4). Lo que falta, en orden: (a) crear el repositorio público
+  del canal (paso 1), (b) asegurar que la clave de firma guardada en
+  `MINISIGN_SECRET_KEY` coincida con esa clave pública embebida, (c) cargar los
+  secretos (paso 3), (d) empujar el tag `vX.Y.Z` (paso 5).
+- El consumidor verifica la firma *fail-closed*: si la clave pública no coincide
+  con la que firmó, la instalación se rechaza (a propósito).
 
 ## 1. Crear el canal público
 
@@ -39,20 +44,26 @@ En el repo del código (el privado, que corre el workflow):
 | `MINISIGN_KEY_PASSWORD` | la contraseña, **solo** si la clave está protegida |
 | `PUBLISH_TOKEN` | token acotado con permiso de publicar en el canal público |
 
-## 4. Reemplazar el placeholder de la clave pública
+## 4. Verificar (o re-embeder) la clave pública
 
-Buscar todas las apariciones (excluyendo este runbook, que menciona el literal):
+La clave pública ya está embebida en los cuatro archivos que la llevan. Para
+ver la variable y su valor actual:
 
 ```bash
-rg -n 'RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY' --hidden -g '!docs/install/PUBLIC_CHANNEL_RUNBOOK.md'
+grep -rn 'DEFAULT_MINISIGN_PUBKEY\|DefaultMinisignPubkey' install.sh install.ps1 scripts/lib/
 ```
 
-La clave real va en **cuatro** archivos:
+La clave va en **cuatro** archivos:
 
 - `install.sh` (variable `DEFAULT_MINISIGN_PUBKEY`)
 - `install.ps1` (variable `$defaultMinisignPubkey`)
 - `scripts/lib/verify_checksum.sh` (variable `DEFAULT_MINISIGN_PUBKEY`)
 - `scripts/lib/verify_checksum.ps1` (variable `$DefaultMinisignPubkey`)
+
+La clave pública embebida **debe** coincidir con la privada guardada en
+`secrets.MINISIGN_SECRET_KEY`. Si en algún momento rotás la clave de firma
+(`minisign -G`, paso 2), re-embebé la clave pública correspondiente en esos
+cuatro archivos.
 
 > `scripts/install-demiurgos.sh` **no** lleva la clave: usa `verify_minisig` de
 > `scripts/lib/verify_checksum.sh`. El seam `MINISIGN_PUBKEY` (variable de

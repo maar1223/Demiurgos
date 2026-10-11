@@ -109,10 +109,12 @@ function Get-ShaFor([string]$sumsFile, [string]$name) {
 }
 
 # --- S5b: signed-manifest gate (task 8.4) ------------------------------------
-# The minisign PUBLIC key that verifies the channel SHA256SUMS.minisig.
-# >>> PLACEHOLDER <<< - the Author MUST replace this with the real key line
-# (the RWS... line of minisign.pub) generated with `minisign -G`, before the
-# first public release (S5b signing-key custody note).
+# The minisign PUBLIC key that verifies the channel SHA256SUMS.minisig. It is
+# already embedded below. This public key must match the private key held in the
+# repository secret `MINISIGN_SECRET_KEY`; if you regenerate the signing key
+# (`minisign -G`), re-embed the matching public key here and in the other three
+# carrier files (install.sh, scripts/lib/verify_checksum.sh,
+# scripts/lib/verify_checksum.ps1).
 # Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
 $defaultMinisignPubkey = 'RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy'
 $minisignPubkey = if ($env:MINISIGN_PUBKEY) { $env:MINISIGN_PUBKEY } else { $defaultMinisignPubkey }
