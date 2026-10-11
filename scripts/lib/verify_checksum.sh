@@ -9,10 +9,11 @@
 #
 # Signature verification (S5b): verify_minisig checks the channel
 # SHA256SUMS.minisig against the embedded minisign PUBLIC key BEFORE any
-# checksum is trusted. The public key below is a clearly-marked PLACEHOLDER:
-# the Author MUST replace it with the real key line from `minisign -G`
-# (minisign.pub, the RWS... line) before the first public release (S5b
-# signing-key custody note). The MINISIGN_PUBKEY env override is the
+# checksum is trusted. The public key is already embedded below; it must match
+# the private key held in the repository secret `MINISIGN_SECRET_KEY`. If you
+# regenerate the signing key (`minisign -G`), re-embed the matching public key
+# here and in the other three carrier files (install.sh, install.ps1,
+# scripts/lib/verify_checksum.ps1). The MINISIGN_PUBKEY env override is the
 # documented seam used by the CI smoke and the hermetic tests.
 #
 # The library is sourced by scripts/install-demiurgos.sh and also usable
