@@ -2,7 +2,7 @@
 
 Comandos reales de la plataforma web Demiurgos, verificados contra el repositorio (`scripts/`, `frontend/package.json`, `src/tools/demiurgos-suite/`).
 
-> ⚠️ **La instalación oficial (Docker, Windows, Linux) está en desarrollo.** Hoy Demiurgos se arranca desde el repositorio con los launchers.
+> ✅ **La instalación oficial (Windows, Linux) ya está disponible con un solo comando**, desde el canal público firmado. Linux / macOS: `curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash`; Windows (PowerShell): `irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio con los launchers.
 
 ---
 
@@ -59,4 +59,4 @@ Comandos reales de la plataforma web Demiurgos, verificados contra el repositori
 
 ## Subsistema narrativo CLI (Hermes)
 
-Las 13 fases narrativas (`/narrative-init`, `/narrative-explore`, `/narrative-propose`, `/narrative-world-spec`, `/narrative-character-spec`, `/narrative-design`, `/narrative-tasks`, `/narrative-outline`, `/narrative-draft`, `/narrative-revise`, `/narrative-verify`, `/narrative-archive`, `/narrative-idea`) siguen existiendo como subsistema CLI del stack de desarrollo, gestionado por Hermes Agent (skills en `src/skills/narrative-*` y `skills/`). No requieren instalación adicional: `bash install.sh` prepara ese stack opcional. Se usan desde Hermes, no desde la app web.
+Las 13 fases narrativas (`/narrative-init`, `/narrative-explore`, `/narrative-propose`, `/narrative-world-spec`, `/narrative-character-spec`, `/narrative-design`, `/narrative-tasks`, `/narrative-outline`, `/narrative-draft`, `/narrative-revise`, `/narrative-verify`, `/narrative-archive`, `/narrative-idea`) siguen existiendo como subsistema CLI del stack de desarrollo, gestionado por Hermes Agent (skills en `src/skills/narrative-*` y `skills/`). No requieren instalación adicional: `bash install.sh --with-cli-stack` prepara ese stack opcional. Se usan desde Hermes, no desde la app web.

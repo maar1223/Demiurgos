@@ -1,11 +1,5 @@
 # Guía de una pantalla — instalar Demiurgos
 
-> ⚠️ **PENDIENTE DE PUBLICACIÓN.** El canal público todavía **no existe** y no
-> hay ningún release firmado. Los comandos de abajo son el destino documentado,
-> no una promesa viva: se habilitan recién cuando el canal esté arriba y una
-> descarga anónima + instalación real se hayan verificado. Hasta entonces, esta
-> guía no debe difundirse como instrucción de instalación.
-
 ## Antes de empezar
 
 - Necesitás una terminal abierta. Un comando. Nada más.
@@ -15,7 +9,7 @@
 ## Linux y macOS
 
 ```bash
-curl -fsSL https://github.com/<canal>/demiurgos-releases/install.sh | bash
+curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
 ```
 
 ## Windows
@@ -23,7 +17,7 @@ curl -fsSL https://github.com/<canal>/demiurgos-releases/install.sh | bash
 Abrí **PowerShell** y pegá:
 
 ```powershell
-irm https://github.com/<canal>/demiurgos-releases/install.ps1 | iex
+irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
 ```
 
 ### Si Windows bloquea el archivo
