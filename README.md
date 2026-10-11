@@ -17,11 +17,25 @@
 | [Hermes Agent](https://hermes-agent.nousresearch.com) CLI | Conversational provider (assistant + gateway on port 8642) |
 | `git` | Cloning the repository |
 
-> `install.sh` bootstraps the optional **dev-CLI stack** (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) persistent memory, and the narrative skills). Run it **once** if you don't have Hermes/Engram yet: `bash install.sh`. It is a development-environment setup — it does **not** install the web platform.
+> `install.sh` is the one-command **web-app bootstrap**: with no flags it installs the Demiurgos web app (delegating to `scripts/install-demiurgos.sh`, fetched from the release channel). The optional **dev-CLI stack** (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) persistent memory, and the narrative skills) is opt-in: `bash install.sh --with-cli-stack` (or `DEMIURGOS_WITH_CLI_STACK=1`). It is not required to run the web app.
 
 ### 2. Install
 
-> ⚠️ **Official installers are not available yet.** The official installation (Docker, Windows, Linux) is **in development**. Until it ships, Demiurgos runs from the repository: clone, `venv`, `npm install`, and launch with the launchers below.
+**One-command install** — the signed public release channel is live. Linux / macOS:
+
+```bash
+curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
+```
+
+This installs the web app under `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` on Windows); launch it with `~/.demiurgos/current/scripts/start-demiurgos.sh start` (see [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). The installer verifies a minisign signature and SHA256 checksums; there is no auto-update and no paid code signing, so a first-run security warning is expected.
+
+**From source (contributors):** clone, `venv`, `npm install`, and launch with the launchers below.
 
 ```bash
 git clone https://github.com/maar1223/Demiurgos.git

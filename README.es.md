@@ -17,11 +17,25 @@
 | CLI de [Hermes Agent](https://hermes-agent.nousresearch.com) | Proveedor conversacional (asistente y gateway en el puerto 8642) |
 | `git` | Clonar el repositorio |
 
-> `install.sh` prepara el stack **CLI de desarrollo** opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas). Ejecútalo **una vez** si aún no tienes Hermes/Engram: `bash install.sh`. Es una preparación del entorno de desarrollo — **no** instala la plataforma web.
+> `install.sh` es el **bootstrap de la app web** en un solo comando: sin flags instala la aplicación web de Demiurgos (delegando en `scripts/install-demiurgos.sh`, descargado del canal de releases). El stack **CLI de desarrollo** opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas) es opt-in: `bash install.sh --with-cli-stack` (o `DEMIURGOS_WITH_CLI_STACK=1`). No es necesario para usar la app web.
 
 ### 2. Instalación
 
-> ⚠️ **Los instaladores oficiales aún no están disponibles.** La instalación oficial (Docker, Windows, Linux) está **en desarrollo**. Hasta que exista, Demiurgos se arranca desde el repositorio: clonar, `venv`, `npm install` y lanzar con los launchers de abajo.
+**Instalación en un solo comando** — el canal público de releases firmado ya está activo. Linux / macOS:
+
+```bash
+curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
+```
+
+Instala la app web en `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` en Windows); arráncala con `~/.demiurgos/current/scripts/start-demiurgos.sh start` (ver [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). El instalador verifica una firma minisign y los checksums SHA256; no hay actualización automática ni firma de código paga, así que es esperable una advertencia de seguridad la primera vez.
+
+**Desde el código fuente (contribuidores):** clonar, `venv`, `npm install` y lanzar con los launchers de abajo.
 
 ```bash
 git clone https://github.com/maar1223/Demiurgos.git
