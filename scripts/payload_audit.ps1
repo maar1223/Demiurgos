@@ -114,7 +114,7 @@ function Test-DenyGlob([string]$rel) {
 
 function Test-Allowed([string]$rel) {
     if ($payload -contains $rel) { return $true }
-    foreach ($entry in $allow) {
+    foreach ($entry in $allowEntries) {
         if ($entry.EndsWith('/')) {
             if ($rel.StartsWith($entry)) { return $true }
         } elseif ($rel -eq $entry -or $rel.EndsWith('/' + $entry)) {
@@ -164,7 +164,7 @@ $data = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
 $payload = @($data.payload)
 
 # --- load the extra shippable paths -------------------------------------------
-$allow = @()
+$allowEntries = @()
 if ($Allow) {
     if (-not (Test-Path -LiteralPath $Allow -PathType Leaf)) {
         Write-Host "payload_audit: cannot read allow file: $Allow" -ForegroundColor Red
@@ -173,7 +173,7 @@ if ($Allow) {
     foreach ($line in Get-Content -LiteralPath $Allow) {
         $trimmed = $line.Trim()
         if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
-        $allow += $trimmed
+        $allowEntries += $trimmed
     }
 }
 

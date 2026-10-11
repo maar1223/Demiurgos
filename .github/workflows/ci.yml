@@ -351,6 +351,46 @@ jobs:
           }
           Write-Output 'PS 5.1 parse OK'
 
+      - name: Payload audit runtime regression (allow-list must apply)
+        # Bug 1 guard: PowerShell variable names are CASE-INSENSITIVE, so the
+        # local accumulator once collided with the -Allow parameter (both
+        # `$allow`) and clobbered it to an empty array. This runtime cell
+        # executes -Allow for real on Windows; it fails before the rename and
+        # passes after.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'payload-audit-regression'
+          if (Test-Path $base) { Remove-Item -Recurse -Force $base }
+          $stage = Join-Path $base 'stage'
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'app') | Out-Null
+          Set-Content -Path (Join-Path $stage 'app/main.py') -Value "print('hello')" -Encoding ascii
+          Set-Content -Path (Join-Path $stage 'LICENSE') -Value 'terms' -Encoding ascii
+          # the manifest lives OUTSIDE the audited stage tree
+          $manifest = Join-Path $base 'manifest.json'
+          Set-Content -Path $manifest -Encoding ascii `
+            -Value '{"schema_version":1,"payload":["app/main.py"]}'
+          # the allow file carries exactly LICENSE: the allow-list MUST apply
+          $allow = Join-Path $base 'allow.txt'
+          Set-Content -Path $allow -Value 'LICENSE' -Encoding ascii
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/payload_audit.ps1 `
+            -Root $stage -Manifest $manifest -Allow $allow
+          if ($LASTEXITCODE -ne 0) {
+            throw "allow-list regression: expected exit 0, got $LASTEXITCODE (the -Allow parameter was clobbered)"
+          }
+          # a path in neither list is still denied (default-DENY stays intact)
+          Set-Content -Path (Join-Path $stage 'rogue.txt') -Value 'rogue' -Encoding ascii
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/payload_audit.ps1 `
+            -Root $stage -Manifest $manifest -Allow $allow
+          if ($LASTEXITCODE -ne 1) {
+            throw "default-DENY regression: expected exit 1 for rogue.txt, got $LASTEXITCODE"
+          }
+          Write-Output 'payload audit runtime regression OK (allow-list applies; rogue path denied)'
+          # The GitHub Actions pwsh shell reports the step exit code as the
+          # $LASTEXITCODE of the LAST native command; the expected rogue-deny
+          # above left it at 1. Every assertion passed, so reset it explicitly.
+          exit 0
+
       - name: Install a working minisign (official 0.12 win64 build)
         shell: pwsh
         run: |
