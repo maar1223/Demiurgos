@@ -439,7 +439,7 @@ def _floors_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
 def _run_floors(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(INSTALLER)], env=env,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=25,
     )
 
 
@@ -829,7 +829,7 @@ def _installer_env(
 def _run_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(INSTALLER)],
-        env=env, capture_output=True, text=True, timeout=240,
+        env=env, capture_output=True, text=True, timeout=25,
     )
 
 
@@ -843,7 +843,7 @@ def _boot_launcher(tmp_path: Path, env: dict[str, str], install_root: Path) -> i
     launcher = install_root / "current" / "scripts" / "start-demiurgos.sh"
     start = subprocess.run(
         ["bash", str(launcher), "start"],
-        env=env, capture_output=True, text=True, timeout=120,
+        env=env, capture_output=True, text=True, timeout=25,
     )
     assert start.returncode == 0, start.stderr
     return api_port
@@ -1686,7 +1686,7 @@ def _ps_installer_env(
 def _run_ps_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["powershell.exe", "-NoProfile", "-File", str(PS_INSTALLER)],
-        env=env, capture_output=True, text=True, timeout=300,
+        env=env, capture_output=True, text=True, timeout=25,
     )
 
 
@@ -1698,7 +1698,7 @@ def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
     launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
     start = subprocess.run(
         ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
-        env=env, capture_output=True, text=True, timeout=180,
+        env=env, capture_output=True, text=True, timeout=25,
     )
     err_log = install_root / "logs" / "demiurgos-api.err.log"
     api_err = (
@@ -1852,7 +1852,7 @@ class TestWindowsM1DefenderSpaceUser:
 def _run_posix_bootstrap(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(INSTALL_SH)],
-        env=env, capture_output=True, text=True, timeout=240,
+        env=env, capture_output=True, text=True, timeout=25,
     )
 
 
@@ -1912,7 +1912,7 @@ def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[st
     )
     return subprocess.run(
         ["powershell.exe", "-NoProfile", "-Command", ps_code],
-        env=env, capture_output=True, text=True, timeout=300,
+        env=env, capture_output=True, text=True, timeout=25,
     )
 
 
