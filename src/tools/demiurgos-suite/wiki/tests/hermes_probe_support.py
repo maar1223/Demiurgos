@@ -42,7 +42,10 @@ REPO_ROOT: Path = _WIKI.parents[3]
 # Self-check: fail loudly at import if the path layout ever changes, instead of
 # silently booting the gateway with DEMIURGOS_ROOT=<repo>/src (which would make
 # .hermes/plugins/demiurgos-idea-capture undiscoverable and Fix 2 silently fail).
-assert "demiurgos-suite/wiki/tests" in str(Path(__file__).resolve()), str(
+# ``as_posix()`` keeps the separator check portable: on Windows ``str(Path)``
+# spells backslashes and the layout assertion would fail at import (collection
+# error for every module importing this helper).
+assert "demiurgos-suite/wiki/tests" in Path(__file__).resolve().as_posix(), str(
     Path(__file__).resolve()
 )
 _PLUGIN_INIT: Path = REPO_ROOT / ".hermes" / "plugins" / "demiurgos-idea-capture" / "__init__.py"

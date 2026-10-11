@@ -397,6 +397,9 @@ def test_unverified_drive_type_value_never_reports_streaming(
 # --------------------------------------------------------------------------
 # REQ-SF-3 — the Linux FUSE-mount signal (verified, injected mount table)
 # --------------------------------------------------------------------------
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux FUSE/mount-table streaming signal",
+)
 def test_fuse_mount_point_is_verified_streaming_with_a_linux_remedy(
     tmp_path: Path,
 ) -> None:
@@ -422,6 +425,9 @@ def test_fuse_mount_point_is_verified_streaming_with_a_linux_remedy(
     assert "Mirroring" not in decision.remedy
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux FUSE/mount-table streaming signal",
+)
 def test_fuse_mount_on_a_parent_mount_point_is_streaming(tmp_path: Path) -> None:
     """The target lives under the FUSE mount; longest-prefix matching finds it."""
     mount_root = tmp_path / "drive"
@@ -437,6 +443,9 @@ def test_fuse_mount_on_a_parent_mount_point_is_streaming(tmp_path: Path) -> None
     assert capabilities.mode_hint == MODE_STREAMING
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux FUSE/mount-table streaming signal",
+)
 def test_fuse_mount_at_the_filesystem_root_is_streaming(tmp_path: Path) -> None:
     """The root mount is a valid longest-prefix match, not skipped."""
     target = tmp_path / "somewhere"
@@ -449,6 +458,9 @@ def test_fuse_mount_at_the_filesystem_root_is_streaming(tmp_path: Path) -> None:
     assert capabilities.mode_hint == MODE_STREAMING
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux FUSE/mount-table streaming signal",
+)
 def test_mount_table_octal_escapes_are_decoded(tmp_path: Path) -> None:
     """``/proc/mounts`` escapes spaces as ``\\040``; matching decodes them."""
     mount_root = tmp_path / "My Drive"

@@ -100,7 +100,8 @@ def _stop_and_assert_clean(launcher: Path, env: dict[str, str], api_port: int) -
             break
         time.sleep(0.25)
     assert not _port_listening(api_port), (
-        f"port {api_port} still listening after stop: leaked launcher process"
+        f"port {api_port} still listening after stop: leaked launcher process\n"
+        f"stop stdout: {stop.stdout!r}\nstop stderr: {stop.stderr!r}"
     )
 
 

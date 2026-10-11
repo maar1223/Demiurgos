@@ -45,6 +45,22 @@ jobs:
       - name: Install uv (wheels-only; no setup-python, no bare pip)
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
+      - name: Provision the no-op browser stubs (headless guard)
+        # The suite runs the launcher boot/rollback cells too; their harnesses
+        # fail loudly if the no-op browser stubs are absent (s2b-harness-gotcha
+        # — a real browser must never open from a test). Provision them up-front
+        # so the cells do not depend on another test file having created them.
+        shell: bash
+        run: |
+          mkdir -p /tmp/opencode/noop-browser/bin
+          for n in xdg-open open gio sensible-browser x-www-browser; do
+            if [ ! -x "/tmp/opencode/noop-browser/bin/$n" ]; then
+              printf '#!/bin/sh\necho "noop %s" >> /tmp/opencode/noop-browser/calls.log\nexit 0\n' "$n" \
+                > "/tmp/opencode/noop-browser/bin/$n"
+              chmod +x "/tmp/opencode/noop-browser/bin/$n"
+            fi
+          done
+
       - name: Create the wheels-only venv
         shell: bash
         run: |
@@ -67,9 +83,21 @@ jobs:
           DEMIURGOS_AUTH_MODE: local-dev
         shell: bash
         run: |
+          # The launcher and installer CONTRACT suites shell out to bash /
+          # powershell / the POSIX installer and are covered by their dedicated
+          # jobs (launcher: ubuntu+macos+windows; installer-smoke: POSIX;
+          # ps51: Windows cells). Running them again here was the source of the
+          # cross-platform red: on macOS the unsigned fixture uv fails the
+          # installer's codesign gate and the shasum shim assumes sha256sum; on
+          # Windows the cells invoke the WSL bash stub and can hang. Keep the
+          # backend matrix on the backend suite.
           "${{ matrix.venv_python }}" -m pytest src/tools/demiurgos-suite/wiki/tests/ \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_semantic_e2e.py \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_import_enrichment_e2e.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py \
             -k "not live" -q
 
   frontend:

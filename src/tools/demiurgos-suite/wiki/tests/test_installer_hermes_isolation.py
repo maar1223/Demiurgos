@@ -25,6 +25,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
 REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
@@ -93,6 +95,10 @@ def test_installer_dedicated_root_outside_personal_and_data_roots():
     assert "profiles/" not in RESOLUTION_CHAIN
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="evaluates the POSIX resolution chain through a real bash",
+)
 def test_installer_resolution_chain_evaluates_per_spec(tmp_path: Path):
     """Spec 'Dedicated root resolution' (behavioural): evaluate the exact chain
     bash reads. Environment override wins; DEMIURGOS_HOME supplies the default;
