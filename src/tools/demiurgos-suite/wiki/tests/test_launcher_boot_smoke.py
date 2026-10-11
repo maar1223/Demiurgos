@@ -36,6 +36,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -84,6 +85,18 @@ def _port_listening(port: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def _run_ps_captured(cmd, env, timeout):
+    """Run a PS command with output to temp FILES (not pipes) + stdin=DEVNULL.
+    A detached grandchild (uvicorn) that inherits the pipes makes
+    communicate() hang on Windows and defeats the timeout (issue #2)."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        outp = Path(td) / "out"; errp = Path(td) / "err"
+        with open(outp, "wb") as o, open(errp, "wb") as e:
+            proc = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL,
+                                  stdout=o, stderr=e, timeout=timeout)
+        return proc.returncode, outp.read_text(encoding="utf-8", errors="replace"), errp.read_text(encoding="utf-8", errors="replace")
 
 
 def _stop_and_assert_clean(launcher: Path, env: dict[str, str], api_port: int) -> None:
@@ -216,11 +229,11 @@ class TestWindowsPsLauncherHermesAbsent:
             if "hermes" not in part.lower()
         )
 
-        start = subprocess.run(
+        start_rc, _start_out, start_err = _run_ps_captured(
             ["powershell.exe", "-NoProfile", "-File", str(PS_STACK), "start"],
-            env=env, capture_output=True, text=True, timeout=120,
+            env, timeout=120,
         )
-        assert start.returncode == 0, start.stderr
+        assert start_rc == 0, start_err
         try:
             status = None
             for _ in range(_SMOKE_POLLS):
@@ -231,9 +244,9 @@ class TestWindowsPsLauncherHermesAbsent:
             assert status == 200, "API /health never became ready"
             assert _http_status(f"http://127.0.0.1:{api_port}/") == 200
         finally:
-            subprocess.run(
+            _run_ps_captured(
                 ["powershell.exe", "-NoProfile", "-File", str(PS_STACK), "stop"],
-                env=env, capture_output=True, text=True, timeout=60,
+                env, timeout=60,
             )
 
     def test_m1_defender_and_username_with_space(self, tmp_path: Path) -> None:
@@ -252,13 +265,13 @@ class TestWindowsPsLauncherHermesAbsent:
             "DEMIURGOS_DATA_ROOT": str(tmp_path / "data root with spaces"),
             "DEMIURGOS_API_PORT": str(_free_port()),
         }
-        probe = subprocess.run(
+        probe_rc, _probe_out, probe_err = _run_ps_captured(
             ["powershell.exe", "-NoProfile", "-File", str(PS_STACK), "stop"],
-            env=env, capture_output=True, text=True, timeout=60,
+            env, timeout=60,
         )
         # `stop` when down must exit cleanly; reaching it proves the script
         # parsed and derived paths under a username-with-space install root.
-        assert probe.returncode == 0, probe.stderr
+        assert probe_rc == 0, probe_err
 
 
 class TestLauncherBehaviourMatrix:
