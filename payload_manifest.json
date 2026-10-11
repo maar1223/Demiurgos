@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "6075b04",
+  "source_commit": "5b0ec92c",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -19,20 +19,6 @@
     "data/methodology/seeds/narrative-character-creation/checksums.json",
     "data/methodology/seeds/narrative-character-creation/manifest.yaml",
     "data/methodology/seeds/narrative-character-creation/source.md",
-    "frontend/dist/assets/EntityPage-7fMxH9AL.js",
-    "frontend/dist/assets/IdeasWorkshop-C2tKJxpE.js",
-    "frontend/dist/assets/LiveDiffEditor-DElgrxuU.js",
-    "frontend/dist/assets/index-BIb50hwl.css",
-    "frontend/dist/assets/index-BslqRUAq.js",
-    "frontend/dist/demiurgos-logo-horizontal.svg",
-    "frontend/dist/demiurgos-wordmark-bevel.svg",
-    "frontend/dist/demiurgos-wordmark.svg",
-    "frontend/dist/favicon-dark.svg",
-    "frontend/dist/favicon-light.svg",
-    "frontend/dist/favicon.svg",
-    "frontend/dist/index.html",
-    "frontend/dist/wordmark-dark.svg",
-    "frontend/dist/wordmark-light.svg",
     "scripts/start-demiurgos.sh",
     "src/tools/capability_probes/__init__.py",
     "src/tools/capability_probes/fixtures/logo-demiurgos-altered.jpg",
@@ -84,6 +70,8 @@
     "src/tools/demiurgos-suite/wiki/guided_character_provider.py",
     "src/tools/demiurgos-suite/wiki/guided_session_store.py",
     "src/tools/demiurgos-suite/wiki/hermes_co_creation_provider.py",
+    "src/tools/demiurgos-suite/wiki/hermes_gateway_hooks.py",
+    "src/tools/demiurgos-suite/wiki/hermes_profile_config.py",
     "src/tools/demiurgos-suite/wiki/hermes_runtime.py",
     "src/tools/demiurgos-suite/wiki/hermes_runtime_probe.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -121,7 +109,10 @@
     "src/tools/demiurgos-suite/wiki/readiness.py",
     "src/tools/demiurgos-suite/wiki/retirement_gate.py",
     "src/tools/demiurgos-suite/wiki/semantic_intent.py",
+    "src/tools/demiurgos-suite/wiki/skill_materializer.py",
+    "src/tools/demiurgos-suite/wiki/skill_renderer.py",
     "src/tools/demiurgos-suite/wiki/skill_router.py",
+    "src/tools/demiurgos-suite/wiki/skill_session_epochs.py",
     "src/tools/demiurgos-suite/wiki/system_control.py",
     "src/tools/demiurgos-suite/wiki/telegram_settings.py",
     "src/tools/demiurgos-suite/wiki/warmup_gateway.py",
@@ -297,7 +288,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 983
+        "line": 1257
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -313,11 +304,11 @@
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 1037
+        "line": 1131
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 1053
+        "line": 1147
       }
     ],
     "sync_lore": [

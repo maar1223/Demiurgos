@@ -34,6 +34,7 @@ Run: ``python scripts/derive_payload_manifest.py`` from the repo root.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import json
 import subprocess
 import sys
@@ -60,7 +61,21 @@ _ANCHORS = (WIKI_DIR, SUITE_DIR, TOOLS_DIR)
 
 # Denied at emit: author data, tests, bytecode. `plantillas/` is the S0-D
 # required removal; the rest keeps the runtime allow-list free of dead weight.
+# This tuple is serialized verbatim into the manifest's ``denied`` field, so it
+# names only the authority classes (author data / tests / bytecode) the release
+# audit reasons about — never a transient build or cache path.
 _DENIED = ("plantillas/**", "**/tests/**", "**/__pycache__/**", "**/*.pyc")
+
+# Transient trees excluded from the payload for hygiene but NOT part of the
+# authority deny-list: a test cache and the frontend build tree are regenerated,
+# not author data or secrets. They stay out of ``_DENIED`` on purpose — that
+# tuple is emitted into the manifest, and naming a transient path there would
+# write the very strings a hygiene check forbids back into the file. The
+# ``frontend/dist/`` tree in particular is a BUILD ARTIFACT: it does not exist
+# with content-hashed names until the release builds it, and the packaging
+# carries it via the allow-prefix, not via this file-level manifest (whose
+# stale hashes only produce noisy "manifest path missing" warnings).
+_TRANSIENT = (".pytest_cache/**", "**/.pytest_cache/**", "frontend/dist/**")
 
 # Mandated runtime data (Skill Madre, 10 tracked files) — not reachable via
 # imports because it is data, not code.
@@ -113,28 +128,37 @@ def _is_repo_module(top: str) -> bool:
     return bool(_resolve_candidates(top)) or top == "wiki"
 
 
-def _is_denied(rel: Path) -> bool:
+def _matches(rel: Path, patterns: tuple[str, ...]) -> bool:
+    """``fnmatch`` ``patterns`` against the POSIX-style repo-relative path."""
     text = "/".join(rel.parts)
-    return any(text == p or text.endswith(p.lstrip("*")) for p in ("plantillas",)) or (
-        "/tests/" in text
-        or text.endswith("/tests")
-        or "/__pycache__/" in text
-        or text.endswith("/__pycache__")
-        or text.endswith(".pyc")
-    )
+    return any(fnmatch.fnmatch(text, pattern) for pattern in patterns)
+
+
+def _is_denied(rel: Path) -> bool:
+    """Authority deny-list membership (author data, tests, bytecode).
+
+    ``_DENIED`` is the single source of truth for the manifest's ``denied``
+    field, so this is what the emitted list documents exactly.
+    """
+    return _matches(rel, _DENIED)
+
+
+def _is_excluded(rel: Path) -> bool:
+    """Payload filter: authority denies plus transient build/cache trees."""
+    return _is_denied(rel) or _matches(rel, _TRANSIENT)
 
 
 def _iter_py_files(target: Path) -> list[Path]:
     """Python files under a resolved target, skipping denied subtrees."""
     if target.is_file() and target.suffix == ".py":
-        if _is_denied(target.relative_to(REPO_ROOT)):
+        if _is_excluded(target.relative_to(REPO_ROOT)):
             return []
         return [target]
     if target.is_dir():
         return [
             p
             for p in sorted(target.rglob("*.py"))
-            if not _is_denied(p.relative_to(REPO_ROOT))
+            if not _is_excluded(p.relative_to(REPO_ROOT))
         ]
     return []
 
@@ -215,7 +239,7 @@ def _expand_to_files(rel_dir: Path) -> set[str]:
     return {
         str(p.relative_to(REPO_ROOT))
         for p in REPO_ROOT.joinpath(rel_dir).rglob("*")
-        if p.is_file() and not _is_denied(p.relative_to(REPO_ROOT))
+        if p.is_file() and not _is_excluded(p.relative_to(REPO_ROOT))
     }
 
 
@@ -264,7 +288,7 @@ def main() -> int:
     for top in sorted(resolved_tops):
         for candidate in _resolve_candidates(top):
             rel = candidate.relative_to(REPO_ROOT)
-            if _is_denied(rel):
+            if _is_excluded(rel):
                 continue
             if candidate.is_dir():
                 payload |= _expand_to_files(rel)
@@ -273,7 +297,7 @@ def main() -> int:
     for resource in resources:
         rel = resource
         target = REPO_ROOT / rel
-        if target.is_file() and not _is_denied(rel):
+        if target.is_file() and not _is_excluded(rel):
             payload.add(str(rel))
         elif target.is_dir():
             payload |= _expand_to_files(rel)
