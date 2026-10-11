@@ -1650,6 +1650,14 @@ def _ps_installer_env(
         "UV_VERSION": STUB_UV_VERSION,
         "DEMIURGOS_STUB_PYTHON": str(_REPO_ROOT / ".venv" / "Scripts" / "python.exe"),
         "DEMIURGOS_STUB_LOG": str(tmp_path / "uv-stub.log"),
+        # Harness seam: the stub uv fakes the wheel install with a ``.pth`` link
+        # to the repository venv. That link is reliable on POSIX but not across
+        # the managed-Python venv layout on Windows, where the staged interpreter
+        # ends up without the repo dependencies (e.g. ``No module named uvicorn``
+        # at boot). Expose the repo venv's site-packages deterministically via
+        # PYTHONPATH for BOTH the install and the booted API. The real uv install
+        # puts the wheels into the venv itself, so this only shapes the fixture.
+        "PYTHONPATH": str(_REPO_ROOT / ".venv" / "Lib" / "site-packages"),
         "APPDATA": str(tmp_path / "appdata"),
         "LOCALAPPDATA": str(tmp_path / "localappdata"),
         "USERPROFILE": str(tmp_path / "userprofile"),
