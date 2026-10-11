@@ -1684,10 +1684,23 @@ def _ps_installer_env(
 
 
 def _run_ps_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["powershell.exe", "-NoProfile", "-File", str(PS_INSTALLER)],
-        env=env, capture_output=True, text=True, timeout=25,
-    )
+    try:
+        return subprocess.run(
+            ["powershell.exe", "-NoProfile", "-File", str(PS_INSTALLER)],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or exc.output or ""
+        err = exc.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        raise AssertionError(
+            f"DIAG: PS installer TIMED OUT after {exc.timeout}s.\n"
+            f"--- installer stdout so far ---\n{out}\n"
+            f"--- installer stderr so far ---\n{err}"
+        ) from exc
 
 
 def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
@@ -1910,10 +1923,22 @@ def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[st
     ps_code = (
         "Get-Content -Raw -LiteralPath '" + str(INSTALL_PS1) + "' | Invoke-Expression"
     )
-    return subprocess.run(
-        ["powershell.exe", "-NoProfile", "-Command", ps_code],
-        env=env, capture_output=True, text=True, timeout=25,
-    )
+    try:
+        return subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps_code],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or exc.output or ""
+        err = exc.stderr or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        raise AssertionError(
+            f"DIAG: PS bootstrap iex TIMED OUT after {exc.timeout}s.\n"
+            f"--- stdout so far ---\n{out}\n--- stderr so far ---\n{err}"
+        ) from exc
 
 
 @PS_RUNNER
