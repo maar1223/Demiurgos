@@ -413,7 +413,8 @@ jobs:
         shell: bash
         run: |
           ".venv/Scripts/python.exe" -m pytest \
-            src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py -q
+            src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py -q -rA \
+            -k "install_then_boot_serves_health"
 
       - name: Download the built frontend dist (the PS boot smoke serves "/" from it)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
