@@ -1729,19 +1729,30 @@ def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
             if err_log.is_file() else "<no api err log>"
         )
 
-    try:
-        start = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
-            env=env, capture_output=True, text=True, timeout=120,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AssertionError(
-            f"DIAG: PS launcher start TIMED OUT after {exc.timeout}s\n"
-            f"api err log ({err_log}):\n{_api_err()}"
-        ) from exc
+    out_file = install_root / "logs" / "launcher.start.out.log"
+    err_file = install_root / "logs" / "launcher.start.err.log"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    # Output goes to FILES, not pipes: the launcher detaches uvicorn, and a
+    # detached grandchild that inherits the captured-output pipes keeps them
+    # open, so communicate() never sees EOF and the timeout never fires (the
+    # Windows-only "hang"). stdin=DEVNULL too.
+    with open(out_file, "wb") as _o, open(err_file, "wb") as _e:
+        try:
+            start = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
+                env=env, stdin=subprocess.DEVNULL, stdout=_o, stderr=_e, timeout=120,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                f"DIAG: PS launcher start TIMED OUT after {exc.timeout}s\n"
+                f"launcher stdout:\n{out_file.read_text(encoding='utf-8', errors='replace')}\n"
+                f"api err log ({err_log}):\n{_api_err()}"
+            ) from exc
+    start_stdout = out_file.read_text(encoding="utf-8", errors="replace")
+    start_stderr = err_file.read_text(encoding="utf-8", errors="replace")
     assert start.returncode == 0, (
         f"PS launcher start failed (rc={start.returncode})\n"
-        f"stdout: {start.stdout}\nstderr: {start.stderr}\n"
+        f"stdout: {start_stdout}\nstderr: {start_stderr}\n"
         f"api err log ({err_log}):\n{_api_err()}"
     )
     return api_port
