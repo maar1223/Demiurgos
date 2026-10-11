@@ -6,16 +6,19 @@
 
 ## 0. Estado actual
 
-- El código del pipeline existe (`.github/workflows/release.yml`), pero el paso
-  de publicación está **guardado por tag**: no hace nada mientras no se empuje
-  un tag `vX.Y.Z`.
-- La clave **pública** del canal ya está embebida en los cuatro archivos que la
-  llevan (ver paso 4). Lo que falta, en orden: (a) crear el repositorio público
-  del canal (paso 1), (b) asegurar que la clave de firma guardada en
-  `MINISIGN_SECRET_KEY` coincida con esa clave pública embebida, (c) cargar los
-  secretos (paso 3), (d) empujar el tag `vX.Y.Z` (paso 5).
-- El consumidor verifica la firma *fail-closed*: si la clave pública no coincide
-  con la que firmó, la instalación se rechaza (a propósito).
+- **Hecho.** El repositorio público del canal existe en
+  `https://github.com/maar1223/demiurgos-releases` y los secretos del repositorio
+  (`MINISIGN_SECRET_KEY`, `MINISIGN_PUBKEY`, `MINISIGN_KEY_PASSWORD`,
+  `PUBLISH_TOKEN`) están cargados.
+- **Hecho.** El release **`v0.1.0` está publicado** (marcado *Latest*) y el smoke
+  anónimo posterior a la publicación pasó: firma + checksums + instalación +
+  arranque. La publicación sigue **guardada por tag**: el pipeline no hace nada
+  mientras no se empuje un tag `vX.Y.Z`. Los pasos 1–5 quedan como el
+  procedimiento para el próximo release.
+- La clave **pública** embebida en los cuatro archivos que la llevan (ver paso 4)
+  coincide con la privada guardada en `MINISIGN_SECRET_KEY`. El consumidor
+  verifica la firma *fail-closed*: si la clave pública no coincide con la que
+  firmó, la instalación se rechaza (a propósito).
 
 ## 1. Crear el canal público
 
@@ -85,7 +88,7 @@ payload, firma `SHA256SUMS`, publica en el canal con `--repo` explícito, y
 Sin credenciales, desde una máquina limpia:
 
 ```bash
-curl -fsSL https://github.com/<owner>/demiurgos-releases/install.sh -o install.sh
+curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh -o install.sh
 sha256sum install.sh            # comparar con lo publicado
 ```
 
@@ -95,9 +98,9 @@ pasa, no se difunde nada.**
 ## 7. Recién entonces: realinear la documentación
 
 La tarea 9.2 (secciones de instalación de `README.md`, `README.es.md`,
-`LEEME.md`, `COMANDOS.md`) está **bloqueada a propósito** hasta que el paso 6
-esté verificado. La regla es simple: la documentación sigue a la evidencia, no
-a la intención.
+`LEEME.md`, `COMANDOS.md`) **ya se ejecutó** tras verificar el paso 6. La regla
+es simple: la documentación sigue a la evidencia, no a la intención. Si en el
+futuro la evidencia cambia, se vuelve a realinear.
 
 ## Verificación de cierre
 

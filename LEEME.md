@@ -8,7 +8,7 @@ Si eres un usuario nuevo, este documento es tu **Punto de Partida**.
 
 ## 1. Estado de la instalación
 
-> ⚠️ **La instalación oficial aún no está disponible.** Los instaladores (Docker, Windows, Linux) están **en desarrollo**. Hoy Demiurgos se arranca desde el repositorio: clonar → crear `venv` → `npm install` → launchers (ver sección 4). `install.sh` solo prepara el stack CLI de desarrollo (Hermes, Engram y las skills narrativas); **no** instala la plataforma web.
+> ✅ **La instalación oficial ya está disponible**, en un solo comando desde el canal público firmado. Linux / macOS: `curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash`; Windows (PowerShell): `irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio: clonar → crear `venv` → `npm install` → launchers (ver sección 4). `install.sh` sin flags instala la app web; el stack CLI de desarrollo (Hermes, Engram y las skills narrativas) es opt-in con `bash install.sh --with-cli-stack`.
 
 ---
 
@@ -40,7 +40,7 @@ Demiurgos/
 ├── start-demiurgos.ps1          ← Launcher de Windows
 ├── plantillas/                  ← Catálogos narrativos (Snyder, tramas)
 ├── docs/                        ← Documentación técnica y de arquitectura
-└── install.sh                   ← Stack CLI de desarrollo (Hermes/Engram/skills)
+└── install.sh                   ← Bootstrap de la app web (stack CLI opcional con --with-cli-stack)
 ```
 
 ---
@@ -59,7 +59,7 @@ Demiurgos/
    - Windows: `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1`
 5. **Abre la app:** `http://127.0.0.1:5173` — el primer arranque muestra el onboarding (idioma, proveedores LLM, crear o importar un mundo).
 
-> **Opcional:** si quieres el stack CLI de desarrollo (Hermes Agent, Engram y las skills narrativas de las 13 fases), ejecuta una vez: `bash install.sh`. No es necesario para usar la app web.
+> **Opcional:** si quieres el stack CLI de desarrollo (Hermes Agent, Engram y las skills narrativas de las 13 fases), usa el flag opt-in: `bash install.sh --with-cli-stack`. No es necesario para usar la app web (`install.sh` sin flags instala la app web).
 
 ---
 
