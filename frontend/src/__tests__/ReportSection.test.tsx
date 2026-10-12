@@ -178,6 +178,45 @@ describe("ReportSection — preview gate, submit and strict fallback (S2b)", () 
     expect(payload.app_version).toBe("0.2.0");
   });
 
+  it("includes a provided contact in the submitted payload", async () => {
+    const user = await renderReady();
+
+    await user.type(
+      screen.getByLabelText(tEs("profile.bugreport.contactLabel")),
+      "dev@example.com",
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-5" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    expect((submitBugReport as Mock).mock.calls[0][0].contact).toBe(
+      "dev@example.com",
+    );
+  });
+
+  it("omits the contact field entirely when the user leaves it empty", async () => {
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-6" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    // The spec: an empty contact is OMITTED, never serialized as "".
+    expect((submitBugReport as Mock).mock.calls[0][0]).not.toHaveProperty(
+      "contact",
+    );
+  });
+
   it("shows the success feedback and hides the fallback when delivery succeeds", async () => {
     const user = await renderReady();
 
