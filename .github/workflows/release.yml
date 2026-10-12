@@ -347,26 +347,45 @@ jobs:
           minisign -Vm SHA256SUMS -P "$pubkey" >/dev/null \
             || { echo "FAIL: self-check signature verification failed"; exit 1; }
           echo "manifest signed: SHA256SUMS.minisig"
-      - name: Publish the release (explicit repo and explicit tag)
+      - name: Publish the release (explicit repo, explicit tag, Beta gate)
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"    # vX.Y.Z — explicit tag, never implicit
           # public channel; owner/name is the Author's pending decision (S0-E);
           # built from parts so no address appears verbatim (mirrors install.sh)
           public_repo="maar12""23/demiurgos-releases"
+          # Beta gate (S0): the tag is the single authority. A tag is a
+          # prerelease iff its version core carries a '-' suffix
+          # (v0.x.y-beta.N -> 1; v0.x.y -> 0). Reclassified inline per job
+          # (no cross-job outputs).
+          core="${tag#v}"
+          if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
+          prerelease_flag=""
+          [ "$is_prerelease" = "1" ] && prerelease_flag="--prerelease"
           gh release create --repo "$public_repo" "$tag" \
             demiurgos-app-* SHA256SUMS SHA256SUMS.minisig version.json \
             scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
             scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
             install.sh install.ps1 \
+            $prerelease_flag \
             --title "Demiurgos ${tag}" \
-            --notes "Versioned artifact release for the one-command install flow. The channel SHA256SUMS is minisign-signed (SHA256SUMS.minisig); the anonymous post-publish smoke verifies the signature + checksums and gates the latest pointer (S5-5)."
+            --notes "Versioned artifact release for the one-command install flow. The channel SHA256SUMS is minisign-signed (SHA256SUMS.minisig); the anonymous post-publish smoke verifies the signature + checksums and gates the channel pointer (stable: latest; beta: latest-beta; S5-5, S0)."
 
   smoke:
     name: Post-publish anonymous smoke (latest gate)
     needs: publish
     runs-on: ubuntu-latest
     steps:
+      - name: Classify the release (Beta gate)
+        run: |
+          set -euo pipefail
+          # Same inline classifier as the publish job: the tag is the single
+          # authority, recomputed here (no cross-job outputs). Exported to
+          # $GITHUB_ENV so the later pointer/gating steps see one decision.
+          tag="${GITHUB_REF_NAME}"; core="${tag#v}"
+          if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
+          printf 'is_prerelease=%s\n' "$is_prerelease" >> "$GITHUB_ENV"
+          echo "release ${tag}: is_prerelease=${is_prerelease}"
       - name: Download the release assets anonymously (no credentials)
         run: |
           set -euo pipefail
@@ -470,7 +489,7 @@ jobs:
           [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8123/")" = "200" ] \
             || { echo "FAIL: / did not serve 200"; exit 1; }
           echo "smoke OK: /health and / serve 200 from the published artifact"
-      - name: Move the latest pointer (only after the smoke passed)
+      - name: Move the channel pointer (only after the smoke passed)
         env:
           GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
         run: |
@@ -478,6 +497,40 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
           public_repo="maar12""23/demiurgos-releases"
-          printf '%s\n' "$version" > latest
-          gh release upload --repo "$public_repo" --clobber "$tag" latest
-          echo "latest pointer moved to $version"
+          # Beta gate (S0): stable advances `latest`; a prerelease advances the
+          # SEPARATE `latest-beta` pointer and MUST NOT touch `latest`.
+          pointer="latest"; [ "$is_prerelease" = "1" ] && pointer="latest-beta"
+          printf '%s\n' "$version" > "$pointer"
+          gh release upload --repo "$public_repo" --clobber "$tag" "$pointer"
+          echo "${pointer} pointer moved to ${version}"
+      - name: Assert the pointer gating (stable latest / beta latest-beta)
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          # (1) the created GitHub release must be marked prerelease iff the tag
+          #     was classified as one; a mismatch is a hard failure.
+          actual="$(gh release view "$tag" --repo "$public_repo" --json isPrerelease -q .isPrerelease)"
+          expected=false; [ "$is_prerelease" = "1" ] && expected=true
+          [ "$actual" = "$expected" ] \
+            || { echo "FAIL: isPrerelease=${actual}, expected ${expected}"; exit 1; }
+          # (2) pointer gating. GitHub's /releases/latest/ download excludes
+          #     prereleases — exactly the property that proves the gate.
+          stable="$(curl -fsSL --proto '=https' --retry 3 --max-time 60 \
+            "https://github.com/${public_repo}/releases/latest/download/latest" 2>/dev/null || true)"
+          if [ "$is_prerelease" = "1" ]; then
+            [ "$stable" != "$version" ] \
+              || { echo "FAIL: a prerelease moved the latest pointer"; exit 1; }
+            beta="$(curl -fsSL --proto '=https' --retry 3 --max-time 60 \
+              "https://github.com/${public_repo}/releases/download/${tag}/latest-beta")"
+            [ "$beta" = "$version" ] \
+              || { echo "FAIL: latest-beta=${beta}, expected ${version}"; exit 1; }
+            echo "beta gating OK: latest untouched, latest-beta=${version}"
+          else
+            [ "$stable" = "$version" ] \
+              || { echo "FAIL: latest=${stable}, expected ${version}"; exit 1; }
+            echo "stable gating OK: latest=${version}"
+          fi
