@@ -116,7 +116,7 @@ function Get-ShaFor([string]$sumsFile, [string]$name) {
 # carrier files (install.sh, scripts/lib/verify_checksum.sh,
 # scripts/lib/verify_checksum.ps1).
 # Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
-$defaultMinisignPubkey = 'RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy'
+$defaultMinisignPubkey = 'RWQ3C9oZP5+p/ClFZOUCjPwsoPVsQyEblu82WCi0A9nEN5caSMR0K0iE'
 $minisignPubkey = if ($env:MINISIGN_PUBKEY) { $env:MINISIGN_PUBKEY } else { $defaultMinisignPubkey }
 
 function Verify-Minisig([string]$sumsFile) {

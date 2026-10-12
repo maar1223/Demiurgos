@@ -483,7 +483,7 @@ verify_sha256() {  # file expected_sha
 # carrier files (install.ps1, scripts/lib/verify_checksum.sh,
 # scripts/lib/verify_checksum.ps1).
 # Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
-DEFAULT_MINISIGN_PUBKEY="RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
+DEFAULT_MINISIGN_PUBKEY="RWQ3C9oZP5+p/ClFZOUCjPwsoPVsQyEblu82WCi0A9nEN5caSMR0K0iE"
 
 verify_minisig() {  # sums_file sig_file
     local sums="$1" sig="$2" pubkey="${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}"

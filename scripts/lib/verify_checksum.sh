@@ -52,7 +52,7 @@ verify_sha256() {
 # --- S5b: signed-manifest gate (task 8.4) -----------------------------------
 # Real public key line (the RW... line of minisign.pub) generated with
 # `minisign -G` (S5b signing-key custody, set 2026-10-02).
-DEFAULT_MINISIGN_PUBKEY="RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
+DEFAULT_MINISIGN_PUBKEY="RWQ3C9oZP5+p/ClFZOUCjPwsoPVsQyEblu82WCi0A9nEN5caSMR0K0iE"
 
 verify_minisig() {  # sums_file sig_file [pubkey]
     local sums="$1" sig="$2" pubkey="${3:-${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}}"
