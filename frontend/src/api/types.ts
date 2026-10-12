@@ -171,6 +171,29 @@ export interface AppConfig {
 }
 
 // ---------------------------------------------------------------------------
+// In-app updater (GET /api/update/status, PUT /api/update/channel)
+// ---------------------------------------------------------------------------
+
+/** Selectable release channel. The value is server-owned: "Estable" is the
+ *  fresh-install default and the server is the authority that persists it. */
+export type UpdateChannel = "Estable" | "Beta";
+
+/**
+ * Advisory update status from GET /api/update/status. `latest` is display-only
+ * (it comes from the channel pointer, never from the unsigned `version.json`):
+ * `null` with `advisory_unavailable: true` when the channel could not be
+ * reached. This payload never authorizes an install.
+ */
+export interface UpdateStatus {
+  current_version: string;
+  channel: UpdateChannel;
+  url_base: string;
+  latest: string | null;
+  update_available: boolean;
+  advisory_unavailable: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Onboarding / Configuration Center (Slice 1 — Foundation)
 // ---------------------------------------------------------------------------
 
