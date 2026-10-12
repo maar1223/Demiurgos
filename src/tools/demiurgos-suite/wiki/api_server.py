@@ -8639,6 +8639,7 @@ from hermes_runtime_probe import HermesGatewayProbe  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
+from updater import create_update_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_spool_gc import gc_enabled, gc_guard_hours, gc_ttl_days, reap_dead_spools  # noqa: E402
@@ -9322,6 +9323,49 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         launcher_path=_SYSTEM_LAUNCHER,
         launcher_available=_SYSTEM_LAUNCHER_AVAILABLE,
+    ),
+)
+
+# In-app update-check — /api/update (Slice 2b: status + channel).
+#
+# The router is principal-gated like system control: every route requires a
+# trusted local principal resolved at call time; None maps to 401 (fail
+# closed). The channel base URL resolves channel.json (installer-written,
+# validated https/file) -> DEMIURGOS_CHANNEL_URL -> the public default, and
+# the advisory latest comes from the channel pointer — never version.json.
+# install_argv/install_available are the Slice 3 detached-apply seams, kept
+# per the browser-facing update flow; Slice 2b routes do not dispatch.
+def _update_installer_path() -> Path:
+    """The installer core the update flow dispatches, per OS (S0-C layout)."""
+    if os.name == "nt":
+        return _CODE_ROOT / "scripts" / "install-demiurgos.ps1"
+    return _CODE_ROOT / "scripts" / "install-demiurgos.sh"
+
+
+_UPDATE_INSTALLER = _update_installer_path()
+_UPDATE_INSTALLER_AVAILABLE = _UPDATE_INSTALLER.is_file()
+if not _UPDATE_INSTALLER_AVAILABLE:
+    logger.warning(
+        "Update installer missing at %s; update apply will fail closed",
+        _UPDATE_INSTALLER,
+    )
+
+
+def _update_installer_argv() -> list[str]:
+    """Installer argv for the update router (POSIX sh / Windows PS parity)."""
+    if os.name == "nt":
+        return ["powershell", "-NoProfile", "-File", str(_UPDATE_INSTALLER)]
+    return [str(_UPDATE_INSTALLER)]
+
+
+app.include_router(
+    create_update_router(
+        require_principal=lambda request: _resolve_principal(request),
+        app_version=_app_version,
+        install_root=_install_root(),
+        local_state=_local_state,
+        install_argv=_update_installer_argv(),
+        install_available=_UPDATE_INSTALLER_AVAILABLE,
     ),
 )
 
