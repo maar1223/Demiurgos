@@ -1,0 +1,26 @@
+# Demiurgos bug-report relay — Cloudflare Worker configuration.
+#
+# This unit is SEPARATELY DEPLOYABLE and is NOT part of the desktop app
+# payload: the application never imports `relay/`, and the only credential it
+# needs (the transactional-email provider key) lives in Worker secrets — never
+# in this file and never in the client install. See README.md for the full
+# deploy prerequisites.
+
+name = "demiurgos-bugreport-relay"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# Per-IP + global-daily rate-limit counters live in Workers KV.
+#
+# Create the namespace once, then paste the printed ids below:
+#   npx wrangler kv namespace create RATE_LIMIT
+#   npx wrangler kv namespace create RATE_LIMIT --preview
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
+
+# Secrets are NOT set here. Provide them out-of-band (never committed):
+#   npx wrangler secret put BREVO_API_KEY
+#   npx wrangler secret put OWNER_INBOX
+#   npx wrangler secret put SENDER_FROM
