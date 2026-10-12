@@ -12,7 +12,8 @@ This module ships three endpoints:
   STATELESS: nothing about the report, a copy or a derived record is persisted.
 * ``POST /api/bugreport/fallback`` — the STRICT fallback: render the reviewed
   bundle as a copy-paste GitHub issue body, privacy-scrub it with
-  :func:`content_scan.scrub_pii`, and return ``{body, issue_url, findings}``.
+  :func:`content_scan.scrub_all` (BOTH the shared secret rules and the
+  report-specific PII rules), and return ``{body, issue_url, findings}``.
   ``issue_url`` defaults to :data:`DEFAULT_ISSUE_URL` (the
   ``maar1223/Demiurgos`` issue form), overridable at wiring time via
   ``DEMIURGOS_BUGREPORT_ISSUE_URL``.
@@ -36,10 +37,14 @@ The fallback endpoint re-validates the same way.
 
 Privacy notes on the fallback body
 ----------------------------------
-:func:`content_scan.scrub_pii` is a report-specific rule set (local paths,
-usernames, hostnames, private network addresses, e-mails, extra secret shapes).
+:func:`content_scan.scrub_all` applies BOTH rule sets to the rendered body:
+the report-specific PII rules (local paths, usernames, hostnames, private
+network addresses, e-mails, extra secret shapes) and the SHARED secret rules
+(``bot-token``, ``openai-key``, ``google-api-key``, ``author-path`` — the same
+set ``scripts/secret_scan.sh`` declares). A credential typed into the
+free-text ``description`` therefore never survives into the copy-paste body.
 Logs reaching the fallback were already redacted at assemble time against the
-SHARED rules, so the body cannot re-expose what logs never carried. The one
+same shared set, so the body cannot re-expose what logs never carried. The one
 deliberate exception is the explicitly-provided contact: it is the follow-up
 datum the user chose to make public (owner decision 5) and survives the scrub.
 """
@@ -406,10 +411,12 @@ def create_bug_report_router(
         The endpoint takes the same reviewed-bundle shape as submit
         (``require_principal`` gate + raw allow-list re-validation, so the body
         is always built from a bundle the user reviewed). The body is rendered
-        from the bundle, privacy-scrubbed with
-        :func:`content_scan.scrub_pii` (paths/usernames/hostnames/private
-        IPs/e-mails/extra secrets become placeholders, structure preserved), and
-        returned together with ``issue_url`` — :data:`DEFAULT_ISSUE_URL` unless
+        from the bundle and privacy-scrubbed with
+        :func:`content_scan.scrub_all` — the report-specific PII rules
+        (paths/usernames/hostnames/private IPs/e-mails/extra secrets become
+        placeholders) AND the shared secret rules (bot-token/openai-key/
+        google-api-key/author-path), structure preserved — then returned
+        together with ``issue_url`` — :data:`DEFAULT_ISSUE_URL` unless
         overridden at wiring time — and the ``findings`` count. The
         explicitly-provided contact survives the scrub as the deliberate
         follow-up datum. Nothing is delivered and nothing is persisted.
@@ -420,7 +427,7 @@ def create_bug_report_router(
         except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
             raise problem("bugreport.not_allowlisted")
         bundle = _validate_and_cap(body)
-        scrubbed, findings = content_scan.scrub_pii(_render_fallback_body(bundle))
+        scrubbed, findings = content_scan.scrub_all(_render_fallback_body(bundle))
         contact = bundle["contact"]
         if contact:
             scrubbed = "%s\n\n## Contacto\n%s" % (scrubbed, contact)

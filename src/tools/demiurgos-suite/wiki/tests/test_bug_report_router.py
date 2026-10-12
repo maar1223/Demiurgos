@@ -34,6 +34,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -54,6 +55,19 @@ AUTH_REQUIRED = {"detail": "Autenticación requerida"}
 
 # Matches the shared ``bot-token`` rule (``[0-9]{8,10}:[A-Za-z0-9_-]{35}``).
 BOT_TOKEN = "1234567890:" + "A" * 35
+
+# Shared-set secrets (the ``SECRET_RULE_*`` set kept byte-identical to
+# ``scripts/secret_scan.sh``). A shared-rule secret typed into the free-text
+# ``description`` must be scrubbed from the fallback body too, not only the
+# report-specific PII classes. Fixtures are assembled by concatenation, per the
+# file-family convention in test_content_scan.py, so this file's source never
+# contains a literal that the repo secret scan would (correctly) flag.
+SHARED_SECRET_FIXTURES = {
+    "bot-token": BOT_TOKEN,
+    "openai-key": "sk-" + "a" * 40,
+    "google-api-key": "AIza" + "b" * 35,
+    "author-path": "spreadsheet" + "Id",
+}
 
 _TOP_LEVEL_KEYS = {"app_version", "platform", "logs", "allow_list", "contact_slot"}
 
@@ -584,6 +598,33 @@ def test_fallback_scrubs_privacy_findings() -> None:
     assert "crashed seeding" in body
     assert "retry" in body
     assert data["findings"] >= 6
+
+
+@pytest.mark.parametrize("rule", sorted(SHARED_SECRET_FIXTURES))
+def test_fallback_scrubs_shared_secret_rule(rule: str) -> None:
+    """Shared-set secrets in the free-text description are scrubbed too.
+
+    The spec requires the fallback body to scrub credentials/secrets, and the
+    body scrub must cover BOTH rule sets: the shared ``SECRET_RULE_*`` set
+    (``scripts/secret_scan.sh`` parity) AND the report-specific PII rules. A
+    shared-rule secret (e.g. an ``sk-``-prefixed key) typed into the
+    ``description`` must never survive into the copy-paste body, and
+    ``findings`` must count it. Reproduction structure survives around the
+    placeholder.
+    """
+    secret = SHARED_SECRET_FIXTURES[rule]
+    app = _make_app()
+    payload = _valid_payload(
+        description="repro: the value %s leaked\nsecond line intact" % secret,
+    )
+    resp = TestClient(app).post("/api/bugreport/fallback", json=payload)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    body = data["body"]
+    assert secret not in body, f"shared {rule} survived the fallback scrub"
+    assert "<secret>" in body or "<path>" in body
+    assert data["findings"] >= 1
+    assert "second line intact" in body
 
 
 def test_fallback_issue_url_targets_main_repo() -> None:

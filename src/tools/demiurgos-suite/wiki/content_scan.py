@@ -19,6 +19,9 @@ The functions never retain a matched value: :func:`scan_secret_lines` reports
 only ``(line, rule)``; :func:`redact_secrets` replaces the whole matching line
 with ``[redacted: <rule>]``; :func:`scrub_pii` replaces each finding with a
 neutral placeholder while preserving the surrounding reproduction structure.
+:func:`scrub_all` extends that placeholder substitution to BOTH rule sets for
+the fallback copy-paste issue body, so a shared-rule secret can never survive
+into a public issue body.
 """
 
 from __future__ import annotations
@@ -107,6 +110,16 @@ _PLACEHOLDERS: Dict[str, str] = {
     "extra-secret": "<secret>",
 }
 
+# Neutral placeholders for the SHARED secret rules, used by scrub_all. The
+# three token rules collapse to "<secret>" (matching the report extra-secret
+# placeholder); the author-path rule is path-shaped and maps to "<path>".
+_SHARED_PLACEHOLDERS: Dict[str, str] = {
+    "bot-token": "<secret>",
+    "openai-key": "<secret>",
+    "google-api-key": "<secret>",
+    "author-path": "<path>",
+}
+
 # Combined lookup — shared rules first, then report-specific rules.
 ALL_RULE_NAMES: Tuple[str, ...] = SECRET_RULE_NAMES + REPORT_RULE_NAMES
 _ALL_RULE_PATTERNS: Dict[str, str] = {**SECRET_RULE_PATTERNS, **REPORT_RULE_PATTERNS}
@@ -170,5 +183,28 @@ def scrub_pii(text: str) -> Tuple[str, int]:
     count = 0
     for name in REPORT_RULE_NAMES:
         scrubbed, replaced = _ALL_RULE_REGEX[name].subn(_PLACEHOLDERS[name], scrubbed)
+        count += replaced
+    return scrubbed, count
+
+
+def scrub_all(text: str) -> Tuple[str, int]:
+    """Replace findings from BOTH rule sets with neutral placeholders.
+
+    The fallback copy-paste issue body must not leak a credential from EITHER
+    set: the SHARED secret rules (``bot-token``, ``openai-key``,
+    ``google-api-key``, ``author-path`` — the same set ``scripts/secret_scan.sh``
+    declares) or the report-specific PII rules. :func:`scrub_pii` covers only
+    the report set, so this function first scrubs the report findings (their
+    username/author lookbehind patterns need the literal home-directory
+    prefixes intact) and then the shared rules. Returns
+    ``(scrubbed_text, replacement_count)``.
+    """
+    if not text:
+        return text, 0
+    scrubbed, count = scrub_pii(text)
+    for name in SECRET_RULE_NAMES:
+        scrubbed, replaced = _ALL_RULE_REGEX[name].subn(
+            _SHARED_PLACEHOLDERS[name], scrubbed
+        )
         count += replaced
     return scrubbed, count

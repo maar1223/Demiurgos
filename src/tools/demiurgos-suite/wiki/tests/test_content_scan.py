@@ -34,6 +34,7 @@ from content_scan import (  # noqa: E402
     SECRET_RULE_PATTERNS,
     redact_secrets,
     scan_secret_lines,
+    scrub_all,
     scrub_pii,
 )
 
@@ -136,6 +137,36 @@ def test_scrub_pii_preserves_reproduction_structure() -> None:
 def test_scrub_pii_noop_on_plain_text() -> None:
     assert scrub_pii("plain reproduction text") == ("plain reproduction text", 0)
     assert scrub_pii("") == ("", 0)
+
+
+# ---------------------------------------------------------------------------
+# (c2) scrub_all covers BOTH rule sets (shared secrets + report PII).
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_all_covers_shared_and_report_rules() -> None:
+    text = (
+        "key " + SHARED_FIXTURES["openai-key"]
+        + " leaked at /var/log/demiurgos/api.log"
+    )
+    out, count = scrub_all(text)
+    assert count == 2
+    assert SHARED_FIXTURES["openai-key"] not in out
+    assert "/var/log/demiurgos/api.log" not in out
+    assert "<secret>" in out
+    assert "<path>" in out
+
+
+def test_scrub_all_keeps_scrub_pii_contract_intact() -> None:
+    # scrub_all must not change scrub_pii's own contract: a text with NO shared
+    # hits yields exactly what scrub_pii yields.
+    text = "repro: run /var/log/demiurgos/api.log then retry"
+    assert scrub_all(text) == scrub_pii(text)
+
+
+def test_scrub_all_noop_on_plain_text() -> None:
+    assert scrub_all("plain reproduction text") == ("plain reproduction text", 0)
+    assert scrub_all("") == ("", 0)
 
 
 # ---------------------------------------------------------------------------
