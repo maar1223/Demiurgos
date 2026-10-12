@@ -16,6 +16,16 @@ Exposes two principal-gated, read-mostly endpoints for the in-app updater:
   ``local-state.json`` via ``LocalState.atomic_commit``, so the choice
   survives version flips and restarts (spec 'Channel type persists across
   restarts').
+- ``POST /api/update/apply`` — dispatch the installer DETACHED for the
+  server-resolved offered version (the client never supplies a version), with
+  the channel base URL and target version passed via environment. The dispatch
+  mirrors ``system_control``'s detached pattern: ``start_new_session=True``,
+  stdout ``DEVNULL``, stderr a FILE (never a PIPE, so the installer can never
+  EPIPE/SIGPIPE on a dead reader after this process is gone), and a 0.5s
+  early-failure peek that surfaces an immediate install crash as a 500.
+  ``version.json`` is never read on this path — the installer core re-verifies
+  the signed manifest (signature BEFORE checksums) and aborts on any failure,
+  so an unsigned advisory can never authorize an install (Slice 3).
 
 Auth mirrors the sibling routers (``system_control.create_system_control_router``):
 every route requires a trusted local principal resolved at call time via
@@ -30,6 +40,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -65,6 +78,45 @@ _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 #: blocks the status route for long (spec 'Channel fetch failure degrades
 #: gracefully').
 _FETCH_TIMEOUT_SECONDS = 3
+
+#: How long to give an instantly-failing installer (bad path, permission
+#: denied) before reporting its exit code. Mirrors ``system_control``'s
+#: ``_PEEK_WINDOW_SECONDS``: brief enough to never feel blocking, long enough
+#: to catch immediate failures. Only *immediate* exits are reported; an
+#: installer that fails later is out of reach of this request.
+_PEEK_WINDOW_SECONDS = 0.5
+
+#: stderr excerpt cap for the 500 early-failure report (mirrors
+#: ``system_control``).
+_STDERR_EXCERPT_LIMIT = 2048
+
+#: Default installer stderr log (see the module docstring for why it is a file
+#: and not a pipe). Kept beside ``system_control``'s ``/tmp/demiurgos-*.log``
+#: family so every stack log is found in one place.
+_INSTALLER_LOG = Path(tempfile.gettempdir()) / "demiurgos-installer.log"
+
+
+def _stderr_excerpt(log_path: Path | None, exit_code: int) -> str:
+    """Read up to 2KB of the installer's stderr log for an immediate failure.
+
+    Only called after ``proc.poll()`` returned a non-None exit code, so the
+    installer has already exited and the log holds whatever it managed to
+    write. ``log_path`` is ``None`` when this run could not open its log;
+    reading the path anyway would report a PREVIOUS run's stderr as this run's
+    failure (mirrors ``system_control._stderr_excerpt``).
+    """
+    excerpt = ""
+    if log_path is not None:
+        try:
+            raw = log_path.read_bytes()
+            excerpt = raw[-_STDERR_EXCERPT_LIMIT:].decode(
+                "utf-8", errors="replace"
+            ).strip()
+        except OSError:  # pragma: no cover - defensive; the log may be absent
+            excerpt = ""
+    if excerpt:
+        return f"script exited with code {exit_code}: {excerpt}"
+    return f"script exited with code {exit_code} (no stderr output)"
 
 
 def _resolve_url_base(cfg_path: Path | None, env: Mapping[str, str]) -> str:
@@ -172,12 +224,16 @@ def create_update_router(
     ``app_version`` returns the running version (env -> install layout -> dev
     fallback; Slice 1). ``install_root`` is the install root when running the
     installed layout, else None (dev checkout); it locates the default
-    ``channel.json``. ``local_state`` returns the runtime-authoritative
-    ``LocalState`` registry. ``install_argv`` / ``install_available`` /
-    ``install_log`` are the Slice 3 detached-apply seams, accepted now so the
-    factory signature is stable across the change; Slice 2b routes never touch
-    them. ``channel_fetch`` defaults to the urllib fetcher (injectable for
-    tests).
+    ``channel.json`` and, on apply, tells the installer to operate on the SAME
+    root the runtime is running from. ``local_state`` returns the
+    runtime-authoritative ``LocalState`` registry. ``install_argv`` is the
+    installer command to spawn detached on apply (``[<sh installer>]`` on
+    POSIX; ``["powershell", "-NoProfile", "-File", "<ps1 installer>"]`` on
+    Windows). ``install_available`` is the boot-time existence verdict for the
+    installer: False refuses the apply with 503 instead of spawning a stale
+    path. ``install_log`` is where the detached installer's stderr is captured
+    (a FILE, never a PIPE); the default is ``_INSTALLER_LOG``. ``channel_fetch``
+    defaults to the urllib fetcher (injectable for tests).
     """
     router = APIRouter(prefix="/api/update", tags=["update"])
     cfg_path = channel_config_path
@@ -257,6 +313,136 @@ def create_update_router(
         capabilities["update"] = {"channel": raw}
         registry.atomic_commit(snapshot)
         return JSONResponse(status_code=200, content={"channel": raw})
+
+    @router.post("/apply")
+    def apply_update(request: Request) -> JSONResponse:
+        """Dispatch the installer detached for the channel's offered version.
+
+        Principal-gated like the sibling routes: an unauthenticated request
+        fails closed with 401 before anything is resolved or spawned (spec
+        'Unauthenticated apply fails closed'). The offered version is
+        SERVER-resolved from the channel pointer — the client never supplies a
+        version, so the version stays inside the server trust boundary and the
+        updater never downgrades (the same no-downgrade rule the status route
+        applies; nothing applicable -> 409 ``update.none_available``).
+        ``version.json`` is never read here: the installer core re-verifies
+        the signed manifest (signature BEFORE checksums) and aborts on any
+        failure, so an unsigned advisory alone can never authorize an install
+        (spec 'Signed-manifest re-verification before apply').
+        """
+        _guard(request)
+
+        channel = _read_channel(local_state())
+        url_base = _resolve_url_base(cfg_path, os.environ)
+        offered = fetch(f"{url_base}/{_pointer_for(channel)}")
+        if offered is None or not offered.strip():
+            return JSONResponse(status_code=409, content={
+                "detail": (
+                    "no hay una actualización disponible para el canal "
+                    "seleccionado"
+                ),
+                "code": "update.none_available",
+            })
+        offered_version = offered.strip()
+        try:
+            semver.parse_version(offered_version)
+        except semver.SemVerError:
+            # Defense in depth: the env version must be SemVer-valid before
+            # dispatch (design 'Dispatch'). An unparseable advisory is never
+            # offered/applied.
+            return JSONResponse(status_code=409, content={
+                "detail": f"versión ofrecida no válida: {offered_version!r}",
+                "code": "update.none_available",
+            })
+        # Never downgrade: only dispatch when the offered version is strictly
+        # greater than the running version (same rule as the status route).
+        try:
+            applicable = semver.compare(offered_version, app_version()) > 0
+        except semver.SemVerError:
+            applicable = False
+        if not applicable:
+            return JSONResponse(status_code=409, content={
+                "detail": (
+                    "no hay una actualización disponible para el canal "
+                    "seleccionado"
+                ),
+                "code": "update.none_available",
+            })
+
+        if install_available is False:
+            return JSONResponse(status_code=503, content={
+                "action": "update",
+                "accepted": False,
+                "error": f"installer not available at {install_argv[-1]}",
+            })
+
+        log_path = Path(install_log) if install_log is not None else _INSTALLER_LOG
+        # The installer receives the channel base and the target version via
+        # environment — never argv (no user text reaches the command line and
+        # there is no shell=True). ``DEMIURGOS_HOME`` pins the SAME install
+        # root the runtime is running from when the installed layout applies,
+        # so the `current` flip (a JUNCTION on Windows) targets the root the
+        # running app lives under instead of the installer's default.
+        env = os.environ.copy()
+        env["DEMIURGOS_URL_BASE"] = url_base
+        env["DEMIURGOS_VERSION"] = offered_version
+        if install_root is not None:
+            env["DEMIURGOS_HOME"] = str(install_root)
+
+        # stderr is a FILE, never a PIPE: the installer keeps writing after
+        # this process is gone, and a pipe whose reader died would kill it
+        # with SIGPIPE mid-install (mirrors system_control's module docstring).
+        try:
+            stderr_target = open(log_path, "wb")
+        except OSError:
+            # Losing the early-failure excerpt must never block the operation.
+            stderr_target = None
+
+        try:
+            proc = subprocess.Popen(
+                install_argv,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=(
+                    stderr_target if stderr_target is not None
+                    else subprocess.DEVNULL
+                ),
+                env=env,
+            )
+        except OSError as exc:
+            # The spawn itself failed (bad path, permission denied): surface it
+            # instead of returning a misleading "accepted".
+            return JSONResponse(status_code=500, content={
+                "action": "update",
+                "accepted": False,
+                "error": f"failed to spawn installer: {exc}",
+            })
+        finally:
+            # The child holds its own descriptor: closing ours keeps this
+            # process free of a leaked fd and never affects the installer.
+            if stderr_target is not None:
+                stderr_target.close()
+
+        # Non-blocking early-failure peek: give an instantly-failing installer
+        # a brief window to exit, then report its stderr/exit code. This is a
+        # bounded 0.5s wait — it never waits for the install to complete.
+        time.sleep(_PEEK_WINDOW_SECONDS)
+        exit_code = proc.poll()
+        if exit_code is not None and exit_code != 0:
+            return JSONResponse(status_code=500, content={
+                "action": "update",
+                "accepted": False,
+                "error": _stderr_excerpt(
+                    log_path if stderr_target is not None else None,
+                    exit_code,
+                ),
+            })
+        return JSONResponse(status_code=200, content={
+            "action": "update",
+            "accepted": True,
+            "version": offered_version,
+            "channel": channel,
+        })
 
     return router
 
