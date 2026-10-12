@@ -166,6 +166,8 @@ export type AppLanguage = "es" | "en";
 export interface AppConfig {
   /** Normalized UI copy language: "es" or "en". */
   language: AppLanguage;
+  /** Resolved runtime version (install layout > dev fallback; never empty). */
+  app_version: string;
 }
 
 // ---------------------------------------------------------------------------
