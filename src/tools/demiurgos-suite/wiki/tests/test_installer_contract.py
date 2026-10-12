@@ -51,6 +51,7 @@ import shutil
 import socket
 import subprocess
 import tarfile
+import tempfile
 import time
 import urllib.request
 import zipfile
@@ -1499,11 +1500,14 @@ switch ($cmd) {
     if (-not $dest) { Write-Error "stub uv: venv missing dest"; exit 2 }
     & $env:DEMIURGOS_STUB_PYTHON -m venv --system-site-packages $dest
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $repoSite = & $env:DEMIURGOS_STUB_PYTHON -c "import site; print(site.getsitepackages()[0])" 2>$null
-    if ($repoSite) {
+    $repoVenv = Split-Path -Parent (Split-Path -Parent $env:DEMIURGOS_STUB_PYTHON)
+    $repoSite = Join-Path $repoVenv "Lib\site-packages"
+    if (Test-Path -LiteralPath $repoSite) {
       $pthDir = Join-Path $dest "Lib\site-packages"
       New-Item -ItemType Directory -Force -Path $pthDir | Out-Null
       Set-Content -LiteralPath (Join-Path $pthDir "demiurgos-repo.pth") -Value $repoSite -Encoding ASCII
+    } else {
+      Write-Warning "stub uv: repo site-packages not found at $repoSite"
     }
     exit 0
   }
@@ -1683,31 +1687,48 @@ def _ps_installer_env(
     return env
 
 
-def _run_ps_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _run_ps_captured(cmd, env, timeout):
+    """Run a PS command with output to temp FILES (not pipes) + stdin=DEVNULL.
+    A detached grandchild (uvicorn) that inherits the pipes makes
+    communicate() hang on Windows and defeats the timeout (issue #2)."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        outp = Path(td) / "out"; errp = Path(td) / "err"
+        with open(outp, "wb") as o, open(errp, "wb") as e:
+            proc = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL,
+                                  stdout=o, stderr=e, timeout=timeout)
+        return proc.returncode, outp.read_text(encoding="utf-8", errors="replace"), errp.read_text(encoding="utf-8", errors="replace")
+
+
+def _run_ps_installer(env: dict[str, str]) -> tuple[int, str, str]:
+    return _run_ps_captured(
         ["powershell.exe", "-NoProfile", "-File", str(PS_INSTALLER)],
-        env=env, capture_output=True, text=True, timeout=300,
+        env, timeout=300,
     )
 
 
 def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
-    """Start the installed Windows launcher headless and return the API port."""
+    """Start the installed Windows launcher headless and return the API port.
+
+    The caller's ``env`` is MUTATED in place (not copied) so the teardown
+    ``stop`` targets the very ports this ``start`` used (issue #2: a copied
+    env made ``stop`` fall back to the DEFAULT port and leak the API on the
+    test port)."""
     api_port = _free_port()
-    env = {**env, "DEMIURGOS_API_PORT": str(api_port),
-           "DEMIURGOS_GATEWAY_PORT": str(_free_port())}
+    env["DEMIURGOS_API_PORT"] = str(api_port)
+    env["DEMIURGOS_GATEWAY_PORT"] = str(_free_port())
     launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
-    start = subprocess.run(
+    rc, stdout, stderr = _run_ps_captured(
         ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
-        env=env, capture_output=True, text=True, timeout=180,
+        env, timeout=180,
     )
     err_log = install_root / "logs" / "demiurgos-api.err.log"
     api_err = (
         err_log.read_text(encoding="utf-8", errors="replace")
         if err_log.is_file() else "<no api err log>"
     )
-    assert start.returncode == 0, (
-        f"PS launcher start failed (rc={start.returncode})\n"
-        f"stdout: {start.stdout}\nstderr: {start.stderr}\n"
+    assert rc == 0, (
+        f"PS launcher start failed (rc={rc})\n"
+        f"stdout: {stdout}\nstderr: {stderr}\n"
         f"api err log ({err_log}):\n{api_err}"
     )
     return api_port
@@ -1719,11 +1740,11 @@ def _stop_ps_launcher_and_assert_clean(
     """Teardown contract (incident parity): stop the PS launcher, then assert
     NO leftover listener on the test port."""
     launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
-    stop = subprocess.run(
+    rc, _stdout, stderr = _run_ps_captured(
         ["powershell.exe", "-NoProfile", "-File", str(launcher), "stop"],
-        env=env, capture_output=True, text=True, timeout=60,
+        env, timeout=60,
     )
-    assert stop.returncode == 0, stop.stderr
+    assert rc == 0, stderr
     for _ in range(20):
         if not _port_listening(api_port):
             break
@@ -1741,8 +1762,8 @@ class TestWindowsFixtureChannelInstall:
         install_root = tmp_path / "install"
         env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
 
-        install = _run_ps_installer(env)
-        assert install.returncode == 0, install.stdout + install.stderr
+        install_rc, install_out, install_err = _run_ps_installer(env)
+        assert install_rc == 0, install_out + install_err
 
         # Installed layout from the frozen contract (S0-C).
         assert (install_root / "app" / version).is_dir()
@@ -1774,13 +1795,13 @@ class TestWindowsFixtureChannelInstall:
         install_root = tmp_path / "install"
         env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
 
-        first = _run_ps_installer(env)
-        assert first.returncode == 0, first.stdout + first.stderr
+        first_rc, first_out, first_err = _run_ps_installer(env)
+        assert first_rc == 0, first_out + first_err
         pointer = _read_pointer(Path(env["APPDATA"]) / "demiurgos")
         env_before = (pointer / ".env").read_bytes()
 
-        second = _run_ps_installer(env)
-        assert second.returncode == 0, second.stdout + second.stderr
+        second_rc, second_out, second_err = _run_ps_installer(env)
+        assert second_rc == 0, second_out + second_err
 
         # One environment: exactly one app/<version>, one current junction.
         app_dirs = [p.name for p in (install_root / "app").iterdir()]
@@ -1799,9 +1820,9 @@ class TestWindowsChecksumMismatchAborts:
         install_root = tmp_path / "install"
         env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
 
-        result = _run_ps_installer(env)
-        assert result.returncode != 0
-        assert "checksum" in (result.stdout + result.stderr).lower()
+        result_rc, result_out, result_err = _run_ps_installer(env)
+        assert result_rc != 0
+        assert "checksum" in (result_out + result_err).lower()
 
         # No runnable state: no current, no app, staging cleaned up.
         assert not (install_root / "current").exists()
@@ -1824,8 +1845,8 @@ class TestWindowsM1DefenderSpaceUser:
         install_root = space_home / "Demiurgos"
         env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
 
-        install = _run_ps_installer(env)
-        assert install.returncode == 0, install.stdout + install.stderr
+        install_rc, install_out, install_err = _run_ps_installer(env)
+        assert install_rc == 0, install_out + install_err
         current = install_root / "current"
         assert current.exists()
         assert (install_root / "app" / version / "src").exists()
@@ -1904,15 +1925,15 @@ class TestPublicBootstrapPosix:
         assert (install_root / "current").is_symlink()
 
 
-def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_ps_bootstrap_iex(env: dict[str, str]) -> tuple[int, str, str]:
     """Faithful `irm | iex`-mode: pipe install.ps1 CONTENT through iex (no
     -File, no script file — exactly what the public one-liner does)."""
     ps_code = (
         "Get-Content -Raw -LiteralPath '" + str(INSTALL_PS1) + "' | Invoke-Expression"
     )
-    return subprocess.run(
+    return _run_ps_captured(
         ["powershell.exe", "-NoProfile", "-Command", ps_code],
-        env=env, capture_output=True, text=True, timeout=300,
+        env, timeout=300,
     )
 
 
@@ -1927,8 +1948,8 @@ class TestPublicBootstrapWindows:
         install_root = tmp_path / "install"
         env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
 
-        run = _run_ps_bootstrap_iex(env)
-        assert run.returncode == 0, run.stdout + run.stderr
+        run_rc, run_out, run_err = _run_ps_bootstrap_iex(env)
+        assert run_rc == 0, run_out + run_err
 
         assert (install_root / "app" / version).is_dir()
         assert (install_root / "current").exists()
