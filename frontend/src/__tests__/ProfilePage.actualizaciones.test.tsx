@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ProfilePage from "@/pages/ProfilePage";
 
-// The Perfil page renders the six-section rail; this suite proves the new
+// The Perfil page renders the seven-section rail; this suite proves the
 // "Actualizaciones" section is present, selectable, and mounts the read-only
 // update panel. The panel's own behavior is covered by UpdateSection.test.tsx.
 
@@ -97,7 +97,7 @@ describe("ProfilePage — Actualizaciones section", () => {
   it("lists the sixth section in the rail", () => {
     renderProfile("/perfil?tab=actualizaciones");
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(6);
+    expect(tabs).toHaveLength(7);
     expect(screen.getByRole("tab", { name: "Actualizaciones" })).toBeInTheDocument();
   });
 

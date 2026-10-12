@@ -10,6 +10,7 @@ import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { BackupSection } from "@/components/organisms/BackupSection";
 import { ProfileSectionRail } from "@/components/organisms/ProfileSectionRail";
+import { ReportSection } from "@/components/organisms/ReportSection";
 import { StatusOverviewHeader } from "@/components/organisms/StatusOverviewHeader";
 import { UpdateSection } from "@/components/organisms/UpdateSection";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
@@ -64,7 +65,8 @@ type ProfileSection =
   | "preferencias"
   | "conexiones"
   | "mundos"
-  | "actualizaciones";
+  | "actualizaciones"
+  | "reporte";
 
 /** The intent-based sections (REQ-PIA-01) with rail label and icon
  *  (REQ-PIA-06). `cuenta` is the default landing section. */
@@ -75,6 +77,7 @@ const PROFILE_SECTIONS: { id: ProfileSection; labelKey: MessageKey; icon: IconNa
   { id: "conexiones", labelKey: "profile.section.conexiones", icon: "lightbulb" },
   { id: "mundos", labelKey: "profile.section.mundos", icon: "world" },
   { id: "actualizaciones", labelKey: "profile.section.actualizaciones", icon: "download" },
+  { id: "reporte", labelKey: "profile.section.reporte", icon: "error" },
 ];
 
 function isProfileSection(value: string | null): value is ProfileSection {
@@ -1558,6 +1561,8 @@ export default function ProfilePage() {
                 <ConexionesSection />
               ) : activeSection === "actualizaciones" ? (
                 <UpdateSection />
+              ) : activeSection === "reporte" ? (
+                <ReportSection />
               ) : (
                 <WorldsSection />
               )}
