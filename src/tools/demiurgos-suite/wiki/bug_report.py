@@ -1,30 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Bug-report REST router — ``/api/bugreport`` (Slice S1b: assemble).
+"""Bug-report REST router — ``/api/bugreport`` (S1b assemble + S1c submit).
 
-This slice ships a SINGLE read-only endpoint:
+This module ships two endpoints:
 
 * ``GET /api/bugreport/assemble`` — build the default, sanitized report bundle:
   the app version, a fixed set of allow-listed platform facts, content-scanned
   logs (default-on), the optional-contact slot flag, and the allow-list itself.
+* ``POST /api/bugreport/submit`` — re-validate the raw payload against the same
+  allow-list, enforce the size caps and the per-principal rate limit, then
+  deliver the bundle through a separately-deployable relay. The submit is
+  STATELESS: nothing about the report, a copy or a derived record is persisted.
 
 Default-DENY posture
 --------------------
 The bundle carries ONLY fields on :data:`ALLOWED_FIELDS`; platform facts are
 restricted to :data:`ALLOWED_PLATFORM_KEYS`. World data (the world-data root),
 ``.env`` and the local account username are excluded **by construction**: the
-handler opens nothing but ``install_root/logs`` — there is no post-hoc
+assemble handler opens nothing but ``install_root/logs`` — there is no post-hoc
 filtering to bypass. Logs are scanned with
 :func:`content_scan.redact_secrets` before they can be previewed, so a matching
 secret line is replaced by ``[redacted: <rule>]`` and the raw value never
 reaches the bundle.
 
+Submit re-validation is a **raw-dict** check (``set(body) <= ALLOWED_FIELDS``):
+a Pydantic model with default config would silently DROP unknown keys and let a
+disallowed-field payload through, so the endpoint reads the raw JSON body and
+rejects any key outside the allow-list with ``bugreport.not_allowlisted``.
+
 Scope
 -----
-This module intentionally implements ONLY assemble. ``POST /submit`` (caps +
-rate limit + relay) and ``POST /fallback`` land in later slices. The
-``relay_url`` / ``relay_post`` / ``issue_url`` / ``clock`` parameters are
-accepted now so the factory signature is stable across the slices; they are
-unused until submit/fallback are added.
+``POST /fallback`` lands in a later slice. ``issue_url`` is accepted now so the
+factory signature is stable across the slices; it is unused until fallback is
+added.
 
 Auth mirrors the sibling routers (``updater.create_update_router``,
 ``system_control.create_system_control_router``): the request is gated through
@@ -33,14 +40,17 @@ Auth mirrors the sibling routers (``updater.create_update_router``,
 
 from __future__ import annotations
 
+import json
 import platform as _platform
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Deque, Dict, List, Tuple
 
 from fastapi import APIRouter, HTTPException, Request
 
 import content_scan
+from error_codes import problem
 
 #: The only fields a report bundle may ever carry (default-DENY).
 ALLOWED_FIELDS = frozenset(
@@ -65,6 +75,23 @@ _LOGS_MAX_BYTES = 65536
 #: Stable ordering for the assembled platform facts.
 _PLATFORM_FACT_ORDER: Tuple[str, ...] = ("os", "os_version", "arch", "python_version")
 
+# --- Submit caps (report-submission) --------------------------------------
+#: Per-field character caps and the total serialized-byte cap.
+_DESCRIPTION_MAX_CHARS = 4000
+_CONTACT_MAX_CHARS = 200
+_LOGS_MAX_CHARS = 65536
+_PAYLOAD_MAX_BYTES = 98304
+
+#: Per-principal rate limit: at most ``_RATE_LIMIT_MAX`` submits per window.
+_RATE_LIMIT_MAX = 5
+_RATE_LIMIT_WINDOW_SECONDS = 600.0
+
+#: Vendor-neutral relay contract version.
+_RELAY_SCHEMA = 1
+
+#: Production relay timeout (seconds).
+_RELAY_TIMEOUT_SECONDS = 10.0
+
 
 def _platform_facts() -> Dict[str, str]:
     """The allow-listed platform facts, restricted to :data:`ALLOWED_PLATFORM_KEYS`."""
@@ -79,6 +106,23 @@ def _platform_facts() -> Dict[str, str]:
         for key in _PLATFORM_FACT_ORDER
         if key in ALLOWED_PLATFORM_KEYS
     }
+
+
+def _default_relay_post(url: str, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    """Production relay invocation: ``POST`` the bundle to ``url`` via httpx.
+
+    Returns ``(status_code, json_body)``; a body that is not a JSON object is
+    reported as ``{}``. The provider credential/owner inbox live ONLY in the
+    relay, never here.
+    """
+    import httpx  # local import keeps the module import surface light
+
+    resp = httpx.post(url, json=payload, timeout=_RELAY_TIMEOUT_SECONDS)
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    return resp.status_code, data if isinstance(data, dict) else {}
 
 
 def create_bug_report_router(
@@ -101,15 +145,125 @@ def create_bug_report_router(
     checkout) — it locates the ONLY log source (``install_root/logs``).
 
     ``log_source`` is injectable for tests; the default reads every ``*.log``
-    under ``install_root/logs`` and returns ``[(name, text), ...]``. ``relay_url``
-    / ``relay_post`` / ``issue_url`` / ``clock`` are accepted for signature
-    stability and used by the submit/fallback slices, not here.
+    under ``install_root/logs`` and returns ``[(name, text), ...]``.
+
+    ``relay_url`` is the operational kill-switch for submit: unset or empty
+    means delivery is unavailable and the endpoint fails closed with
+    ``bugreport.relay_unavailable``. ``relay_post`` injects the relay invocation
+    (tests); the production default is an ``httpx`` ``POST`` to ``relay_url``.
+    ``clock`` injects the time source for the rate limit (tests). ``issue_url``
+    is accepted for signature stability and used by the fallback slice.
     """
     router = APIRouter(prefix="/api/bugreport", tags=["bug-report"])
 
-    def _guard(request: Request) -> None:
-        if require_principal(request) is None:
+    # In-memory per-principal rate-limit buckets, lazily pruned via ``clock``.
+    # Ephemeral operational state, never persisted — a restart resets it, which
+    # is acceptable for the Alpha bound (relay applies a durable limit too).
+    _rate: Dict[str, Deque[float]] = {}
+
+    def _guard(request: Request) -> Any:
+        principal = require_principal(request)
+        if principal is None:
             raise HTTPException(status_code=401, detail=_AUTH_REQUIRED_DETAIL)
+        return principal
+
+    def _check_rate_limit(principal_id: str) -> None:
+        """Record one attempt for ``principal_id``; reject beyond the window cap.
+
+        Entries older than :data:`_RATE_LIMIT_WINDOW_SECONDS` are dropped on the
+        next access (lazy pruning). At most :data:`_RATE_LIMIT_MAX` attempts per
+        window per principal.
+        """
+        now = clock()
+        bucket = _rate.get(principal_id)
+        if bucket is None:
+            bucket = deque()
+            _rate[principal_id] = bucket
+        while bucket and (now - bucket[0]) > _RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT_MAX:
+            raise problem("bugreport.rate_limited")
+        bucket.append(now)
+
+    def _validate_and_cap(body: Any) -> Dict[str, Any]:
+        """Raw-dict re-validation against the allow-list, then the size caps.
+
+        Returns the normalized bundle. ``body`` must be a JSON object whose keys
+        are a subset of :data:`ALLOWED_FIELDS` and whose ``platform`` (when
+        present) is a JSON object with keys within
+        :data:`ALLOWED_PLATFORM_KEYS`; anything else maps to
+        ``bugreport.not_allowlisted``. Per-field and total caps map to
+        ``bugreport.too_large``.
+        """
+        if not isinstance(body, dict):
+            raise problem("bugreport.not_allowlisted")
+        if not set(body).issubset(ALLOWED_FIELDS):
+            raise problem("bugreport.not_allowlisted")
+        platform = body.get("platform", {})
+        if platform is None:
+            platform = {}
+        if not isinstance(platform, dict) or not set(platform).issubset(
+            ALLOWED_PLATFORM_KEYS
+        ):
+            raise problem("bugreport.not_allowlisted")
+
+        description = body.get("description", "") or ""
+        contact = body.get("contact")
+        logs = body.get("logs")
+        if not isinstance(description, str) or (
+            contact is not None and not isinstance(contact, str)
+        ) or (logs is not None and not isinstance(logs, str)):
+            raise problem("bugreport.not_allowlisted")
+        if len(description) > _DESCRIPTION_MAX_CHARS:
+            raise problem("bugreport.too_large", field="description")
+        if contact is not None and len(contact) > _CONTACT_MAX_CHARS:
+            raise problem("bugreport.too_large", field="contact")
+        if logs is not None and len(logs) > _LOGS_MAX_CHARS:
+            raise problem("bugreport.too_large", field="logs")
+        try:
+            serialized = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError):
+            raise problem("bugreport.not_allowlisted")
+        if len(serialized) > _PAYLOAD_MAX_BYTES:
+            raise problem("bugreport.too_large", field="total")
+        return {
+            "app_version": str(body.get("app_version", "") or ""),
+            "platform": {key: str(value) for key, value in platform.items()},
+            "description": description,
+            "contact": contact or None,
+            "logs": logs or None,
+        }
+
+    def _deliver(bundle: Dict[str, Any]) -> Dict[str, Any]:
+        """Forward the validated bundle to the relay; fail closed on any failure.
+
+        The contract is vendor-neutral: ``{schema, app_version, platform,
+        description, contact, logs}``. A success maps to ``{ok: True,
+        delivery_id}``; an unreachable/misconfigured relay maps to
+        ``bugreport.relay_unavailable``; a relay-reported failure maps to
+        ``bugreport.delivery_failed``. No credential or traceback is ever
+        included in a response.
+        """
+        if not relay_url:
+            raise problem("bugreport.relay_unavailable")
+        payload = {
+            "schema": _RELAY_SCHEMA,
+            "app_version": bundle["app_version"],
+            "platform": bundle["platform"],
+            "description": bundle["description"],
+            "contact": bundle["contact"],
+            "logs": bundle["logs"],
+        }
+        sender = relay_post if relay_post is not None else _default_relay_post
+        try:
+            status, data = sender(relay_url, payload)
+        except Exception:  # noqa: BLE001 - network/config failure fails closed
+            raise problem("bugreport.relay_unavailable")
+        if not isinstance(data, dict):
+            data = {}
+        if 200 <= int(status) < 300 and data.get("ok") is True:
+            return {"ok": True, "delivery_id": str(data.get("delivery_id") or "")}
+        raise problem("bugreport.delivery_failed")
 
     def _default_log_source() -> List[Tuple[str, str]]:
         """Read every ``*.log`` under ``install_root/logs`` — the ONLY source.
@@ -192,6 +346,24 @@ def create_bug_report_router(
             "allow_list": sorted(ALLOWED_FIELDS),
             "contact_slot": True,
         }
+
+    @router.post("/submit")
+    async def submit(request: Request) -> Dict[str, Any]:
+        """Re-validate, rate-limit and relay-deliver a report bundle.
+
+        Stateless: no report, copy or derived record is persisted. Order:
+        principal gate (401) -> per-principal rate limit (429) -> raw allow-list
+        re-validation and caps (400/413) -> relay delivery (502 on failure).
+        """
+        principal = _guard(request)
+        principal_id = str(getattr(principal, "id", None) or id(principal))
+        _check_rate_limit(principal_id)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
+            raise problem("bugreport.not_allowlisted")
+        bundle = _validate_and_cap(body)
+        return _deliver(bundle)
 
     return router
 
