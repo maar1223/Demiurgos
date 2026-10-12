@@ -526,6 +526,12 @@ start_all() {
     export DEMIURGOS_DATA_ROOT="$DATA_ROOT"
     export DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist"
     export DEMIURGOS_ROOT="$APP_ROOT"
+    # Runtime version identity (install layout): <install_root>/current -> app/<version>.
+    # The launcher is the SOLE exporter, set only when the `current` layout
+    # exists; a dev checkout has no layout and must never export an empty value.
+    if [ "$(basename "$APP_ROOT")" = "current" ] && [ -n "$(readlink "$INSTALL_ROOT/current" 2>/dev/null)" ]; then
+        export DEMIURGOS_APP_VERSION="$(basename "$(readlink "$INSTALL_ROOT/current")")"
+    fi
     # Hermes dedicated profile (additive isolation): export HERMES_HOME to both
     # children before they start, only when the profile is provisioned.
     export_product_hermes_home

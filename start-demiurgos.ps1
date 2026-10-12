@@ -290,6 +290,14 @@ Load-DataRootEnv
 $env:DEMIURGOS_DATA_ROOT = $dataRoot
 $env:DEMIURGOS_FRONTEND_DIST = Join-Path $appRoot "frontend\dist"
 $env:DEMIURGOS_ROOT = $appRoot
+# Runtime version identity (install layout): <install_root>\current -> app\<version>.
+# Windows parity of the POSIX export: only when a junction/symlink `current`
+# layout exists (the PowerShell installer commits `current` as a junction);
+# never an empty value. `@($target)[0]` normalizes the possibly-array Target.
+if ((Split-Path -Leaf $appRoot) -eq "current") {
+    $target = (Get-Item -LiteralPath $appRoot -Force).Target
+    if ($target) { $env:DEMIURGOS_APP_VERSION = Split-Path -Leaf @($target)[0] }
+}
 
 if (-not $hermesBin) {
     Write-Host "Hermes CLI not found; the assistant will be unavailable." -ForegroundColor Yellow

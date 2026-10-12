@@ -42,6 +42,7 @@ _FORCED_EXPORT = 'export DEMIURGOS_DATA_ROOT="$PROJECT_ROOT"'
 _DATA_ROOT_EXPORT = 'export DEMIURGOS_DATA_ROOT="$DATA_ROOT"'
 _LEGACY_ROOT = 'DEMIURGOS_ROOT="$APP_ROOT"'
 _DIST_EXPORT = 'export DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist"'
+_APP_VERSION_EXPORT = "export DEMIURGOS_APP_VERSION"
 
 
 def _text(path: Path) -> str:
@@ -115,6 +116,29 @@ def test_powershell_standalone_launchers_resolve_data_root_portably():
     assert "$env:DEMIURGOS_DATA_ROOT" in gateway
     assert "$env:DEMIURGOS_ROOT" in gateway
     assert "Get-Command hermes" in gateway
+
+
+def test_launchers_export_runtime_version_from_install_layout():
+    """S1: DEMIURGOS_APP_VERSION rides the layout-contract export block.
+
+    POSIX derives it from the basename of the resolved `current` link, guarded
+    by the layout-existence check so a dev checkout never exports an empty
+    value. The export precedes both children (like the other contract env).
+    Windows mirrors it via the junction `.Target` leaf (`@($target)[0]`).
+    """
+    text = _text(PORTABLE_LAUNCHER)
+    assert _APP_VERSION_EXPORT in text
+    assert 'readlink "$INSTALL_ROOT/current"' in text
+    # The export lives in the layout-contract block, before any child starts.
+    assert text.index(_APP_VERSION_EXPORT) < text.index("start_component gateway")
+    assert text.index(_APP_VERSION_EXPORT) < text.index("start_component api")
+    # Never export an empty value (hard constraint from the spec).
+    assert 'export DEMIURGOS_APP_VERSION=""' not in text
+
+    ps = _text(PS_STACK)
+    assert "$env:DEMIURGOS_APP_VERSION" in ps
+    assert "(Split-Path -Leaf $appRoot) -eq \"current\"" in ps
+    assert "Split-Path -Leaf @($target)[0]" in ps
 
 
 @pytest.mark.skipif(

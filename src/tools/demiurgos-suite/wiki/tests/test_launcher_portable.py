@@ -294,6 +294,28 @@ class TestPowerShell51Contract:
         # The exported contract env mirrors the POSIX launcher (S1-6/S2-3).
         assert "DEMIURGOS_FRONTEND_DIST" in text
         assert "DEMIURGOS_ROOT" in text
+        # Runtime version identity (S1): exported from the install layout only.
+        assert "DEMIURGOS_APP_VERSION" in text
+        assert "Split-Path -Leaf" in text
+
+    def test_version_export_present_in_both_launchers(self):
+        """S1: both launchers export DEMIURGOS_APP_VERSION from the layout.
+
+        POSIX: basename of the resolved `current` link inside the layout
+        guard, so a dev checkout never exports an empty value. Windows: the
+        junction `.Target` leaf with `@($target)[0]` array normalization.
+        """
+        sh_text = _text(PORTABLE_LAUNCHER)
+        # The guard ties the export to the installed layout.
+        assert 'basename "$(readlink "$INSTALL_ROOT/current")"' in sh_text
+        assert 'readlink "$INSTALL_ROOT/current"' in sh_text
+        # Never an unconditional empty export.
+        assert 'export DEMIURGOS_APP_VERSION=""' not in sh_text
+
+        ps_text = _text(PS_STACK)
+        assert "$env:DEMIURGOS_APP_VERSION" in ps_text
+        assert "(Split-Path -Leaf $appRoot) -eq \"current\"" in ps_text
+        assert "Split-Path -Leaf @($target)[0]" in ps_text
 
     def test_ps_launchers_handle_data_root_pointer(self):
         for path in PS_LAUNCHERS:
