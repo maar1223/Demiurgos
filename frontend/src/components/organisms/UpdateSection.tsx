@@ -4,6 +4,7 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { getAppConfig } from "@/api/config";
 import { getUpdateStatus, setUpdateChannel, applyUpdate } from "@/api/updates";
 import { getAuthStatus, logoutSession } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
@@ -33,8 +34,9 @@ function describeError(cause: unknown, fallback: string): string {
  * Perfil → Actualizaciones — update panel (v1).
  *
  * Manual-only by design (spec: "Read-only frontend update panel"): the panel
- * issues NO request on mount and runs NO timer/polling for checks. Every
- * network call is driven by an explicit action — the "Buscar actualizaciones"
+ * runs NO timer/polling for checks. It reads the app's own metadata once on
+ * mount to display the running version. Every check/channel/apply call is
+ * driven by an explicit action — the "Buscar actualizaciones"
  * button (GET status), the channel selector (PUT channel), and the
  * "Instalar y reiniciar" apply flow. The status payload is advisory and
  * display-only. The apply flow mirrors the Navbar restart flow: confirmation
@@ -45,6 +47,10 @@ export function UpdateSection() {
   const { t } = useAppLanguage();
 
   const [status, setStatus] = useState<UpdateStatus | null>(null);
+  // Running version for the render-time display, read once from the app's own
+  // metadata (`GET /api/config.app_version`). This is NOT the update check:
+  // the check stays manual-only (spec: no background/polling request).
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   // The server owns the default channel ("Estable" on a fresh install). The
   // selector starts from that documented default and mirrors whatever the last
   // status read reported.
@@ -61,6 +67,26 @@ export function UpdateSection() {
   const [applying, setApplying] = useState(false);
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   const applyTimerRef = useRef<number | null>(null);
+
+  // Render-time version: one read of the app's own metadata on mount (spec
+  // "Read-only frontend update panel" renders the current version). It never
+  // polls and never triggers the advisory update check.
+  useEffect(() => {
+    let active = true;
+    // Async IIFE so a synchronous throw from the client is caught too — the
+    // panel must never crash a host page just because app metadata is missing.
+    void (async () => {
+      try {
+        const config = await getAppConfig();
+        if (active) setAppVersion(config.app_version);
+      } catch {
+        if (active) setAppVersion(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const check = useCallback(() => {
     setChecking(true);
@@ -185,7 +211,9 @@ export function UpdateSection() {
             {t("profile.updates.currentVersion")}
           </dt>
           <dd className="font-medium text-primary" data-testid="update-current-version">
-            {status?.current_version ?? t("profile.updates.versionUnknown")}
+            {status?.current_version ??
+              appVersion ??
+              t("profile.updates.versionUnknown")}
           </dd>
         </div>
         <div>

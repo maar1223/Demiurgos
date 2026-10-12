@@ -8,6 +8,7 @@ import {
   setUpdateChannel,
 } from "@/api/updates";
 import { apiFetch } from "@/api/client";
+import { getAppConfig } from "@/api/config";
 import { getAuthStatus, logoutSession } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
 import { ApiError } from "@/api/types";
@@ -17,6 +18,10 @@ vi.mock("@/api/updates", () => ({
   getUpdateStatus: vi.fn(),
   setUpdateChannel: vi.fn(),
   applyUpdate: vi.fn(),
+}));
+
+vi.mock("@/api/config", () => ({
+  getAppConfig: vi.fn(),
 }));
 
 vi.mock("@/api/wiki", () => ({
@@ -53,6 +58,11 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     (logoutSession as Mock).mockReset();
     (getAuthStatus as Mock).mockReset();
     (apiFetch as Mock).mockReset();
+    (getAppConfig as Mock).mockReset();
+    (getAppConfig as Mock).mockResolvedValue({
+      language: "es",
+      app_version: "0.1.1",
+    });
     (logoutSession as Mock).mockResolvedValue({
       mode: "local-dev",
       enabled: true,
@@ -77,23 +87,35 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     vi.restoreAllMocks();
   });
 
-  it("issues no request on mount (manual-only, no background check)", async () => {
+  it("issues no update check on mount (manual-only); reads app config once", async () => {
     render(<UpdateSection />);
     // Give any accidental effect / microtask a chance to fire.
     await new Promise((resolve) => setTimeout(resolve, 20));
+    // The update check and the channel write are never triggered on mount...
     expect(getUpdateStatus).not.toHaveBeenCalled();
     expect(setUpdateChannel).not.toHaveBeenCalled();
+    // ...but the running version comes from a single app-metadata read.
+    expect(getAppConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the version and channel only after the manual check", async () => {
+  it("shows the running version from config on render, channel after the check", async () => {
     (getUpdateStatus as Mock).mockResolvedValue(baseStatus);
     const user = userEvent.setup();
     render(<UpdateSection />);
 
-    // Before the check the version is honestly unknown.
-    expect(screen.getByTestId("update-current-version")).toHaveTextContent(
-      "Sin verificar",
+    // On render the running version comes from app metadata (spec scenario
+    // "Panel displays current version") — no update check needed yet.
+    await waitFor(() =>
+      expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+        "0.1.1",
+      ),
     );
+    // The channel is server-owned: it starts at the documented default until a
+    // check reports the selected channel.
+    expect(screen.getByTestId("update-channel-value")).toHaveTextContent(
+      "Estable",
+    );
+    expect(getUpdateStatus).not.toHaveBeenCalled();
 
     await user.click(
       screen.getByRole("button", { name: "Buscar actualizaciones" }),
