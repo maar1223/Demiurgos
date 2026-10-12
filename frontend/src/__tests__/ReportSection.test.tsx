@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { ReportSection } from "@/components/organisms/ReportSection";
-import { assembleBugReport } from "@/api/bugReports";
-import { type BugReportBundle } from "@/api/types";
+import { assembleBugReport, fallbackBody, submitBugReport } from "@/api/bugReports";
+import { ApiError, type BugReportBundle } from "@/api/types";
 import type { Mock } from "vitest";
 import { tEs } from "@/__tests__/i18nTestUtils";
 import ProfilePage from "@/pages/ProfilePage";
 
 vi.mock("@/api/bugReports", () => ({
   assembleBugReport: vi.fn(),
+  submitBugReport: vi.fn(),
+  fallbackBody: vi.fn(),
 }));
 
 /** A canonical allow-listed bundle, shaped exactly like the backend response
@@ -30,6 +33,17 @@ const baseBundle: BugReportBundle = {
   },
   allow_list: ["app_version", "contact", "description", "logs", "platform"],
   contact_slot: true,
+};
+
+/** Same bundle but with default-on logs included, so removal is meaningful. */
+const logsBundle: BugReportBundle = {
+  ...baseBundle,
+  logs: {
+    included: true,
+    content: "2026-01-01 debug line",
+    redacted_lines: 0,
+    reason: "",
+  },
 };
 
 describe("ReportSection — Perfil → Reporte de errores (S2a skeleton)", () => {
@@ -90,6 +104,144 @@ describe("ReportSection — Perfil → Reporte de errores (S2a skeleton)", () =>
         tEs("profile.bugreport.loadError"),
       ),
     );
+  });
+});
+
+// S2b — mandatory preview gate, editable description, removable fields, submit
+// through the relay and the STRICT fallback (copy-paste body + issue link)
+// offered only when delivery fails.
+describe("ReportSection — preview gate, submit and strict fallback (S2b)", () => {
+  beforeEach(() => {
+    (assembleBugReport as Mock).mockReset();
+    (submitBugReport as Mock).mockReset();
+    (fallbackBody as Mock).mockReset();
+    (assembleBugReport as Mock).mockResolvedValue(logsBundle);
+  });
+
+  /** Mount the section with an assembled bundle and return a user-event handle. */
+  async function renderReady() {
+    const user = userEvent.setup();
+    render(<ReportSection />);
+    await screen.findByTestId("bugreport-app-version");
+    return user;
+  }
+
+  it("keeps submit disabled until the preview is rendered (mandatory gate)", async () => {
+    const user = await renderReady();
+
+    const submit = screen.getByRole("button", {
+      name: tEs("profile.bugreport.submit"),
+    });
+    // No preview yet → the exact bundle has not been shown → submission blocked.
+    expect(submit).toBeDisabled();
+    expect(screen.queryByTestId("bugreport-preview")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+
+    expect(screen.getByTestId("bugreport-preview")).toBeInTheDocument();
+    expect(submit).toBeEnabled();
+
+    // Editing after the preview invalidates it: the submitted payload must be
+    // exactly what was shown, so submit re-locks until the user previews again.
+    await user.type(
+      screen.getByLabelText(tEs("profile.bugreport.descriptionLabel")),
+      "changed",
+    );
+    expect(submit).toBeDisabled();
+    expect(screen.queryByTestId("bugreport-preview")).not.toBeInTheDocument();
+  });
+
+  it("reflects the edited description and removed logs in the submitted payload", async () => {
+    const user = await renderReady();
+
+    await user.type(
+      screen.getByLabelText(tEs("profile.bugreport.descriptionLabel")),
+      "It crashed on save",
+    );
+    // Logs are default-on; removing them must drop the field entirely.
+    await user.click(screen.getByLabelText(tEs("profile.bugreport.includeLogs")));
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-1" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    const payload = (submitBugReport as Mock).mock.calls[0][0];
+    expect(payload.description).toBe("It crashed on save");
+    expect(payload).not.toHaveProperty("logs");
+    expect(payload.app_version).toBe("0.2.0");
+  });
+
+  it("shows the success feedback and hides the fallback when delivery succeeds", async () => {
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-2" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await screen.findByText(tEs("profile.bugreport.submitSuccess"));
+    expect(screen.queryByTestId("bugreport-fallback")).not.toBeInTheDocument();
+  });
+
+  it("shows the copy-paste fallback and issue link when delivery fails", async () => {
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockRejectedValue(
+      new ApiError(502, "relay down", undefined, "bugreport.relay_unavailable"),
+    );
+    (fallbackBody as Mock).mockResolvedValue({
+      body: "scrubbed issue body",
+      issue_url:
+        "https://github.com/maar1223/Demiurgos/issues/new?template=bug_report.yml",
+      findings: 2,
+    });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await screen.findByTestId("bugreport-fallback");
+    expect(screen.getByTestId("bugreport-fallback-body")).toHaveValue(
+      "scrubbed issue body",
+    );
+    expect(screen.getByTestId("bugreport-fallback-link")).toHaveAttribute(
+      "href",
+      "https://github.com/maar1223/Demiurgos/issues/new?template=bug_report.yml",
+    );
+    expect(fallbackBody).toHaveBeenCalledTimes(1);
+    // The failed delivery still surfaces a localized, non-secret error code.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      tEs("error.bugreport.relay_unavailable"),
+    );
+  });
+
+  it("offers the fallback strictly on failure, never alongside a success", async () => {
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-3" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await screen.findByText(tEs("profile.bugreport.submitSuccess"));
+    // Strict fallback: a successful delivery never prepares or shows it.
+    expect(fallbackBody).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("bugreport-fallback")).not.toBeInTheDocument();
   });
 });
 

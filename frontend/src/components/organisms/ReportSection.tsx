@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
-import { assembleBugReport } from "@/api/bugReports";
-import { ApiError, type BugReportBundle } from "@/api/types";
+import { assembleBugReport, fallbackBody, submitBugReport } from "@/api/bugReports";
+import {
+  ApiError,
+  type BugReportBundle,
+  type BugReportFallback,
+  type BugReportSubmitPayload,
+} from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -14,18 +20,25 @@ function describeError(cause: unknown, fallback: string): string {
   return fallback;
 }
 
+const FIELD_INPUT_CLASS =
+  "rounded-lg border border-edge bg-surface px-3 py-2 text-small text-primary " +
+  "placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50";
+
 /**
- * Perfil → Reporte de errores — bug-report panel (S2a skeleton).
+ * Perfil → Reporte de errores — bug-report panel.
  *
  * On mount it calls `GET /api/bugreport/assemble` — once, readonly — and
- * renders the allow-listed, content-scanned default bundle: app version,
- * allow-listed platform facts, the logs status (included/excluded + redaction
- * count + non-secret reason) and the allow-list itself. Assembly is
+ * renders the allow-listed, content-scanned default bundle. Assembly is
  * server-provided because the browser sandbox cannot read local logs/`uname`.
  *
- * This slice ships the skeleton only: the preview/edit + mandatory submit
- * gate, the submit UI and the strict fallback land in later slices. A failed
- * assembly never crashes the host page — it renders the localized error.
+ * The flow enforces the spec's MANDATORY preview gate: submission stays
+ * disabled until the exact payload has been rendered for review. The user can
+ * edit the description and remove fields (logs, contact); any edit invalidates
+ * the preview so the submitted payload is always exactly what was shown.
+ * Submit goes through the stateless relay (`submitBugReport`); on success the
+ * panel reports delivery and hides the fallback, on failure it prepares the
+ * STRICT fallback (`fallbackBody`) — a privacy-scrubbed copy-paste issue body
+ * plus the `maar1223/Demiurgos` issue-form link, offered only on failure.
  */
 export function ReportSection() {
   const { t } = useAppLanguage();
@@ -33,6 +46,23 @@ export function ReportSection() {
   const [bundle, setBundle] = useState<BugReportBundle | null>(null);
   const [assembling, setAssembling] = useState(true);
   const [assembleError, setAssembleError] = useState<string | null>(null);
+
+  // Editable review state (spec: preview and edit are mandatory before submit).
+  const [description, setDescription] = useState("");
+  const [contact, setContact] = useState("");
+  const [includeLogs, setIncludeLogs] = useState(true);
+  // The mandatory gate: submit stays disabled until the exact bundle has been
+  // shown at least once, and re-locks on every edit so nothing ships unseen.
+  const [previewed, setPreviewed] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+
+  // Strict fallback state — populated ONLY after a failed delivery.
+  const [fallback, setFallback] = useState<BugReportFallback | null>(null);
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // One read-only assemble on mount (spec: assembly is a server step). The
   // guard flag keeps a slow response from setting state on an unmounted panel.
@@ -54,6 +84,71 @@ export function ReportSection() {
       active = false;
     };
   }, [t]);
+
+  const logsIncluded = Boolean(bundle?.logs.included) && includeLogs;
+
+  // The submitted payload is built live from the current review state, so edits
+  // and removals are always reflected (spec: edits/removals reflected).
+  const buildPayload = useCallback((): BugReportSubmitPayload | null => {
+    if (!bundle) return null;
+    const trimmedContact = contact.trim();
+    return {
+      app_version: bundle.app_version,
+      platform: bundle.platform,
+      description,
+      ...(trimmedContact ? { contact: trimmedContact } : {}),
+      ...(logsIncluded ? { logs: bundle.logs.content } : {}),
+    };
+  }, [bundle, contact, description, logsIncluded]);
+
+  const payloadPreview = useMemo(() => {
+    const payload = buildPayload();
+    return payload ? JSON.stringify(payload, null, 2) : "";
+  }, [buildPayload]);
+
+  /** Any review edit invalidates the preview — the exact-shown guarantee. */
+  const markEdited = useCallback(() => setPreviewed(false), []);
+
+  const submit = useCallback(async () => {
+    const payload = buildPayload();
+    if (!payload || !previewed || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    setFallback(null);
+    setFallbackError(null);
+    setCopied(false);
+    try {
+      await submitBugReport(payload);
+      setSubmitted(true);
+    } catch (cause: unknown) {
+      setSubmitError(describeError(cause, t("profile.bugreport.submitError")));
+      // STRICT fallback: prepared ONLY after a failed delivery, never in
+      // parallel with a success.
+      try {
+        const next = await fallbackBody(payload);
+        setFallback(next);
+      } catch (fallbackCause: unknown) {
+        setFallbackError(
+          describeError(fallbackCause, t("error.bugreport.fallbackFailed")),
+        );
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }, [buildPayload, previewed, submitting, t]);
+
+  const copyFallback = useCallback(async () => {
+    if (!fallback || !navigator.clipboard) {
+      setCopied(false);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(fallback.body);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }, [fallback]);
 
   return (
     <section
@@ -78,50 +173,211 @@ export function ReportSection() {
           {assembleError}
         </p>
       ) : bundle ? (
-        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <dt className="text-small text-muted">
-              {t("profile.bugreport.appVersion")}
-            </dt>
-            <dd className="font-medium text-primary" data-testid="bugreport-app-version">
-              {bundle.app_version}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-small text-muted">
-              {t("profile.bugreport.platform")}
-            </dt>
-            <dd className="font-medium text-primary" data-testid="bugreport-platform">
-              {bundle.platform.os} {bundle.platform.os_version} ·{" "}
-              {bundle.platform.arch} · Python {bundle.platform.python_version}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-small text-muted">{t("profile.bugreport.logs")}</dt>
-            <dd className="font-medium text-primary" data-testid="bugreport-logs-status">
-              {bundle.logs.included
-                ? t("profile.bugreport.logsIncluded")
-                : t("profile.bugreport.logsExcluded")}
-              {bundle.logs.redacted_lines > 0 &&
-                ` · ${t("profile.bugreport.redactedLines", {
-                  count: bundle.logs.redacted_lines,
-                })}`}
-            </dd>
-            {!bundle.logs.included && bundle.logs.reason && (
-              <dd className="text-small text-muted">
-                {t("profile.bugreport.logsReason")}: {bundle.logs.reason}
+        <>
+          <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <dt className="text-small text-muted">
+                {t("profile.bugreport.appVersion")}
+              </dt>
+              <dd
+                className="font-medium text-primary"
+                data-testid="bugreport-app-version"
+              >
+                {bundle.app_version}
               </dd>
+            </div>
+            <div>
+              <dt className="text-small text-muted">
+                {t("profile.bugreport.platform")}
+              </dt>
+              <dd
+                className="font-medium text-primary"
+                data-testid="bugreport-platform"
+              >
+                {bundle.platform.os} {bundle.platform.os_version} ·{" "}
+                {bundle.platform.arch} · Python {bundle.platform.python_version}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-small text-muted">
+                {t("profile.bugreport.logs")}
+              </dt>
+              <dd
+                className="font-medium text-primary"
+                data-testid="bugreport-logs-status"
+              >
+                {bundle.logs.included
+                  ? t("profile.bugreport.logsIncluded")
+                  : t("profile.bugreport.logsExcluded")}
+                {bundle.logs.redacted_lines > 0 &&
+                  ` · ${t("profile.bugreport.redactedLines", {
+                    count: bundle.logs.redacted_lines,
+                  })}`}
+              </dd>
+              {!bundle.logs.included && bundle.logs.reason && (
+                <dd className="text-small text-muted">
+                  {t("profile.bugreport.logsReason")}: {bundle.logs.reason}
+                </dd>
+              )}
+            </div>
+            <div>
+              <dt className="text-small text-muted">
+                {t("profile.bugreport.allowList")}
+              </dt>
+              <dd
+                className="font-medium text-primary"
+                data-testid="bugreport-allow-list"
+              >
+                {bundle.allow_list.join(", ")}
+              </dd>
+            </div>
+          </dl>
+
+          {/* Editable review fields — every edit re-locks the mandatory gate. */}
+          <div className="mt-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="bugreport-description"
+                className="text-small text-muted"
+              >
+                {t("profile.bugreport.descriptionLabel")}
+              </label>
+              <textarea
+                id="bugreport-description"
+                rows={4}
+                value={description}
+                placeholder={t("profile.bugreport.descriptionPlaceholder")}
+                onChange={(event) => {
+                  setDescription(event.target.value);
+                  markEdited();
+                }}
+                className={FIELD_INPUT_CLASS}
+                data-testid="bugreport-description"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="bugreport-contact" className="text-small text-muted">
+                {t("profile.bugreport.contactLabel")}
+              </label>
+              <input
+                id="bugreport-contact"
+                type="text"
+                value={contact}
+                placeholder={t("profile.bugreport.contactPlaceholder")}
+                onChange={(event) => {
+                  setContact(event.target.value);
+                  markEdited();
+                }}
+                className={FIELD_INPUT_CLASS}
+                data-testid="bugreport-contact"
+              />
+            </div>
+            {bundle.logs.included && (
+              <label className="flex items-center gap-2 text-small text-primary">
+                <input
+                  type="checkbox"
+                  checked={includeLogs}
+                  onChange={(event) => {
+                    setIncludeLogs(event.target.checked);
+                    markEdited();
+                  }}
+                />
+                {t("profile.bugreport.includeLogs")}
+              </label>
             )}
           </div>
-          <div>
-            <dt className="text-small text-muted">
-              {t("profile.bugreport.allowList")}
-            </dt>
-            <dd className="font-medium text-primary" data-testid="bugreport-allow-list">
-              {bundle.allow_list.join(", ")}
-            </dd>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => setPreviewed(true)}>
+              {t("profile.bugreport.preview")}
+            </Button>
+            <Button
+              onClick={() => void submit()}
+              disabled={!previewed || submitting || submitted}
+            >
+              {submitting && <Spinner size="sm" />}
+              {submitting
+                ? t("profile.bugreport.submitting")
+                : t("profile.bugreport.submit")}
+            </Button>
           </div>
-        </dl>
+
+          {previewed && (
+            <div
+              className="mt-4 rounded-lg border border-edge bg-surface p-3"
+              data-testid="bugreport-preview"
+            >
+              <p className="text-small font-medium text-primary">
+                {t("profile.bugreport.previewTitle")}
+              </p>
+              <p className="mt-1 text-small text-muted">
+                {t("profile.bugreport.previewHint")}
+              </p>
+              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-small text-primary">
+                {payloadPreview}
+              </pre>
+            </div>
+          )}
+
+          {submitted && (
+            <p role="status" className="mt-3 text-small text-status-success">
+              {t("profile.bugreport.submitSuccess")}
+            </p>
+          )}
+
+          {submitError && (
+            <p role="alert" className="mt-3 text-small text-status-error">
+              {submitError}
+            </p>
+          )}
+
+          {fallback && (
+            <div
+              className="mt-4 rounded-lg border border-edge bg-surface p-3"
+              data-testid="bugreport-fallback"
+            >
+              <p className="text-small font-medium text-primary">
+                {t("profile.bugreport.fallbackTitle")}
+              </p>
+              <p className="mt-1 text-small text-muted">
+                {t("profile.bugreport.fallbackHint")}
+              </p>
+              <p className="mt-1 text-small text-muted">
+                {t("profile.bugreport.fallbackScrubNote")}
+              </p>
+              <textarea
+                readOnly
+                rows={8}
+                value={fallback.body}
+                aria-label={t("profile.bugreport.fallbackBodyLabel")}
+                className={`mt-2 w-full ${FIELD_INPUT_CLASS}`}
+                data-testid="bugreport-fallback-body"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button variant="secondary" onClick={() => void copyFallback()}>
+                  {copied
+                    ? t("profile.bugreport.fallbackCopied")
+                    : t("profile.bugreport.fallbackCopy")}
+                </Button>
+                <a
+                  href={fallback.issue_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="bugreport-fallback-link"
+                  className="text-small font-medium text-action underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+                >
+                  {t("profile.bugreport.fallbackOpen")}
+                </a>
+              </div>
+            </div>
+          )}
+
+          {fallbackError && (
+            <p role="alert" className="mt-3 text-small text-status-error">
+              {fallbackError}
+            </p>
+          )}
+        </>
       ) : null}
     </section>
   );
