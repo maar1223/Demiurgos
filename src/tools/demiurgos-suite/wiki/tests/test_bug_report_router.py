@@ -1,25 +1,30 @@
 # -*- coding: utf-8 -*-
-"""tests/test_bug_report_router.py — ``/api/bugreport`` router (S1b + S1c).
+"""tests/test_bug_report_router.py — ``/api/bugreport`` router (S1b–S3b).
 
 Slice S1b ships the read-only assemble endpoint (``GET
 /api/bugreport/assemble``); slice S1c adds the stateless, principal-gated
-submit endpoint (``POST /api/bugreport/submit``). The tests cover:
+submit endpoint (``POST /api/bugreport/submit``); slice S3b adds the strict
+fallback endpoint (``POST /api/bugreport/fallback``). The tests cover:
 
-* fail-closed 401 auth for a missing principal (assemble and submit);
+* fail-closed 401 auth for a missing principal (assemble, submit, fallback);
 * the bundle exposes ONLY allow-listed keys (default-DENY posture);
 * world data (``mundos/``), ``.env`` and the local account username are excluded
   BY CONSTRUCTION — the handler opens only ``install_root/logs``;
 * a log line matching a shared secret rule is redacted before it can be
   previewed or submitted;
 * submit re-validates the raw payload against the allow-list (extra JSON keys
-  are REJECTED, not silently dropped), enforces the size caps, applies a
-  per-principal rate limit, delivers through the injected relay and persists
-  nothing;
+  are REJECTED, not silently dropped), enforces the size caps (per-field AND
+  the total serialized-byte cap), applies a per-principal rate limit, delivers
+  through the injected relay and persists nothing;
+* fallback returns ``{body, issue_url, findings}`` where the body is pre-filled
+  from the reviewed bundle, privacy-scrubbed (paths/usernames/hostnames/
+  private IPs/e-mails/secrets become placeholders) and the issue form is the
+  ``maar1223/Demiurgos`` destination (``DEFAULT_ISSUE_URL``, overridable);
 * the derived ``payload_manifest.json`` ships both bug-report modules.
 
 The app is hermetic: a bare ``FastAPI()`` with an injected ``require_principal``,
-``log_source``, ``relay_post`` and ``clock``, so no real install state, data
-root or network is ever touched (mirrors ``test_update_router.py`` /
+``log_source``, ``relay_post``, ``clock`` and ``issue_url``, so no real install
+state, data root or network is ever touched (mirrors ``test_update_router.py`` /
 ``test_system_control.py``).
 """
 
@@ -40,6 +45,7 @@ if str(_WIKI) not in sys.path:
 from bug_report import (  # noqa: E402
     ALLOWED_FIELDS,
     ALLOWED_PLATFORM_KEYS,
+    DEFAULT_ISSUE_URL,
     create_bug_report_router,
 )
 from error_codes import register_error_handlers  # noqa: E402
@@ -69,6 +75,7 @@ def _make_app(
     relay_url=None,
     relay_post=None,
     clock=None,
+    issue_url=None,
 ) -> FastAPI:
     """Build a hermetic app around the bug-report router.
 
@@ -88,6 +95,8 @@ def _make_app(
         kwargs["relay_post"] = relay_post
     if clock is not None:
         kwargs["clock"] = clock
+    if issue_url is not None:
+        kwargs["issue_url"] = issue_url
     app.include_router(
         create_bug_report_router(
             _require_principal,
@@ -265,6 +274,7 @@ def test_assemble_registered_in_api_server_app() -> None:
     paths = api_server.app.openapi()["paths"]
     assert "/api/bugreport/assemble" in paths
     assert "/api/bugreport/submit" in paths
+    assert "/api/bugreport/fallback" in paths
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +357,60 @@ def test_submit_rejects_oversized() -> None:
     assert too_long_logs.status_code == 413, too_long_logs.text
     assert too_long_logs.json()["code"] == "bugreport.too_large"
 
+    assert calls == []
+
+
+def test_submit_caps_contact_at_200_chars() -> None:
+    """The optional contact is capped at 200 chars (at the cap is accepted)."""
+    calls = []
+
+    def _relay(url, payload):
+        calls.append((url, payload))
+        return 200, {"ok": True, "delivery_id": "d1"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+    client = TestClient(app)
+
+    at_cap = client.post(
+        "/api/bugreport/submit", json=_valid_payload(contact="x" * 200)
+    )
+    assert at_cap.status_code == 200, at_cap.text
+
+    over_cap = client.post(
+        "/api/bugreport/submit", json=_valid_payload(contact="x" * 201)
+    )
+    assert over_cap.status_code == 413, over_cap.text
+    assert over_cap.json()["code"] == "bugreport.too_large"
+    assert over_cap.json()["params"] == {"field": "contact"}
+    # Only the at-cap payload reached the relay; the over-cap one did not.
+    assert len(calls) == 1
+
+
+def test_submit_rejects_total_byte_cap() -> None:
+    """The 98304-byte total cap is REACHABLE under the per-field char caps.
+
+    Multi-byte UTF-8 content (here 3-byte characters) puts the serialized
+    payload far over the total byte cap while every per-field character cap
+    still passes — so the total-cap branch is a live guard, not dead code.
+    """
+    calls = []
+
+    def _relay(url, payload):
+        calls.append((url, payload))
+        return 200, {"ok": True, "delivery_id": "d1"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+    client = TestClient(app)
+
+    # 65536 "€" chars (3 bytes each in UTF-8) = 196608 bytes for logs alone,
+    # plus a 4000-char description → ≈208 KB serialized, well over 98304 B.
+    resp = client.post(
+        "/api/bugreport/submit",
+        json=_valid_payload(logs="\u20ac" * 65536, description="\u20ac" * 4000),
+    )
+    assert resp.status_code == 413, resp.text
+    assert resp.json()["code"] == "bugreport.too_large"
+    assert resp.json()["params"] == {"field": "total"}
     assert calls == []
 
 
@@ -455,6 +519,100 @@ def test_submit_success_stores_nothing(tmp_path: Path) -> None:
     }
     assert captured["payload"]["schema"] == 1
     assert captured["payload"]["description"] == _valid_payload()["description"]
+
+
+# ---------------------------------------------------------------------------
+# Slice S3b — POST /api/bugreport/fallback (strict fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_body_prefilled_from_bundle() -> None:
+    """The fallback body is pre-filled from the REVIEWED bundle.
+
+    The copy-paste issue body carries the reviewed description, app version,
+    platform facts and logs, and the explicitly-provided contact survives the
+    privacy scrub as the deliberate follow-up datum (owner decision 5). A clean
+    bundle yields zero privacy findings.
+    """
+    app = _make_app()
+    resp = TestClient(app).post("/api/bugreport/fallback", json=_valid_payload())
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert set(data.keys()) == {"body", "issue_url", "findings"}
+    body = data["body"]
+    assert body.startswith("## Descripción")
+    assert "The app crashed while opening a world." in body
+    assert "0.2.0" in body
+    assert "Linux" in body
+    assert "server started" in body
+    # The explicit contact is the deliberate follow-up channel (not scrubbed).
+    assert "user@example.com" in body
+    assert data["findings"] == 0
+
+
+def test_fallback_scrubs_privacy_findings() -> None:
+    """Local paths, hostnames, private IPs and secrets become placeholders.
+
+    The body preserves the reproduction structure around the scrubbed findings,
+    and ``findings`` reports the number of replaced values. The raw values never
+    survive into the presented body.
+    """
+    app = _make_app()
+    payload = _valid_payload(
+        description=(
+            "repro: crashed seeding /var/log/demiurgos/api.log from "
+            "host=devbox.local (192.168.1.42), key AKIAIOSFODNN7EXAMPLE"
+        ),
+        logs="started\nconnect db@internal.local\ndev@example.com ping\nretry\n",
+    )
+    resp = TestClient(app).post("/api/bugreport/fallback", json=payload)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    body = data["body"]
+    for raw in (
+        "/var/log/demiurgos/api.log",
+        "devbox.local",
+        "192.168.1.42",
+        "AKIAIOSFODNN7EXAMPLE",
+        "internal.local",
+        "dev@example.com",
+    ):
+        assert raw not in body, f"privacy finding survived the scrub: {raw}"
+    for placeholder in ("<path>", "<hostname>", "<private-ip>", "<secret>", "<email>"):
+        assert placeholder in body, f"{placeholder} missing from body"
+    # Reproduction structure survives around the placeholders.
+    assert "crashed seeding" in body
+    assert "retry" in body
+    assert data["findings"] >= 6
+
+
+def test_fallback_issue_url_targets_main_repo() -> None:
+    """``issue_url`` targets the maar1223/Demiurgos issue form by default.
+
+    The URL pins the exact YAML Issue Form file (``template=bug_report.yml``),
+    which must exist in the repo — it is the format authority for the
+    fallback destination. A wiring override replaces the default.
+    """
+    app = _make_app()
+    resp = TestClient(app).post("/api/bugreport/fallback", json=_valid_payload())
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["issue_url"] == DEFAULT_ISSUE_URL
+    assert resp.json()["issue_url"] == (
+        "https://github.com/maar1223/Demiurgos/issues/new?template=bug_report.yml"
+    )
+    # The destination form exists — the URL must not dangle.
+    assert (
+        _REPO_ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
+    ).is_file(), "issue form missing: fallback URL would not resolve"
+
+    # Wiring override is honored by the factory (production wiring reads
+    # DEMIURGOS_BUGREPORT_ISSUE_URL from the environment).
+    redirect = _make_app(issue_url="https://issues.example.test/new")
+    resp = TestClient(redirect).post(
+        "/api/bugreport/fallback", json=_valid_payload()
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["issue_url"] == "https://issues.example.test/new"
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Bug-report REST router — ``/api/bugreport`` (S1b assemble + S1c submit).
+"""Bug-report REST router — ``/api/bugreport`` (S1b assemble + S1c submit + S3b fallback).
 
-This module ships two endpoints:
+This module ships three endpoints:
 
 * ``GET /api/bugreport/assemble`` — build the default, sanitized report bundle:
   the app version, a fixed set of allow-listed platform facts, content-scanned
@@ -10,6 +10,12 @@ This module ships two endpoints:
   allow-list, enforce the size caps and the per-principal rate limit, then
   deliver the bundle through a separately-deployable relay. The submit is
   STATELESS: nothing about the report, a copy or a derived record is persisted.
+* ``POST /api/bugreport/fallback`` — the STRICT fallback: render the reviewed
+  bundle as a copy-paste GitHub issue body, privacy-scrub it with
+  :func:`content_scan.scrub_pii`, and return ``{body, issue_url, findings}``.
+  ``issue_url`` defaults to :data:`DEFAULT_ISSUE_URL` (the
+  ``maar1223/Demiurgos`` issue form), overridable at wiring time via
+  ``DEMIURGOS_BUGREPORT_ISSUE_URL``.
 
 Default-DENY posture
 --------------------
@@ -26,16 +32,16 @@ Submit re-validation is a **raw-dict** check (``set(body) <= ALLOWED_FIELDS``):
 a Pydantic model with default config would silently DROP unknown keys and let a
 disallowed-field payload through, so the endpoint reads the raw JSON body and
 rejects any key outside the allow-list with ``bugreport.not_allowlisted``.
+The fallback endpoint re-validates the same way.
 
-Scope
------
-``POST /fallback`` lands in a later slice. ``issue_url`` is accepted now so the
-factory signature is stable across the slices; it is unused until fallback is
-added.
-
-Auth mirrors the sibling routers (``updater.create_update_router``,
-``system_control.create_system_control_router``): the request is gated through
-``require_principal`` resolved at call time; ``None`` maps to 401 (fail closed).
+Privacy notes on the fallback body
+----------------------------------
+:func:`content_scan.scrub_pii` is a report-specific rule set (local paths,
+usernames, hostnames, private network addresses, e-mails, extra secret shapes).
+Logs reaching the fallback were already redacted at assemble time against the
+SHARED rules, so the body cannot re-expose what logs never carried. The one
+deliberate exception is the explicitly-provided contact: it is the follow-up
+datum the user chose to make public (owner decision 5) and survives the scrub.
 """
 
 from __future__ import annotations
@@ -152,7 +158,9 @@ def create_bug_report_router(
     ``bugreport.relay_unavailable``. ``relay_post`` injects the relay invocation
     (tests); the production default is an ``httpx`` ``POST`` to ``relay_url``.
     ``clock`` injects the time source for the rate limit (tests). ``issue_url``
-    is accepted for signature stability and used by the fallback slice.
+    is the fallback destination; production wiring reads
+    ``DEMIURGOS_BUGREPORT_ISSUE_URL`` from the environment, defaulting to
+    :data:`DEFAULT_ISSUE_URL`.
     """
     router = APIRouter(prefix="/api/bugreport", tags=["bug-report"])
 
@@ -265,6 +273,32 @@ def create_bug_report_router(
             return {"ok": True, "delivery_id": str(data.get("delivery_id") or "")}
         raise problem("bugreport.delivery_failed")
 
+    def _render_fallback_body(bundle: Dict[str, Any]) -> str:
+        """Render the reviewed bundle as a copy-paste GitHub issue body.
+
+        Neutral-Spanish section labels mirror the profile panel copy
+        (``profile.bugreport.*`` in ``frontend/src/i18n/messages.ts``). The
+        explicitly-provided contact is deliberately NOT part of this prefix:
+        it is appended verbatim by the fallback handler after the privacy scrub
+        (the contact is the follow-up datum the user chose to make public).
+        """
+        platform = bundle["platform"]
+        lines = [
+            "## Descripción",
+            bundle["description"] or "_(sin descripción)_",
+            "",
+            "## Información del sistema",
+            "- **Versión de la aplicación:** %s" % bundle["app_version"],
+            "- **Sistema operativo:** %s" % platform.get("os", ""),
+            "- **Versión del sistema:** %s" % platform.get("os_version", ""),
+            "- **Arquitectura:** %s" % platform.get("arch", ""),
+            "- **Versión de Python:** %s" % platform.get("python_version", ""),
+            "",
+            "## Registros",
+            bundle["logs"] or "_(sin registros)_",
+        ]
+        return "\n".join(lines)
+
     def _default_log_source() -> List[Tuple[str, str]]:
         """Read every ``*.log`` under ``install_root/logs`` — the ONLY source.
 
@@ -364,6 +398,35 @@ def create_bug_report_router(
             raise problem("bugreport.not_allowlisted")
         bundle = _validate_and_cap(body)
         return _deliver(bundle)
+
+    @router.post("/fallback")
+    async def fallback(request: Request) -> Dict[str, Any]:
+        """Return the STRICT fallback: a copy-paste issue body and the form link.
+
+        The endpoint takes the same reviewed-bundle shape as submit
+        (``require_principal`` gate + raw allow-list re-validation, so the body
+        is always built from a bundle the user reviewed). The body is rendered
+        from the bundle, privacy-scrubbed with
+        :func:`content_scan.scrub_pii` (paths/usernames/hostnames/private
+        IPs/e-mails/extra secrets become placeholders, structure preserved), and
+        returned together with ``issue_url`` — :data:`DEFAULT_ISSUE_URL` unless
+        overridden at wiring time — and the ``findings`` count. The
+        explicitly-provided contact survives the scrub as the deliberate
+        follow-up datum. Nothing is delivered and nothing is persisted.
+        """
+        _guard(request)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
+            raise problem("bugreport.not_allowlisted")
+        bundle = _validate_and_cap(body)
+        scrubbed, findings = content_scan.scrub_pii(_render_fallback_body(bundle))
+        contact = bundle["contact"]
+        if contact:
+            scrubbed = "%s\n\n## Contacto\n%s" % (scrubbed, contact)
+        else:
+            scrubbed = "%s\n\n## Contacto\n_(no proporcionado)_" % scrubbed
+        return {"body": scrubbed, "issue_url": issue_url, "findings": findings}
 
     return router
 

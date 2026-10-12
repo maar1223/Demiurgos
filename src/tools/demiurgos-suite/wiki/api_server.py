@@ -8640,7 +8640,7 @@ from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
 from updater import create_update_router  # noqa: E402
-from bug_report import create_bug_report_router  # noqa: E402
+from bug_report import DEFAULT_ISSUE_URL, create_bug_report_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_spool_gc import gc_enabled, gc_guard_hours, gc_ttl_days, reap_dead_spools  # noqa: E402
@@ -9375,13 +9375,17 @@ app.include_router(
 # swap _resolve_principal. install_root is resolved once at wiring time to the
 # SAME root the runtime runs from (dev checkout -> None), which bounds the log
 # source to install_root/logs; relay_url is the operational kill-switch for the
-# later submit slice (unset -> fail closed).
+# later submit slice (unset -> fail closed). issue_url is the strict-fallback
+# destination (.github/ISSUE_TEMPLATE/bug_report.yml), overridable via
+# DEMIURGOS_BUGREPORT_ISSUE_URL for forks or redirects.
 app.include_router(
     create_bug_report_router(
         require_principal=lambda request: _resolve_principal(request),
         app_version=_app_version,
         install_root=_install_root(),
         relay_url=os.environ.get("DEMIURGOS_BUGREPORT_RELAY_URL", "").strip() or None,
+        issue_url=os.environ.get("DEMIURGOS_BUGREPORT_ISSUE_URL", "").strip()
+        or DEFAULT_ISSUE_URL,
     ),
 )
 
