@@ -660,28 +660,32 @@ def _app_version() -> str:
         return env
     try:
         if _CODE_ROOT.name == "current":
-            resolved = _CODE_ROOT.resolve()          # <install_root>/app/<version>
-            if resolved.parent.name == "app":
-                return resolved.name
+            # Distinctive local names: the code-relative-path guard reasons over
+            # variable NAMES, so a generic binding that mentions _CODE_ROOT would
+            # cascade and falsely flag unrelated pre-existing data paths.
+            _layout_target = _CODE_ROOT.resolve()    # <install_root>/app/<version>
+            if _layout_target.parent.name == "app":
+                return _layout_target.name
     except OSError:
         pass
     # Dev fallback (source checkout, never the deployed identity).
     try:
-        pkg = _CODE_ROOT / "package.json"
-        if pkg.is_file():
-            version = json.loads(pkg.read_text(encoding="utf-8")).get("version")
-            if isinstance(version, str) and version.strip():
-                return version.strip()
+        _dev_manifest = _CODE_ROOT / "package.json"
+        if _dev_manifest.is_file():
+            _manifest_version = json.loads(
+                _dev_manifest.read_text(encoding="utf-8")).get("version")
+            if isinstance(_manifest_version, str) and _manifest_version.strip():
+                return _manifest_version.strip()
     except (OSError, ValueError):
         pass
     try:
-        out = subprocess.run(
+        _describe = subprocess.run(
             ["git", "-C", str(_CODE_ROOT), "describe", "--tags", "--always"],
             capture_output=True, text=True, timeout=2,
         )
-        tag = out.stdout.strip().lstrip("v")
-        if out.returncode == 0 and tag:
-            return tag
+        _describe_tag = _describe.stdout.strip().lstrip("v")
+        if _describe.returncode == 0 and _describe_tag:
+            return _describe_tag
     except (OSError, subprocess.SubprocessError):
         pass
     return "0.0.0-dev"
