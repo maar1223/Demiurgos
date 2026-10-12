@@ -60,7 +60,7 @@ function Verify-Sha256 {
 # secret `MINISIGN_SECRET_KEY`. If you regenerate the signing key
 # (`minisign -G`), re-embed the matching public key here and in the other three
 # carrier files (install.sh, install.ps1, scripts/lib/verify_checksum.sh).
-$DefaultMinisignPubkey = "RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
+$DefaultMinisignPubkey = "RWQ3C9oZP5+p/ClFZOUCjPwsoPVsQyEblu82WCi0A9nEN5caSMR0K0iE"
 
 function Test-Minisig {
     param(
