@@ -1,8 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
-import { getUpdateStatus, setUpdateChannel } from "@/api/updates";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { getUpdateStatus, setUpdateChannel, applyUpdate } from "@/api/updates";
+import { getAuthStatus, logoutSession } from "@/api/wiki";
+import { reloadPage } from "@/lib/reloadPage";
 import { ApiError, type UpdateChannel, type UpdateStatus } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { cn, getErrorMessage } from "@/lib/utils";
@@ -26,13 +30,16 @@ function describeError(cause: unknown, fallback: string): string {
 }
 
 /**
- * Perfil → Actualizaciones — read-only update panel (v1).
+ * Perfil → Actualizaciones — update panel (v1).
  *
  * Manual-only by design (spec: "Read-only frontend update panel"): the panel
- * issues NO request on mount and runs NO timer/polling. Every network call is
- * driven by an explicit action — the "Buscar actualizaciones" button (GET
- * status) or the channel selector (PUT channel). The status payload is
- * advisory and display-only; the apply/install flow ships in a later slice.
+ * issues NO request on mount and runs NO timer/polling for checks. Every
+ * network call is driven by an explicit action — the "Buscar actualizaciones"
+ * button (GET status), the channel selector (PUT channel), and the
+ * "Instalar y reiniciar" apply flow. The status payload is advisory and
+ * display-only. The apply flow mirrors the Navbar restart flow: confirmation
+ * dialog → logout FIRST → apply dispatch (90s timeout) → full-screen
+ * transition overlay polling until the stack is back.
  */
 export function UpdateSection() {
   const { t } = useAppLanguage();
@@ -46,6 +53,14 @@ export function UpdateSection() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [savingChannel, setSavingChannel] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
+
+  // Apply flow (mirrors Navbar restart): dialog -> logout -> POST -> overlay.
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyNotice, setApplyNotice] = useState<string | null>(null);
+  const applyTimerRef = useRef<number | null>(null);
 
   const check = useCallback(() => {
     setChecking(true);
@@ -79,6 +94,77 @@ export function UpdateSection() {
     },
     [channel, savingChannel, t],
   );
+
+  /** Open the apply confirmation dialog with a fresh error state. */
+  const requestApply = useCallback(() => {
+    setApplyError(null);
+    setApplyNotice(null);
+    setApplyOpen(true);
+  }, []);
+
+  /** Cancel/close must stop the busy state — never leave the dialog stuck. */
+  const closeApply = useCallback(() => {
+    setApplyOpen(false);
+    setApplyBusy(false);
+    setApplyError(null);
+  }, []);
+
+  /** Confirmed apply: logout FIRST, then dispatch, then show the overlay. */
+  const confirmApply = useCallback(async () => {
+    setApplyBusy(true);
+    setApplyError(null);
+    try {
+      // Session safety (spec 'Local session is logged out before apply'): the
+      // installer restarts the whole stack, so the local session must be
+      // closed BEFORE the dispatch — the server never clears it itself.
+      await logoutSession();
+      try {
+        await applyUpdate();
+      } catch (cause: unknown) {
+        // A dropped connection (status 0) means the installer killed the
+        // backend mid-dispatch — the EXPECTED outcome once the apply starts.
+        if (!(cause instanceof ApiError && cause.status === 0)) {
+          setApplyError(describeError(cause, t("profile.updates.applyError")));
+          return;
+        }
+      }
+      // Accepted (or connection dropped mid-install): close the dialog and
+      // show a blocking screen until the stack comes back.
+      setApplyOpen(false);
+      setApplying(true);
+    } catch (cause: unknown) {
+      // logoutSession itself failed — nothing was dispatched; keep the dialog
+      // open so the user can retry or close.
+      setApplyError(describeError(cause, t("profile.updates.applyError")));
+    } finally {
+      setApplyBusy(false);
+    }
+  }, [t]);
+
+  // After an accepted apply the backend goes down (install) and comes back
+  // (restart) with the new version. Poll a lightweight endpoint until it
+  // responds, then reload the page automatically (mirrors Navbar restart).
+  useEffect(() => {
+    if (!applying) return;
+    let attempts = 0;
+    applyTimerRef.current = window.setInterval(async () => {
+      attempts += 1;
+      try {
+        await getAuthStatus();
+        if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
+        reloadPage();
+      } catch {
+        if (attempts > 30) {
+          if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
+          setApplying(false);
+          setApplyNotice(t("profile.updates.applyServerDown"));
+        }
+      }
+    }, 2000);
+    return () => {
+      if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
+    };
+  }, [applying, t]);
 
   return (
     <section
@@ -172,10 +258,16 @@ export function UpdateSection() {
               {t("profile.updates.advisoryUnavailable")}
             </p>
           ) : status.update_available ? (
-            <p className="flex items-center gap-2 text-small text-primary">
-              <Icon name="download" size={16} className="text-action" />
-              {t("profile.updates.available", { version: status.latest ?? "" })}
-            </p>
+            <>
+              <p className="flex items-center gap-2 text-small text-primary">
+                <Icon name="download" size={16} className="text-action" />
+                {t("profile.updates.available", { version: status.latest ?? "" })}
+              </p>
+              <Button onClick={requestApply} className="mt-3">
+                <Icon name="download" size={16} />
+                {t("profile.updates.apply")}
+              </Button>
+            </>
           ) : (
             <p className="flex items-center gap-2 text-small text-muted">
               <Icon name="check" size={16} className="text-status-success" />
@@ -184,6 +276,47 @@ export function UpdateSection() {
           )}
         </div>
       )}
+
+      {applyNotice && (
+        <p role="alert" className="mt-3 text-small text-status-error">
+          {applyNotice}
+        </p>
+      )}
+
+      {/* Apply confirmation (mirrors Navbar restart): the install closes the
+          local session and restarts the stack, so it requires an explicit
+          confirm before logout + dispatch. */}
+      {applyOpen && (
+        <ConfirmDialog
+          title={t("profile.updates.confirmTitle")}
+          message={t("profile.updates.confirmMessage", {
+            version: status?.latest ?? "",
+          })}
+          confirmLabel={t("profile.updates.apply")}
+          isBusy={applyBusy}
+          error={applyError}
+          onConfirm={() => void confirmApply()}
+          onClose={closeApply}
+        />
+      )}
+
+      {/* Full-screen transition overlay while the installer runs and the
+          backend restarts (mirrors Navbar's restarting overlay). */}
+      {applying &&
+        createPortal(
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface/90 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3 px-6 text-center">
+              <Spinner size="lg" />
+              <p className="text-body text-primary">
+                {t("profile.updates.applying")}
+              </p>
+              <p className="max-w-sm text-small text-muted">
+                {t("profile.updates.transitionApplying")}
+              </p>
+            </div>
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }

@@ -174,6 +174,16 @@ export const messages = {
       "No se pudo consultar el canal. Intenta de nuevo más tarde.",
     "profile.updates.available": "Hay una actualización disponible: {version}",
     "profile.updates.upToDate": "Estás al día.",
+    "profile.updates.apply": "Instalar y reiniciar",
+    "profile.updates.confirmTitle": "Instalar actualización",
+    "profile.updates.confirmMessage":
+      "Se instalará la versión {version} y Demiurgos se reiniciará. Se cerrará la sesión local antes de instalar.",
+    "profile.updates.applying": "Instalando actualización…",
+    "profile.updates.transitionApplying":
+      "Demiurgos se reiniciará cuando termine la instalación. No cierres esta ventana.",
+    "profile.updates.applyError": "No se pudo iniciar la instalación.",
+    "profile.updates.applyServerDown":
+      "El servidor tardó demasiado en volver. Recarga la página manualmente si no se reinició.",
 
     "profile.cuenta.checkingVault": "Comprobando la bóveda…",
     "profile.cuenta.loadError": "No se pudo cargar el estado de la bóveda.",
@@ -2085,6 +2095,16 @@ export const messages = {
       "Could not reach the channel. Try again later.",
     "profile.updates.available": "An update is available: {version}",
     "profile.updates.upToDate": "You're up to date.",
+    "profile.updates.apply": "Install and restart",
+    "profile.updates.confirmTitle": "Install update",
+    "profile.updates.confirmMessage":
+      "Version {version} will be installed and Demiurgos will restart. Your local session will be closed before installing.",
+    "profile.updates.applying": "Installing update…",
+    "profile.updates.transitionApplying":
+      "Demiurgos will restart when the install finishes. Keep this window open.",
+    "profile.updates.applyError": "Could not start the installation.",
+    "profile.updates.applyServerDown":
+      "The server took too long to come back. Reload the page manually if it did not restart.",
 
     "profile.cuenta.checkingVault": "Checking the vault…",
     "profile.cuenta.loadError": "Could not load the vault status.",
