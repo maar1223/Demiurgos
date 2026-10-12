@@ -156,6 +156,7 @@ export const messages = {
     "profile.section.conexiones": "Conexiones",
     "profile.section.mundos": "Mundos",
     "profile.section.actualizaciones": "Actualizaciones",
+    "profile.section.reporte": "Reporte de errores",
 
     "profile.updates.panelTitle": "Actualizaciones",
     "profile.updates.manualHint":
@@ -184,6 +185,20 @@ export const messages = {
     "profile.updates.applyError": "No se pudo iniciar la instalación.",
     "profile.updates.applyServerDown":
       "El servidor tardó demasiado en volver. Recarga la página manualmente si no se reinició.",
+
+    "profile.bugreport.panelTitle": "Reporte de errores",
+    "profile.bugreport.intro":
+      "El sistema recopila un resumen del estado para diagnosticar problemas.",
+    "profile.bugreport.loading": "Preparando el informe…",
+    "profile.bugreport.loadError": "No se pudo preparar el informe de errores.",
+    "profile.bugreport.appVersion": "Versión de la aplicación",
+    "profile.bugreport.platform": "Plataforma",
+    "profile.bugreport.logs": "Registros",
+    "profile.bugreport.logsIncluded": "Incluidos",
+    "profile.bugreport.logsExcluded": "Excluidos",
+    "profile.bugreport.redactedLines": "Líneas con contenido sensible: {count}",
+    "profile.bugreport.logsReason": "Motivo de exclusión",
+    "profile.bugreport.allowList": "Campos permitidos",
 
     "profile.cuenta.checkingVault": "Comprobando la bóveda…",
     "profile.cuenta.loadError": "No se pudo cargar el estado de la bóveda.",
@@ -1023,6 +1038,11 @@ export const messages = {
     "error.provider.validate_unreachable": "No se pudo alcanzar el endpoint del proveedor.",
     "error.provider.auth_rejected": "El proveedor rechazó la clave API.",
     "error.provider.connection_rejected": "El proveedor rechazó la solicitud de conexión.",
+    "error.bugreport.not_allowlisted": "El informe contiene campos no permitidos.",
+    "error.bugreport.too_large": "El informe supera el tamaño máximo permitido.",
+    "error.bugreport.rate_limited": "Se enviaron demasiados informes. Inténtalo más tarde.",
+    "error.bugreport.relay_unavailable": "El servicio de envío no está disponible.",
+    "error.bugreport.delivery_failed": "No se pudo entregar el informe.",
     "configCenter.state.pending": "Pendiente",
     "configCenter.state.configured": "Configurado",
     "configCenter.state.requiresConnection": "Requiere conexión",
@@ -2077,6 +2097,7 @@ export const messages = {
     "profile.section.conexiones": "Connections",
     "profile.section.mundos": "Worlds",
     "profile.section.actualizaciones": "Updates",
+    "profile.section.reporte": "Bug report",
 
     "profile.updates.panelTitle": "Updates",
     "profile.updates.manualHint":
@@ -2105,6 +2126,20 @@ export const messages = {
     "profile.updates.applyError": "Could not start the installation.",
     "profile.updates.applyServerDown":
       "The server took too long to come back. Reload the page manually if it did not restart.",
+
+    "profile.bugreport.panelTitle": "Bug report",
+    "profile.bugreport.intro":
+      "The system collects a summary of the environment to help diagnose problems.",
+    "profile.bugreport.loading": "Preparing the report…",
+    "profile.bugreport.loadError": "Could not prepare the bug report.",
+    "profile.bugreport.appVersion": "App version",
+    "profile.bugreport.platform": "Platform",
+    "profile.bugreport.logs": "Logs",
+    "profile.bugreport.logsIncluded": "Included",
+    "profile.bugreport.logsExcluded": "Excluded",
+    "profile.bugreport.redactedLines": "Lines with sensitive content: {count}",
+    "profile.bugreport.logsReason": "Exclusion reason",
+    "profile.bugreport.allowList": "Allowed fields",
 
     "profile.cuenta.checkingVault": "Checking the vault…",
     "profile.cuenta.loadError": "Could not load the vault status.",
@@ -2929,6 +2964,11 @@ export const messages = {
     "error.provider.validate_unreachable": "The provider endpoint could not be reached.",
     "error.provider.auth_rejected": "The provider rejected the API key.",
     "error.provider.connection_rejected": "The provider rejected the connection request.",
+    "error.bugreport.not_allowlisted": "The report contains fields that are not allowed.",
+    "error.bugreport.too_large": "The report exceeds the maximum allowed size.",
+    "error.bugreport.rate_limited": "Too many reports were sent. Try again later.",
+    "error.bugreport.relay_unavailable": "The delivery service is not available.",
+    "error.bugreport.delivery_failed": "The report could not be delivered.",
     "configCenter.state.pending": "Pending",
     "configCenter.state.configured": "Configured",
     "configCenter.state.requiresConnection": "Connection required",
