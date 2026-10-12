@@ -195,3 +195,25 @@ def test_assemble_redacts_secret_log_line(tmp_path: Path) -> None:
     # Useful reproduction structure survives around the redacted line.
     assert "boot" in logs["content"]
     assert "ready" in logs["content"]
+
+
+# ---------------------------------------------------------------------------
+# Registration smoke: the production app imports cleanly and exposes the route
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_registered_in_api_server_app() -> None:
+    """The production ``api_server`` app registers the assemble route.
+
+    Importing the real app doubles as the clean-import smoke check for the
+    ``include_router`` wiring (mirrors ``test_system_control``). The endpoint
+    itself is NOT invoked here: against the real app it requires an
+    authenticated local session, so registration is asserted through the
+    OpenAPI schema instead.
+    """
+    import api_server  # noqa: F401
+
+    # Included routers are nested behind wrapper objects in app.routes, so the
+    # OpenAPI schema is the reliable surface to assert registration.
+    paths = api_server.app.openapi()["paths"]
+    assert "/api/bugreport/assemble" in paths
