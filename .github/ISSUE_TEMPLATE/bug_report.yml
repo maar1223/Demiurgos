@@ -1,0 +1,50 @@
+name: Informe de errores
+description: Reporta un problema con Demiurgos (formulario de incidencias principal del panel «Reporte de errores»).
+title: "[Informe] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por reportar un problema con Demiurgos.
+        Si llegaste desde el panel «Reporte de errores», usa el botón «Copiar»
+        para copiar el cuerpo del informe y pégalo en el campo «Cuerpo del
+        informe» de abajo. Antes de enviar, revisa que el contenido no exponga
+        datos privados.
+  - type: textarea
+    id: report_body
+    attributes:
+      label: Cuerpo del informe
+      description: Describe el problema o pega el cuerpo copiado desde el panel «Reporte de errores».
+      placeholder: |
+        ## Descripción
+        Describe qué ocurrió y cómo reproducirlo.
+
+        ## Información del sistema
+        - **Versión de la aplicación:**
+        - **Sistema operativo:**
+        - **Versión del sistema:**
+        - **Arquitectura:**
+        - **Versión de Python:**
+
+        ## Registros
+        Incluye aquí los registros relevantes, si los hay.
+
+        ## Contacto
+        Correo o identificador para responder, si quieres seguimiento.
+      render: markdown
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Contacto (opcional)
+      description: Correo o identificador para responder sobre la incidencia.
+      placeholder: usuario@ejemplo.com
+  - type: checkboxes
+    id: privacy_review
+    attributes:
+      label: Revisión de privacidad
+      description: Confirma que el informe no expone datos privados.
+      options:
+        - label: El informe no contiene rutas locales, nombres de usuario, claves, direcciones privadas ni otros datos privados.
+          required: true
