@@ -459,4 +459,6 @@ class TestPersistedLocaleIntegration:
         assert locale["ui"] == "en"
         assert locale["conversation_explicit"] is True
         assert locale["content_explicit"] is False
-        assert client.get("/api/config").json() == {"language": "en"}
+        config = client.get("/api/config").json()
+        assert config["language"] == "en"
+        assert isinstance(config["app_version"], str) and config["app_version"]

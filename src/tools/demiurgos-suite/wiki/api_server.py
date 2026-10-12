@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -631,15 +632,70 @@ def health():
     return {"status": "ok", "worlds_available": bool(_list_worlds())}
 
 
+def _install_root() -> Path | None:
+    """``<install_root>`` when running the ``current`` layout, else None.
+
+    In an installed layout the code root is the ``<install_root>/current``
+    junction/symlink (the launcher re-executes itself from it), so the parent
+    of the checkout IS the install root. A dev checkout's root is not named
+    ``current`` and has no install root.
+    """
+    if _CODE_ROOT.name == "current":
+        return _CODE_ROOT.parent
+    return None
+
+
+def _app_version() -> str:
+    """Non-empty runtime version; never raises (spec: fallback chain).
+
+    Order: env ``DEMIURGOS_APP_VERSION`` (exported by the launcher from the
+    install layout) > the basename of the resolved ``current`` layout
+    (``<install_root>/current`` -> ``app/<version>``) > a dev source
+    (``package.json`` / ``git describe --tags``) > the literal ``0.0.0-dev``.
+    ``package.json`` is ONLY a dev fallback — the install layout is the
+    runtime version source of truth.
+    """
+    env = os.environ.get("DEMIURGOS_APP_VERSION", "").strip()
+    if env:
+        return env
+    try:
+        if _CODE_ROOT.name == "current":
+            resolved = _CODE_ROOT.resolve()          # <install_root>/app/<version>
+            if resolved.parent.name == "app":
+                return resolved.name
+    except OSError:
+        pass
+    # Dev fallback (source checkout, never the deployed identity).
+    try:
+        pkg = _CODE_ROOT / "package.json"
+        if pkg.is_file():
+            version = json.loads(pkg.read_text(encoding="utf-8")).get("version")
+            if isinstance(version, str) and version.strip():
+                return version.strip()
+    except (OSError, ValueError):
+        pass
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(_CODE_ROOT), "describe", "--tags", "--always"],
+            capture_output=True, text=True, timeout=2,
+        )
+        tag = out.stdout.strip().lstrip("v")
+        if out.returncode == 0 and tag:
+            return tag
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "0.0.0-dev"
+
+
 @app.get("/api/config")
 def get_app_config():
     """Non-sensitive global runtime metadata for the frontend.
 
     Exposes only the normalized UI language, persisted-first (the selected
-    locale) with the project ``.env``/environment as fallback; never secrets
-    or paths.
+    locale) with the project ``.env``/environment as fallback, plus the
+    resolved runtime ``app_version``; never secrets or paths.
     """
-    return {"language": _configured_language()}
+    return {"language": _configured_language(), "app_version": _app_version()}
 
 
 # ---------------------------------------------------------------------------

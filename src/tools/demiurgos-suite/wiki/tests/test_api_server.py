@@ -142,9 +142,12 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 ])
 def test_config_endpoint_exposes_normalized_language(client: TestClient, monkeypatch, language, expected):
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", language)
+    # Pin the runtime version so the response shape is deterministic: env wins
+    # over the layout/dev fallback chain (runtime-version-reporting spec).
+    monkeypatch.setenv("DEMIURGOS_APP_VERSION", "9.9.9")
     response = client.get("/api/config")
     assert response.status_code == 200
-    assert response.json() == {"language": expected}
+    assert response.json() == {"language": expected, "app_version": "9.9.9"}
 
 
 def test_config_endpoint_reads_project_env_file_with_safe_fallback(client: TestClient, monkeypatch, tmp_path):
@@ -152,11 +155,87 @@ def test_config_endpoint_reads_project_env_file_with_safe_fallback(client: TestC
     env_file = tmp_path / ".env"
     env_file.write_text("DEMIURGOS_LANGUAGE=en\n", encoding="utf-8")
     response = client.get("/api/config")
-    assert response.json() == {"language": "en"}
+    body = response.json()
+    assert body["language"] == "en"
+    # The new app_version field is always present and never empty.
+    assert isinstance(body["app_version"], str) and body["app_version"]
 
     env_file.write_text("SOME_SECRET=top-secret\n", encoding="utf-8")
     response = client.get("/api/config")
-    assert response.json() == {"language": "es"}
+    body = response.json()
+    assert body["language"] == "es"
+    assert isinstance(body["app_version"], str) and body["app_version"]
+
+
+# --- Runtime version resolution (runtime-version-reporting spec) -------------
+
+
+def _make_current_layout(tmp_path: Path) -> Path:
+    """Create ``<tmp>/app/0.2.0`` plus a ``current`` symlink to it.
+
+    Mirrors the installed layout ``<install_root>/current -> app/<version>``.
+    Returns the ``current`` link, which is what the code root resolves to in
+    an installed deployment. Skipped on platforms that cannot create links.
+    """
+    app_version_dir = tmp_path / "app" / "0.2.0"
+    app_version_dir.mkdir(parents=True)
+    current = tmp_path / "current"
+    try:
+        current.symlink_to(app_version_dir, target_is_directory=True)
+    except OSError as exc:  # pragma: no cover - platform-dependent
+        pytest.skip(f"cannot create a directory symlink here: {exc}")
+    return current
+
+
+def test_app_version_env_wins_over_layout(monkeypatch, tmp_path):
+    """Spec: env `DEMIURGOS_APP_VERSION` beats an existing install layout."""
+    monkeypatch.setenv("DEMIURGOS_APP_VERSION", "9.9.9")
+    monkeypatch.setattr(api_server, "_CODE_ROOT", _make_current_layout(tmp_path))
+    assert api_server._app_version() == "9.9.9"
+
+
+def test_app_version_layout_basename_used_when_env_absent(monkeypatch, tmp_path):
+    """Spec: layout used when env is absent — basename of `current` target."""
+    monkeypatch.delenv("DEMIURGOS_APP_VERSION", raising=False)
+    monkeypatch.setattr(api_server, "_CODE_ROOT", _make_current_layout(tmp_path))
+    assert api_server._app_version() == "0.2.0"
+
+
+def test_app_version_dev_literal_when_nothing_usable(monkeypatch, tmp_path):
+    """Spec: absolute fallback `0.0.0-dev` when no env/layout/dev source."""
+    monkeypatch.delenv("DEMIURGOS_APP_VERSION", raising=False)
+    plain = tmp_path / "plain-checkout"
+    plain.mkdir()
+    monkeypatch.setattr(api_server, "_CODE_ROOT", plain)
+    assert api_server._app_version() == "0.0.0-dev"
+
+
+def test_app_version_never_raises_and_always_nonempty(monkeypatch, tmp_path):
+    """Hard constraint: resolver never raises and never returns empty."""
+    monkeypatch.delenv("DEMIURGOS_APP_VERSION", raising=False)
+    # A deleted, non-git code root: no package.json, `git -C` cannot resolve,
+    # no env, no layout — must still land on the literal fallback.
+    monkeypatch.setattr(api_server, "_CODE_ROOT", tmp_path / "missing")
+    assert api_server._app_version() == "0.0.0-dev"
+    # Layout present: resolves even though the symlink was created after mkdir.
+    monkeypatch.setattr(api_server, "_CODE_ROOT", _make_current_layout(tmp_path))
+    assert bool(api_server._app_version())
+
+
+def test_install_root_detects_current_layout(monkeypatch, tmp_path):
+    """`_install_root()` returns <install_root> only under the `current` layout."""
+    monkeypatch.setattr(api_server, "_CODE_ROOT", _make_current_layout(tmp_path))
+    assert api_server._install_root() == tmp_path
+    monkeypatch.setattr(api_server, "_CODE_ROOT", tmp_path / "plain-checkout")
+    assert api_server._install_root() is None
+
+
+def test_config_endpoint_includes_nonempty_app_version(client: TestClient, monkeypatch):
+    """Spec: GET /api/config includes a non-empty app_version string."""
+    monkeypatch.setenv("DEMIURGOS_APP_VERSION", "9.9.9")
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["app_version"] == "9.9.9"
 
 
 @pytest.fixture()
@@ -6061,7 +6140,10 @@ class TestOnboardingRoutes:
         _principal(monkeypatch)
         monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
         _post_step0(empty_client, ui="en", conversation="en", content="en")
-        assert empty_client.get("/api/config").json() == {"language": "en"}
+        body = empty_client.get("/api/config").json()
+        assert body["language"] == "en"
+        # The app_version field rides along and stays non-empty.
+        assert isinstance(body["app_version"], str) and body["app_version"]
 
     def test_ai_path_language_follows_persisted_locale_not_env(
             self, empty_client: TestClient, monkeypatch):
