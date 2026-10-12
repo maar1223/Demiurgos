@@ -199,6 +199,31 @@ export const messages = {
     "profile.bugreport.redactedLines": "Líneas con contenido sensible: {count}",
     "profile.bugreport.logsReason": "Motivo de exclusión",
     "profile.bugreport.allowList": "Campos permitidos",
+    "profile.bugreport.descriptionLabel": "Descripción del problema",
+    "profile.bugreport.descriptionPlaceholder":
+      "Describe qué ocurrió y cómo reproducirlo.",
+    "profile.bugreport.contactLabel": "Contacto (opcional)",
+    "profile.bugreport.contactPlaceholder":
+      "Correo o identificador para responder (opcional)",
+    "profile.bugreport.includeLogs": "Incluir registros en el informe",
+    "profile.bugreport.preview": "Previsualizar informe",
+    "profile.bugreport.previewTitle": "Vista previa del informe",
+    "profile.bugreport.previewHint":
+      "Revisa el contenido exacto antes de enviar.",
+    "profile.bugreport.submit": "Enviar informe",
+    "profile.bugreport.submitting": "Enviando…",
+    "profile.bugreport.submitSuccess":
+      "Informe enviado. Gracias por ayudar a mejorar Demiurgos.",
+    "profile.bugreport.submitError": "No se pudo enviar el informe.",
+    "profile.bugreport.fallbackTitle": "Envío alternativo",
+    "profile.bugreport.fallbackHint":
+      "Copia el contenido y ábrelo en el formulario de incidencias del repositorio.",
+    "profile.bugreport.fallbackScrubNote":
+      "El texto se depuró de datos privados antes de mostrarlo.",
+    "profile.bugreport.fallbackCopy": "Copiar",
+    "profile.bugreport.fallbackCopied": "Copiado",
+    "profile.bugreport.fallbackOpen": "Abrir formulario de incidencias",
+    "profile.bugreport.fallbackBodyLabel": "Cuerpo del informe",
 
     "profile.cuenta.checkingVault": "Comprobando la bóveda…",
     "profile.cuenta.loadError": "No se pudo cargar el estado de la bóveda.",
@@ -1043,6 +1068,8 @@ export const messages = {
     "error.bugreport.rate_limited": "Se enviaron demasiados informes. Inténtalo más tarde.",
     "error.bugreport.relay_unavailable": "El servicio de envío no está disponible.",
     "error.bugreport.delivery_failed": "No se pudo entregar el informe.",
+    "error.bugreport.fallbackFailed":
+      "No se pudo preparar el texto alternativo.",
     "configCenter.state.pending": "Pendiente",
     "configCenter.state.configured": "Configurado",
     "configCenter.state.requiresConnection": "Requiere conexión",
@@ -2140,6 +2167,31 @@ export const messages = {
     "profile.bugreport.redactedLines": "Lines with sensitive content: {count}",
     "profile.bugreport.logsReason": "Exclusion reason",
     "profile.bugreport.allowList": "Allowed fields",
+    "profile.bugreport.descriptionLabel": "Problem description",
+    "profile.bugreport.descriptionPlaceholder":
+      "Describe what happened and how to reproduce it.",
+    "profile.bugreport.contactLabel": "Contact (optional)",
+    "profile.bugreport.contactPlaceholder":
+      "Email or handle for a reply (optional)",
+    "profile.bugreport.includeLogs": "Include logs in the report",
+    "profile.bugreport.preview": "Preview report",
+    "profile.bugreport.previewTitle": "Report preview",
+    "profile.bugreport.previewHint":
+      "Review the exact content before sending.",
+    "profile.bugreport.submit": "Send report",
+    "profile.bugreport.submitting": "Sending…",
+    "profile.bugreport.submitSuccess":
+      "Report sent. Thank you for helping improve Demiurgos.",
+    "profile.bugreport.submitError": "The report could not be sent.",
+    "profile.bugreport.fallbackTitle": "Alternative delivery",
+    "profile.bugreport.fallbackHint":
+      "Copy the content and open it in the repository's issue form.",
+    "profile.bugreport.fallbackScrubNote":
+      "The text was scrubbed of private data before being shown.",
+    "profile.bugreport.fallbackCopy": "Copy",
+    "profile.bugreport.fallbackCopied": "Copied",
+    "profile.bugreport.fallbackOpen": "Open issue form",
+    "profile.bugreport.fallbackBodyLabel": "Report body",
 
     "profile.cuenta.checkingVault": "Checking the vault…",
     "profile.cuenta.loadError": "Could not load the vault status.",
@@ -2969,6 +3021,8 @@ export const messages = {
     "error.bugreport.rate_limited": "Too many reports were sent. Try again later.",
     "error.bugreport.relay_unavailable": "The delivery service is not available.",
     "error.bugreport.delivery_failed": "The report could not be delivered.",
+    "error.bugreport.fallbackFailed":
+      "The alternative text could not be prepared.",
     "configCenter.state.pending": "Pending",
     "configCenter.state.configured": "Configured",
     "configCenter.state.requiresConnection": "Connection required",
