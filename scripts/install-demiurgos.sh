@@ -380,6 +380,15 @@ commit_staging() {
     printf 'install-demiurgos: installed %s at %s/current\n' "$VERSION" "$INSTALL_ROOT" >&2
 }
 
+write_channel_config() {
+    # Persist the channel base URL this install validated (https:// or
+    # file:// — `download` fails on any other scheme) so the runtime updater
+    # resolves it WITHOUT the env override (design S2-b). Written next to
+    # commit_staging because it records the channel this install trusts.
+    printf '{\n  "schema_version": 1,\n  "url_base": "%s"\n}\n' "$URL_BASE" > "$INSTALL_ROOT/channel.json"
+    printf 'install-demiurgos: persisted channel config at %s/channel.json\n' "$INSTALL_ROOT" >&2
+}
+
 # --- data-root bootstrap-once + .env seed (4.9, S0-A) ------------------------
 
 seed_env_file() {
@@ -459,6 +468,7 @@ fetch_and_verify_payload
 provision_uv
 stage_and_install
 commit_staging
+write_channel_config
 bootstrap_data_root
 
 printf '%s\n' "install-demiurgos: done. Start Demiurgos with:"

@@ -325,6 +325,30 @@ class TestOptionalExtrasBestEffort:
         assert "|| warn" in text
 
 
+class TestChannelConfigPersisted:
+    """Slice 2b — the installer persists ``<install_root>/channel.json``
+    (``schema_version`` + ``url_base``) at install time so the runtime updater
+    resolves the channel base URL without the env override (design S2-b)."""
+
+    def test_posix_writes_channel_json_with_schema_and_url(self):
+        text = _text(INSTALLER)
+        assert "channel.json" in text
+        assert '"schema_version": 1' in text
+        assert '"url_base"' in text
+        # The record is written beside the install root, like the pointer.
+        assert "INSTALL_ROOT/channel.json" in text
+        # The scheme-validated URL_BASE is the source (installer scheme gate).
+        assert '"$URL_BASE"' in text
+
+    def test_windows_parity_writes_channel_json_with_schema_and_url(self):
+        text = _text(PS_INSTALLER)
+        assert "channel.json" in text
+        assert '"schema_version": 1' in text
+        assert '"url_base"' in text
+        assert 'Join-Path $installRoot "channel.json"' in text
+        assert "$urlBase" in text
+
+
 class TestNoArbitraryPayloadExecution:
     def test_installer_never_executes_payload_files(self):
         """Threat-matrix 'Documentation-like paths' (execution half): the
@@ -892,6 +916,14 @@ class TestFixtureChannelInstall:
         assert (install_root / "bin" / "uv").is_file()
         assert (install_root / "app" / version / ".venv" / "bin" / "python").exists()
 
+        # Slice 2b: install-root channel.json records the validated channel
+        # base with the runtime schema (design S2-b).
+        channel_json = install_root / "channel.json"
+        assert channel_json.is_file()
+        record = json.loads(channel_json.read_text(encoding="utf-8"))
+        assert record["schema_version"] == 1
+        assert record["url_base"] == f"file://{channel}"
+
         # Stub uv recorded the mandatory flags (hash-locked wheels-only).
         log = (tmp_path / "uv-stub.log").read_text(encoding="utf-8")
         assert "--require-hashes" in log
@@ -932,6 +964,13 @@ class TestFixtureChannelInstall:
         pointer_after = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
         assert pointer_after == pointer_before
         assert (pointer_after / ".env").read_bytes() == env_before
+
+        # channel.json is persisted on first install and survives the re-run.
+        channel_json = install_root / "channel.json"
+        assert channel_json.is_file()
+        record = json.loads(channel_json.read_text(encoding="utf-8"))
+        assert record["schema_version"] == 1
+        assert record["url_base"] == f"file://{channel}"
 
         # Re-run still boots (one instance).
         api_port = _boot_launcher(tmp_path, env, install_root)

@@ -387,6 +387,27 @@ function Invoke-CommitStaging {
     Write-Host "install-demiurgos: installed $version at $installRoot\current"
 }
 
+function Write-ChannelConfig {
+    # Persist the channel base URL this install validated (https:// or
+    # file:// - `Invoke-Download` fails on any other scheme) so the runtime
+    # updater resolves it WITHOUT the env override (design S2-b). Written next
+    # to Invoke-CommitStaging because it records the channel this install
+    # trusts. Backslashes (file://C:\...) are JSON-escaped like the data-root
+    # record; UTF-8 without BOM.
+    $escapedBase = $urlBase.Replace("\", "\\")
+    $record = @"
+{
+  "schema_version": 1,
+  "url_base": "$escapedBase"
+}
+"@
+    [System.IO.File]::WriteAllText(
+        (Join-Path $installRoot "channel.json"), $record,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    Write-Host "install-demiurgos: persisted channel config at $installRoot\channel.json"
+}
+
 # --- data-root bootstrap-once + .env seed (5.3, S0-A) ------------------------
 
 function Invoke-SeedEnvFile {
@@ -494,6 +515,7 @@ try {
     Invoke-ProvisionUv
     Invoke-StageAndInstall
     Invoke-CommitStaging
+    Write-ChannelConfig
     Invoke-DataRootBootstrap
 
     Write-Host "install-demiurgos: done. Start Demiurgos with:"
