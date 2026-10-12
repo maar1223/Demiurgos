@@ -90,6 +90,12 @@ DEFAULT_ALLOWLIST=(
     scripts/payload_audit.sh
     scripts/payload_audit.ps1
     .gitleaks.toml
+    # The bug-report content scanner + its tests: they carry the SAME deny
+    # patterns as this script (parity-locked by test) and their report-specific
+    # rules (local paths, usernames, hostnames) necessarily match some literals;
+    # no real credential or author path is hidden by these entries.
+    src/tools/demiurgos-suite/wiki/content_scan.py
+    src/tools/demiurgos-suite/wiki/tests/test_content_scan.py
     # Obvious test fixtures only (fake values for the secret-scan suite).
     src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py
     # Pre-existing frontend fixtures with placeholder paths/ids.

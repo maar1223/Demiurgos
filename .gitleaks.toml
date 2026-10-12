@@ -7,6 +7,10 @@
 #
 # The allowlist covers ONLY:
 #   * the scanner's own files (they contain the rule definitions by design);
+#   * the bug-report content scanner and its tests — they carry the same deny
+#     patterns by design (parity-locked to secret_scan.sh) plus report-specific
+#     local-path/username/hostname rules that necessarily match some literals;
+#     no real credential or author path is hidden by these entries;
 #   * obviously-fake test fixtures (placeholder values, never real
 #     credentials and never real author data);
 #   * test harnesses that deliberately reference the patterns as functional
@@ -55,6 +59,8 @@ secretGroup = 0
 description = "Scanner self-files, fake fixtures, harness predicates and env-var-driven Sheets tools only"
 paths = [
     '''src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py''',
+    '''src/tools/demiurgos-suite/wiki/content_scan.py''',
+    '''src/tools/demiurgos-suite/wiki/tests/test_content_scan.py''',
     '''frontend/src/__tests__/BackupSection.test.tsx''',
     '''frontend/src/__tests__/MethodologyLibrary.test.tsx''',
     '''scripts/secret_scan.sh''',
