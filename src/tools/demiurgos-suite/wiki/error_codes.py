@@ -69,6 +69,18 @@ REGISTRY: dict[str, ErrorSpec] = {
         "import.resume_denied", 403, "Resume denied"),
     "import.rollback_failed": ErrorSpec(
         "import.rollback_failed", 409, "Rollback failed"),
+    # Bug-report submission (report-submission): clear, non-secret codes.
+    "bugreport.not_allowlisted": ErrorSpec(
+        "bugreport.not_allowlisted", 400,
+        "Field is not on the bug-report allow-list"),
+    "bugreport.too_large": ErrorSpec(
+        "bugreport.too_large", 413, "Bug report exceeds a size cap"),
+    "bugreport.rate_limited": ErrorSpec(
+        "bugreport.rate_limited", 429, "Too many bug reports submitted"),
+    "bugreport.relay_unavailable": ErrorSpec(
+        "bugreport.relay_unavailable", 502, "Bug-report relay is unavailable"),
+    "bugreport.delivery_failed": ErrorSpec(
+        "bugreport.delivery_failed", 502, "Bug-report delivery failed"),
 }
 
 
