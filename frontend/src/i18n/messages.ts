@@ -155,6 +155,25 @@ export const messages = {
     "profile.section.preferencias": "Preferencias",
     "profile.section.conexiones": "Conexiones",
     "profile.section.mundos": "Mundos",
+    "profile.section.actualizaciones": "Actualizaciones",
+
+    "profile.updates.panelTitle": "Actualizaciones",
+    "profile.updates.manualHint":
+      "La búsqueda es manual: no se consulta en segundo plano.",
+    "profile.updates.currentVersion": "Versión instalada",
+    "profile.updates.versionUnknown": "Sin verificar",
+    "profile.updates.channelLabel": "Canal",
+    "profile.updates.channelAria": "Selección de canal de actualizaciones",
+    "profile.updates.channel.estable": "Estable",
+    "profile.updates.channel.beta": "Beta",
+    "profile.updates.check": "Buscar actualizaciones",
+    "profile.updates.checking": "Buscando…",
+    "profile.updates.checkError": "No se pudieron buscar actualizaciones.",
+    "profile.updates.channelError": "No se pudo cambiar el canal.",
+    "profile.updates.advisoryUnavailable":
+      "No se pudo consultar el canal. Intenta de nuevo más tarde.",
+    "profile.updates.available": "Hay una actualización disponible: {version}",
+    "profile.updates.upToDate": "Estás al día.",
 
     "profile.cuenta.checkingVault": "Comprobando la bóveda…",
     "profile.cuenta.loadError": "No se pudo cargar el estado de la bóveda.",
@@ -2047,6 +2066,25 @@ export const messages = {
     "profile.section.preferencias": "Preferences",
     "profile.section.conexiones": "Connections",
     "profile.section.mundos": "Worlds",
+    "profile.section.actualizaciones": "Updates",
+
+    "profile.updates.panelTitle": "Updates",
+    "profile.updates.manualHint":
+      "Checks are manual: nothing runs in the background.",
+    "profile.updates.currentVersion": "Installed version",
+    "profile.updates.versionUnknown": "Not checked",
+    "profile.updates.channelLabel": "Channel",
+    "profile.updates.channelAria": "Update channel selection",
+    "profile.updates.channel.estable": "Stable",
+    "profile.updates.channel.beta": "Beta",
+    "profile.updates.check": "Check for updates",
+    "profile.updates.checking": "Checking…",
+    "profile.updates.checkError": "Could not check for updates.",
+    "profile.updates.channelError": "Could not change the channel.",
+    "profile.updates.advisoryUnavailable":
+      "Could not reach the channel. Try again later.",
+    "profile.updates.available": "An update is available: {version}",
+    "profile.updates.upToDate": "You're up to date.",
 
     "profile.cuenta.checkingVault": "Checking the vault…",
     "profile.cuenta.loadError": "Could not load the vault status.",
