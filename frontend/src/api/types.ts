@@ -209,6 +209,67 @@ export interface UpdateApplyResult {
 }
 
 // ---------------------------------------------------------------------------
+// Bug report (report-diagnostics-bundle / report-submission)
+
+/** The only platform/environment facts a report bundle may carry. */
+export interface BugReportPlatform {
+  os: string;
+  os_version: string;
+  arch: string;
+  python_version: string;
+}
+
+/** Content-scanned logs block of the assembled bundle. `included` is false
+ *  (with a non-secret `reason`) when the source is unavailable or oversized. */
+export interface BugReportLogs {
+  included: boolean;
+  content: string;
+  redacted_lines: number;
+  reason: string;
+}
+
+/**
+ * GET /api/bugreport/assemble — the default, allow-listed report bundle.
+ * Server-provided: app version, platform facts, default-on content-scanned
+ * logs, the allow-list itself and the optional-contact slot flag. World data,
+ * `.env` and the local account username are excluded server-side by
+ * construction and never appear here.
+ */
+export interface BugReportBundle {
+  app_version: string;
+  platform: BugReportPlatform;
+  logs: BugReportLogs;
+  allow_list: string[];
+  contact_slot: boolean;
+}
+
+/** POST /api/bugreport/submit request body — allow-listed fields only. The
+ *  server re-validates this set independently of any client-side check. */
+export interface BugReportSubmitPayload {
+  app_version: string;
+  platform: BugReportPlatform;
+  description: string;
+  /** Omitted/empty when the user leaves the optional contact field empty. */
+  contact?: string | null;
+  /** Removed entirely when the user removes the logs before submitting. */
+  logs?: string | null;
+}
+
+/** POST /api/bugreport/submit success response (stateless relay delivery). */
+export interface BugReportSubmitResult {
+  ok: true;
+  delivery_id: string;
+}
+
+/** POST /api/bugreport/fallback — the strict copy-paste fallback: a
+ *  privacy-scrubbed issue body plus the `maar1223/Demiurgos` issue form. */
+export interface BugReportFallback {
+  body: string;
+  issue_url: string;
+  findings: number;
+}
+
+// ---------------------------------------------------------------------------
 // Onboarding / Configuration Center (Slice 1 — Foundation)
 // ---------------------------------------------------------------------------
 
