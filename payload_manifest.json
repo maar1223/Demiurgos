@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "5b0ec92c",
+  "source_commit": "59e907f3",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -19,6 +19,8 @@
     "data/methodology/seeds/narrative-character-creation/checksums.json",
     "data/methodology/seeds/narrative-character-creation/manifest.yaml",
     "data/methodology/seeds/narrative-character-creation/source.md",
+    "scripts/install-demiurgos.ps1",
+    "scripts/install-demiurgos.sh",
     "scripts/start-demiurgos.sh",
     "src/tools/capability_probes/__init__.py",
     "src/tools/capability_probes/fixtures/logo-demiurgos-altered.jpg",
@@ -109,12 +111,14 @@
     "src/tools/demiurgos-suite/wiki/readiness.py",
     "src/tools/demiurgos-suite/wiki/retirement_gate.py",
     "src/tools/demiurgos-suite/wiki/semantic_intent.py",
+    "src/tools/demiurgos-suite/wiki/semver.py",
     "src/tools/demiurgos-suite/wiki/skill_materializer.py",
     "src/tools/demiurgos-suite/wiki/skill_renderer.py",
     "src/tools/demiurgos-suite/wiki/skill_router.py",
     "src/tools/demiurgos-suite/wiki/skill_session_epochs.py",
     "src/tools/demiurgos-suite/wiki/system_control.py",
     "src/tools/demiurgos-suite/wiki/telegram_settings.py",
+    "src/tools/demiurgos-suite/wiki/updater.py",
     "src/tools/demiurgos-suite/wiki/warmup_gateway.py",
     "src/tools/demiurgos-suite/wiki/wordlists/eff_large_wordlist.txt",
     "src/tools/demiurgos-suite/wiki/world_authority.py",
@@ -288,7 +292,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1257
+        "line": 1313
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
