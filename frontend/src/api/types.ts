@@ -193,6 +193,21 @@ export interface UpdateStatus {
   advisory_unavailable: boolean;
 }
 
+/**
+ * Result of POST /api/update/apply. The backend is the only authority: it
+ * resolves the offered version server-side (no client-supplied version) and
+ * dispatches the installer detached. `accepted: false` with an `error` is a
+ * 500/503-shaped rejection (early installer failure, spawn failure, or
+ * installer unavailable); the 409 "nothing available" case surfaces as an
+ * `ApiError` and never produces this payload.
+ */
+export interface UpdateApplyResult {
+  action: "update";
+  accepted: boolean;
+  version?: string;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Onboarding / Configuration Center (Slice 1 — Foundation)
 // ---------------------------------------------------------------------------
