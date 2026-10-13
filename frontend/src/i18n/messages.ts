@@ -157,6 +157,7 @@ export const messages = {
     "profile.section.mundos": "Mundos",
     "profile.section.actualizaciones": "Actualizaciones",
     "profile.section.reporte": "Reporte de errores",
+    "profile.section.guia": "Guía de uso",
 
     "profile.updates.panelTitle": "Actualizaciones",
     "profile.updates.manualHint":
@@ -224,6 +225,64 @@ export const messages = {
     "profile.bugreport.fallbackCopied": "Copiado",
     "profile.bugreport.fallbackOpen": "Abrir formulario de incidencias",
     "profile.bugreport.fallbackBodyLabel": "Cuerpo del informe",
+
+    "profile.guide.panelTitle": "Guía de uso",
+    "profile.guide.intro":
+      "Pasos esenciales para empezar, importar un mundo y mantener la aplicación al día.",
+
+    "profile.guide.firstSteps.title": "Primeros pasos",
+    "profile.guide.firstSteps.lead":
+      "Prepara tu cuenta, un mundo y la primera acción.",
+    "profile.guide.firstSteps.step1":
+      "Abre Demiurgos en el navegador; el primer arranque muestra el onboarding.",
+    "profile.guide.firstSteps.step2":
+      "Configura la cuenta local y las palabras de recuperación en Perfil → Cuenta.",
+    "profile.guide.firstSteps.step3": "Crea un mundo nuevo o importa uno existente.",
+    "profile.guide.firstSteps.step4": "Entra a la wiki y abre una ficha para editar.",
+
+    "profile.guide.import.title": "Importar un mundo",
+    "profile.guide.import.lead":
+      "Convierte borradores de Word o PDF a formato OKF.",
+    "profile.guide.import.step1":
+      "Ve a la wiki de tu mundo y abre el importador.",
+    "profile.guide.import.step2":
+      "Sube un archivo .docx o .pdf (también admite exportaciones de Notion).",
+    "profile.guide.import.step3":
+      "Antes de escribir, el sistema guarda un punto de control con copia de respaldo: revisa y aprueba el resumen.",
+    "profile.guide.import.step4":
+      "Confirma la ejecución; si algo falla, usa rollback para restaurar el estado anterior.",
+
+    "profile.guide.workshop.title": "Taller de herramientas",
+    "profile.guide.workshop.lead":
+      "Explora los talleres y las metodologías creativas.",
+    "profile.guide.workshop.step1":
+      "Abre Taller de herramientas desde la navegación.",
+    "profile.guide.workshop.step2":
+      "Consulta las metodologías disponibles y sus skills.",
+    "profile.guide.workshop.step3":
+      "Aplica una herramienta para guiar el trabajo de tu mundo.",
+
+    "profile.guide.report.title": "Reportar un bug",
+    "profile.guide.report.lead":
+      "Informa un problema desde la propia aplicación.",
+    "profile.guide.report.step1": "Ve a Perfil → Reporte de errores.",
+    "profile.guide.report.step2":
+      "Revisa el informe generado y edita la descripción.",
+    "profile.guide.report.step3":
+      "Envía el informe: se entrega por el canal de relé.",
+    "profile.guide.report.step4":
+      "Si el envío falla, copia el texto y ábrelo en el formulario de incidencias de GitHub.",
+
+    "profile.guide.updates.title": "Actualizaciones",
+    "profile.guide.updates.lead":
+      "Mantén Demiurgos al día con los canales Estable o Beta.",
+    "profile.guide.updates.step1": "Ve a Perfil → Actualizaciones.",
+    "profile.guide.updates.step2":
+      "Elige el canal Estable para versiones estables o Beta para probar antes.",
+    "profile.guide.updates.step3":
+      "Pulsa Buscar actualizaciones para comprobar si hay una versión nueva.",
+    "profile.guide.updates.step4":
+      "Instala y reinicia cuando quieras aplicar la actualización.",
 
     "profile.cuenta.checkingVault": "Comprobando la bóveda…",
     "profile.cuenta.loadError": "No se pudo cargar el estado de la bóveda.",
@@ -2125,6 +2184,7 @@ export const messages = {
     "profile.section.mundos": "Worlds",
     "profile.section.actualizaciones": "Updates",
     "profile.section.reporte": "Bug report",
+    "profile.section.guia": "Usage guide",
 
     "profile.updates.panelTitle": "Updates",
     "profile.updates.manualHint":
@@ -2192,6 +2252,64 @@ export const messages = {
     "profile.bugreport.fallbackCopied": "Copied",
     "profile.bugreport.fallbackOpen": "Open issue form",
     "profile.bugreport.fallbackBodyLabel": "Report body",
+
+    "profile.guide.panelTitle": "Usage guide",
+    "profile.guide.intro":
+      "Essential steps to get started, import a world, and keep the app up to date.",
+
+    "profile.guide.firstSteps.title": "First steps",
+    "profile.guide.firstSteps.lead":
+      "Set up your account, a world, and your first action.",
+    "profile.guide.firstSteps.step1":
+      "Open Demiurgos in the browser; the first launch shows the onboarding.",
+    "profile.guide.firstSteps.step2":
+      "Set up the local account and the recovery words in Profile → Account.",
+    "profile.guide.firstSteps.step3": "Create a new world or import an existing one.",
+    "profile.guide.firstSteps.step4": "Open the wiki and pick a page to edit.",
+
+    "profile.guide.import.title": "Import a world",
+    "profile.guide.import.lead":
+      "Turn Word or PDF drafts into OKF format.",
+    "profile.guide.import.step1":
+      "Go to your world's wiki and open the importer.",
+    "profile.guide.import.step2":
+      "Upload a .docx or .pdf file (Notion exports are also supported).",
+    "profile.guide.import.step3":
+      "Before writing, the system saves a checkpoint with a backup copy: review and approve the summary.",
+    "profile.guide.import.step4":
+      "Confirm the run; if anything fails, use rollback to restore the previous state.",
+
+    "profile.guide.workshop.title": "Tool workshop",
+    "profile.guide.workshop.lead":
+      "Explore the workshops and creative methodologies.",
+    "profile.guide.workshop.step1":
+      "Open Tool workshop from the navigation.",
+    "profile.guide.workshop.step2":
+      "Browse the available methodologies and their skills.",
+    "profile.guide.workshop.step3":
+      "Apply a tool to guide the work on your world.",
+
+    "profile.guide.report.title": "Report a bug",
+    "profile.guide.report.lead":
+      "Report a problem from inside the app.",
+    "profile.guide.report.step1": "Go to Profile → Bug report.",
+    "profile.guide.report.step2":
+      "Review the generated report and edit the description.",
+    "profile.guide.report.step3":
+      "Send the report: it is delivered through the relay channel.",
+    "profile.guide.report.step4":
+      "If sending fails, copy the text and open it in the GitHub issue form.",
+
+    "profile.guide.updates.title": "Updates",
+    "profile.guide.updates.lead":
+      "Keep Demiurgos current with the Stable or Beta channels.",
+    "profile.guide.updates.step1": "Go to Profile → Updates.",
+    "profile.guide.updates.step2":
+      "Pick the Stable channel for stable releases or Beta to test early.",
+    "profile.guide.updates.step3":
+      "Press Check for updates to see if a new version exists.",
+    "profile.guide.updates.step4":
+      "Install and restart when you want to apply the update.",
 
     "profile.cuenta.checkingVault": "Checking the vault…",
     "profile.cuenta.loadError": "Could not load the vault status.",
