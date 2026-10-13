@@ -6845,6 +6845,14 @@ _MATERIALIZE_PROVIDER = HermesMaterializationProvider(
 # Skill Madre provider (kernel-owned, co-creation-v1 envelope). Same adapter
 # seam as the guided provider; tests replace it after import.
 _CO_CREATION_PROVIDER = HermesCoCreationProvider(ACTIVITY_ADAPTER)
+# Skill Madre materializer (deterministic draft assembly: create_draft +
+# compile_methodology; it NEVER publishes). Bound lazily so the methodology
+# library is not constructed or seeded at import time (see
+# ``_DeferredMethodologyLibrary``); the routes read this seam directly and
+# tests replace the module attribute after import.
+_CO_CREATION_MATERIALIZER = _LazyBinding(
+    lambda: CoCreationMaterializer(_methodology_library())
+)
 # Mandatory semantic gate: Hermes-first interpretation over the runs adapter.
 # Unavailable/invalid/exhausted Hermes results fail closed as ``blocked`` with
 # localized safe copy and NO lexical/plain-chat fallback. Entry-handler

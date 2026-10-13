@@ -60,6 +60,11 @@ ROUTES = {
     ("POST", "/api/co-creation/derive"),
 }
 
+#: Production materializer seam captured at import, before any fixture swaps it
+#: for a concrete instance. Used by the API-level regression test to drive the
+#: route through the binding that ships in ``api_server`` (REQ-CC-5).
+_PRODUCTION_MATERIALIZER_SEAM = api_server._CO_CREATION_MATERIALIZER
+
 
 def _capabilities() -> Capabilities:
     return Capabilities(PROTOCOL_VERSION, True, True, True, MAX_DEADLINE_MS)
@@ -440,6 +445,49 @@ def test_materialize_requires_borrador_listo_milestone(client: TestClient, monke
     })
     assert materialized.status_code == 422
     assert materialized.json()["code"] == "invalid_input"
+
+
+def test_production_materializer_seam_is_wired() -> None:
+    """REQ-CC-5 regression: the production seam must not be ``None``.
+
+    Before the fix ``_CO_CREATION_MATERIALIZER`` was declared but never
+    assigned, so ``materialize``/``derive``/``canvas``/``validate`` fail closed
+    with 503 ``capability_unavailable`` in production (only tests injected the
+    seam). This guards the wiring against silently regressing to ``None``.
+    """
+    assert api_server._CO_CREATION_MATERIALIZER is not None
+
+
+def test_materialize_route_does_not_fail_closed_through_production_seam(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-5 regression at the API level, driven through the REAL seam.
+
+    Re-installs the production ``_CO_CREATION_MATERIALIZER`` binding (captured
+    at import, before any fixture replaces it) and drives a session at
+    ``borrador_listo`` through ``POST .../materialize``. On the pre-fix code the
+    production seam is ``None`` and the route returns 503
+    ``capability_unavailable``; with it wired the draft is materialized.
+    """
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    seam = _PRODUCTION_MATERIALIZER_SEAM
+    assert seam is not None
+    if isinstance(seam, api_server._LazyBinding):
+        # Clear any cached resolution so the lazy seam binds to THIS test's
+        # tmp library root instead of an earlier one.
+        seam._value = None
+    monkeypatch.setattr(api_server, "_CO_CREATION_MATERIALIZER", seam)
+    session_id = _create_session(client)
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={"base_revision": 1, "name": "Batallas Épicas", "skill_id": "batallas-epicas"},
+    )
+    assert materialized.status_code != 503, materialized.text
+    assert materialized.json().get("code") != "capability_unavailable", materialized.text
+    assert materialized.status_code == 200, materialized.text
+    assert materialized.json()["ok"] is True
+    assert materialized.json()["draft_id"]
 
 
 def test_turns_never_create_library_drafts(client: TestClient, monkeypatch) -> None:
