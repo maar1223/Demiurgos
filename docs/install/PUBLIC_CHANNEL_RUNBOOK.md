@@ -83,6 +83,9 @@ El pipeline construye el frontend una sola vez, empaqueta por sistema, audita el
 payload, firma `SHA256SUMS`, publica en el canal con `--repo` explícito, y
 **solo si** el smoke anónimo posterior pasa, mueve `latest`.
 
+Para la regla de **qué número** subir (PATCH o MINOR) y el canal según `beta`,
+ver `docs/RELEASING.md`.
+
 ## 6. Verificar la descarga anónima (obligatorio antes de difundir)
 
 Sin credenciales, desde una máquina limpia:
