@@ -2,22 +2,22 @@
 
 > **Qué es.** Procedimiento **manual** para validar de extremo a extremo la co-creación de Skills del Taller de Herramientas (MVP Alfa, ítem D) contra un proveedor Hermes **real**. No es un smoke test automático: cada paso lo ejecuta una persona y compara el resultado con el esperado.
 > **Alcance.** Cubre arranque + semilla fundacional, biblioteca/activación/compañeros + router, sesión de co-creación real, materializar → publicar → derivar, e importar + consumo guiado.
-> **Aviso de estado (leer antes de empezar).** En el commit de referencia `01fc2f2d`, el seam `_CO_CREATION_MATERIALIZER` (`src/tools/demiurgos-suite/wiki/api_server.py`) se declara `None` y **no se cablea en producción** (solo los tests lo inyectan). Por eso los pasos de **materializar/derivar/canvas/validate** responden hoy **503 `capability_unavailable`**; ver §0 para el detalle y §4 para el punto exacto. Este runbook documenta el flujo completo para que el gate lo verifique, y marca con claridad lo que hoy está bloqueado.
+> **Aviso de estado (leer antes de empezar).** El seam `_CO_CREATION_MATERIALIZER` (`src/tools/demiurgos-suite/wiki/api_server.py`) **está cableado**: se enlaza perezosamente junto a `_CO_CREATION_PROVIDER` y construye `CoCreationMaterializer(_methodology_library())` en el primer uso. Por eso los pasos de **materializar/derivar/canvas/validate** ya **no** responden 503 `capability_unavailable` por falta de materializador; ver §0 para el detalle y §4 para el punto exacto. Este runbook documenta el flujo completo para que el gate lo verifique.
 
 ---
 
 ## 0. Estado de partida (lo que hoy funciona y lo que no)
 
-| Área | Estado verificado en `01fc2f2d` |
+| Área | Estado verificado |
 |---|---|
 | Arranque, semilla fundacional, biblioteca, activación, compañeros, router | **Operativo** (con Hermes real donde se indica) |
 | Sesión de co-creación: crear, `turn`, `progress`, `trigger/approve` | **Operativo** (requiere Hermes real) |
-| `materialize`, `derive`, `canvas`, `validate` | **Bloqueado**: 503 `capability_unavailable` — el seam `_CO_CREATION_MATERIALIZER` nunca se asigna fuera de los tests |
-| `publish` / `activate` de una co-creación | Mecánicamente disponibles, pero en la práctica dependen de un borrador, y el único camino de co-creación que crea el borrador es `materialize` (bloqueado) |
+| `materialize`, `derive`, `canvas`, `validate` | **Operativo**: el seam `_CO_CREATION_MATERIALIZER` está cableado en producción (enlace perezoso, construido en el primer uso) |
+| `publish` / `activate` de una co-creación | Disponibles; dependen de un borrador creado por `materialize` (ya operativo) |
 
-**Evidencia del bloqueo** (`src/tools/demiurgos-suite/wiki/api_server.py`): declaración en `_CO_CREATION_MATERIALIZER: CoCreationMaterializer | None = None` (línea 3496) y lecturas que fallan cerrado en `materialize` (≈3851), `publish` (opcional, ≈3977), `derive` (≈4194), `canvas` (≈4311) y `validate` (≈4351). No existe ninguna asignación de producción: `grep -rn '_CO_CREATION_MATERIALIZER' src/tools/demiurgos-suite/` devuelve solo la declaración, las lecturas y los `monkeypatch` de `tests/test_co_creation_api.py`. La ruta alterna (no co-creación) `/api/methodologies/drafts` + `/publish` sí funciona.
+**Evidencia del cableado** (`src/tools/demiurgos-suite/wiki/api_server.py`): declaración en `_CO_CREATION_MATERIALIZER: CoCreationMaterializer | None = None` (línea 3496) y lecturas que resuelven el seam en `materialize` (≈3851), `publish` (opcional, ≈3977), `derive` (≈4194), `canvas` (≈4311) y `validate` (≈4351). La asignación de producción vive junto a `_CO_CREATION_PROVIDER` y enlaza perezosamente el materializador: `_CO_CREATION_MATERIALIZER = _LazyBinding(lambda: CoCreationMaterializer(_methodology_library()))`. El enlace perezoso evita construir o sembrar la biblioteca al importar el módulo (ver `_DeferredMethodologyLibrary`); los tests siguen reemplazando el atributo después del import (`tests/test_co_creation_api.py`). La regresión está cubierta por `test_production_materializer_seam_is_wired` y `test_materialize_route_does_not_fail_closed_through_production_seam`. La ruta alterna (no co-creación) `/api/methodologies/drafts` + `/publish` sigue funcionando igual.
 
-Si el objetivo del gate es la co-creación completa, antes hay que cablear ese seam (cambio de código, **fuera del alcance de este documento**). Los pasos 1–3 y la parte de biblioteca del paso 5 se pueden validar igual.
+Con el seam cableado, la co-creación completa es validable de extremo a extremo en el gate. Los pasos 1–3 y la parte de biblioteca del paso 5 ya se podían validar sin el seam; ahora también los pasos 4–5 con `materialize`/`derive`.
 
 ---
 
@@ -48,7 +48,7 @@ JAR=/tmp/demiurgos-cookies.txt
 2. **Semilla fundacional**: verificar `narrative-character-creation` en la biblioteca.
 3. **Biblioteca/activación/compañeros** + router: activar una versión y listar compañeros.
 4. **Sesión real de co-creación**: crear sesión, responder turnos, revisar hitos y techo de preguntas.
-5. **Materializar → revisar → publicar → derivar** *(hoy bloqueado en materialize/derive)*.
+5. **Materializar → revisar → publicar → derivar**.
 6. **Importar** un paquete y **consumir** la versión activada en el flujo guiado.
 
 ---
@@ -193,9 +193,9 @@ curl -fsS -b "$JAR" "$API/api/co-creation/sessions/<SESSION_ID>/progress"
 
 **Guardas adicionales:** `base_revision` obsoleto → `409 revision_conflict`; sesión de otro principal → `403`; desconocida/expirada → `404`; sesión ya `complete` → `422`.
 
-### Paso 4 — Materializar → revisar → publicar → derivar *(hoy bloqueado)*
+### Paso 4 — Materializar → revisar → publicar → derivar
 
-> ⚠️ **Bloqueante verificado.** `POST .../materialize`, `POST /api/co-creation/derive`, `PUT .../canvas` y `POST .../validate` devuelven **503 `capability_unavailable`** porque `_CO_CREATION_MATERIALIZER` es `None` en producción (ver §0). Hasta cablear el seam, este paso no produce borrador. Se documenta igualmente el flujo objetivo para que el gate lo valide cuando el seam esté cableado.
+> ✅ **Seam cableado.** `POST .../materialize`, `POST /api/co-creation/derive`, `PUT .../canvas` y `POST .../validate` resuelven el materializador a través del seam `_CO_CREATION_MATERIALIZER` (enlace perezoso; ver §0), por lo que este paso ya produce borrador. Si el materializador no se pudiera construir, la ruta sigue fallando cerrado con 503 `capability_unavailable` (guarda defensiva, no estado por defecto).
 
 **Materializar** (Autor confirma `borrador_listo`; crea un **borrador**, nunca publica):
 
@@ -307,10 +307,10 @@ curl -fsS -b "$JAR" -X POST "$API/api/methodologies/published/<SKILL>/<VERSION>/
 | 7 | `POST .../turn` con `base_revision` | `200`, revisión+1, una pregunta | No (requiere gateway) |
 | 8 | Superar 20 preguntas | `422 ceiling_reached`, cero mutación | No |
 | 9 | Sobre con clave de autoridad (stub) | `422 invalid_envelope`/`502 malformed_output`, cero mutación | Manual/opcional |
-| 10 | `POST .../materialize` en `borrador_listo` | `{ draft_id, ok: true }`, `phase=review` | **Sí — 503** |
-| 11 | `PUT .../canvas` / `POST .../validate` | `ok` + `issues[]`; validación sin mutación | **Sí — 503** |
+| 10 | `POST .../materialize` en `borrador_listo` | `{ draft_id, ok: true }`, `phase=review` | No |
+| 11 | `PUT .../canvas` / `POST .../validate` | `ok` + `issues[]`; validación sin mutación | No |
 | 12 | `POST .../publish` | `phase=complete` + `published{digest}` | Depende de #10 |
-| 13 | `POST /api/co-creation/derive` | `{ draft_id, derived_from }`, versión parent+1 | **Sí — 503** |
+| 13 | `POST /api/co-creation/derive` | `{ draft_id, derived_from }`, versión parent+1 | No |
 | 14 | `POST /api/methodologies/import` + `/trust` | Cuarentena con veredicto; borrador tras confiar; `409` para el id reservado | No |
 | 15 | Publicar/activar el import + `guided-character/session` | Sesión guiada fija la versión activada | No (requiere gateway) |
 
@@ -333,7 +333,7 @@ Adjunta al reporte del gate, como mínimo:
 
 ## Siguiente paso
 
-- Si el gate debe cubrir la co-creación completa: cablear `_CO_CREATION_MATERIALIZER` en `api_server.py` (construcción fuera de tests, p. ej. junto a `_CO_CREATION_PROVIDER`) y repetir los pasos 4–5. Es un cambio de **código**, separado de este runbook.
+- Co-creación completa: el seam `_CO_CREATION_MATERIALIZER` ya está cableado en `api_server.py` (enlace perezoso junto a `_CO_CREATION_PROVIDER`), así que los pasos 4–5 se pueden validar de extremo a extremo en el gate sin cambios de código.
 - Contrato de superficie del Taller: `docs/architecture/tool-workshop.md` (§8).
 - Contrato de selección/ruteo: `docs/architecture/skill-runtime-consumption-contract.md`.
 - Subsistema técnico (biblioteca, compilador, ciclo de vida): `docs/architecture/skill-library-and-guided-character-creation.md`.
