@@ -84,7 +84,8 @@ payload, firma `SHA256SUMS`, publica en el canal con `--repo` explícito, y
 **solo si** el smoke anónimo posterior pasa, mueve `latest`.
 
 Para la regla de **qué número** subir (PATCH o MINOR) y el canal según `beta`,
-ver `docs/RELEASING.md`.
+ver `docs/RELEASING.md`. El procedimiento operativo del agente (pasos, checklist,
+clasificación por tag) vive en la skill `skills/release-protocol/SKILL.md`.
 
 ## 6. Verificar la descarga anónima (obligatorio antes de difundir)
 
