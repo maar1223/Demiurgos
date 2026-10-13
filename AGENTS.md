@@ -191,6 +191,16 @@ Use SDD for substantial features or architectural changes. The workflow:
 
 ---
 
+## Release & versioning (protocolo)
+
+- **Formato**: `v0.<MINOR>.<PATCH>` mientras Demiurgos esté en Alfa (`1.0.0` reservado; todavía no se usa).
+- **Número**: arreglo chico → PATCH (el último); algo nuevo o visible para el usuario → MINOR (el del medio).
+- **Canal automático**: sin `beta` en el nombre → Estable (Recomendado); con `beta` → Beta (Anticipado, opt-in). No se elige a mano.
+- **Publicar = tag + push** (`git tag vX.Y.Z && git push origin vX.Y.Z`); el tag ES la versión (no se edita ningún archivo).
+- Publicar es público: **solo con pedido explícito del Owner**. Protocolo completo: `docs/RELEASING.md`.
+
+---
+
 ## Execution Mode
 
 When starting a new SDD or multi-phase action, ask:
