@@ -97,7 +97,7 @@ describe("ProfilePage — Actualizaciones section", () => {
   it("lists the sixth section in the rail", () => {
     renderProfile("/perfil?tab=actualizaciones");
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(7);
+    expect(tabs).toHaveLength(8);
     expect(screen.getByRole("tab", { name: "Actualizaciones" })).toBeInTheDocument();
   });
 

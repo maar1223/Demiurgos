@@ -383,7 +383,7 @@ describe("ProfilePage — bug-report section entry (7th, after Actualizaciones)"
     await screen.findByRole("heading", { name: "Sesión", level: 3 });
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(7);
+    expect(tabs).toHaveLength(8);
     expect(tabs[5].textContent).toBe(tEs("profile.section.actualizaciones"));
     expect(tabs[6].textContent).toBe(tEs("profile.section.reporte"));
     expect(screen.getByRole("tab", { name: tEs("profile.section.reporte") })).toHaveAttribute(

@@ -562,6 +562,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
       tEs("profile.section.mundos"),
       tEs("profile.section.actualizaciones"),
       tEs("profile.section.reporte"),
+      tEs("profile.section.guia"),
     ]);
     const activeTab = within(tablist).getByRole("tab", { name: tEs("profile.section.cuenta") });
     expect(activeTab).toHaveAttribute("aria-selected", "true");
@@ -591,23 +592,23 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
     );
 
     fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.respaldo") }), { key: "End" });
-    expect(screen.getByRole("tab", { name: tEs("profile.section.reporte") })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: tEs("profile.section.reporte") })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.guia") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.guia") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.reporte") }), { key: "Home" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.guia") }), { key: "Home" });
     expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveFocus();
     expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    // ArrowLeft wraps back to the last tab (the bug-report entry).
+    // ArrowLeft wraps back to the last tab (the usage-guide entry).
     fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.cuenta") }), { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: tEs("profile.section.reporte") })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: tEs("profile.section.reporte") })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.guia") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.guia") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
