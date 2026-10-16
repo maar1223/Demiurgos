@@ -8197,10 +8197,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # old zero-companion byte-freeze: companion-free worlds with a real session
     # now await routing (≤ ROUTING_AWAIT_TIMEOUT_SECONDS, fail-open — a timeout
     # yields winner=None and no injection) and may inject a transversal method.
-    # Session-less turns keep today's fire-and-forget byte-for-byte. Exactly one
-    # class injects — companion precedence is preserved by the ``or``
-    # short-circuit — and the single early_route_task is reused at stream close
-    # (exactly one routing decision per turn).
+    # Session-less turns do no routing and stay byte-identical to the base.
+    # Exactly one class injects — companion precedence is preserved by the
+    # ``or`` short-circuit — and the single early_route_task is reused at
+    # stream close (exactly one routing decision per turn).
     library = _methodology_library()
     companions = library.list_companions(mundo)
     early_route_task = None

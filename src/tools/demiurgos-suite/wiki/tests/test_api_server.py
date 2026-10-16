@@ -44,7 +44,7 @@ from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
 from methodology_compiler import compile_methodology  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
-from methodology_seed import load_seed_catalog  # noqa: E402
+from methodology_seed import install_seeds, load_seed_catalog  # noqa: E402
 from methodology_trust import build_package, inspect_package  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
@@ -3359,6 +3359,26 @@ class TestMethodologyApi:
         assert trusted.json()["code"] == "reserved_skill_id"
         assert client.get("/api/methodologies/status").json()["drafts"] == []
 
+    def test_system_skill_id_rejected_at_trust(self, client: TestClient, monkeypatch):
+        """WU-3 quarantine-trust coverage: the reserved foundational Sistema id
+        is rejected with 409 reserved_skill_id and no draft is created — the
+        system skill is reserved exactly like the character skill."""
+        _principal(monkeypatch, "author-1")
+        foundational = build_package({
+            "skill_id": "narrative-system-creation",
+            "version": "1.0",
+            "name": "Creación de Sistemas",
+            "description": "La skill fundacional de sistemas.",
+            "phases": ["conversation", "review", "complete"],
+            "language": "es",
+        }, "## Sistema\n\nTexto.\n")
+        imported = self._upload(client, foundational, filename="sistema.zip").json()
+        assert imported["verdict"]["ok"] is True
+        trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
+        assert trusted.status_code == 409
+        assert trusted.json()["code"] == "reserved_skill_id"
+        assert client.get("/api/methodologies/status").json()["drafts"] == []
+
     def test_reserved_skill_id_rejected_at_publish(self, client: TestClient, monkeypatch):
         """REQ-IMP-6 scenario: an import-derived foundational character-skill
         draft can never be published (409 reserved_skill_id)."""
@@ -3873,6 +3893,38 @@ class TestTransversalActivityConsumption:
         assert adapter.prompts[0].endswith("\n\nHola")
         # Exactly one semantic provider run — the gate; routing adds none.
         assert runs.starts == 1
+
+    def test_real_seed_injects_full_system_method_contract(self, client, monkeypatch, tmp_path):
+        """WARNING-1 regression: the REAL repo seed's method — not the synthetic
+        stand-in the E2E tests publish — is what the transversal seam injects.
+        Installing the real seed catalog and routing its skill yields a
+        projection carrying all nine question markers, the five origin classes,
+        the ``Rieles 40%`` completeness rail, and the Cronología boundary, within
+        the default token bound. This locks the seed's ``description`` contract
+        against future byte-edits."""
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.installed == 2 and report.conflict == 0
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+        contract = api_server._transversal_contract_for(
+            "narrative-system-creation", "test_mundo"
+        )
+
+        assert contract is not None
+        assert contract.startswith("[Foundational methodology: Creación de Sistemas]\n")
+        for marker in (f"({n})" for n in range(1, 10)):
+            assert marker in contract, f"missing question marker {marker}"
+        for clase in (
+            "material/construido", "innato/biológico", "otorgado/divino",
+            "natural/cósmico", "social/convencional",
+        ):
+            assert clase in contract, f"missing origin class {clase}"
+        assert "Rieles 40%" in contract
+        assert "Cronología" in contract
+        # Default projection bound (≤1000 tokens, ~4 chars/token).
+        projected = contract.split("\n", 1)[1]
+        assert len(projected) <= 1000 * 4
 
     def test_transversal_marker_no_digest_no_path(self, client, monkeypatch, tmp_path):
         """The transversal marker is bounded: name + projected markdown only."""
