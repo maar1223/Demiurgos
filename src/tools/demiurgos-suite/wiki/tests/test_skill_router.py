@@ -198,8 +198,11 @@ def test_available_skills_without_activation_are_just_transversal() -> None:
 
 
 def test_transversal_pool_is_audit_derived() -> None:
-    """The transversal pool is exactly the foundational skill (audit-derived)."""
-    assert set(TRANSVERSAL_SKILLS) == {"narrative-character-creation"}
+    """The transversal pool is exactly the server-seeded foundational skills."""
+    assert set(TRANSVERSAL_SKILLS) == {
+        "narrative-character-creation",
+        "narrative-system-creation",
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -32,6 +32,8 @@ from methodology_library import (  # noqa: E402
     MethodologyLibraryError,
     NotPublishedError,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
+    FOUNDATIONAL_SKILL_IDS,
+    FOUNDATIONAL_SYSTEM_SKILL_ID,
     FoundationalImmutableError,
     PublishedVersion,
     TriggerNotApprovedError,
@@ -1065,6 +1067,33 @@ class TestReservedSkillId:
     def test_constant_value_is_pinned(self) -> None:
         assert FOUNDATIONAL_CHARACTER_SKILL_ID == "narrative-character-creation"
 
+    def test_reserved_set_contains_both_foundational_ids(self) -> None:
+        """The reserved set is the single source of truth for both ids."""
+        assert FOUNDATIONAL_SYSTEM_SKILL_ID == "narrative-system-creation"
+        assert FOUNDATIONAL_SKILL_IDS == {
+            "narrative-character-creation",
+            "narrative-system-creation",
+        }
+
+    def test_publish_import_derived_system_is_rejected(self, tmp_path: Path) -> None:
+        """REQ-IMP-6: the system-creation id is reserved exactly like the
+        character id — an import-derived draft can never publish it."""
+        library = _library(tmp_path)
+        original = library.create_draft(
+            skill_id=FOUNDATIONAL_SYSTEM_SKILL_ID, version="1.0.0",
+            name="Sistema", source=_valid_source(),
+            description="La skill fundacional de sistemas.",
+        )
+        _publish(library, original)
+        derived = library.create_derived_draft(
+            FOUNDATIONAL_SYSTEM_SKILL_ID, "1.0.0",
+            seed_source=_valid_source(), name="Sistema importado",
+        )
+        with pytest.raises(MethodologyLibraryError) as excinfo:
+            _publish(library, derived)
+        assert str(excinfo.value) == "reserved_skill_id"
+        assert library.get_published(FOUNDATIONAL_SYSTEM_SKILL_ID, "1.0.1") is None
+
     def test_publish_foundational_original_is_allowed(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
         draft_id = library.create_draft(
@@ -1417,7 +1446,7 @@ class TestFoundationalSeedV12Channels:
         shutil.copytree(SEED_ROOT, seed_root)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
-        assert report.installed == 1 and report.conflict == 0
+        assert report.installed == 2 and report.conflict == 0
         assert [v["version"] for v in
                 library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.2"]
         library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")

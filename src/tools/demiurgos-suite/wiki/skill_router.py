@@ -20,16 +20,16 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assistant_activity import HermesActivityRequest
-from methodology_library import FOUNDATIONAL_CHARACTER_SKILL_ID, GUIDED_CHARACTER_FLOW
+from methodology_library import FOUNDATIONAL_SKILL_IDS, GUIDED_CHARACTER_FLOW
 
-# Audit-derived transversal pool (SR2): the methodology library publishes exactly
-# one foundational transversal today — narrative-character-creation (1 recoverable
-# of the 20 audited skills; 19 are legacy). The six legacy transversal slugs and
-# the keyword fallback layer were retired in PR ② so every routing candidate
-# traces to a foundational / companion / flow-slot class (pool traceability).
-TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
-    FOUNDATIONAL_CHARACTER_SKILL_ID,
-})
+# Transversal candidate pool (SR2): every server-seeded foundational skill is a
+# routing candidate in every world, sourced from the methodology library's
+# reserved-id set (single source of truth — no duplicated literals). Today that
+# is narrative-character-creation and narrative-system-creation; the six legacy
+# transversal slugs and the keyword fallback layer were retired in PR ② so
+# every routing candidate traces to a foundational / companion / flow-slot
+# class (pool traceability).
+TRANSVERSAL_SKILLS: frozenset[str] = FOUNDATIONAL_SKILL_IDS
 
 CONFIDENCE_THRESHOLD = 0.7
 

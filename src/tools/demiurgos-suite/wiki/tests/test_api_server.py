@@ -3563,7 +3563,9 @@ class TestSeedFirstBoot:
         response = client.get("/api/methodologies/inventory")
         assert response.status_code == 200
         items = response.json()["items"]
-        assert [item["skill_id"] for item in items] == ["narrative-character-creation"]
+        assert [item["skill_id"] for item in items] == [
+            "narrative-character-creation", "narrative-system-creation",
+        ]
         item = items[0]
         assert item["version"] == "1.2"
         assert item["clasificacion"] == "Oficiales"
@@ -3575,7 +3577,9 @@ class TestSeedFirstBoot:
         _principal(monkeypatch, "author-1")
         status = client.get("/api/methodologies/status").json()
         published = status["published"]
-        assert [p["skill_id"] for p in published] == ["narrative-character-creation"]
+        assert [p["skill_id"] for p in published] == [
+            "narrative-character-creation", "narrative-system-creation",
+        ]
         assert published[0]["clasificacion"] == "Oficiales"
         assert published[0]["trust_attributes"] == ["fundacional"]
 

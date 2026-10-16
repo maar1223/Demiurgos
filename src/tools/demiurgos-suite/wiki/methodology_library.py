@@ -48,6 +48,19 @@ logger = logging.getLogger("demiurgos-api")
 # truth shared with the skill router and the API trust boundary.
 FOUNDATIONAL_CHARACTER_SKILL_ID = "narrative-character-creation"
 
+# The id of the author-created foundational system-creation skill (Sistema).
+# Reserved exactly like the character id: never publishable from an
+# import-derived draft (REQ-IMP-6).
+FOUNDATIONAL_SYSTEM_SKILL_ID = "narrative-system-creation"
+
+# Every reserved foundational id. Import-derived publishing is refused for any
+# member; the skill router's transversal pool and the API trust boundary share
+# this single set instead of duplicating literals.
+FOUNDATIONAL_SKILL_IDS: frozenset[str] = frozenset({
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
+    FOUNDATIONAL_SYSTEM_SKILL_ID,
+})
+
 # Guided flow types (SR1 — one activation slot per guided-flow type per world;
 # contract §2). ``guided-character`` is the shipped guided flow; ``co-creation``
 # is the Author-facing skill-creation flow. The set is the enumeration for the
@@ -676,12 +689,12 @@ class MethodologyLibrary:
         now = _utcnow()
         with self._lock:
             draft_record = self._drafts.get(draft_id) or {}
-            # REQ-IMP-6: this id belongs to the author-created foundational
-            # character-creation skill and is never publishable from an import-derived
+            # REQ-IMP-6: this id is a reserved foundational skill (character- or
+            # system-creation) and is never publishable from an import-derived
             # draft (server-injected ``parent_skill_id``). The Skill Madre is a core
             # co-creation capability outside this library (G13) — no guard needed here.
             if (
-                compiled.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID
+                compiled.skill_id in FOUNDATIONAL_SKILL_IDS
                 and draft_record.get("parent_skill_id")
             ):
                 raise MethodologyLibraryError("reserved_skill_id")

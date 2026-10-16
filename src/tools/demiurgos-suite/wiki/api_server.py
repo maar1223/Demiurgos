@@ -175,6 +175,7 @@ from methodology_library import (
     SUPPORTED_FLOW_TYPES,
     TRIGGER_INTAKE_LIMIT,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
+    FOUNDATIONAL_SKILL_IDS,
     TriggerApproval,
     TriggerInvalidError,
     TriggerNotApprovedError,
@@ -10378,7 +10379,7 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
     if record is None:
         return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
     compiled = record.verdict.compiled
-    if compiled is not None and compiled.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID:
+    if compiled is not None and compiled.skill_id in FOUNDATIONAL_SKILL_IDS:
         return JSONResponse(status_code=409, content={
             "detail": "reserved_skill_id", "code": "reserved_skill_id",
         })
