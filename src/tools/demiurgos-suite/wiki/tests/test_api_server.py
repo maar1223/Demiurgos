@@ -3756,8 +3756,13 @@ class TestCompanionActivityBridge:
         assert turns[0].skill_id == "companion-skill"
 
     def test_activity_nonmatching_prompt_identical_baseline(self, client, monkeypatch, tmp_path):
-        """Zero-companion baseline == companion-no-winner prompt; one routing
-        decision per turn (no double routing)."""
+        """Zero-companion no-winner == companion-no-winner prompt; one routing
+        decision per turn (no double routing).
+
+        WU-3: companion-free worlds with a real session now AWAIT routing, so a
+        zero-companion no-winner turn still yields today's byte-identical
+        no-skill prompt (no marker injected) with exactly one routing decision.
+        """
         router = _BridgeRouter()
         library, runs, adapter = self._wire(
             monkeypatch, tmp_path, router, payloads=2, companions=False,
@@ -3767,8 +3772,11 @@ class TestCompanionActivityBridge:
         })
         assert baseline.status_code == 200
         baseline_prompt = adapter.prompts[0]
+        # The companion-free no-winner turn injects nothing (byte-identical).
+        assert "[Companion methodology:" not in baseline_prompt
+        assert "[Foundational methodology:" not in baseline_prompt
         # The same world now gains a companion but classification yields no
-        # winner: the prompt must be byte-identical to today's no-skill prompt.
+        # winner: the prompt must be byte-identical to the no-skill prompt.
         library.add_companion("test_mundo", "companion-skill", "1.0.0")
         no_winner = client.post("/api/test_mundo/ai/ask/activity", json={
             "prompt": "Hola", "session_id": "bridge-nowinner",
@@ -3811,6 +3819,96 @@ class TestCompanionActivityBridge:
             "/mnt/", "tmp/", "CompiledMethodology",
         ):
             assert forbidden not in prompt
+
+
+class TestTransversalActivityConsumption:
+    """WU-3 consume bridge: a routed transversal winner injects the bounded
+    method on the legacy channel for a companion-FREE world.
+
+    Mirrors ``TestCompanionActivityBridge`` for the generic transversal seam:
+    the world has NO companion and the router returns a foundational winner
+    (``narrative-system-creation``), yet the method content is injected; a
+    routing timeout falls back to today's prompt with persistence intact; and a
+    companion-free no-winner turn stays byte-identical to the baseline.
+    """
+
+    def _wire(self, monkeypatch, tmp_path, router, payloads=1):
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        draft_id = library.create_draft(
+            skill_id="narrative-system-creation", version="1.0",
+            name="Creación de Sistemas",
+            source="## Sistema\n\nMetodología fundacional de sistemas.\n",
+            description="Metodología fundacional para co-crear un sistema.",
+        )
+        _approve_library_trigger(
+            library, draft_id, "Metodología fundacional para co-crear un sistema."
+        )
+        library.publish(draft_id)
+        # No companion is registered: the world is companion-free (WU-3 change).
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        monkeypatch.setattr(
+            api_server, "_CONVERSATION_MEMORY", api_server.ConversationMemoryStore(":memory:")
+        )
+        monkeypatch.setattr(api_server, "_SKILL_ROUTER", router)
+        runs = _SemanticRuns(*([_semantic_payload("allow")] * payloads))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = _RecordingActivityAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        return library, runs, adapter
+
+    def test_companion_free_transversal_winner_injects_contract(self, client, monkeypatch, tmp_path):
+        """A routed transversal winner's projected method is injected as CONTENT."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("narrative-system-creation")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-1",
+        })
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        published = library.get_published("narrative-system-creation", "1.0")
+        assert f"[Foundational methodology: {published.name}]\n" in adapter.prompts[0]
+        # Projected markdown content rides in the marker (not name-only).
+        assert "Metodología fundacional para co-crear un sistema." in adapter.prompts[0]
+        assert adapter.prompts[0].endswith("\n\nHola")
+        # Exactly one semantic provider run — the gate; routing adds none.
+        assert runs.starts == 1
+
+    def test_transversal_marker_no_digest_no_path(self, client, monkeypatch, tmp_path):
+        """The transversal marker is bounded: name + projected markdown only."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("narrative-system-creation")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-leak",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Foundational methodology:" in prompt
+        for forbidden in (
+            "sha256:", "digest", "library.json", "data/methodology",
+            "/mnt/", "tmp/", "CompiledMethodology",
+        ):
+            assert forbidden not in prompt
+
+    def test_transversal_routing_timeout_falls_back_and_persists(
+        self, client, monkeypatch, tmp_path
+    ):
+        """A routing timeout keeps today's prompt AND persistence intact."""
+        library, runs, adapter = self._wire(monkeypatch, tmp_path, _SlowRouter())
+        monkeypatch.setattr(api_server, "ROUTING_AWAIT_TIMEOUT_SECONDS", 0.01)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-timeout",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Foundational methodology:" not in prompt
+        assert prompt.endswith("\n\nHola")
+        # The shielded task resolved at close: the user turn persisted with the
+        # routed winner recorded while the prompt stayed clean.
+        turns = api_server._CONVERSATION_MEMORY.get_recent_turns("transversal-timeout")
+        assert [turn.role for turn in turns] == ["user", "assistant"]
+        assert turns[0].skill_id == "companion-skill"
 
 
 def _delta_guided_provider():

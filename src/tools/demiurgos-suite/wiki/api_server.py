@@ -196,7 +196,7 @@ from semantic_intent import (
     unavailable_copy,
 )
 from conversation_memory_store import ConversationMemoryStore, Turn
-from skill_router import SkillRouter, SkillRouteResult
+from skill_router import SkillRouter, SkillRouteResult, TRANSVERSAL_SKILLS
 from contract_projection import project_contract_markdown
 from order_manifest import read_order, remove_from_order
 
@@ -6981,6 +6981,42 @@ def _companion_contract_for(
     return None
 
 
+def _transversal_contract_for(winner: str | None, mundo: str) -> str | None:
+    """Build the bounded transversal methodology marker for ``winner``.
+
+    The generic consume seam of WU-3: any routed transversal winner (a
+    foundational skill routed in every world) injects its method as bounded
+    content, so the assistant applies it instead of routing being a signal-only
+    side effect. The winner is versionless, so the newest non-deleted published
+    record is resolved via ``MethodologyLibrary.latest_published``; its bounded
+    name (≤120 chars) plus the default ``project_contract_markdown`` projection
+    (≤1000 tokens, same bound as the companion path) is returned.
+
+    ``mundo`` is accepted for call-site symmetry with ``_companion_contract_for``
+    and reserved for a future world-scoped form; it is intentionally unused —
+    the transversal form is carried by the skill's identity/data, not the world.
+
+    Fail-open: a non-``legacy`` channel, no/unknown/non-transversal winner, an
+    unavailable library, a missing published record, or any lookup exception all
+    return ``None``, so the prompt falls back to today's byte-for-byte shape.
+    """
+    if _active_channel_state() != "legacy":
+        return None
+    if winner is None or winner not in TRANSVERSAL_SKILLS:
+        return None
+    library = _methodology_library()
+    if library is None:
+        return None
+    try:
+        published = library.latest_published(winner)
+    except Exception:
+        return None
+    if published is None:
+        return None
+    name = (getattr(published, "name", "") or "")[:120]
+    return f"[Foundational methodology: {name}]\n{project_contract_markdown(published)}"
+
+
 def _persist_memory_turn(
     session_id: str, mundo: str, role: str, content: str, skill_id: str | None = None,
 ) -> None:
@@ -8154,16 +8190,22 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # (api_server_runs: _conversation_history_for_session ->
     # get_messages_as_conversation), so embedding it would duplicate history
     # and inflate the input context.
-    # Companion-gated awaited routing (bridge): when the world has ≥1 companion
-    # AND a real session is active, routing is awaited (≤5s) BEFORE the prompt
-    # is built so a companion winner's methodology can be injected as content.
-    # Zero-companion worlds and session-less turns keep today's fire-and-forget
-    # byte-for-byte: no added await and no extra provider call.
+    # Awaited routing (companion bridge + WU-3 transversal consume): when a real
+    # session is active, routing is awaited (≤5s) BEFORE the prompt is built so
+    # a routed winner's methodology can be injected as content — a companion
+    # winner's pinned method, or a routed transversal method. This DISCARDS the
+    # old zero-companion byte-freeze: companion-free worlds with a real session
+    # now await routing (≤ ROUTING_AWAIT_TIMEOUT_SECONDS, fail-open — a timeout
+    # yields winner=None and no injection) and may inject a transversal method.
+    # Session-less turns keep today's fire-and-forget byte-for-byte. Exactly one
+    # class injects — companion precedence is preserved by the ``or``
+    # short-circuit — and the single early_route_task is reused at stream close
+    # (exactly one routing decision per turn).
     library = _methodology_library()
     companions = library.list_companions(mundo)
     early_route_task = None
     skill_contract = None
-    if companions and body.session_id and _CONVERSATION_MEMORY is not None:
+    if body.session_id and _CONVERSATION_MEMORY is not None:
         early_route_task = asyncio.create_task(_route_skill(body.prompt, mundo, distilled_state))
         try:
             winner = await asyncio.wait_for(
@@ -8171,7 +8213,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             )
         except Exception:
             winner = None
-        skill_contract = _companion_contract_for(winner, companions, mundo)
+        skill_contract = (
+            _companion_contract_for(winner, companions, mundo)
+            or _transversal_contract_for(winner, mundo)
+        )
     # Skill routing is fire-and-forget: it never blocks the response and its
     # skill_id is persisted at stream close.
     activity_request = HermesActivityRequest(
@@ -8210,10 +8255,11 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         yield _sse_event(_semantic_decision_event(result).as_dict())
         completed = False
         disconnected = False
-        # Skill routing: reuse the companion-gated early task when one was
-        # started (already resolved or shielded for close-time persistence);
-        # otherwise fire-and-forget as today — the zero-companion spawn site is
-        # byte-identical and adds no provider call.
+        # Skill routing: reuse the awaited early task when one was started
+        # (already resolved or shielded for close-time persistence); otherwise
+        # fire-and-forget. The early task is now spawned for every real session
+        # (companion-free included), so this fallback runs only for the
+        # session-less shape — exactly one routing decision per turn either way.
         route_task = early_route_task
         try:
             if route_task is None and body.session_id and _CONVERSATION_MEMORY is not None:

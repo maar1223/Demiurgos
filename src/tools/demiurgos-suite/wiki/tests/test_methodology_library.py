@@ -419,6 +419,55 @@ class TestPublishedVersionsFor:
         assert [v["version"] for v in library.published_versions_for("seeded-skill")] == ["1.0"]
 
 
+class TestLatestPublished:
+    """WU-3 (Decision 1b): newest non-deleted published version per ``skill_id``.
+
+    The transversal consume seam resolves a versionless winner through this
+    helper, so it must order by ``_version_key`` (``1.10 > 1.9``), ignore
+    soft-deleted records and other ``skill_id`` values, and return ``None``
+    when nothing matches.
+    """
+
+    def _install(self, library: MethodologyLibrary, skill_id: str, version: str) -> None:
+        # Non-foundational trust keeps soft_delete available (a foundational
+        # record is immutable and would refuse the deletion fixture below).
+        outcome = library.install_published_version(
+            _compiled(skill_id=skill_id, version=version),
+            clasificacion="Personalizadas", trust_attributes=(),
+        )
+        assert outcome == "installed"
+
+    def test_picks_greatest_version_not_lexicographic(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install(library, "s", "1.9")
+        self._install(library, "s", "1.10")
+        latest = library.latest_published("s")
+        assert latest is not None
+        assert latest.version == "1.10"
+
+    def test_ignores_soft_deleted_versions(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install(library, "s", "1.10")
+        self._install(library, "s", "1.11")
+        library.soft_delete("s", "1.11")
+        latest = library.latest_published("s")
+        assert latest is not None
+        assert latest.version == "1.10"
+
+    def test_ignores_other_skill_ids(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install(library, "s", "1.0")
+        self._install(library, "other", "9.9")
+        latest = library.latest_published("s")
+        assert latest is not None
+        assert latest.version == "1.0"
+
+    def test_none_when_nothing_matches(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install(library, "other", "1.0")
+        assert library.latest_published("missing") is None
+
+
 class TestVersionKey:
     """Dependency-free dot-split version comparison (design decision)."""
 

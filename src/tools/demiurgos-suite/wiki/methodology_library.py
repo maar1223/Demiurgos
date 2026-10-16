@@ -910,6 +910,25 @@ class MethodologyLibrary:
                 if not r.get("deleted_at")
             ]
 
+    def latest_published(self, skill_id: str) -> PublishedVersion | None:
+        """Resolve the greatest non-deleted published version for ``skill_id``.
+
+        Transversal winners carry no activation pin, so the consumer seam needs
+        the newest published record by ``skill_id`` alone. Version ordering uses
+        ``_version_key`` (``1.10 > 1.9``); soft-deleted records and other
+        ``skill_id`` values are skipped. Returns ``None`` when nothing matches.
+        """
+        with self._lock:
+            best = None
+            for record in self._published.values():
+                if record.get("skill_id") != skill_id or record.get("deleted_at"):
+                    continue
+                if best is None or _version_key(record["version"]) > _version_key(
+                    best["version"]
+                ):
+                    best = record
+            return self._published_from(best) if best else None
+
     def soft_delete(self, skill_id: str, version: str) -> None:
         key = self._key(skill_id, version)
         with self._lock:
