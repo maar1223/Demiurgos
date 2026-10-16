@@ -16,9 +16,14 @@ with respect to what the model sees. Covered scenarios (spec cross-cutting
   in ``skills.external_dirs``.
 - Materialization writes nothing under the live ``data/methodology/skills/``
   folder, which keeps holding only its tracked sentinel.
-- The legacy channel modules (``skill_router.py`` / ``contract_projection.py``)
-  are unchanged versus the merge base with ``master`` (skipped when git is
-  unavailable).
+- The legacy channel projection module (``contract_projection.py``) is unchanged
+  versus the merge base with ``master`` (skipped when git is unavailable). The
+  byte-freeze is narrowed to the projection: the later change
+  ``sistema-foundational-skill`` intentionally advances ``skill_router.py`` by
+  routing a transversal foundational skill (``narrative-system-creation``) into
+  the legacy router pool, so the router is no longer part of this snapshot. The
+  dormant-legacy **presence** guard (``test_dormant_legacy_guard.py``) keeps
+  preventing its premature deletion.
 - A partial Etapa 2 delivery (a subset of the two new capabilities) changes
   nothing visible: the projection is independent of whether an approval exists.
 """
@@ -56,7 +61,6 @@ REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> r
 LIVE_SKILLS_DIR = REPO_ROOT / "data" / "methodology" / "skills"
 INSTALL_SH = REPO_ROOT / "install.sh"
 
-_ROUTER = "src/tools/demiurgos-suite/wiki/skill_router.py"
 _PROJECTION = "src/tools/demiurgos-suite/wiki/contract_projection.py"
 
 GIT_AVAILABLE = shutil.which("git") is not None
@@ -273,12 +277,20 @@ def test_installer_never_enables_skills_toolset():
     assert "platform_toolsets" not in text
 
 
-# -- Legacy channel modules unchanged ----------------------------------------
+# -- Legacy channel projection unchanged -------------------------------------
 
 
-def test_legacy_channel_modules_unchanged_vs_merge_base():
+def test_legacy_channel_projection_unchanged_vs_merge_base():
     """Scenario 'Legacy methodology channel is untouched and still serving': the
-    legacy channel modules are byte-unchanged versus the merge base with master."""
+    legacy channel projection module (``contract_projection.py``) is
+    byte-unchanged versus the merge base with master.
+
+    The freeze is narrowed to the projection. ``skill_router.py`` is
+    intentionally advanced by the later change ``sistema-foundational-skill``,
+    which routes a transversal foundational skill (``narrative-system-creation``)
+    into the legacy router pool, so its snapshot premise no longer holds. The
+    dormant-legacy presence guard (``test_dormant_legacy_guard.py``) still
+    prevents premature deletion of the legacy channel."""
     if not GIT_AVAILABLE:
         pytest.skip("git unavailable")
 
@@ -293,15 +305,18 @@ def test_legacy_channel_modules_unchanged_vs_merge_base():
         pytest.skip("merge-base with master unavailable")
     merge_base = base.stdout.strip()
 
+    # Router excluded: `sistema-foundational-skill` deliberately routes a
+    # transversal foundational skill into skill_router.py, so only the untouched
+    # projection module stays byte-frozen against the merge base.
     result = subprocess.run(
-        ["git", "diff", "--quiet", merge_base, "--", _ROUTER, _PROJECTION],
+        ["git", "diff", "--quiet", merge_base, "--", _PROJECTION],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         timeout=30,
     )
     assert result.returncode == 0, (
-        f"legacy channel modules changed vs merge-base {merge_base}: "
+        f"legacy channel projection changed vs merge-base {merge_base}: "
         f"{result.stdout}{result.stderr}"
     )
 
