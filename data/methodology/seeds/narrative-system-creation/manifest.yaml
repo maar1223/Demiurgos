@@ -1,0 +1,38 @@
+skill_id: narrative-system-creation
+version: "1.0"
+name: Creación de Sistemas
+description: >-
+  Metodología fundacional para co-crear un SISTEMA nuevo, agnóstica al mundo.
+  Forma `sistema`: contrato de preguntas mínimas y semánticas, SIN registro
+  fijo; el cuerpo emerge; envelope en OKF. Nueve preguntas: (1) nombre y clase;
+  (2) origen o fuente; (3) qué hace; (4) qué exige o restringe — recurso,
+  condición, o nada si es impersonal; (5) límites, siempre obligatorio; (6)
+  acceso, N/A si es impersonal; (7) consecuencia; (8) estado de verdad; (9)
+  estabilidad: reglas fijas o mutables. Clase única por ORIGEN:
+  material/construido, innato/biológico, otorgado/divino, natural/cósmico,
+  social/convencional; se rechazan las combinadas (duro/blando es un eje aparte
+  de rigor). Rieles 40%: incompleto sin origen (2) + exigencia-o-justificación
+  (4) + límite (5). Eje de agencia: los impersonales declaran la (4) "sin costo,
+  impersonal" y marcan la (6) N/A. Frontera con Cronología: la estabilidad (9)
+  se declara aquí; los cambios se narran en Cronología. El color del mundo lo
+  aporta la skill de mundo.
+phases:
+  - Nombre y clase de sistema
+  - Origen o fuente
+  - Qué hace y a quién afecta
+  - Qué exige o restringe
+  - Límites (obligatorio)
+  - Acceso (N/A si impersonal)
+  - Consecuencia en el mundo
+  - Estado de verdad
+  - "Estabilidad: reglas fijas o mutables"
+  - Ramificación por clase de origen
+  - "Rieles 40%: origen, exigencia, límite"
+  - Frontera con Cronología
+language: es
+categoria_funcional: Diseño
+taller: Mundo
+etiquetas: [sistema, worldbuilding, forma-sistema]
+# v1.0 ships no adjuntos: el método vive completo en source.md y los adjuntos
+# de densidad (1º/2º/3º) son semántica de personaje, no de sistema.
+adjuntos: []
