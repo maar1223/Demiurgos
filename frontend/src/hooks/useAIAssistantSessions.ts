@@ -20,6 +20,7 @@ import {
   rejectGuidedCharacterProposal,
   serializeGuidedCharacter,
 } from "@/api/guidedCharacter";
+import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
 import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -87,7 +88,10 @@ export interface AIAssistantSessionsResult {
   deleteSession: (id: string) => void;
   sendMessage: (prompt: string) => Promise<void>;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
-  resolveGuidedConsent: (accept: boolean) => Promise<void>;
+  resolveGuidedConsent: (
+    accept: boolean,
+    method?: GuidedMethodChoice,
+  ) => Promise<void>;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   cancelSend: () => void;
 }
@@ -598,7 +602,10 @@ export function useAIAssistantSessions(
     )));
   }, [activeSession, activeSessionId, contextMundo]);
 
-  const resolveGuidedConsent = useCallback(async (accept: boolean) => {
+  const resolveGuidedConsent = useCallback(async (
+    accept: boolean,
+    method?: GuidedMethodChoice,
+  ) => {
     const token = activeSession?.consentToken;
     if (!token || !activeSessionId) return;
     try {
@@ -610,7 +617,9 @@ export function useAIAssistantSessions(
         // bare session (or undefined) — never the envelope. A legacy server
         // answering with the bare session directly is still admitted; anything
         // malformed is dropped instead of being stored as `guided`.
-        const envelope = await acceptGuidedConsent(contextMundo, token);
+        const envelope = method
+          ? await acceptGuidedConsent(contextMundo, token, method)
+          : await acceptGuidedConsent(contextMundo, token);
         // Validate the unwrapped value too: a present-but-malformed
         // `guided_state` must not be stored either, so this boundary stays
         // symmetric with loadSessions instead of trusting the server's type.

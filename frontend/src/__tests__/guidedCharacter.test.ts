@@ -115,3 +115,48 @@ describe("guided character API compatibility", () => {
     });
   });
 });
+
+describe("guided character per-session method (S6)", () => {
+  beforeEach(() => {
+    mockApiFetch.mockReset().mockResolvedValue(session);
+  });
+
+  it("sends method_skill_id/method_version and the factory token", async () => {
+    await startGuidedCharacter("nec", "x", { skill_id: "factory" });
+    await startGuidedCharacter("nec", "y", {
+      skill_id: "narrative-character-creation",
+      version: "1.2",
+    });
+    await acceptGuidedConsent("nec", "ct-1", {
+      skill_id: "narrative-character-creation",
+      version: "1.2",
+    });
+
+    expect(
+      mockApiFetch.mock.calls.map(([, options]) => options?.body),
+    ).toEqual([
+      JSON.stringify({ author_input: "x", method_skill_id: "factory" }),
+      JSON.stringify({
+        author_input: "y",
+        method_skill_id: "narrative-character-creation",
+        method_version: "1.2",
+      }),
+      JSON.stringify({
+        token: "ct-1",
+        method_skill_id: "narrative-character-creation",
+        method_version: "1.2",
+      }),
+    ]);
+  });
+
+  it("omits the method when no choice is supplied (legacy default)", async () => {
+    await startGuidedCharacter("nec", "x");
+    await acceptGuidedConsent("nec", "ct-1");
+    expect(
+      mockApiFetch.mock.calls.map(([, options]) => options?.body),
+    ).toEqual([
+      JSON.stringify({ author_input: "x" }),
+      JSON.stringify({ token: "ct-1" }),
+    ]);
+  });
+});

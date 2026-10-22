@@ -18,9 +18,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import {
   activateCompanion,
-  activateMethodology,
   deactivateCompanion,
-  deactivateMethodology,
   exportPublished,
   getMethodologyStatus,
 } from "@/api/methodologies";
@@ -79,7 +77,7 @@ function useActiveTaller(): string {
  * - 🟡 Loading (worlds): spinner centered in the EditorLayout body
  * - 🔴 Error (worlds): ErrorBanner with retry in the body
  * - 🟢 No world selected (or no worlds at all): the tree still shows
- *   publications, but the right panel's Activar stays disabled
+ *   publications, but the right panel's chat actions stay disabled
  * - 🟢 Data: sidebar explorer + detail body + state/actions panel
  */
 export default function ToolWorkshop() {
@@ -146,54 +144,9 @@ export default function ToolWorkshop() {
     void loadStatus();
   }, [loadStatus]);
 
-  /** World-scoped activation (moved up from MethodologyLibrary, task 2.3):
-   *  the page owns it so a successful activation can refetch the shared
-   *  status for both the tree and the right panel. */
-  const handleActivate = useCallback(
-    async (skillId: string, version: string) => {
-      if (!world) {
-        return;
-      }
-      setBusy(true);
-      setStatusErrorKey(null);
-      try {
-        await activateMethodology(world, skillId, version);
-        await loadStatus();
-      } catch {
-        setStatusErrorKey("toolworkshop.status.activateError");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [world, loadStatus],
-  );
-
-  /** World-scoped deactivation (mirrors handleActivate): clears the world's
-   *  activation slot so the selected version stops serving new sessions, then
-   *  refetches the shared status for the tree and the right panel. */
-  const handleDeactivate = useCallback(
-    async (_skillId: string, _version: string) => {
-      if (!world) {
-        return;
-      }
-      setBusy(true);
-      setStatusErrorKey(null);
-      try {
-        await deactivateMethodology(world);
-        await loadStatus();
-      } catch {
-        setStatusErrorKey("toolworkshop.status.deactivateError");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [world, loadStatus],
-  );
-
-  /** World-scoped companion toggle (R-UI chips): mirrors handleActivate — the
-   *  client call is followed by the shared status refetch. The first-ever
-   *  successful activation in a world surfaces the one-time latency notice
-   *  (persisted per world so it never repeats, R-UI notice). */
+  /** World-scoped chat toggle (S1/S5): the client call is followed by the
+   *  shared status refetch. The first-ever successful add in a world surfaces
+   *  the one-time latency notice (persisted per world, R-UI notice). */
   const handleToggleCompanion = useCallback(
     async (skillId: string, version: string, on: boolean) => {
       if (!world) {
@@ -358,12 +311,6 @@ export default function ToolWorkshop() {
               activeTaller={activeTaller}
               busy={busy}
               onSelect={setSelected}
-              onActivate={(skillId, version) =>
-                void handleActivate(skillId, version)
-              }
-              onDeactivate={(skillId, version) =>
-                void handleDeactivate(skillId, version)
-              }
               onToggleCompanion={(skillId, version, on) =>
                 void handleToggleCompanion(skillId, version, on)
               }
