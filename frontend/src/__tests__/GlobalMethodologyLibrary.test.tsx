@@ -668,8 +668,6 @@ describe("Compare selection (REQ-LIB-7 / UL-4) — compare panel lives in the ri
         selected={panelSelected}
         status={panelStatus}
         lens="catalogo-total"
-        onActivate={vi.fn()}
-        onDeactivate={vi.fn()}
         onAdaptar={vi.fn()}
         onComparar={vi.fn()}
         onExportar={vi.fn()}

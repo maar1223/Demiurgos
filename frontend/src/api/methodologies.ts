@@ -1,6 +1,7 @@
 import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
+  GuidedMethodsResponse,
   ImportResult,
   MethodologyActivation,
   MethodologyCompanion,
@@ -23,6 +24,15 @@ function url(suffix = ""): string {
 /** GET /api/methodologies/status — published versions, activations, drafts. */
 export function getMethodologyStatus(): Promise<MethodologyStatus> {
   return apiFetch<MethodologyStatus>(url("/status"), {
+    timeout: METHODOLOGIES_TIMEOUT_MS,
+  });
+}
+
+/** GET /api/methodologies/guided-methods — eligible character-creation
+ *  methods for the guided assistant, plus the world's preselected default. */
+export function getGuidedMethods(world?: string): Promise<GuidedMethodsResponse> {
+  const query = world ? `?world=${encodeURIComponent(world)}` : "";
+  return apiFetch<GuidedMethodsResponse>(url(`/guided-methods${query}`), {
     timeout: METHODOLOGIES_TIMEOUT_MS,
   });
 }

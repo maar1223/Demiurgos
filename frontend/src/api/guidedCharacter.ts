@@ -11,6 +11,20 @@ function url(world: string, suffix = ""): string {
   return `/api/${encodeURIComponent(world)}/guided-character${suffix}`;
 }
 
+/** Per-session guided method (S6). `skill_id: "factory"` selects the builtin
+ *  contract; any other id carries the exact published version. */
+export interface GuidedMethodChoice {
+  skill_id: string;
+  version?: string;
+}
+
+function methodPayload(method?: GuidedMethodChoice): Record<string, string> {
+  if (!method) return {};
+  const payload: Record<string, string> = { method_skill_id: method.skill_id };
+  if (method.version) payload.method_version = method.version;
+  return payload;
+}
+
 export function recoverGuidedCharacter(
   world: string,
   sessionId: string,
@@ -23,10 +37,11 @@ export function recoverGuidedCharacter(
 export function startGuidedCharacter(
   world: string,
   authorInput: string,
+  method?: GuidedMethodChoice,
 ): Promise<GuidedCharacterSession> {
   return apiFetch<GuidedCharacterSession>(url(world, "/session"), {
     method: "POST",
-    body: JSON.stringify({ author_input: authorInput }),
+    body: JSON.stringify({ author_input: authorInput, ...methodPayload(method) }),
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,
   });
 }
@@ -107,10 +122,11 @@ export function retryGuidedCharacterIndex(
 export function acceptGuidedConsent(
   world: string,
   token: string,
+  method?: GuidedMethodChoice,
 ): Promise<SemanticDecisionEnvelope> {
   return apiFetch<SemanticDecisionEnvelope>(url(world, "/consent/accept"), {
     method: "POST",
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ token, ...methodPayload(method) }),
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,
   });
 }

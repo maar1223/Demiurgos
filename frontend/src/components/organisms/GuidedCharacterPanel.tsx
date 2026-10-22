@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useGuidedCharacter } from "@/hooks/useGuidedCharacter";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { Spinner } from "@/components/atoms/Spinner";
+import { getGuidedMethods } from "@/api/methodologies";
+import type { GuidedMethodChoice } from "@/api/guidedCharacter";
+import type { GuidedMethodOption } from "@/api/types";
 
 interface GuidedCharacterPanelProps {
   world: string;
@@ -17,6 +20,8 @@ const SUPPORTED_PHASES = new Set([
 /** Compact guided creation surface; metadata and provenance never render here. */
 export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
   const [input, setInput] = useState("");
+  const [methods, setMethods] = useState<GuidedMethodOption[]>([]);
+  const [methodId, setMethodId] = useState("factory");
   const guided = useGuidedCharacter(world);
   const { t } = useAppLanguage();
   const session = guided.session;
@@ -24,9 +29,46 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
   const unsupportedPhase =
     session !== null && !SUPPORTED_PHASES.has(session.phase);
 
+  /** Method choice happens BEFORE the session starts (S6); the eligible list
+   *  is server-filtered to the character-creation family (S4). */
+  useEffect(() => {
+    let cancelled = false;
+    getGuidedMethods(world)
+      .then((response) => {
+        if (cancelled) return;
+        setMethods(response.methods);
+        if (response.default) setMethodId(response.default.skill_id);
+      })
+      .catch(() => {
+        /* Keep the factory option; the server still validates the choice. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [world]);
+
+  const chosenMethod = (): GuidedMethodChoice => {
+    if (methodId === "factory") return { skill_id: "factory" };
+    const chosen = methods.find((method) => method.skill_id === methodId);
+    return chosen
+      ? { skill_id: chosen.skill_id, version: chosen.version }
+      : { skill_id: "factory" };
+  };
+
+  const sessionMethodName = (() => {
+    const methodology = session?.methodology;
+    if (!methodology) return null;
+    if (methodology.factory) return t("guided.methodFactory");
+    return (
+      methods.find((method) => method.skill_id === methodology.skill_id)?.name
+      ?? methodology.skill_id
+      ?? ""
+    );
+  })();
+
   const submit = () => {
     if (!input.trim() || guided.isLoading) return;
-    void guided.send(input);
+    void guided.send(input, chosenMethod());
     setInput("");
   };
 
@@ -59,6 +101,29 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
         <p className="mt-1 text-xs text-muted">
           {t("guided.intro")}
         </p>
+        {sessionMethodName && (
+          <p className="mt-1 text-xs text-muted">
+            {t("guided.methodCurrent", { name: sessionMethodName })}
+          </p>
+        )}
+        {!session && (
+          <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
+            {t("guided.methodTitle")}
+            <select
+              value={methodId}
+              onChange={(event) => setMethodId(event.target.value)}
+              disabled={guided.isLoading}
+              className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
+            >
+              <option value="factory">{t("guided.methodFactory")}</option>
+              {methods.map((method) => (
+                <option key={method.skill_id} value={method.skill_id}>
+                  {method.name} (v{method.version})
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {messages.map((message, index) => (

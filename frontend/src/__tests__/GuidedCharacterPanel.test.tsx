@@ -8,6 +8,20 @@ import { translate } from "@/i18n/messages";
 
 vi.mock("@/hooks/useGuidedCharacter", () => ({ useGuidedCharacter: vi.fn() }));
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
+vi.mock("@/api/methodologies", () => ({
+  getGuidedMethods: vi.fn(() =>
+    Promise.resolve({
+      methods: [
+        {
+          skill_id: "narrative-character-creation",
+          version: "1.2",
+          name: "Creación de Personajes",
+        },
+      ],
+      default: null,
+    }),
+  ),
+}));
 
 const useGuidedCharacterMock = vi.mocked(useGuidedCharacter);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
@@ -64,6 +78,67 @@ describe("GuidedCharacterPanel", () => {
     expect(screen.getByText(/Protect the village/)).toBeInTheDocument();
     expect(screen.queryByText("secret")).not.toBeInTheDocument();
     expect(screen.queryByText(/workflow|provenance/i)).not.toBeInTheDocument();
+  });
+
+  it("chooses the method before the first message and sends it with the session start (S6)", async () => {
+    const user = userEvent.setup();
+    const send = vi.fn();
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      session: null,
+      send,
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    await user.selectOptions(select, "narrative-character-creation");
+    await user.type(
+      screen.getByRole("textbox", { name: "Respuesta de creación de personaje" }),
+      "Crea a Pert",
+    );
+    await user.click(screen.getByRole("button", { name: "Enviar" }));
+
+    expect(send).toHaveBeenCalledWith("Crea a Pert", {
+      skill_id: "narrative-character-creation",
+      version: "1.2",
+    });
+  });
+
+  it("defaults to the factory method and shows it before the session starts (S6)", async () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      session: null,
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("factory");
+    expect(
+      screen.getByRole("option", { name: "De fábrica (Creación de Personajes)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the method that drives an existing session (S1)", async () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      session: {
+        ...baseState().session,
+        methodology: {
+          skill_id: "narrative-character-creation",
+          skill_version: "1.2",
+          flow_type: "guided-character",
+          factory: false,
+        },
+      },
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+    expect(
+      await screen.findByText("Método: Creación de Personajes"),
+    ).toBeInTheDocument();
   });
 
   it("delegates rejection and acceptance without a client-side write", async () => {

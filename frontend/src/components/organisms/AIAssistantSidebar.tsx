@@ -16,7 +16,9 @@ import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
-import type { EditProposal } from "@/api/types";
+import type { EditProposal, GuidedMethodOption } from "@/api/types";
+import type { GuidedMethodChoice } from "@/api/guidedCharacter";
+import { getGuidedMethods } from "@/api/methodologies";
 import { useWhisper } from "@/hooks/useWhisper";
 
 /* ------------------------------------------------------------------ */
@@ -125,7 +127,14 @@ interface ChatScreenProps {
   onNewChat: () => void;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
-  resolveGuidedConsent: (accept: boolean) => Promise<void>;
+  resolveGuidedConsent: (
+    accept: boolean,
+    method?: GuidedMethodChoice,
+  ) => Promise<void>;
+  /** Eligible character-creation methods for THIS session (S4/S6). */
+  guidedMethods: GuidedMethodOption[];
+  /** The world's eligible legacy activation, preselected; null = factory. */
+  guidedMethodDefault: { skill_id: string; version: string } | null;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
 }
@@ -245,9 +254,13 @@ function ChatScreen({
   onGuidedReview,
   resolveGuidedProposal,
   resolveGuidedConsent,
+  guidedMethods,
+  guidedMethodDefault,
   requestGuidedReview,
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
+  const [consentMethodId, setConsentMethodId] = useState("factory");
+  const [consentMethodTouched, setConsentMethodTouched] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -293,9 +306,41 @@ function ChatScreen({
     }
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
+  const { language: appLanguage, t } = useAppLanguage();
   const messages = activeSession?.messages ?? [];
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
-  const { language: appLanguage, t } = useAppLanguage();
+  const consentToken = activeSession?.consentToken;
+  const guidedMethodology = activeSession?.guided?.methodology ?? null;
+  const guidedMethodName = guidedMethodology
+    ? guidedMethodology.factory
+      ? t("guided.methodFactory")
+      : guidedMethods.find(
+          (method) => method.skill_id === guidedMethodology.skill_id,
+        )?.name ?? guidedMethodology.skill_id ?? ""
+    : null;
+
+  /** Preselect the world default when the consent card appears (S6). */
+  useEffect(() => {
+    if (!consentToken) {
+      setConsentMethodTouched(false);
+      return;
+    }
+    if (!consentMethodTouched) {
+      setConsentMethodId(guidedMethodDefault?.skill_id ?? "factory");
+    }
+  }, [consentToken, guidedMethodDefault, consentMethodTouched]);
+
+  const consentChoice = (): GuidedMethodChoice => {
+    if (consentMethodId === "factory" || !consentMethodId) {
+      return { skill_id: "factory" };
+    }
+    const chosen = guidedMethods.find(
+      (method) => method.skill_id === consentMethodId,
+    );
+    return chosen
+      ? { skill_id: chosen.skill_id, version: chosen.version }
+      : { skill_id: "factory" };
+  };
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()
@@ -493,6 +538,12 @@ function ChatScreen({
             </div>
            ))}
 
+           {guidedMethodName && (
+             <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
+               {t("guided.methodCurrent", { name: guidedMethodName })}
+             </p>
+           )}
+
            {confirmationPending && (
              <section
                aria-labelledby="guided-confirmation-title"
@@ -525,7 +576,7 @@ function ChatScreen({
              </section>
            )}
 
-           {activeSession?.consentToken && (
+           {consentToken && (
              <section
                aria-labelledby="guided-consent-title"
                className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
@@ -536,10 +587,29 @@ function ChatScreen({
                 <p className="mt-1 text-xs leading-relaxed text-muted">
                   {t("assistant.consent.body")}
                 </p>
+                <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
+                  {t("guided.methodTitle")}
+                  <select
+                    value={consentMethodId}
+                    onChange={(event) => {
+                      setConsentMethodTouched(true);
+                      setConsentMethodId(event.target.value);
+                    }}
+                    disabled={isSending}
+                    className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="factory">{t("guided.methodFactory")}</option>
+                    {guidedMethods.map((method) => (
+                      <option key={method.skill_id} value={method.skill_id}>
+                        {method.name} (v{method.version})
+                      </option>
+                    ))}
+                  </select>
+                </label>
                <div className="mt-3 flex flex-wrap gap-2">
                  <button
                    type="button"
-                   onClick={() => void resolveGuidedConsent(true)}
+                   onClick={() => void resolveGuidedConsent(true, consentChoice())}
                    disabled={isSending}
                     className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -842,6 +912,32 @@ export function AIAssistantSidebar({
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
   const sessions = useAIAssistantSessions(mundo, section, filePath);
+  const [guidedMethods, setGuidedMethods] = useState<GuidedMethodOption[]>([]);
+  const [guidedMethodDefault, setGuidedMethodDefault] = useState<
+    { skill_id: string; version: string } | null
+  >(null);
+  const consentToken = sessions.activeSession?.consentToken;
+  const guidedMethodSkillId =
+    sessions.activeSession?.guided?.methodology?.skill_id ?? null;
+
+  /** Eligible methods are fetched when the consent card or a running guided
+   *  session needs to render the method. */
+  useEffect(() => {
+    if (!consentToken && !guidedMethodSkillId) return;
+    let cancelled = false;
+    getGuidedMethods(mundo)
+      .then((response) => {
+        if (cancelled) return;
+        setGuidedMethods(response.methods);
+        setGuidedMethodDefault(response.default);
+      })
+      .catch(() => {
+        /* The factory option stays; the server validates the choice. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [consentToken, guidedMethodSkillId, mundo]);
 
   const whisper = useWhisper({
     onTranscribed: useCallback(
@@ -881,6 +977,8 @@ export function AIAssistantSidebar({
           onGuidedReview={onGuidedReview}
           resolveGuidedProposal={sessions.resolveGuidedProposal}
           resolveGuidedConsent={sessions.resolveGuidedConsent}
+          guidedMethods={guidedMethods}
+          guidedMethodDefault={guidedMethodDefault}
           requestGuidedReview={sessions.requestGuidedReview}
         />
       ) : (

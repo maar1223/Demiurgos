@@ -61,6 +61,16 @@ FOUNDATIONAL_SKILL_IDS: frozenset[str] = frozenset({
     FOUNDATIONAL_SYSTEM_SKILL_ID,
 })
 
+# Root ids of the character-creation method family: the guided-character
+# assistant only consumes methods declared by this lineage. ``guided-character-v1``
+# is the builtin contract id (also honored as a legacy activation); every
+# Author skill derived from the foundational one inherits eligibility through
+# its ``parent_skill_id`` chain.
+GUIDED_CHARACTER_METHOD_ROOTS: frozenset[str] = frozenset({
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
+    "guided-character-v1",
+})
+
 # Guided flow types (SR1 — one activation slot per guided-flow type per world;
 # contract §2). ``guided-character`` is the shipped guided flow; ``co-creation``
 # is the Author-facing skill-creation flow. The set is the enumeration for the
@@ -929,6 +939,12 @@ class MethodologyLibrary:
                     best = record
             return self._published_from(best) if best else None
 
+    def is_deleted(self, skill_id: str, version: str) -> bool:
+        """True when the exact version exists but has been soft-deleted."""
+        with self._lock:
+            record = self._published.get(self._key(skill_id, version))
+            return bool(record is not None and record.get("deleted_at"))
+
     def soft_delete(self, skill_id: str, version: str) -> None:
         key = self._key(skill_id, version)
         with self._lock:
@@ -972,6 +988,76 @@ class MethodologyLibrary:
                 raise NotPublishedError(f"{skill_id}@{version} is not published")
             record["deleted_at"] = None
             self._save_locked()
+
+    # ------------------------------------------------------------------ #
+    # Guided-character method eligibility
+    # ------------------------------------------------------------------ #
+
+    def is_guided_character_method(self, skill_id: str) -> bool:
+        """True when ``skill_id`` belongs to the character-creation family.
+
+        The guided-character assistant may only consume methods that produce
+        characters. Membership is declared by lineage, never by catalog
+        metadata: the foundational character skill, the builtin contract id,
+        and every skill derived from the foundational one (``parent_skill_id``
+        chain). Cronología, Sistemas and unrelated skills are excluded.
+        """
+        with self._lock:
+            return self._is_guided_character_method_locked(skill_id)
+
+    def _is_guided_character_method_locked(self, skill_id: str) -> bool:
+        current = skill_id
+        seen: set[str] = set()
+        for _ in range(32):
+            if current in GUIDED_CHARACTER_METHOD_ROOTS:
+                return True
+            if not current or current in seen:
+                return False
+            seen.add(current)
+            parent = self._parent_skill_id_locked(current)
+            if parent is None:
+                return False
+            current = parent
+        return False
+
+    def _parent_skill_id_locked(self, skill_id: str) -> str | None:
+        records = sorted(
+            (
+                record
+                for record in self._published.values()
+                if record.get("skill_id") == skill_id
+                and not record.get("deleted_at")
+                and record.get("parent_skill_id")
+            ),
+            key=lambda record: _version_key(record["version"]),
+        )
+        if not records:
+            return None
+        return str(records[-1]["parent_skill_id"])
+
+    def list_guided_methods(self) -> list[PublishedVersion]:
+        """Latest published version of every eligible guided-character method."""
+        with self._lock:
+            latest: dict[str, dict[str, Any]] = {}
+            for record in self._published.values():
+                if record.get("deleted_at"):
+                    continue
+                skill_id = str(record["skill_id"])
+                if not self._is_guided_character_method_locked(skill_id):
+                    continue
+                current = latest.get(skill_id)
+                if current is None or _version_key(record["version"]) > _version_key(
+                    current["version"]
+                ):
+                    latest[skill_id] = record
+            ordered = sorted(
+                latest.values(),
+                key=lambda record: (
+                    str(record.get("name") or record["skill_id"]).lower(),
+                    str(record["skill_id"]),
+                ),
+            )
+            return [self._published_from(record) for record in ordered]
 
     # ------------------------------------------------------------------ #
     # Activation by world and flow type
@@ -1033,6 +1119,20 @@ class MethodologyLibrary:
                 if not flows:
                     self._activations.pop(world, None)
             self._save_locked()
+
+    def next_rollback(
+        self,
+        world: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> dict[str, Any] | None:
+        """Read-only peek at the record a ``rollback`` would restore.
+
+        Used by the API boundary to refuse restoring an ineligible guided
+        method before any mutation (S4).
+        """
+        with self._lock:
+            history = (self._history.get(world) or {}).get(flow_type) or []
+            return dict(history[-1]) if history else None
 
     def rollback(
         self,

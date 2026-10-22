@@ -128,6 +128,7 @@ def test_public_state_envelope_excludes_backend_provenance() -> None:
     assert set(payload) == {
         "protocol_version", "session_id", "world", "phase", "revision",
         "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth",
+        "methodology",
     }
     assert "provenance" not in payload["candidate"]
     assert payload["messages"] == [{"role": "assistant", "content": "What drives them?"}]
@@ -869,7 +870,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology"}
     assert "provenance" not in session["candidate"]
 
     recovered = client.get(f"/api/vibrantes/guided-character/session/{session['session_id']}")
@@ -1870,3 +1871,65 @@ def test_decline_records_durable_server_flag_with_flag_on(monkeypatch, tmp_path)
     assert "guided_session_id" not in third and "guided_state" not in third
     assert sessions._sessions == {}
     assert runs.starts == 3
+
+
+def _publish_guided_method(skill_id: str = "narrative-character-creation", version: str = "1.0.0") -> None:
+    """Publish an eligible/ineligible method in the isolated library."""
+    library = api_server._methodology_library()
+    description = "Co-crea personajes narrativos nuevos."
+    draft = library.create_draft(
+        skill_id=skill_id,
+        version=version,
+        name=skill_id,
+        source="## Construcción segura\n\nHaz preguntas de a una.\n",
+        description=description,
+    )
+    library.approve_trigger(draft, description, "author-1")
+    library.publish(draft)
+
+
+def test_consent_accept_chooses_method_per_session(monkeypatch, tmp_path) -> None:
+    """S6: the consent card method applies to THIS session, over the legacy default."""
+    _consent_harness(
+        monkeypatch, tmp_path,
+        _musing_continuation_payload("require_confirmation"),
+        _musing_continuation_payload("require_confirmation"),
+    )
+    _publish_guided_method()
+    api_server._methodology_library().activate(
+        "vibrantes", "narrative-character-creation", "1.0.0",
+    )
+
+    token = _issue_consent_suggestion(client)
+    factory = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token, "method_skill_id": "factory",
+    })
+    assert factory.status_code == 200, factory.text
+    assert factory.json()["guided_state"]["methodology"]["factory"] is True
+
+    token = _issue_consent_suggestion(client, session_id="consent-2")
+    explicit = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token,
+        "method_skill_id": "narrative-character-creation",
+        "method_version": "1.0.0",
+    })
+    assert explicit.status_code == 200, explicit.text
+    methodology = explicit.json()["guided_state"]["methodology"]
+    assert methodology["skill_id"] == "narrative-character-creation"
+    assert methodology["skill_version"] == "1.0.0"
+    assert methodology["factory"] is False
+
+
+def test_consent_accept_rejects_ineligible_method(monkeypatch, tmp_path) -> None:
+    """S4: Cronología/Sistemas never become the guided method, even by API."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload("require_confirmation"))
+    _publish_guided_method("narrative-system-creation")
+    token = _issue_consent_suggestion(client)
+    rejected = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token,
+        "method_skill_id": "narrative-system-creation",
+        "method_version": "1.0.0",
+    })
+    assert rejected.status_code == 422
+    assert "does not create characters" in rejected.json()["message"]
+    assert api_server._GUIDED_SESSIONS._sessions == {}

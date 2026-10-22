@@ -630,6 +630,27 @@ export interface GuidedCharacterProposal {
   rationale?: string;
 }
 
+export interface GuidedCharacterMethodology {
+  skill_id: string | null;
+  skill_version: string | null;
+  flow_type: string | null;
+  /** True when the builtin guided-character contract drives the session. */
+  factory: boolean;
+}
+
+/** One eligible method for the guided-character assistant (S4/S6). */
+export interface GuidedMethodOption {
+  skill_id: string;
+  version: string;
+  name: string;
+}
+
+export interface GuidedMethodsResponse {
+  methods: GuidedMethodOption[];
+  /** The world's eligible legacy activation, preselected; null means factory. */
+  default: { skill_id: string; version: string } | null;
+}
+
 export interface GuidedCharacterSession {
   protocol_version: string;
   session_id: string;
@@ -645,6 +666,8 @@ export interface GuidedCharacterSession {
   index_status?: GuidedCharacterIndexStatus;
   retryable?: boolean;
   message?: string;
+  /** Per-session method echo (S1/S6). Additive: absent on pre-method servers. */
+  methodology?: GuidedCharacterMethodology | null;
   reference?: {
     name: string | null;
     verified: boolean;

@@ -1,100 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { tEs } from "@/__tests__/i18nTestUtils";
 import {
-  AXIS_ACTIVATION,
   AXIS_COMPANION,
-  AXIS_CONFLICT,
   AXIS_SCOPE,
   AXIS_TERMS,
-  NO_ACTIVATION_PLACEHOLDER,
-  activationChip,
-  companionChip,
-  conflictExplanation,
+  chatChip,
+  scopeChip,
 } from "@/lib/vocabularyAxes";
 
 describe("vocabularyAxes registry (axis-binding-ui R1 — Term table pinned)", () => {
   it("maps every canonical term to exactly one axis", () => {
-    expect(AXIS_TERMS["Activa"]).toBe(AXIS_ACTIVATION);
-    expect(AXIS_TERMS["Inactiva"]).toBe(AXIS_ACTIVATION);
-    expect(AXIS_TERMS["Metodología en chat"]).toBe(AXIS_COMPANION);
-    expect(AXIS_TERMS["Método en chat"]).toBe(AXIS_COMPANION);
+    expect(AXIS_TERMS["En el chat"]).toBe(AXIS_COMPANION);
     expect(AXIS_TERMS["Transversal"]).toBe(AXIS_SCOPE);
-    expect(AXIS_TERMS["Bloqueada"]).toBe(AXIS_CONFLICT);
   });
 
-  it("pins the committed no-activation placeholder (Term table pinned)", () => {
-    expect(NO_ACTIVATION_PLACEHOLDER).toBe("Sin activación en este flujo");
-    expect(NO_ACTIVATION_PLACEHOLDER).not.toBe("Inactiva");
+  it("does not register any activation on/off vocabulary (S2)", () => {
+    expect(AXIS_TERMS["Activa"]).toBeUndefined();
+    expect(AXIS_TERMS["Inactiva"]).toBeUndefined();
+    expect(AXIS_TERMS["Método en chat"]).toBeUndefined();
   });
 });
 
-describe("activationChip — axis-1 (activación por flujo) row chip", () => {
-  it("attributes the active slot term to the activation axis with the success variant", () => {
-    expect(activationChip({ state: "activa", hasActivation: true })).toEqual({
-      axis: AXIS_ACTIVATION,
-      term: "Activa",
+describe("chatChip — chat-availability row chip (S1)", () => {
+  it("attributes En el chat to the companion axis", () => {
+    expect(chatChip()).toEqual({
+      axis: AXIS_COMPANION,
+      term: "En el chat",
       variant: "success",
     });
-    // Transversal-active rows keep the SAME slot chip: scope vocabulary never
-    // reaches the primary badge (R3).
-    expect(
-      activationChip({ state: "transversal-activa", hasActivation: true }),
-    ).toEqual({ axis: AXIS_ACTIVATION, term: "Activa", variant: "success" });
-  });
-
-  it("attributes inactive rows to the activation axis when the slot is filled", () => {
-    expect(
-      activationChip({ state: "inactiva", hasActivation: true }),
-    ).toEqual({ axis: AXIS_ACTIVATION, term: "Inactiva", variant: "default" });
-    expect(
-      activationChip({ state: "transversal-inactiva", hasActivation: true }),
-    ).toEqual({ axis: AXIS_ACTIVATION, term: "Inactiva", variant: "default" });
-  });
-
-  it("renders the neutral placeholder when the world lacks an activation (R4)", () => {
-    expect(
-      activationChip({ state: "inactiva", hasActivation: false }),
-    ).toEqual({
-      axis: AXIS_ACTIVATION,
-      term: NO_ACTIVATION_PLACEHOLDER,
-      variant: "default",
-    });
-    expect(
-      activationChip({ state: "transversal-inactiva", hasActivation: false }),
-    ).toEqual({
-      axis: AXIS_ACTIVATION,
-      term: NO_ACTIVATION_PLACEHOLDER,
-      variant: "default",
-    });
-  });
-
-  it("attributes blocked rows to the activation axis — never Bloqueada (R3)", () => {
-    expect(
-      activationChip({ state: "bloqueada", hasActivation: true }),
-    ).toEqual({ axis: AXIS_ACTIVATION, term: "Inactiva", variant: "default" });
+    expect(tEs("axis.term.enChat")).toBe("En el chat");
   });
 });
 
-describe("companionChip — axis-2 (metodología en chat) row chip", () => {
-  it("attributes the committed Método en chat term to the companion axis (R7)", () => {
-    expect(companionChip()).toEqual({
-      axis: AXIS_COMPANION,
-      term: "Método en chat",
-      variant: "info",
+describe("scopeChip — transversal row chip", () => {
+  it("attributes Transversal to the scope axis", () => {
+    expect(scopeChip()).toEqual({
+      axis: AXIS_SCOPE,
+      term: "Transversal",
+      variant: "default",
     });
-  });
-});
-
-describe("conflictExplanation — axis-4 (conflicto) tooltip/panel copy (Final sentence locked — REQ-TRE-6 S1)", () => {
-  it("interpolates taller labels into the verbatim conflict copy", () => {
-    expect(conflictExplanation("Mundo", "Ideas", tEs)).toBe(
-      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
-    );
-  });
-
-  it("falls back to the raw taller value for unknown taller keys", () => {
-    expect(conflictExplanation("Mundo", "Taller Custom", tEs)).toBe(
-      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller Custom) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
-    );
+    expect(tEs("axis.term.transversal")).toBe("Transversal");
   });
 });
