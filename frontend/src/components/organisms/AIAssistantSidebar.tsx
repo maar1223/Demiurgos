@@ -260,6 +260,7 @@ function ChatScreen({
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
   const [consentMethodId, setConsentMethodId] = useState("factory");
+  const [consentMethodTouched, setConsentMethodTouched] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -305,15 +306,29 @@ function ChatScreen({
     }
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
+  const { language: appLanguage, t } = useAppLanguage();
   const messages = activeSession?.messages ?? [];
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
+  const guidedMethodology = activeSession?.guided?.methodology ?? null;
+  const guidedMethodName = guidedMethodology
+    ? guidedMethodology.factory
+      ? t("guided.methodFactory")
+      : guidedMethods.find(
+          (method) => method.skill_id === guidedMethodology.skill_id,
+        )?.name ?? guidedMethodology.skill_id ?? ""
+    : null;
 
   /** Preselect the world default when the consent card appears (S6). */
   useEffect(() => {
-    if (!consentToken) return;
-    setConsentMethodId(guidedMethodDefault?.skill_id ?? "factory");
-  }, [consentToken, guidedMethodDefault]);
+    if (!consentToken) {
+      setConsentMethodTouched(false);
+      return;
+    }
+    if (!consentMethodTouched) {
+      setConsentMethodId(guidedMethodDefault?.skill_id ?? "factory");
+    }
+  }, [consentToken, guidedMethodDefault, consentMethodTouched]);
 
   const consentChoice = (): GuidedMethodChoice => {
     if (consentMethodId === "factory" || !consentMethodId) {
@@ -326,7 +341,6 @@ function ChatScreen({
       ? { skill_id: chosen.skill_id, version: chosen.version }
       : { skill_id: "factory" };
   };
-  const { language: appLanguage, t } = useAppLanguage();
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()
@@ -524,6 +538,12 @@ function ChatScreen({
             </div>
            ))}
 
+           {guidedMethodName && (
+             <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
+               {t("guided.methodCurrent", { name: guidedMethodName })}
+             </p>
+           )}
+
            {confirmationPending && (
              <section
                aria-labelledby="guided-confirmation-title"
@@ -571,7 +591,10 @@ function ChatScreen({
                   {t("guided.methodTitle")}
                   <select
                     value={consentMethodId}
-                    onChange={(event) => setConsentMethodId(event.target.value)}
+                    onChange={(event) => {
+                      setConsentMethodTouched(true);
+                      setConsentMethodId(event.target.value);
+                    }}
                     disabled={isSending}
                     className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
                   >
@@ -894,10 +917,13 @@ export function AIAssistantSidebar({
     { skill_id: string; version: string } | null
   >(null);
   const consentToken = sessions.activeSession?.consentToken;
+  const guidedMethodSkillId =
+    sessions.activeSession?.guided?.methodology?.skill_id ?? null;
 
-  /** Eligible methods are fetched only when the consent card can appear. */
+  /** Eligible methods are fetched when the consent card or a running guided
+   *  session needs to render the method. */
   useEffect(() => {
-    if (!consentToken) return;
+    if (!consentToken && !guidedMethodSkillId) return;
     let cancelled = false;
     getGuidedMethods(mundo)
       .then((response) => {
@@ -911,7 +937,7 @@ export function AIAssistantSidebar({
     return () => {
       cancelled = true;
     };
-  }, [consentToken, mundo]);
+  }, [consentToken, guidedMethodSkillId, mundo]);
 
   const whisper = useWhisper({
     onTranscribed: useCallback(

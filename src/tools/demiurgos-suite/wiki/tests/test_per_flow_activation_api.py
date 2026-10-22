@@ -528,3 +528,20 @@ class TestPerFlowActivationApi:
         })
         assert ineligible.status_code == 422
         assert "does not create characters" in ineligible.json()["message"]
+
+    def test_rollback_rejects_ineligible_legacy_target(self, client, monkeypatch):
+        """S4: rollback cannot restore a pre-existing non-character method."""
+        _principal(monkeypatch)
+        self._publish(client, "narrative-character-creation", "1.0.0", "Personajes")
+        self._publish(client, "narrative-system-creation", "1.0.0", "Sistemas")
+        library = api_server._methodology_library()
+        library.activate("test_mundo", "narrative-system-creation", "1.0.0")
+        library.activate("test_mundo", "narrative-character-creation", "1.0.0")
+
+        response = client.post("/api/methodologies/rollback", json={
+            "world": "test_mundo",
+        })
+        assert response.status_code == 422
+        assert response.json()["code"] == "ineligible_guided_method"
+        active = client.get("/api/methodologies/active/test_mundo").json()["activation"]
+        assert active["skill_id"] == "narrative-character-creation"

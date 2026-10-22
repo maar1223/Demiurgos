@@ -831,6 +831,86 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     });
   });
 
+  it("shows the pinned method while a guided session runs (S1)", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        createdAt: 1,
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "confirmation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: "Continue?",
+          messages: [],
+          candidate: {
+            accepted_canon: {},
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          methodology: {
+            skill_id: "narrative-character-creation",
+            skill_version: "1.2",
+            flow_type: "guided-character",
+            factory: false,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByText("Método: narrative-character-creation"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the factory method while a factory guided session runs (S1)", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        createdAt: 1,
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: {},
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          methodology: {
+            skill_id: "guided-character-v1",
+            skill_version: "builtin",
+            flow_type: "guided-character",
+            factory: true,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByText("Método: De fábrica (Creación de Personajes)"),
+    ).toBeInTheDocument();
+  });
+
   it("renders no consent card without a pending token", () => {
     useSessionsMock.mockReturnValue(createSessionsState());
 

@@ -1088,6 +1088,20 @@ class MethodologyLibrary:
                     self._activations.pop(world, None)
             self._save_locked()
 
+    def next_rollback(
+        self,
+        world: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> dict[str, Any] | None:
+        """Read-only peek at the record a ``rollback`` would restore.
+
+        Used by the API boundary to refuse restoring an ineligible guided
+        method before any mutation (S4).
+        """
+        with self._lock:
+            history = (self._history.get(world) or {}).get(flow_type) or []
+            return dict(history[-1]) if history else None
+
     def rollback(
         self,
         world: str,

@@ -10333,6 +10333,11 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
             "code": "unsupported_flow_type",
         })
     library = _methodology_library()
+    if body.flow_type == GUIDED_CHARACTER_FLOW:
+        target = library.next_rollback(body.world, body.flow_type)
+        target_skill = str((target or {}).get("skill_id") or "")
+        if target and not library.is_guided_character_method(target_skill):
+            return _ineligible_guided_method_response(target_skill)
     activation = library.rollback(body.world, body.flow_type)
     if activation is None:
         return {"world": body.world, "flow_type": body.flow_type,
