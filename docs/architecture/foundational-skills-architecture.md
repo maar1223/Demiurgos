@@ -47,7 +47,7 @@
 | `shape` | **NUEVO**, derivado de `type` si falta | `entidad` \| `sistema` \| `cronologia` (`relacion` reservada) |
 | `canon_state` | **NUEVO**, derivado de `status` | 7 estados propios del mundo (ver §3) |
 | `type` | normalizado | lowercase + mapa de alias (`Criatura`→`criatura`) |
-| mínimos | por **forma** + extras por tipo | `entidad`=identidad; `sistema`=origen/fuente; `cronologia`=evento/fecha; `personaje` además=deseo |
+| mínimos | por **forma** + extras por tipo | `entidad`=identidad; `sistema`=identidad + origen/fuente + límite; `cronologia`=evento/fecha; `personaje` además=deseo |
 | `taller` | **NO va en la ficha** | registro aparte de qué formas/tipos muestra cada taller |
 
 **Lectura tolerante:** datos viejos siguen válidos (normalización + defaults, sin migración masiva).
@@ -96,6 +96,8 @@ Ejemplo de la pregunta 4 re-instanciada: magia → *energía/material*; economí
 
 ### 4.3 Rieles 40% (siempre verificables, pero semánticos — no campos)
 Un sistema está **incompleto** si no responde **origen (2) + exigencia-o-justificación (4) + límite (5)**. No son columnas de una ficha: son preguntas que **deben tener respuesta**. (En sistemas impersonales, la pregunta 4 se responde como "sin costo, impersonal".)
+
+**Envelope persistido (implementado):** la forma `sistema` exige además un límite en el frontmatter (`limite`/`limites`/`limitacion`/`limitaciones`) — "el límite no se evade" también en el archivo. El seed `narrative-system-creation@1.1` declara su flujo guiado `guided-system` y aterriza en `lore/` con `type: Sistema`.
 
 ### 4.4 Validación anti-sobreajuste (corregida)
 Hay que validar contra **al menos un sistema NO-mágico** (economía, ley o religión). La lista anterior (Vibrastal, La Fuerza, Dune, HP, Red Rising) era **toda mágica/blanda → sesgo de sobreajuste**.

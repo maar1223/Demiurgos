@@ -204,6 +204,14 @@ Este contrato consolida la UX de co-creación acordada. Aplica la identidad del 
 
 ---
 
+### 6.8 Flujos guiados declarados por una skill `[ACTUAL]`
+
+Una metodología publicada puede declarar que produce una entidad persistible (`guided_flow` en el manifest: flujo, forma, vocabulario de intención, clave de copy e índice). El Taller **no muestra ningún control de activación**: la declaración es contenido de la skill, la valida el compilador al publicar y el servidor resuelve la sección de destino y los mínimos. Una declaración incompleta o que intente reclamar `target_section`, `minimums` o persistencia falla en publish.
+
+- El canvas de co-creación **todavía no recoge** esta declaración (fase dos): una skill co-creada hereda el flujo de su raíz por linaje, y una importada solo hereda. No hay que reescribir una skill existente para que siga funcionando.
+- Un flujo declarado no ofrece la opción "De fábrica"; su selector preselecciona el método fundacional del flujo.
+- El método de un flujo no puede gobernar otro: el servidor responde 422 `ineligible_guided_method` sin mutar la biblioteca.
+
 ## 7. Frontera con el Taller de Mundo y futuros Talleres
 
 **[DECISIÓN CERRADA]** El Taller de Herramientas **gestiona y co-crea metodologías**; el Taller de Mundo **ejecuta** los flujos guiados que esas metodologías gobiernan:

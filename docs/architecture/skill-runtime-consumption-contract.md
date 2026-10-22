@@ -60,7 +60,7 @@
 **[DECISIÓN CERRADA — SR1, origen D1]** Cada mundo tiene **un slot de activación por tipo de flujo guiado**, no uno solo global. Implementado en el PR ① (`per-flow-activation-schema`): los slots viven en `self._activations = {world: {flow_type: record}}` (`wiki/methodology_library.py:248-249`), con `activate(..., flow_type)` (`:795-830`) y `active_for(world, flow_type)` (`:832-839`). `[ACTUAL]`
 
 - **El método se elige por sesión**: `GuidedStartRequest` acepta `method_skill_id`/`method_version` (token reservado `factory` para el contrato integrado) y el consentimiento de chat reenvía la elección. El snapshot queda fijado a esa sesión (`wiki/api_server.py` `_resolve_guided_method_snapshot`). **La biblioteca ya no expone ningún botón de activar/desactivar**; el slot queda como default heredado, no como estado visible. `[ACTUAL — S2/S6]`
-- **Elegibilidad**: solo la familia de creación de personajes (fundacional `narrative-character-creation`, `guided-character-v1` y derivadas por `parent_skill_id`) puede ser método; Cronología/Sistemas se rechazan en el arranque de sesión y en las rutas heredadas de activación (`ineligible_guided_method`). `[ACTUAL — S4]`
+- **Elegibilidad**: por flujo. La familia de creación de personajes (fundacional `narrative-character-creation`, `guided-character-v1` y derivadas por `parent_skill_id`) sigue siendo el método del flujo de personajes; una skill que declara `guided_flow` pertenece solo a ese flujo. Cronología/Sistemas se rechazan en el flujo de personajes y viceversa, en el arranque de sesión y en las rutas heredadas de activación (`ineligible_guided_method`). `[ACTUAL — S4/S6/SR7]`
 - **Default**: sin elección explícita, el método es la activación heredada del mundo **si es elegible**, y si no el contrato integrado `guided-character-v1`. Una activación no elegible se ignora para sesiones nuevas y **nunca se borra**. `[ACTUAL — S7]`
 - **Pinning de sesión**: al iniciar una sesión guiada, `skill@version` queda fijado para toda la sesión (`wiki/api_server.py:2183`, `:5904` — snapshot en la creación de la sesión); **todas las continuaciones** de la sesión inyectan el contrato compilado activo (`wiki/api_server.py:2081`). `[ACTUAL]`
 - **Sin deriva por cambio de default**: el snapshot manda. Cambiar el default del mundo (o el método de otra sesión) **no invalida** una sesión existente; solo se rechaza si su versión publicada fue eliminada. `[ACTUAL — S6/S7]`
@@ -70,6 +70,23 @@
 - **Los compañeros siguen moldeando el chat libre**: el compañero ganador del enrutamiento sigue siendo la **única** inyección de chat, independiente de cualquier slot (`wiki/api_server.py:5508-5533`; `wiki/methodology_library.py:768-772` — las operaciones de compañero son "fully independent of the activation slot"). `[ACTUAL]`
 
 **Escenarios cubiertos:** método elegido por sesión (`Per-session method`), fábrica por defecto (`Factory fallback`), activación heredada no elegible (`Ineligible legacy default ignored`), intención de flujo desde chat (`Flow intent`), compañero gana el turno (`Companion wins`).
+
+---
+
+## 2.1 Flujos guiados declarados por la skill `[ACTUAL]` — SR7
+
+**[DECISIÓN CERRADA — SR7]** Una metodología publicada puede declarar el flujo guiado que gobierna. La declaración vive en el manifest (`guided_flow`) y la valida el compilador; el kernel conserva la autoridad sobre persistencia y mínimos.
+
+- **Esquema declarable**: `flow_id`, `entity_type`, `ui_copy_key`, `index`, `intent{terms, verbs}`. El conjunto es exacto: cualquier campo extra (`target_section`, `minimums`, `persistence`, `allowlisted_targets`) falla en publish con `unknown-field`, porque son kernel-owned. `flow_id` es un identificador acotado; `entity_type` debe ser una forma conocida con sección kernel.
+- **Sección kernel-owned**: `personaje` → `personajes/`; `sistema` y `cronologia` → `lore/`. La skill nunca declara la sección. El perfil resuelto (`GuidedFlowProfile`) aporta `target_section`, `type_label`, grupos de completitud (`prompt_minimums_for`), preguntas, copy y campos de frontmatter, y se fija en el snapshot de sesión (`profile`) junto a `skill_id`/`skill_version`/`flow_type`.
+- **Flujos soportados**: `guided-character` (integrado, `guided-character-v1`), `guided-system` (declarado por `narrative-system-creation@1.1`); `co-creation` sigue reservado. Un flujo nuevo cuesta una entrada de sección kernel + un seed que lo declare, no una rama del motor.
+- **Elegibilidad por flujo**: una declaración explícita es autoritativa y ata la skill a ese flujo; sin declaración, la familia de personajes conserva su regla de linaje (`narrative-character-creation`, `guided-character-v1`, derivadas por `parent_skill_id`). Una skill derivada hereda el flujo de su raíz; una importada no declara flujo (solo hereda). Un método de otro flujo se rechaza con 422 `ineligible_guided_method` en el arranque de sesión, `/api/methodologies/activate` y `rollback`, sin mutación.
+- **Default por flujo**: personajes → contrato integrado; un flujo declarado sin elección explícita → su método fundacional (`FOUNDATIONAL_METHOD_BY_FLOW`), nunca una sección ni un perfil inventado.
+- **API**: rutas genéricas `/api/{mundo}/guided/*` con `/guided-character/*` como alias; `flow` se ecoa en el estado público y en la sugerencia de consentimiento; `GET /api/methodologies/guided-methods?flow=` lista por flujo. El cliente nunca aporta el perfil.
+- **Skill Madre**: el canvas de co-creación todavía no recoge la declaración (fase dos); una skill co-creada hereda el flujo por linaje. La opción "De fábrica" solo existe para el flujo de personajes.
+- **Persistencia**: la ficha se escribe en la sección kernel con el `type` del perfil; los mínimos OKF del tipo se validan y los campos de envelope del perfil se promueven desde el canon aceptado al frontmatter. El índice del grafo reconcilia la sección de forma idempotente.
+
+**Escenarios cubiertos:** flujo declarado (Sistemas), herencia por linaje, método de otro flujo rechazado, declaración inválida rechazada en publish, flujo de personajes sin cambios.
 
 ---
 
