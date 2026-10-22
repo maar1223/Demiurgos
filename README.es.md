@@ -110,7 +110,7 @@ La primera ejecución muestra el flujo de **onboarding**: elige el idioma de la 
 | **Asistente de IA** | Chat + streaming SSE (`ai/ask`), gate de intención semántica, sugerencias de edición (`ai/edit-suggest`); nombre visible: **Asistente de Demiurgos** | Barra lateral del asistente |
 | **Creación guiada de personajes** | Protocolo `guided-character-v1` (confirmación → conversación → revisión → finalización), propuestas diskless, sesiones durables | Taller de Mundo |
 | **Ideas (Taller de Ideas)** | Banco de ideas agnóstico de mundo con versiones y media; captura de ideas por Telegram | `/ideas`, Integraciones → Captura de ideas |
-| **Biblioteca de metodologías y talleres** | Metodologías creativas editables por el Autor (compilar, confianza, cuarentena), talleres del Core | `/taller-herramientas`, `/taller-mundo` |
+| **Biblioteca de metodologías y talleres** | Metodologías creativas editables por el Autor (compilar, confianza, cuarentena), skills que se añaden al chat y método del asistente elegido al iniciar la sesión, talleres del Core | `/taller-herramientas`, `/taller-mundo` |
 | **Bóveda de cuenta** | Cuenta local única, contraseña opcional, palabras de recuperación EFF — **100 % offline**, sin secretos en `.env` | `/perfil` → Seguridad / Bóveda |
 | **Papelera** | `.papelera` por ficha **y** papelera a nivel de mundo, ambas con retención TTL de **30 días** | Editor, Perfil → Mundos |
 
