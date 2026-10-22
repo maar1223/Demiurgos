@@ -275,3 +275,41 @@ def test_system_profile_gates_a_delta_on_origin_and_limit() -> None:
         assert session_flow_profile(state) == profile
 
     asyncio.run(scenario())
+
+
+def test_character_profile_asks_desire_after_a_name_delta() -> None:
+    """S5 regression through the engine: a name delta moves to the desire."""
+    from guided_character_protocol import MethodologySnapshot
+    from guided_flow import builtin_profile
+
+    profile = builtin_profile("guided-character")
+    assert profile is not None
+
+    async def name_provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": req.request_id,
+            "session_id": req.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Aria"},
+        }
+
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create(
+            "session-1", "nec", "author-1",
+            methodology_snapshot=MethodologySnapshot(
+                skill_id="guided-character-v1",
+                skill_version="builtin",
+                compiled_contract_digest=None,
+                flow_type="guided-character",
+                profile=profile.as_dict(),
+            ),
+        )
+        response, _state = await continue_session(
+            store, name_provider, request(), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert response.question == "¿Cuál es el deseo que define a este personaje?"
+
+    asyncio.run(scenario())

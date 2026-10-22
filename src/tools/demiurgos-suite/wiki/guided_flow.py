@@ -26,6 +26,14 @@ from okf_contract import (
 GUIDED_CHARACTER_FLOW = "guided-character"
 GUIDED_SYSTEM_FLOW = "guided-system"
 
+# A declared flow id is bound to exactly one kernel entity shape. A
+# declaration pairing them inconsistently (e.g. the character flow writing a
+# system) fails at publish.
+ENTITY_TYPE_BY_FLOW: dict[str, str] = {
+    "guided-character": "personaje",
+    "guided-system": "sistema",
+}
+
 # Deterministic default for a flow that has no builtin contract: the
 # foundational method of the family. The chat imperative path uses it when the
 # Author did not pick a method, mirroring the character factory fallback.
@@ -172,6 +180,10 @@ class GuidedFlowProfile:
     ui_copy_key: str
     intent_terms: tuple[str, ...]
     intent_verbs: tuple[str, ...]
+    # Compatibility strategy for intent detection, kernel-owned. Currently
+    # ``legacy-character`` (the historical matcher, byte-identical) or
+    # ``declarative`` (the declared terms/verbs).
+    intent_matcher: str
     builtin: bool = False
 
     @property
@@ -271,6 +283,21 @@ def guided_flow_issues(value: Any) -> list[tuple[str, str, str]]:
                 "guided_flow.entity_type",
             )
 
+    if (
+        isinstance(flow_id, str)
+        and isinstance(entity_type, str)
+        and _FLOW_ID.match(flow_id.strip())
+        and entity_type_is_persistible(entity_type)
+    ):
+        expected_entity = ENTITY_TYPE_BY_FLOW.get(flow_id.strip())
+        if expected_entity is not None and expected_entity != normalize_type(entity_type):
+            issue(
+                "invalid-value",
+                f"guided_flow.flow_id {flow_id!r} is bound to entity_type "
+                f"{expected_entity!r}.",
+                "guided_flow.entity_type",
+            )
+
     ui_copy_key = value.get("ui_copy_key")
     if ui_copy_key is not None:
         if not isinstance(ui_copy_key, str) or ui_copy_key.strip() not in UI_COPY_KEYS:
@@ -351,6 +378,9 @@ def resolve_profile(
     entity_type = normalize_type(declaration.entity_type)
     if not entity_type_is_persistible(entity_type):
         return None
+    expected_entity = ENTITY_TYPE_BY_FLOW.get(declaration.flow_id)
+    if expected_entity is not None and expected_entity != entity_type:
+        return None
     if declaration.ui_copy_key not in UI_COPY_KEYS:
         return None
     question_keys = QUESTION_KEYS_BY_ENTITY_TYPE.get(entity_type)
@@ -370,6 +400,11 @@ def resolve_profile(
         ui_copy_key=declaration.ui_copy_key,
         intent_terms=declaration.intent_terms,
         intent_verbs=declaration.intent_verbs,
+        intent_matcher=(
+            "legacy-character"
+            if declaration.flow_id == GUIDED_CHARACTER_FLOW
+            else "declarative"
+        ),
         builtin=builtin,
     )
 

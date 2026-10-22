@@ -123,3 +123,9 @@ class TestProfileResolution:
             "entity_type": "planeta",
             "ui_copy_key": "system",
         }) is None
+
+
+def test_flow_id_must_match_the_declared_entity_shape() -> None:
+    """A flow id is bound to one kernel entity shape (S7)."""
+    codes = _codes(_declaration(flow_id=GUIDED_CHARACTER_FLOW, entity_type="sistema"))
+    assert codes == {"invalid-value"}

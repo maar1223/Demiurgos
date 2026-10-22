@@ -312,3 +312,37 @@ def test_system_reject_removes_the_proposal_without_writing(_isolated_flow_env) 
     assert response.status_code == 200, response.json()
     assert response.json()["candidate"]["proposals"] == {}
     assert not list((Path(api_server.MUNDOS_DIR) / "vibrantes" / "lore").iterdir())
+
+
+def test_reviewing_a_system_before_accepting_cannot_persist_below_okf(monkeypatch) -> None:
+    """S4 regression: the review button is visible while the fields are still
+    proposals; the serialized file must already carry the OKF minimums."""
+    _allow(monkeypatch, 1)
+
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {
+                "name": "Magia", "origen": "los dioses",
+                "limite": "no crea materia",
+            },
+        }
+
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    started = client.post("/api/vibrantes/guided/session", json={
+        "author_input": "Quiero crear un sistema de magia",
+        "flow_id": "guided-system",
+    })
+    assert started.status_code == 200, started.json()
+    payload = started.json()
+    assert payload["candidate"]["proposals"]
+
+    reviewed = client.post("/api/vibrantes/guided/proposal/serialize", json={
+        "session_id": payload["session_id"], "base_revision": payload["revision"],
+    })
+    assert reviewed.status_code == 200, reviewed.json()
+    validation = validate(reviewed.json()["proposed_content"])
+    assert validation.ok, validation.issues

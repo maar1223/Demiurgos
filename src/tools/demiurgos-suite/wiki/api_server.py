@@ -7647,6 +7647,12 @@ GUIDED_CONSENT_SUGGESTION_TEXT = (
 )
 """Approved in-chat suggestion copy (REQ-GFC-04)."""
 
+GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY = {
+    "character": GUIDED_CONSENT_SUGGESTION_TEXT,
+    "system": "Parece que quieres crear un sistema. ¿Abrimos el flujo guiado?",
+}
+"""Flow-specific suggestion copy; the card renders its own catalogue copy."""
+
 CONSENT_TOKEN_TTL = timedelta(minutes=30)
 """A consent suggestion token stays valid for this long after issuance."""
 
@@ -7812,7 +7818,9 @@ def _guided_consent_suggestion(
     return {
         "state": result.state,
         "action": result.action,
-        "response": GUIDED_CONSENT_SUGGESTION_TEXT,
+        "response": GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY.get(
+            profile.ui_copy_key, GUIDED_CONSENT_SUGGESTION_TEXT,
+        ),
         "request_id": result.request_id,
         "attempts": result.attempts,
         "guided_explicitness": decision.guided_explicitness,

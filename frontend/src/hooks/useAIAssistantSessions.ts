@@ -10,8 +10,8 @@ import type {
   AssistantActivityEvidence,
   AssistantActivityItem,
   EditProposal,
-  GuidedCharacterSession,
   GuidedFlowEcho,
+  GuidedCharacterSession,
   SemanticDecisionEvent,
 } from "@/api/types";
 import {

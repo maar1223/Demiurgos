@@ -321,7 +321,7 @@ def route_guided_intent(
     other flow uses the declaration's bounded intent vocabulary (terms and
     verbs) supplied by the published skill; no flow-specific branch lives here.
     """
-    if getattr(profile, "flow_id", None) == "guided-character":
+    if getattr(profile, "intent_matcher", "declarative") == "legacy-character":
         return route_new_character_intent(
             author_input,
             allow_descriptive_seed=allow_descriptive_seed,
@@ -617,10 +617,13 @@ def serialize_entity(
         "type": type_label, "schema_version": 1, "id": slug,
         "title": title, "status": "proposed", "provenance": list(provenance),
     }
-    # Flow-declared envelope fields: only accepted canon is promoted, never a
-    # proposal. Empty for the character flow, which keeps its exact bytes.
+    # Flow-declared envelope fields. Accepted canon wins; the Author is
+    # reviewing a still-proposed entity (``status: proposed``), so an answered
+    # minimum that is still a proposal is promoted to the envelope as well —
+    # otherwise the file would be written without the OKF minimums. Empty for
+    # the character flow, which keeps its exact bytes.
     for field in frontmatter_fields:
-        raw = candidate.accepted_canon.get(field)
+        raw = candidate.accepted_canon.get(field, candidate.proposals.get(field))
         if isinstance(raw, Mapping) and "value" in raw:
             raw = raw["value"]
         if isinstance(raw, (str, int, float)) and str(raw).strip():

@@ -198,6 +198,11 @@ def prompt_minimums_for(entity_type: str) -> tuple[frozenset[str], ...]:
         PROMPT_MINIMUM_GROUPS_BY_SHAPE.get(shape_for_type(entity_type), ())
     )
     for group in OKF_MINIMUM_GROUPS_BY_TYPE.get(normalize_type(entity_type), ()):
+        # The shape's completion identity is already ``MINIMUM_NAME_FIELDS``;
+        # the file-envelope identity group (which also accepts ``id``) must not
+        # add a third group and shift the question order.
+        if group == MINIMUM_IDENTITY_FIELDS:
+            continue
         if group not in groups:
             groups.append(group)
     return tuple(groups)

@@ -487,3 +487,25 @@ def test_system_intent_uses_the_declared_vocabulary() -> None:
     assert route_guided_intent("Quiero diseñar un sistema económico", profile).is_new_entity
     assert not route_guided_intent("Editar el sistema existente", profile).is_new_entity
     assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+
+
+def test_character_profile_keeps_name_then_desire_question_order() -> None:
+    """S5 regression: the profile-derived character gate must not add a third
+    identity group (which would repeat the name question forever)."""
+    from guided_flow import builtin_profile
+
+    profile = builtin_profile("guided-character")
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+    first = next_required_question(
+        CandidateState(), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    second = next_required_question(
+        CandidateState(accepted_canon={"name": {"value": "Aria"}}), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    assert first == "¿Cómo se llama este personaje?"
+    assert second == "¿Cuál es el deseo que define a este personaje?"

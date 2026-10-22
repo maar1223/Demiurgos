@@ -84,7 +84,7 @@
 - **Default por flujo**: personajes → contrato integrado; un flujo declarado sin elección explícita → su método fundacional (`FOUNDATIONAL_METHOD_BY_FLOW`), nunca una sección ni un perfil inventado.
 - **API**: rutas genéricas `/api/{mundo}/guided/*` con `/guided-character/*` como alias; `flow` se ecoa en el estado público y en la sugerencia de consentimiento; `GET /api/methodologies/guided-methods?flow=` lista por flujo. El cliente nunca aporta el perfil.
 - **Skill Madre**: el canvas de co-creación todavía no recoge la declaración (fase dos); una skill co-creada hereda el flujo por linaje. La opción "De fábrica" solo existe para el flujo de personajes.
-- **Persistencia**: la ficha se escribe en la sección kernel con el `type` del perfil; los mínimos OKF del tipo se validan y los campos de envelope del perfil se promueven desde el canon aceptado al frontmatter. El índice del grafo reconcilia la sección de forma idempotente.
+- **Persistencia**: la ficha se escribe en la sección kernel con el `type` del perfil; los mínimos OKF del tipo se validan y los campos de envelope del perfil se promueven al frontmatter desde el canon aceptado (o desde la propuesta ya respondida, con `status: proposed`), de modo que revisar antes de aceptar no persiste una entidad incompleta. El índice del grafo reconcilia la sección de forma idempotente.
 
 **Escenarios cubiertos:** flujo declarado (Sistemas), herencia por linaje, método de otro flujo rechazado, declaración inválida rechazada en publish, flujo de personajes sin cambios.
 
