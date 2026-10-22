@@ -1491,3 +1491,67 @@ class TestNativeChannelFlag:
         assert library.get_draft(draft_id) is not None
         payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["native_channel"] == {"W": True}
+
+
+class TestGuidedMethodEligibility:
+    """S4: the guided-character assistant only consumes character methods."""
+
+    def _publish_skill(
+        self, library: MethodologyLibrary, skill_id: str, version: str = "1.0.0",
+    ) -> PublishedVersion:
+        draft = library.create_draft(
+            skill_id=skill_id,
+            version=version,
+            name=skill_id,
+            source=_valid_source(),
+            description="A safe construction methodology for guided characters.",
+        )
+        return _publish(library, draft)
+
+    def test_character_family_is_eligible(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert library.is_guided_character_method(FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert library.is_guided_character_method("guided-character-v1")
+
+    def test_unrelated_foundational_skills_are_ineligible(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, "narrative-chronology-creation")
+        self._publish_skill(library, "narrative-system-creation")
+        assert not library.is_guided_character_method("narrative-chronology-creation")
+        assert not library.is_guided_character_method("narrative-system-creation")
+        assert not library.is_guided_character_method("cualquier-otra-skill")
+
+    def test_parent_lineage_inherits_eligibility(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        library._published[library._key("mi-metodo", "1.0.0")] = {
+            "skill_id": "mi-metodo",
+            "version": "1.0.0",
+            "name": "Mi método",
+            "parent_skill_id": FOUNDATIONAL_CHARACTER_SKILL_ID,
+            "deleted_at": None,
+        }
+        assert library.is_guided_character_method("mi-metodo")
+
+    def test_lineage_cycle_is_safe(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        for skill_id, parent in (("a", "b"), ("b", "a")):
+            library._published[library._key(skill_id, "1.0.0")] = {
+                "skill_id": skill_id,
+                "version": "1.0.0",
+                "name": skill_id,
+                "parent_skill_id": parent,
+                "deleted_at": None,
+            }
+        assert not library.is_guided_character_method("a")
+
+    def test_list_guided_methods_returns_latest_per_skill(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID, "1.0.0")
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2.0")
+        self._publish_skill(library, "narrative-system-creation")
+        methods = library.list_guided_methods()
+        assert [(item.skill_id, item.version) for item in methods] == [
+            (FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2.0"),
+        ]

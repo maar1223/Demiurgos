@@ -1923,7 +1923,9 @@ class TestGuidedSessionDurability:
         assert fresh.status_code == 200
         assert fresh.json()["proposal_id"].startswith("guided-proposal-")
 
-    def test_methodology_change_requires_a_new_session(self, client: TestClient, monkeypatch, tmp_path):
+    def test_factory_version_change_keeps_existing_session(self, client: TestClient, monkeypatch, tmp_path):
+        """S6/S7: the method is per-session. A new factory version never
+        invalidates an existing session; only new sessions pin it."""
         db = tmp_path / "guided.sqlite3"
         store = DurableGuidedSessionStore(db)
         provider = self._delta_provider()
@@ -1939,17 +1941,15 @@ class TestGuidedSessionDurability:
 
         monkeypatch.setattr(api_server, "_ACTIVE_METHODOLOGY_VERSION", "custom-v2")
         resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
-        assert resumed.status_code == 422
-        assert "methodology version has changed" in resumed.json()["message"]
+        assert resumed.status_code == 200
 
         turned = client.post("/api/test_mundo/guided-character/turn", json={
             "session_id": sid, "base_revision": revision,
             "author_input": "Su deseo es la libertad",
         })
-        assert turned.status_code == 422
-        assert "methodology version has changed" in turned.json()["message"]
+        assert turned.status_code == 200
 
-        # A brand-new session under the new version works and pins it.
+        # A brand-new session under the new factory version pins it.
         fresh = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Mar",
         })
@@ -2500,9 +2500,9 @@ class TestMethodologyApi:
         assert snapshot.compiled_contract_digest is not None
         assert snapshot.flow_type == "guided-character"
 
-    def test_existing_session_fails_closed_after_activation(self, client: TestClient, monkeypatch, tmp_path):
-        """A session created BEFORE activation keeps its pinned version and is
-        refused on resume/turn once the world's active version changed."""
+    def test_existing_session_keeps_method_after_activation(self, client: TestClient, monkeypatch, tmp_path):
+        """S6/S7: activating a world default later never invalidates a session
+        that already pinned the factory method; new sessions pin the default."""
         db = tmp_path / "guided.sqlite3"
         store = DurableGuidedSessionStore(db)
         provider = _delta_guided_provider()
@@ -2528,13 +2528,20 @@ class TestMethodologyApi:
 
         self._publish_and_activate(client)
         resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
-        assert resumed.status_code == 422
-        assert "methodology version has changed" in resumed.json()["message"]
+        assert resumed.status_code == 200
         turned = client.post("/api/test_mundo/guided-character/turn", json={
             "session_id": sid, "base_revision": revision,
             "author_input": "Su deseo es la libertad",
         })
-        assert turned.status_code == 422
+        assert turned.status_code == 200
+
+        fresh = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Mar",
+        })
+        assert fresh.status_code == 200
+        snapshot = store.methodology_snapshot(fresh.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_version == "1.2.0"
 
     def test_authority_claiming_draft_fails_compile_on_publish(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
