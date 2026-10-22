@@ -295,20 +295,20 @@ class TestFirstProviderTouchE2E:
             api_server, "_GUIDED_CAPABILITIES",
             api_server.Capabilities("guided-character-v1", True, True, True, 30000),
         )
-        real_route = api_server.route_new_character_intent
+        real_route = api_server.route_guided_intent
 
         def recorded_route(*args, **kwargs):
-            order.append("route_new_character_intent")
+            order.append("route_guided_intent")
             return real_route(*args, **kwargs)
 
-        monkeypatch.setattr(api_server, "route_new_character_intent", recorded_route)
+        monkeypatch.setattr(api_server, "route_guided_intent", recorded_route)
         response = client.post(
             "/api/test_mundo/guided-character/session",
             json={"author_input": "Create a character"},
         )
         assert response.status_code == 200
         assert order[0] == "semantic.decide"
-        assert order == ["semantic.decide", "route_new_character_intent", "guided_provider"]
+        assert order == ["semantic.decide", "route_guided_intent", "guided_provider"]
         assert runs.starts == 1
 
     def test_guided_turn_first_touch_is_semantic(self, client, monkeypatch):

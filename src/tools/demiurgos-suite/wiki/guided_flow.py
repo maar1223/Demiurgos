@@ -26,6 +26,13 @@ from okf_contract import (
 GUIDED_CHARACTER_FLOW = "guided-character"
 GUIDED_SYSTEM_FLOW = "guided-system"
 
+# Deterministic default for a flow that has no builtin contract: the
+# foundational method of the family. The chat imperative path uses it when the
+# Author did not pick a method, mirroring the character factory fallback.
+FOUNDATIONAL_METHOD_BY_FLOW: dict[str, str] = {
+    "guided-system": "narrative-system-creation",
+}
+
 # Flow ids the server currently accepts as activation slots. A genuinely new
 # flow id requires one entry here plus its kernel entity mapping below.
 GUIDED_FLOW_IDS: frozenset[str] = frozenset({
@@ -50,6 +57,21 @@ TYPE_LABEL_BY_ENTITY_TYPE: dict[str, str] = {
 
 # Canonical provenance fallback when a candidate carries no provenance, keyed by
 # entity type so the character serializer keeps its historical value verbatim.
+# Envelope fields the serializer promotes from accepted canon into the ficha
+# frontmatter so the persisted entity passes the OKF minimums. Empty for the
+# character flow: its bytes stay exactly as before.
+FRONTMATTER_FIELDS_BY_ENTITY_TYPE: dict[str, tuple[str, ...]] = {
+    "personaje": (),
+    "sistema": ("origen", "limite"),
+    "cronologia": ("evento",),
+}
+
+DEFAULT_TITLE_BY_ENTITY_TYPE: dict[str, str] = {
+    "personaje": "Guided Character",
+    "sistema": "Guided System",
+    "cronologia": "Guided Chronology",
+}
+
 PROVENANCE_DEFAULT_BY_ENTITY_TYPE: dict[str, str] = {
     "personaje": "guided-character-v1",
     "sistema": "guided-sistema-v1",
@@ -144,6 +166,8 @@ class GuidedFlowProfile:
     minimum_groups: tuple[frozenset[str], ...]
     question_keys: tuple[str, ...]
     provenance_default: str
+    default_title: str
+    frontmatter_fields: tuple[str, ...]
     index: bool
     ui_copy_key: str
     intent_terms: tuple[str, ...]
@@ -340,6 +364,8 @@ def resolve_profile(
         minimum_groups=prompt_minimums_for(entity_type),
         question_keys=question_keys,
         provenance_default=PROVENANCE_DEFAULT_BY_ENTITY_TYPE[entity_type],
+        default_title=DEFAULT_TITLE_BY_ENTITY_TYPE[entity_type],
+        frontmatter_fields=FRONTMATTER_FIELDS_BY_ENTITY_TYPE[entity_type],
         index=declaration.index,
         ui_copy_key=declaration.ui_copy_key,
         intent_terms=declaration.intent_terms,

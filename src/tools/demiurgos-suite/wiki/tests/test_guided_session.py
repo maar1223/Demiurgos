@@ -229,3 +229,49 @@ def test_continue_session_forwards_convergence_specimen_hint_additively() -> Non
         assert received == {"contract": None, "specimen": None}
 
     asyncio.run(scenario())
+
+
+def test_system_profile_gates_a_delta_on_origin_and_limit() -> None:
+    """S1/S4: the completion gate follows the session's pinned profile."""
+    from guided_character_protocol import MethodologySnapshot, session_flow_profile
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    profile = resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-system",
+        "entity_type": "sistema",
+        "ui_copy_key": "system",
+        "index": True,
+        "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+    }))
+    assert profile is not None
+
+    async def delta_provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": req.request_id,
+            "session_id": req.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Magia", "origen": "los dioses"},
+        }
+
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create(
+            "session-1", "nec", "author-1",
+            methodology_snapshot=MethodologySnapshot(
+                skill_id="narrative-system-creation",
+                skill_version="1.1",
+                compiled_contract_digest="digest",
+                flow_type="guided-system",
+                profile=profile.as_dict(),
+            ),
+        )
+        response, state = await continue_session(
+            store, delta_provider, request(), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert response.question and response.question.startswith("¿Qué no puede hacer")
+        assert state is not None
+        assert session_flow_profile(state) == profile
+
+    asyncio.run(scenario())

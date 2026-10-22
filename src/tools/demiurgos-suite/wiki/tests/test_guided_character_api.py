@@ -870,7 +870,13 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow"}
+    assert session["flow"] == {
+        "flow_id": "guided-character",
+        "entity_type": "personaje",
+        "target_section": "personajes",
+        "ui_copy_key": "character",
+    }
     assert "provenance" not in session["candidate"]
 
     recovered = client.get(f"/api/vibrantes/guided-character/session/{session['session_id']}")
@@ -1356,20 +1362,20 @@ def test_guided_start_semantic_decides_before_lexical_policy(monkeypatch, tmp_pa
         return await original_decide(*args, **kwargs)
 
     provider_semantic.decide = recorded_decide
-    real_route = api_server.route_new_character_intent
+    real_route = api_server.route_guided_intent
 
     def recorded_route(*args, **kwargs):
-        order.append("route_new_character_intent")
+        order.append("route_guided_intent")
         return real_route(*args, **kwargs)
 
-    monkeypatch.setattr(api_server, "route_new_character_intent", recorded_route)
+    monkeypatch.setattr(api_server, "route_guided_intent", recorded_route)
 
     response = client.post("/api/vibrantes/guided-character/session", json={
         "author_input": "Create a character",
     })
 
     assert response.status_code == 200
-    assert order == ["semantic.decide", "route_new_character_intent", "guided_provider"]
+    assert order == ["semantic.decide", "route_guided_intent", "guided_provider"]
     assert runs.starts == 1
 
 

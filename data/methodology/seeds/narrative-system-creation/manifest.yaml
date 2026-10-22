@@ -1,5 +1,5 @@
 skill_id: narrative-system-creation
-version: "1.0"
+version: "1.1"
 name: Creación de Sistemas
 description: >-
   Metodología fundacional para co-crear un SISTEMA nuevo, agnóstica al mundo.
@@ -36,3 +36,31 @@ etiquetas: [sistema, worldbuilding, forma-sistema]
 # v1.0 ships no adjuntos: el método vive completo en source.md y los adjuntos
 # de densidad (1º/2º/3º) son semántica de personaje, no de sistema.
 adjuntos: []
+
+# Declaración de flujo guiado (S1): la skill declara la FORMA, el kernel decide
+# la sección (lore/) y los mínimos. El vocabulario acota la intención de chat;
+# nunca declara destino, persistencia ni mínimos.
+guided_flow:
+  flow_id: guided-system
+  entity_type: sistema
+  ui_copy_key: system
+  index: true
+  intent:
+    terms: [sistema, sistemas, system, systems]
+    verbs:
+      - crear
+      - crea
+      - diseñar
+      - diseña
+      - inventar
+      - hacer
+      - quiero
+      - necesito
+      - definir
+      - define
+      - create
+      - design
+      - invent
+      - make
+      - want
+      - need

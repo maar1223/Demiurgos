@@ -448,19 +448,27 @@ def test_system_questions_walk_the_missing_group() -> None:
 def test_system_serializer_writes_the_kernel_section_and_type() -> None:
     from guided_character_domain import serialize_entity
 
-    candidate = CandidateState(accepted_canon={"name": "Magia", "origen": "los dioses"})
+    candidate = CandidateState(accepted_canon={
+        "name": "Magia", "origen": "los dioses", "limite": "no crea materia",
+    })
     proposal = serialize_entity(
         candidate, world="vibrantes", slug="magia", title="Magia",
         entity_type="sistema", target_section="lore", type_label="Sistema",
         provenance_default="guided-sistema-v1",
+        frontmatter_fields=("origen", "limite"),
     )
     assert proposal.target == "lore/magia.md"
     frontmatter, body = proposal.content.split("---\n", 2)[1:]
     metadata = yaml.safe_load(frontmatter)
     assert metadata["type"] == "Sistema"
     assert metadata["id"] == "magia"
+    assert metadata["origen"] == "los dioses"
+    assert metadata["limite"] == "no crea materia"
     assert metadata["provenance"] == ["guided-sistema-v1"]
     assert "## Identity" in body
+    from okf_contract import validate
+
+    assert validate(proposal.content).ok, validate(proposal.content).issues
 
 
 def test_system_intent_uses_the_declared_vocabulary() -> None:

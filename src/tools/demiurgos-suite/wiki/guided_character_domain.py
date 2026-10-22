@@ -596,6 +596,7 @@ def serialize_entity(
     world: str, slug: str, title: str,
     entity_type: str, target_section: str, type_label: str,
     provenance_default: str = "guided-character-v1",
+    frontmatter_fields: tuple[str, ...] = (),
     existing_targets: set[str] | None = None,
 ) -> FichaProposal:
     """Serialize an additive OKF v1 entity and validate its authorized target.
@@ -616,6 +617,14 @@ def serialize_entity(
         "type": type_label, "schema_version": 1, "id": slug,
         "title": title, "status": "proposed", "provenance": list(provenance),
     }
+    # Flow-declared envelope fields: only accepted canon is promoted, never a
+    # proposal. Empty for the character flow, which keeps its exact bytes.
+    for field in frontmatter_fields:
+        raw = candidate.accepted_canon.get(field)
+        if isinstance(raw, Mapping) and "value" in raw:
+            raw = raw["value"]
+        if isinstance(raw, (str, int, float)) and str(raw).strip():
+            frontmatter_values[field] = raw
     frontmatter = "---\n" + yaml.safe_dump(frontmatter_values, sort_keys=False, allow_unicode=False) + "---\n"
     def section(name: str, values: Mapping[str, Any] | list[Any]) -> str:
         if not values:

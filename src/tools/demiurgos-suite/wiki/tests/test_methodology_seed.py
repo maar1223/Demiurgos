@@ -691,6 +691,21 @@ class TestSistemaSeedPublishesClean:
             "narrative-system-creation",
         ]
 
+    def test_sistema_seed_declares_the_guided_flow(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+        published = library.get_published("narrative-system-creation", "1.1")
+        assert published is not None
+        assert published.guided_flow is not None
+        assert published.guided_flow.flow_id == "guided-system"
+        assert published.guided_flow.entity_type == "sistema"
+        assert library.is_method_for_flow(
+            "guided-system", "narrative-system-creation",
+        )
+        assert not library.is_method_for_flow(
+            "guided-character", "narrative-system-creation",
+        )
+
     def test_both_seeds_install_clean_as_foundational(self, tmp_path: Path) -> None:
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, SEED_ROOT)
@@ -698,7 +713,7 @@ class TestSistemaSeedPublishesClean:
         assert report.installed == 2 and report.conflict == 0
         for skill_id, version in (
             ("narrative-character-creation", "1.2"),
-            ("narrative-system-creation", "1.0"),
+            ("narrative-system-creation", "1.1"),
         ):
             published = library.get_published(skill_id, version)
             assert published is not None
