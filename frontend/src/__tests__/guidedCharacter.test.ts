@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptGuidedCharacterProposal,
+  startGuidedFlow,
   acceptGuidedConsent,
   continueGuidedCharacter,
   declineGuidedConsent,
@@ -47,17 +48,17 @@ describe("guided character API compatibility", () => {
 
     const calls = mockApiFetch.mock.calls;
     expect(calls.map(([url, options]) => [url, options?.method ?? "GET"])).toEqual([
-      ["/api/world%20with%20spaces/guided-character/session/s1", "GET"],
-      ["/api/world%20with%20spaces/guided-character/session", "POST"],
-      ["/api/world%20with%20spaces/guided-character/turn", "POST"],
-      ["/api/world%20with%20spaces/guided-character/proposal/accept", "POST"],
-      ["/api/world%20with%20spaces/guided-character/proposal/reject", "POST"],
-      ["/api/world%20with%20spaces/guided-character/proposal/serialize", "POST"],
-      ["/api/world%20with%20spaces/guided-character/index/retry", "POST"],
+      ["/api/world%20with%20spaces/guided/session/s1", "GET"],
+      ["/api/world%20with%20spaces/guided/session", "POST"],
+      ["/api/world%20with%20spaces/guided/turn", "POST"],
+      ["/api/world%20with%20spaces/guided/proposal/accept", "POST"],
+      ["/api/world%20with%20spaces/guided/proposal/reject", "POST"],
+      ["/api/world%20with%20spaces/guided/proposal/serialize", "POST"],
+      ["/api/world%20with%20spaces/guided/index/retry", "POST"],
     ]);
     expect(calls.map(([, options]) => options?.timeout)).toEqual(Array(7).fill(35_000));
     expect(calls.slice(1).map(([, options]) => options?.body)).toEqual([
-      JSON.stringify({ author_input: "Create a character" }),
+      JSON.stringify({ author_input: "Create a character", flow_id: "guided-character" }),
       JSON.stringify({ session_id: "s1", base_revision: 1, author_input: "freedom" }),
       JSON.stringify({ session_id: "s1", base_revision: 1, key: "desire" }),
       JSON.stringify({ session_id: "s1", base_revision: 1, key: "desire" }),
@@ -65,6 +66,25 @@ describe("guided character API compatibility", () => {
       JSON.stringify({ session_id: "s1", base_revision: 1 }),
     ]);
     expect(await startGuidedCharacter("nec", "x")).toEqual(session);
+  });
+
+  it("opens a declared flow with its flow id (S1/S3)", async () => {
+    await startGuidedFlow("nec", "Quiero crear un sistema", "guided-system", {
+      skill_id: "narrative-system-creation",
+      version: "1.1",
+    });
+    await acceptGuidedConsent("nec", "ct-1", undefined, "guided-system");
+    expect(
+      mockApiFetch.mock.calls.map(([, options]) => options?.body),
+    ).toEqual([
+      JSON.stringify({
+        author_input: "Quiero crear un sistema",
+        flow_id: "guided-system",
+        method_skill_id: "narrative-system-creation",
+        method_version: "1.1",
+      }),
+      JSON.stringify({ token: "ct-1", flow_id: "guided-system" }),
+    ]);
   });
 
   it("wires the one-shot consent accept/decline calls with the token body", async () => {
@@ -94,8 +114,8 @@ describe("guided character API compatibility", () => {
 
     const calls = mockApiFetch.mock.calls;
     expect(calls.map(([url, options]) => [url, options?.method ?? "GET"])).toEqual([
-      ["/api/world%20with%20spaces/guided-character/consent/accept", "POST"],
-      ["/api/world%20with%20spaces/guided-character/consent/decline", "POST"],
+      ["/api/world%20with%20spaces/guided/consent/accept", "POST"],
+      ["/api/world%20with%20spaces/guided/consent/decline", "POST"],
     ]);
     expect(calls.map(([, options]) => options?.body)).toEqual([
       JSON.stringify({ token: "ct-1" }),
@@ -135,9 +155,10 @@ describe("guided character per-session method (S6)", () => {
     expect(
       mockApiFetch.mock.calls.map(([, options]) => options?.body),
     ).toEqual([
-      JSON.stringify({ author_input: "x", method_skill_id: "factory" }),
+      JSON.stringify({ author_input: "x", flow_id: "guided-character", method_skill_id: "factory" }),
       JSON.stringify({
         author_input: "y",
+        flow_id: "guided-character",
         method_skill_id: "narrative-character-creation",
         method_version: "1.2",
       }),
@@ -155,7 +176,7 @@ describe("guided character per-session method (S6)", () => {
     expect(
       mockApiFetch.mock.calls.map(([, options]) => options?.body),
     ).toEqual([
-      JSON.stringify({ author_input: "x" }),
+      JSON.stringify({ author_input: "x", flow_id: "guided-character" }),
       JSON.stringify({ token: "ct-1" }),
     ]);
   });

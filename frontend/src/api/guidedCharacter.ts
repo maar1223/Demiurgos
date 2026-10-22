@@ -8,7 +8,7 @@ import type {
 const GUIDED_CHARACTER_TIMEOUT_MS = 35_000;
 
 function url(world: string, suffix = ""): string {
-  return `/api/${encodeURIComponent(world)}/guided-character${suffix}`;
+  return `/api/${encodeURIComponent(world)}/guided${suffix}`;
 }
 
 /** Per-session guided method (S6). `skill_id: "factory"` selects the builtin
@@ -34,16 +34,30 @@ export function recoverGuidedCharacter(
   });
 }
 
+export function startGuidedFlow(
+  world: string,
+  authorInput: string,
+  flowId = "guided-character",
+  method?: GuidedMethodChoice,
+): Promise<GuidedCharacterSession> {
+  return apiFetch<GuidedCharacterSession>(url(world, "/session"), {
+    method: "POST",
+    body: JSON.stringify({
+      author_input: authorInput,
+      flow_id: flowId,
+      ...methodPayload(method),
+    }),
+    timeout: GUIDED_CHARACTER_TIMEOUT_MS,
+  });
+}
+
+/** Character-flow convenience wrapper over `startGuidedFlow`. */
 export function startGuidedCharacter(
   world: string,
   authorInput: string,
   method?: GuidedMethodChoice,
 ): Promise<GuidedCharacterSession> {
-  return apiFetch<GuidedCharacterSession>(url(world, "/session"), {
-    method: "POST",
-    body: JSON.stringify({ author_input: authorInput, ...methodPayload(method) }),
-    timeout: GUIDED_CHARACTER_TIMEOUT_MS,
-  });
+  return startGuidedFlow(world, authorInput, "guided-character", method);
 }
 
 export function continueGuidedCharacter(
@@ -123,10 +137,15 @@ export function acceptGuidedConsent(
   world: string,
   token: string,
   method?: GuidedMethodChoice,
+  flowId?: string,
 ): Promise<SemanticDecisionEnvelope> {
   return apiFetch<SemanticDecisionEnvelope>(url(world, "/consent/accept"), {
     method: "POST",
-    body: JSON.stringify({ token, ...methodPayload(method) }),
+    body: JSON.stringify({
+      token,
+      ...(flowId ? { flow_id: flowId } : {}),
+      ...methodPayload(method),
+    }),
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,
   });
 }

@@ -30,8 +30,14 @@ export function getMethodologyStatus(): Promise<MethodologyStatus> {
 
 /** GET /api/methodologies/guided-methods — eligible character-creation
  *  methods for the guided assistant, plus the world's preselected default. */
-export function getGuidedMethods(world?: string): Promise<GuidedMethodsResponse> {
-  const query = world ? `?world=${encodeURIComponent(world)}` : "";
+export function getGuidedMethods(
+  world?: string,
+  flow?: string,
+): Promise<GuidedMethodsResponse> {
+  const params = new URLSearchParams();
+  if (world) params.set("world", world);
+  if (flow) params.set("flow", flow);
+  const query = params.size ? `?${params.toString()}` : "";
   return apiFetch<GuidedMethodsResponse>(url(`/guided-methods${query}`), {
     timeout: METHODOLOGIES_TIMEOUT_MS,
   });

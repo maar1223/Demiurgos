@@ -533,6 +533,10 @@ export const messages = {
     "assistant.consent.title": "Flujo guiado",
     "assistant.consent.body":
       "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?",
+    "assistant.consent.body.character":
+      "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?",
+    "assistant.consent.body.system":
+      "Parece que quieres crear un sistema. ¿Abrimos el flujo guiado?",
     "assistant.consent.yes": "Sí, empecemos",
     "assistant.consent.no": "Seguir charlando",
     "assistant.proposal.title": "Detalle sugerido",
@@ -2554,6 +2558,10 @@ export const messages = {
     "assistant.consent.title": "Guided flow",
     "assistant.consent.body":
       "It looks like you want to create a character. Shall we open the guided flow?",
+    "assistant.consent.body.character":
+      "It looks like you want to create a character. Shall we open the guided flow?",
+    "assistant.consent.body.system":
+      "It looks like you want to create a system. Shall we open the guided flow?",
     "assistant.consent.yes": "Yes, let's start",
     "assistant.consent.no": "Keep chatting",
     "assistant.proposal.title": "Suggested detail",

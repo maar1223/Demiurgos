@@ -16,7 +16,11 @@ import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
-import type { EditProposal, GuidedMethodOption } from "@/api/types";
+import type {
+  EditProposal,
+  GuidedFlowEcho,
+  GuidedMethodOption,
+} from "@/api/types";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { getGuidedMethods } from "@/api/methodologies";
 import { useWhisper } from "@/hooks/useWhisper";
@@ -135,6 +139,8 @@ interface ChatScreenProps {
   guidedMethods: GuidedMethodOption[];
   /** The world's eligible legacy activation, preselected; null = factory. */
   guidedMethodDefault: { skill_id: string; version: string } | null;
+  /** Server-resolved flow for the pending consent card (S1). */
+  consentFlow?: GuidedFlowEcho;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
 }
@@ -256,6 +262,7 @@ function ChatScreen({
   resolveGuidedConsent,
   guidedMethods,
   guidedMethodDefault,
+  consentFlow,
   requestGuidedReview,
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
@@ -319,27 +326,39 @@ function ChatScreen({
         )?.name ?? guidedMethodology.skill_id ?? ""
     : null;
 
-  /** Preselect the world default when the consent card appears (S6). */
+  const consentFlowKey =
+    consentFlow?.ui_copy_key === "system" ? "system" : "character";
+
+  /** Preselect the flow default when the consent card appears (S3/S6).
+   *  The character flow keeps its factory fallback; a declared flow preselects
+   *  its first eligible method (the server's foundational default). */
   useEffect(() => {
     if (!consentToken) {
       setConsentMethodTouched(false);
       return;
     }
     if (!consentMethodTouched) {
-      setConsentMethodId(guidedMethodDefault?.skill_id ?? "factory");
+      setConsentMethodId(
+        consentFlowKey === "character"
+          ? (guidedMethodDefault?.skill_id ?? "factory")
+          : (guidedMethodDefault?.skill_id ?? guidedMethods[0]?.skill_id ?? ""),
+      );
     }
-  }, [consentToken, guidedMethodDefault, consentMethodTouched]);
+  }, [
+    consentToken, consentFlowKey, guidedMethodDefault, guidedMethods,
+    consentMethodTouched,
+  ]);
 
-  const consentChoice = (): GuidedMethodChoice => {
+  const consentChoice = (): GuidedMethodChoice | undefined => {
     if (consentMethodId === "factory" || !consentMethodId) {
-      return { skill_id: "factory" };
+      // Only the character flow has a builtin factory contract.
+      return consentFlowKey === "character" ? { skill_id: "factory" } : undefined;
     }
     const chosen = guidedMethods.find(
       (method) => method.skill_id === consentMethodId,
     );
-    return chosen
-      ? { skill_id: chosen.skill_id, version: chosen.version }
-      : { skill_id: "factory" };
+    if (chosen) return { skill_id: chosen.skill_id, version: chosen.version };
+    return consentFlowKey === "character" ? { skill_id: "factory" } : undefined;
   };
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
@@ -585,7 +604,9 @@ function ChatScreen({
                   {t("assistant.consent.title")}
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-muted">
-                  {t("assistant.consent.body")}
+                  {consentFlowKey === "system"
+                    ? t("assistant.consent.body.system")
+                    : t("assistant.consent.body.character")}
                 </p>
                 <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
                   {t("guided.methodTitle")}
@@ -598,7 +619,9 @@ function ChatScreen({
                     disabled={isSending}
                     className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
                   >
-                    <option value="factory">{t("guided.methodFactory")}</option>
+                    {consentFlowKey === "character" && (
+                      <option value="factory">{t("guided.methodFactory")}</option>
+                    )}
                     {guidedMethods.map((method) => (
                       <option key={method.skill_id} value={method.skill_id}>
                         {method.name} (v{method.version})
@@ -917,15 +940,20 @@ export function AIAssistantSidebar({
     { skill_id: string; version: string } | null
   >(null);
   const consentToken = sessions.activeSession?.consentToken;
+  const consentFlow = sessions.activeSession?.consentFlow;
   const guidedMethodSkillId =
     sessions.activeSession?.guided?.methodology?.skill_id ?? null;
+  const guidedFlowId =
+    consentFlow?.flow_id ??
+    sessions.activeSession?.guided?.flow?.flow_id ??
+    "guided-character";
 
   /** Eligible methods are fetched when the consent card or a running guided
-   *  session needs to render the method. */
+   *  session needs to render the method, scoped to the session's flow. */
   useEffect(() => {
     if (!consentToken && !guidedMethodSkillId) return;
     let cancelled = false;
-    getGuidedMethods(mundo)
+    getGuidedMethods(mundo, guidedFlowId)
       .then((response) => {
         if (cancelled) return;
         setGuidedMethods(response.methods);
@@ -937,7 +965,7 @@ export function AIAssistantSidebar({
     return () => {
       cancelled = true;
     };
-  }, [consentToken, guidedMethodSkillId, mundo]);
+  }, [consentToken, guidedMethodSkillId, guidedFlowId, mundo]);
 
   const whisper = useWhisper({
     onTranscribed: useCallback(
@@ -979,6 +1007,7 @@ export function AIAssistantSidebar({
           resolveGuidedConsent={sessions.resolveGuidedConsent}
           guidedMethods={guidedMethods}
           guidedMethodDefault={guidedMethodDefault}
+          consentFlow={consentFlow}
           requestGuidedReview={sessions.requestGuidedReview}
         />
       ) : (

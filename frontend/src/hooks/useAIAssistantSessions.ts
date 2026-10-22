@@ -11,6 +11,7 @@ import type {
   AssistantActivityItem,
   EditProposal,
   GuidedCharacterSession,
+  GuidedFlowEcho,
   SemanticDecisionEvent,
 } from "@/api/types";
 import {
@@ -50,6 +51,8 @@ export interface Session {
    * counts as "keep chatting" and dismisses it.
    */
   consentToken?: string;
+  /** Server-resolved flow for the pending consent card (S1). */
+  consentFlow?: GuidedFlowEcho;
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
@@ -412,6 +415,7 @@ export function useAIAssistantSessions(
                 // Sending another message counts as "keep chatting": the
                 // pending suggestion is dismissed (REQ-GFC-06).
                 consentToken: undefined,
+                consentFlow: undefined,
               }
             : s,
         ),
@@ -483,7 +487,13 @@ export function useAIAssistantSessions(
           // the composer stays enabled (no guided session yet).
           setSessions((prev) =>
             prev.map((s) =>
-              s.id === sessionId ? { ...s, consentToken: outcome.consentToken } : s,
+              s.id === sessionId
+                ? {
+                    ...s,
+                    consentToken: outcome.consentToken,
+                    consentFlow: outcome.flow,
+                  }
+                : s,
             ),
           );
           return;
@@ -617,9 +627,12 @@ export function useAIAssistantSessions(
         // bare session (or undefined) — never the envelope. A legacy server
         // answering with the bare session directly is still admitted; anything
         // malformed is dropped instead of being stored as `guided`.
-        const envelope = method
-          ? await acceptGuidedConsent(contextMundo, token, method)
-          : await acceptGuidedConsent(contextMundo, token);
+        const flowId = activeSession?.consentFlow?.flow_id;
+        const envelope = flowId
+          ? await acceptGuidedConsent(contextMundo, token, method, flowId)
+          : method
+            ? await acceptGuidedConsent(contextMundo, token, method)
+            : await acceptGuidedConsent(contextMundo, token);
         // Validate the unwrapped value too: a present-but-malformed
         // `guided_state` must not be stored either, so this boundary stays
         // symmetric with loadSessions instead of trusting the server's type.
@@ -628,7 +641,7 @@ export function useAIAssistantSessions(
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId
-              ? { ...session, guided, consentToken: undefined }
+              ? { ...session, guided, consentToken: undefined, consentFlow: undefined }
               : session,
           ),
         );
@@ -637,7 +650,7 @@ export function useAIAssistantSessions(
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId
-              ? { ...session, consentToken: undefined }
+              ? { ...session, consentToken: undefined, consentFlow: undefined }
               : session,
           ),
         );

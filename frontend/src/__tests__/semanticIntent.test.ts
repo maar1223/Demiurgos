@@ -173,6 +173,44 @@ describe("semantic intent consent suggestion mapping", () => {
     });
   });
 
+  it("carries the server-resolved flow on a consent suggestion (S1)", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-sys",
+      flow: {
+        flow_id: "guided-system",
+        entity_type: "sistema",
+        target_section: "lore",
+        ui_copy_key: "system",
+      },
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "¿Abrimos el flujo guiado?",
+      consentToken: "ct-sys",
+      flow: {
+        flow_id: "guided-system",
+        entity_type: "sistema",
+        target_section: "lore",
+        ui_copy_key: "system",
+      },
+    });
+  });
+
+  it("drops a malformed flow echo instead of rendering it", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent: "required",
+      consent_token: "ct-bad",
+      flow: { flow_id: "guided-system", ui_copy_key: "wizard" },
+    }));
+    expect(result.kind).toBe("suggestion");
+    if (result.kind !== "suggestion") return;
+    expect(result.flow).toBeUndefined();
+  });
+
   it("maps a proposal_ready consent suggestion when no proposal is present", () => {
     const result = mapSemanticDecision(envelope("proposal_ready", {
       action: "show_proposal",

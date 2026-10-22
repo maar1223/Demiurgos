@@ -793,6 +793,61 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(false);
   });
 
+  it("renders flow-specific copy and methods for a declared flow (S3)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-system-creation",
+          version: "1.1",
+          name: "Creación de Sistemas",
+        },
+      ],
+      default: { skill_id: "narrative-system-creation", version: "1.1" },
+      flow: "guided-system",
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear sistema",
+        messages: [{ role: "user", content: "Quiero crear un sistema" }],
+        createdAt: 1,
+        consentToken: "ct-sys",
+        consentFlow: {
+          flow_id: "guided-system",
+          entity_type: "sistema",
+          target_section: "lore",
+          ui_copy_key: "system",
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByText(tEs("assistant.consent.body.system")),
+    ).toBeInTheDocument();
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-system-creation");
+    // A declared flow has no builtin factory contract.
+    expect(
+      screen.queryByRole("option", { name: /De fábrica/ }),
+    ).not.toBeInTheDocument();
+    expect(getGuidedMethodsMock).toHaveBeenLastCalledWith(
+      "Vibrantes", "guided-system",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-system-creation",
+      version: "1.1",
+    });
+  });
+
   it("sends the method chosen on the consent card (S6)", async () => {
     const resolveGuidedConsent = vi.fn();
     getGuidedMethodsMock.mockResolvedValueOnce({

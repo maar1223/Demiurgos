@@ -649,6 +649,17 @@ export interface GuidedMethodsResponse {
   methods: GuidedMethodOption[];
   /** The world's eligible legacy activation, preselected; null means factory. */
   default: { skill_id: string; version: string } | null;
+  /** The flow the list was resolved for (additive; defaults to the character flow). */
+  flow?: string;
+}
+
+/** Server-resolved flow echo (S1). The client renders copy from `ui_copy_key`
+ *  and never supplies the binding. */
+export interface GuidedFlowEcho {
+  flow_id: string;
+  entity_type: string;
+  target_section: string;
+  ui_copy_key: "character" | "system";
 }
 
 export interface GuidedCharacterSession {
@@ -668,6 +679,8 @@ export interface GuidedCharacterSession {
   message?: string;
   /** Per-session method echo (S1/S6). Additive: absent on pre-method servers. */
   methodology?: GuidedCharacterMethodology | null;
+  /** Server-resolved flow echo (S1). Additive: absent on legacy sessions. */
+  flow?: GuidedFlowEcho | null;
   reference?: {
     name: string | null;
     verified: boolean;
@@ -1070,6 +1083,8 @@ export interface SemanticDecisionEnvelope {
    */
   consent?: "required";
   consent_token?: string;
+  /** Server-resolved flow for the pending consent card (S1). */
+  flow?: GuidedFlowEcho;
   /** Bounded explicitness on guided continuations; only `imperative` auto-opens. */
   guided_explicitness?: "imperative" | "musing";
   proposal_id?: string;
