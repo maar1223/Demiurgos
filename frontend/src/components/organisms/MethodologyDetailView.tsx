@@ -175,9 +175,9 @@ export function MethodologyDetailView({
             </div>
           )}
         </div>
-        {detail.description && (
-          <p className="mt-3 text-body text-muted">{detail.description}</p>
-        )}
+        {/* The trigger/description lives once, in the right state panel
+            ("Gatillo de la skill"); repeating it here made the same long text
+            appear in both columns. */}
       </header>
 
       {adjuntos.length > 0 && (
