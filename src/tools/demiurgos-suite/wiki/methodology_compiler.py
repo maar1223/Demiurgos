@@ -29,6 +29,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from guided_flow import GuidedFlowDeclaration, guided_flow_issues
+
 # ---------------------------------------------------------------------------
 # Bounds
 # ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ CATEGORIA_FUNCIONAL_ALLOWED = frozenset({
 ALLOWED_MANIFEST_FIELDS = frozenset({
     "skill_id", "version", "name", "description", "phases", "language",
     "taller", "talleres_compatibles", "categoria_funcional", "etiquetas",
-    "adjuntos",
+    "adjuntos", "guided_flow",
 })
 
 # Kernel-owned fields a methodology must NEVER claim. Present in the manifest
@@ -165,6 +167,10 @@ class CompiledMethodology:
     # Attachment entries (contract §4, SR4) — metadata only; also excluded
     # from the digest canonical (per-attachment sha256 IS the pin, D1).
     adjuntos: tuple[AttachmentEntry, ...] = ()
+    # Guided-flow declaration (S1): kernel-validated behavior, so it IS part of
+    # the digest canonical when present. Omitted from the canonical when absent
+    # so every pre-existing record keeps its digest byte-identically.
+    guided_flow: GuidedFlowDeclaration | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -181,6 +187,7 @@ class CompiledMethodology:
             "categoria_funcional": self.categoria_funcional,
             "etiquetas": list(self.etiquetas),
             "adjuntos": [entry.as_dict() for entry in self.adjuntos],
+            "guided_flow": self.guided_flow.as_dict() if self.guided_flow else None,
         }
 
 
@@ -258,6 +265,12 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
     etiquetas = tuple(
         str(e).strip() for e in (manifest.get("etiquetas") or [])
     )
+    # Guided-flow declaration (S1): validation happened in the issue pass.
+    raw_guided_flow = manifest.get("guided_flow")
+    guided_flow = (
+        GuidedFlowDeclaration.from_mapping(raw_guided_flow)
+        if isinstance(raw_guided_flow, Mapping) else None
+    )
     # Attachment entries (contract §4, SR4): validation happened in the issue
     # pass, so a clean result guarantees every entry is well-formed.
     raw_adjuntos = manifest.get("adjuntos")
@@ -283,6 +296,10 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
         "language": language,
         "source": source,
     }
+    # Conditionally included: an absent declaration must not change the digest
+    # of every already-published record (the character seed included).
+    if guided_flow is not None:
+        canonical["guided_flow"] = guided_flow.as_dict()
     digest = hashlib.sha256(
         json.dumps(canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -301,6 +318,7 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
         categoria_funcional=categoria_funcional,
         etiquetas=etiquetas,
         adjuntos=adjuntos,
+        guided_flow=guided_flow,
     )
     return CompileResult(True, (), compiled)
 
@@ -412,6 +430,11 @@ def _collect_manifest_issues(manifest: Mapping, issues: list[MethodologyIssue]) 
         manifest.get("etiquetas"), "etiquetas",
         MAX_ETIQUETAS, MAX_ETIQUETA_LEN, issues,
     )
+
+    guided_flow = manifest.get("guided_flow")
+    if guided_flow is not None:
+        for code, message, field in guided_flow_issues(guided_flow):
+            issues.append(MethodologyIssue(code, message, field))
 
     _collect_adjuntos_issues(manifest.get("adjuntos"), issues)
 

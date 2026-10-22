@@ -603,16 +603,40 @@ class TestEnvelopeDerivation(unittest.TestCase):
 class TestShapeMinimums(unittest.TestCase):
     """Shape base minimums compose with type-specific extras."""
 
-    def test_sistema_requires_origen(self) -> None:
+    def test_sistema_requires_identity_origin_and_limit(self) -> None:
         missing = validate("---\ntype: sistema\ntitle: Magia\n---\nCuerpo\n")
         codes = {issue.code for issue in missing.issues}
         self.assertIn("missing-minimum", codes)
         self.assertFalse(missing.ok)
 
         complete = validate(
-            "---\ntype: sistema\norigen: los dioses\n---\nCuerpo\n"
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "origen: los dioses\nlimite: no crea materia\n---\nCuerpo\n"
         )
         self.assertTrue(complete.ok, complete.issues)
+
+    def test_sistema_without_limit_is_incomplete(self) -> None:
+        # Locked rail: "el límite no se evade" — origin alone is not enough.
+        partial = validate(
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "origen: los dioses\n---\nCuerpo\n"
+        )
+        self.assertFalse(partial.ok)
+        self.assertIn(
+            "limit, limitacion, limitaciones, limite, limites, limits",
+            {issue.field for issue in partial.issues},
+        )
+
+    def test_sistema_without_origin_is_incomplete(self) -> None:
+        partial = validate(
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "limite: no crea materia\n---\nCuerpo\n"
+        )
+        self.assertFalse(partial.ok)
+        self.assertIn(
+            "fuente, origen, premisa, principio, source",
+            {issue.field for issue in partial.issues},
+        )
 
     def test_cronologia_requires_event_field(self) -> None:
         missing = validate("---\ntype: cronologia\ntitle: Era\n---\nCuerpo\n")

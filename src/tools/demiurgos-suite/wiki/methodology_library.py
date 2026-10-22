@@ -39,6 +39,14 @@ from methodology_compiler import (
     compile_methodology,
 )
 from methodology_trust import FOUNDATIONAL, OFFICIAL, PERSONALIZADAS, scrub_foundational
+from guided_flow import (
+    GUIDED_CHARACTER_FLOW,
+    GUIDED_SYSTEM_FLOW,
+    GuidedFlowDeclaration,
+    GuidedFlowProfile,
+    builtin_profile,
+    profile_for_declaration,
+)
 
 logger = logging.getLogger("demiurgos-api")
 
@@ -72,11 +80,11 @@ GUIDED_CHARACTER_METHOD_ROOTS: frozenset[str] = frozenset({
 })
 
 # Guided flow types (SR1 — one activation slot per guided-flow type per world;
-# contract §2). ``guided-character`` is the shipped guided flow; ``co-creation``
-# is the Author-facing skill-creation flow. The set is the enumeration for the
-# per-flow slot mechanism: adding a guided flow costs one constant + one set
-# entry + its fallback branch (design D2 — no registry object).
-GUIDED_CHARACTER_FLOW = "guided-character"
+# contract §2). ``guided-character`` is the shipped guided flow; ``guided-system``
+# is the first declared (skill-owned) flow; ``co-creation`` is the Author-facing
+# skill-creation flow. The set is the enumeration for the per-flow slot
+# mechanism: adding a guided flow costs one kernel entity mapping + one set
+# entry (design D2 — no registry object).
 # RESERVED (WARNING-1 resolution, PR ②): ``co-creation`` is documented and
 # kept but deliberately NOT bound as an activation slot. Co-created skills
 # activate into the guided-character slot (``activate_co_creation`` calls
@@ -89,6 +97,7 @@ GUIDED_CHARACTER_FLOW = "guided-character"
 CO_CREATION_FLOW = "co-creation"
 SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
     GUIDED_CHARACTER_FLOW,
+    GUIDED_SYSTEM_FLOW,
     CO_CREATION_FLOW,
 })
 DEFAULT_FLOW_TYPE = GUIDED_CHARACTER_FLOW
@@ -250,6 +259,9 @@ class PublishedVersion:
     # deserialize safely; EXCLUDED from the manifest/digest (metadata, not
     # identity — like ``parent_skill_id``/``adjuntos``).
     trigger_approval: TriggerApproval | None = None
+    # Guided-flow declaration copied from the compiled contract (S1). Optional
+    # so every pre-existing published record deserializes without it.
+    guided_flow: GuidedFlowDeclaration | None = None
 
 
 @dataclass(frozen=True)
@@ -831,6 +843,11 @@ class MethodologyLibrary:
             "trigger_approval": (
                 asdict(trigger_approval) if trigger_approval is not None else None
             ),
+            # S1: present only when the compiled contract declared a flow.
+            "guided_flow": (
+                compiled.guided_flow.as_dict()
+                if compiled.guided_flow is not None else None
+            ),
         }
 
     def install_published_version(
@@ -990,20 +1007,38 @@ class MethodologyLibrary:
             self._save_locked()
 
     # ------------------------------------------------------------------ #
-    # Guided-character method eligibility
+    # Per-flow guided method eligibility
     # ------------------------------------------------------------------ #
 
     def is_guided_character_method(self, skill_id: str) -> bool:
         """True when ``skill_id`` belongs to the character-creation family.
 
-        The guided-character assistant may only consume methods that produce
-        characters. Membership is declared by lineage, never by catalog
-        metadata: the foundational character skill, the builtin contract id,
-        and every skill derived from the foundational one (``parent_skill_id``
-        chain). Cronología, Sistemas and unrelated skills are excluded.
+        Compatibility wrapper over ``is_method_for_flow``: the character flow
+        keeps its lineage rule (foundational character skill, the builtin
+        contract id, and every skill derived through ``parent_skill_id``). A
+        skill that declares another flow is never a character method.
         """
         with self._lock:
+            return self._is_method_for_flow_locked(GUIDED_CHARACTER_FLOW, skill_id)
+
+    def is_method_for_flow(self, flow_id: str, skill_id: str) -> bool:
+        """True when ``skill_id`` may govern ``flow_id``.
+
+        Eligibility order (S6): an explicit declaration is authoritative and
+        binds the skill to exactly that flow; without a declaration, the
+        builtin character family keeps its lineage rule. Other flows have no
+        implicit eligibility — only a declared (or inherited) declaration.
+        """
+        with self._lock:
+            return self._is_method_for_flow_locked(flow_id, skill_id)
+
+    def _is_method_for_flow_locked(self, flow_id: str, skill_id: str) -> bool:
+        declared = self._declared_flow_locked(skill_id)
+        if declared is not None:
+            return declared == flow_id
+        if flow_id == GUIDED_CHARACTER_FLOW:
             return self._is_guided_character_method_locked(skill_id)
+        return False
 
     def _is_guided_character_method_locked(self, skill_id: str) -> bool:
         current = skill_id
@@ -1019,6 +1054,52 @@ class MethodologyLibrary:
                 return False
             current = parent
         return False
+
+    def _declared_flow_locked(self, skill_id: str) -> str | None:
+        """Flow declared by ``skill_id`` or its nearest declaring ancestor."""
+        declaration = self._declared_declaration_locked(skill_id)
+        return declaration.flow_id if declaration is not None else None
+
+    def _declared_declaration_locked(
+        self, skill_id: str,
+    ) -> GuidedFlowDeclaration | None:
+        current = skill_id
+        seen: set[str] = set()
+        for _ in range(32):
+            if not current or current in seen:
+                return None
+            seen.add(current)
+            record = self._latest_published_record_locked(current)
+            if record is not None:
+                raw = record.get("guided_flow")
+                if isinstance(raw, Mapping):
+                    return GuidedFlowDeclaration.from_mapping(raw)
+            parent = self._parent_skill_id_locked(current)
+            if parent is None:
+                return None
+            current = parent
+        return None
+
+    def _latest_published_record_locked(self, skill_id: str) -> Mapping[str, Any] | None:
+        records = [
+            record
+            for record in self._published.values()
+            if record.get("skill_id") == skill_id and not record.get("deleted_at")
+        ]
+        if not records:
+            return None
+        return max(records, key=lambda record: _version_key(record["version"]))
+
+    def flow_profile_for(self, flow_id: str, skill_id: str) -> GuidedFlowProfile | None:
+        """Resolve the kernel profile a published method binds for ``flow_id``."""
+        with self._lock:
+            if not self._is_method_for_flow_locked(flow_id, skill_id):
+                return None
+            declaration = self._declared_declaration_locked(skill_id)
+        if declaration is not None:
+            profile = profile_for_declaration(declaration)
+            return profile if profile is not None and profile.flow_id == flow_id else None
+        return builtin_profile(flow_id)
 
     def _parent_skill_id_locked(self, skill_id: str) -> str | None:
         records = sorted(
@@ -1036,14 +1117,18 @@ class MethodologyLibrary:
         return str(records[-1]["parent_skill_id"])
 
     def list_guided_methods(self) -> list[PublishedVersion]:
-        """Latest published version of every eligible guided-character method."""
+        """Latest published version of every eligible character method."""
+        return self.list_methods_for_flow(GUIDED_CHARACTER_FLOW)
+
+    def list_methods_for_flow(self, flow_id: str) -> list[PublishedVersion]:
+        """Latest published version of every eligible method for ``flow_id``."""
         with self._lock:
             latest: dict[str, dict[str, Any]] = {}
             for record in self._published.values():
                 if record.get("deleted_at"):
                     continue
                 skill_id = str(record["skill_id"])
-                if not self._is_guided_character_method_locked(skill_id):
+                if not self._is_method_for_flow_locked(flow_id, skill_id):
                     continue
                 current = latest.get(skill_id)
                 if current is None or _version_key(record["version"]) > _version_key(
@@ -1436,6 +1521,11 @@ class MethodologyLibrary:
             trigger_approval=(
                 TriggerApproval(**record["trigger_approval"])
                 if record.get("trigger_approval")
+                else None
+            ),
+            guided_flow=(
+                GuidedFlowDeclaration.from_mapping(record["guided_flow"])
+                if isinstance(record.get("guided_flow"), Mapping)
                 else None
             ),
         )
