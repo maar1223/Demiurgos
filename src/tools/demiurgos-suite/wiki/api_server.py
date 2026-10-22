@@ -65,6 +65,7 @@ from guided_character_protocol import (
     SessionState,
     StructuredError,
     continue_session,
+    session_flow_profile,
 )
 from guided_character_domain import (
     FichaValidationError,
@@ -72,7 +73,9 @@ from guided_character_domain import (
     named_reference_name,
     resolve_named_reference,
     route_new_character_intent,
+    route_guided_intent,
     confirmation_decision,
+    serialize_entity,
     serialize_ficha,
     candidate_minimum_complete,
     has_finished_exchange,
@@ -83,6 +86,12 @@ from convergence_injection import (
     carrier_root_for,
     read_adjunto_bytes,
     read_adjunto_text,
+)
+from guided_flow import (
+    FOUNDATIONAL_METHOD_BY_FLOW,
+    GUIDED_SYSTEM_FLOW,
+    GuidedFlowProfile,
+    builtin_profile,
 )
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
@@ -2358,6 +2367,14 @@ def _resolve_principal(request=None) -> EditPrincipal | None:
 
 class GuidedStartRequest(BaseModel):
     author_input: str
+    # Per-session method (S6): the reserved ``factory`` token selects the
+    # builtin contract; a skill id must carry its published version. Absent
+    # on old clients -> the eligible legacy activation or the factory.
+    method_skill_id: str | None = None
+    method_version: str | None = None
+    # Guided flow to open (S1). Absent/omitted -> guided-character, preserving
+    # every pre-existing client. The client never supplies the profile itself.
+    flow_id: str | None = None
 
 
 class GuidedTurnRequest(BaseModel):
@@ -2388,6 +2405,11 @@ class GuidedConsentRequest(BaseModel):
     """One-shot consent token issued with a musing guided suggestion (REQ-GFC-04)."""
 
     token: str
+    # Per-session method chosen on the consent card (S6); ignored on decline.
+    method_skill_id: str | None = None
+    method_version: str | None = None
+    # Optional echo of the server-resolved flow; a mismatch is rejected.
+    flow_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2494,6 +2516,28 @@ _GUIDED_PROBE_LOCK = asyncio.Lock()
 # active. A session pinned to a different version fails closed on resume.
 _BUILTIN_METHODOLOGY_VERSION = "builtin"
 _ACTIVE_METHODOLOGY_VERSION: str | None = _BUILTIN_METHODOLOGY_VERSION
+# Reserved per-session token: use the builtin guided-character contract.
+FACTORY_METHOD_ID = "factory"
+
+
+class GuidedMethodError(Exception):
+    """A per-session guided method choice is not admissible (S4/S6)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _guided_method_error_response(exc: "GuidedMethodError") -> JSONResponse:
+    """Surface the method rejection code the frontend keys on (422)."""
+    return JSONResponse(status_code=422, content={
+        "detail": exc.message,
+        "code": exc.code,
+        "message": exc.message,
+        "retryable": False,
+    })
+
 # Server-owned methodology library + mandatory-quarantine trust store. Both
 # are created lazily so tests and callers can swap roots per process.
 _METHODOLOGY_LIBRARY: MethodologyLibrary | None = None
@@ -2617,23 +2661,151 @@ def _methodology_quarantine() -> QuarantineStore:
     return _METHODOLOGY_QUARANTINE
 
 
-def _active_methodology_version(world: str, flow_type: str = DEFAULT_FLOW_TYPE) -> str | None:
-    """Active methodology version for a world's ``flow_type`` slot.
+def _factory_method_snapshot(flow_type: str = GUIDED_CHARACTER_FLOW) -> MethodologySnapshot:
+    active = _ACTIVE_METHODOLOGY_VERSION or _BUILTIN_METHODOLOGY_VERSION
+    profile = builtin_profile(flow_type)
+    return MethodologySnapshot(
+        skill_id="guided-character-v1",
+        skill_version=active,
+        compiled_contract_digest=None,
+        flow_type=flow_type,
+        profile=profile.as_dict() if profile is not None else None,
+    )
 
-    A published version explicitly activated for the world/flow wins; otherwise
-    the builtin pin applies. Only NEW sessions consult this; existing sessions
-    keep their pinned snapshot and fail closed when it no longer matches.
+
+def _guided_method_error_message(flow_id: str, kind: str) -> str:
+    """Flow-aware copy while the character flow keeps its historical strings."""
+    if flow_id == GUIDED_CHARACTER_FLOW:
+        return {
+            "ineligible": "The selected method does not create characters.",
+            "no_method": "No eligible character-creation method is published.",
+        }[kind]
+    return {
+        "ineligible": "The selected method does not belong to this guided flow.",
+        "no_method": "No eligible method is published for this guided flow.",
+    }[kind]
+
+
+def _profile_for_method(flow_id: str, skill_id: str) -> GuidedFlowProfile:
+    profile = _methodology_library().flow_profile_for(flow_id, skill_id)
+    if profile is None:
+        raise GuidedMethodError(
+            "ineligible_guided_method",
+            _guided_method_error_message(flow_id, "ineligible"),
+        )
+    return profile
+
+
+def _resolve_guided_method_snapshot(
+    world: str,
+    method_skill_id: str | None = None,
+    method_version: str | None = None,
+    flow_id: str = GUIDED_CHARACTER_FLOW,
+) -> MethodologySnapshot:
+    """Pin the method and its resolved flow profile for ONE new session (S1/S6).
+
+    Order: explicit factory token (builtin flows only) -> explicit eligible
+    skill@version -> the world's legacy activation for this flow when eligible
+    -> the builtin character contract. An ineligible legacy activation is
+    ignored for NEW sessions (the stored record is never mutated; S8). A
+    non-character flow has no builtin fallback: without an eligible published
+    method it fails closed.
     """
-    activation = _methodology_library().active_for(world, flow_type)
+    library = _methodology_library()
+    if method_skill_id == FACTORY_METHOD_ID:
+        profile = builtin_profile(flow_id)
+        if profile is None:
+            raise GuidedMethodError(
+                "ineligible_guided_method",
+                _guided_method_error_message(flow_id, "ineligible"),
+            )
+        return _factory_method_snapshot(flow_id)
+    if method_skill_id:
+        if not library.is_method_for_flow(flow_id, method_skill_id):
+            raise GuidedMethodError(
+                "ineligible_guided_method",
+                _guided_method_error_message(flow_id, "ineligible"),
+            )
+        if not method_version:
+            raise GuidedMethodError(
+                "invalid_guided_method",
+                "A version is required for the selected method.",
+            )
+        published = library.get_published(method_skill_id, method_version)
+        if published is None:
+            raise GuidedMethodError(
+                "not_published",
+                "The selected method version is not published.",
+            )
+        profile = _profile_for_method(flow_id, method_skill_id)
+        return MethodologySnapshot(
+            skill_id=method_skill_id,
+            skill_version=method_version,
+            compiled_contract_digest=published.digest,
+            flow_type=flow_id,
+            profile=profile.as_dict(),
+        )
+    activation = library.active_for(world, flow_id)
+    if activation is not None and library.is_method_for_flow(flow_id, activation.skill_id):
+        profile = library.flow_profile_for(flow_id, activation.skill_id)
+        if profile is not None:
+            return MethodologySnapshot(
+                skill_id=activation.skill_id,
+                skill_version=activation.version,
+                compiled_contract_digest=activation.digest,
+                flow_type=flow_id,
+                profile=profile.as_dict(),
+            )
     if activation is not None:
-        return activation.version
-    return _ACTIVE_METHODOLOGY_VERSION
+        logger.warning(
+            "guided session: ignoring ineligible legacy activation %s@%s for flow %s in world %r",
+            activation.skill_id, activation.version, flow_id, world,
+        )
+    if flow_id == GUIDED_CHARACTER_FLOW:
+        return _factory_method_snapshot()
+    # No builtin contract for this flow: fall back deterministically to its
+    # foundational method (the analogue of the character factory), else fail.
+    candidates = library.list_methods_for_flow(flow_id)
+    if candidates:
+        preferred = FOUNDATIONAL_METHOD_BY_FLOW.get(flow_id)
+        chosen = next(
+            (
+                item for item in candidates
+                if item.skill_id == preferred
+            ),
+            candidates[0],
+        )
+        profile = library.flow_profile_for(flow_id, chosen.skill_id)
+        if profile is not None:
+            return MethodologySnapshot(
+                skill_id=chosen.skill_id,
+                skill_version=chosen.version,
+                compiled_contract_digest=chosen.digest,
+                flow_type=flow_id,
+                profile=profile.as_dict(),
+            )
+    raise GuidedMethodError(
+        "no_eligible_method",
+        _guided_method_error_message(flow_id, "no_method"),
+    )
 
 
 def _active_methodology_snapshot(
-    world: str, flow_type: str = DEFAULT_FLOW_TYPE,
+    world: str,
+    flow_type: str = DEFAULT_FLOW_TYPE,
+    method_skill_id: str | None = None,
+    method_version: str | None = None,
 ) -> MethodologySnapshot:
-    """Pin the currently active methodology/version at session creation."""
+    """Pin the methodology/version for a new session.
+
+    Every guided flow resolves a per-session choice plus its flow profile
+    (S1/S6); the reserved co-creation slot keeps its legacy activation-only
+    behavior.
+    """
+    if flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+        return _resolve_guided_method_snapshot(
+            world, method_skill_id, method_version, flow_type,
+        )
     activation = _methodology_library().active_for(world, flow_type)
     if activation is not None:
         return MethodologySnapshot(
@@ -2642,28 +2814,41 @@ def _active_methodology_snapshot(
             compiled_contract_digest=activation.digest,
             flow_type=flow_type,
         )
-    if flow_type != GUIDED_CHARACTER_FLOW:
-        # The builtin contract only exists for the guided-character flow;
-        # other flow slots have no activation-based fallback (SR1).
-        return MethodologySnapshot(flow_type=flow_type)
-    active = _ACTIVE_METHODOLOGY_VERSION or _BUILTIN_METHODOLOGY_VERSION
-    return MethodologySnapshot(
-        skill_id="guided-character-v1",
-        skill_version=active,
-        compiled_contract_digest=None,
-        flow_type=flow_type,
-    )
+    # Non-guided flow slots have no activation-based fallback (SR1).
+    return MethodologySnapshot(flow_type=flow_type)
+
+
+def _session_method_pin(
+    world: str, flow_type: str, state: SessionState | None,
+) -> tuple[str, str] | None:
+    """Resolve the published method this SESSION runs under (S6).
+
+    The per-session snapshot wins; sessions created before the snapshot model
+    fall back to the world slot. A factory pin (``guided-character-v1`` with no
+    compiled digest) resolves to ``None`` — the builtin contract has no
+    published record, exactly like the pre-existing builtin case.
+    """
+    if state is not None:
+        snapshot = state.methodology_snapshot
+        if snapshot is not None and snapshot.skill_id and snapshot.skill_version:
+            if snapshot.skill_id == "guided-character-v1" and not snapshot.compiled_contract_digest:
+                return None
+            return str(snapshot.skill_id), str(snapshot.skill_version)
+    activation = _methodology_library().active_for(world, flow_type)
+    if activation is None:
+        return None
+    return activation.skill_id, activation.version
 
 
 def _compiled_contract_markdown(
-    world: str, flow_type: str = DEFAULT_FLOW_TYPE,
+    world: str, flow_type: str = DEFAULT_FLOW_TYPE, state: SessionState | None = None,
 ) -> str | None:
-    """Resolve the world's active compiled methodology as bounded Markdown.
+    """Resolve the session's compiled methodology as bounded Markdown.
 
-    Walks activation → published version → ``project_contract_markdown`` and
-    returns ``None`` for the builtin case (no activation) or on any resolution
-    failure, so callers fall back to the legacy version-string injection.
-    When the active channel is NOT ``legacy`` (native or fail-closed
+    Walks the session's pinned method → published version →
+    ``project_contract_markdown`` and returns ``None`` for the factory case or
+    on any resolution failure, so callers fall back to the legacy version-string
+    injection. When the active channel is NOT ``legacy`` (native or fail-closed
     unhealthy), the legacy projection is suppressed — early ``None`` (REQ-NC-4
     path d / REQ-GF-1): the native ``SKILL.md`` is the only guide, or, when
     unhealthy, no guidance at all (never a silent legacy fallback, D2).
@@ -2671,10 +2856,10 @@ def _compiled_contract_markdown(
     if _active_channel_state() != "legacy":
         return None
     try:
-        activation = _methodology_library().active_for(world, flow_type)
-        if activation is None:
+        pin = _session_method_pin(world, flow_type, state)
+        if pin is None:
             return None
-        published = _methodology_library().get_published(activation.skill_id, activation.version)
+        published = _methodology_library().get_published(*pin)
         if published is None:
             return None
         return project_contract_markdown(published)
@@ -2708,10 +2893,10 @@ def _convergence_specimen_markdown(
             return None
         if not has_finished_exchange(state):
             return None
-        activation = _methodology_library().active_for(world, flow_type)
-        if activation is None:
+        pin = _session_method_pin(world, flow_type, state)
+        if pin is None:
             return None
-        published = _methodology_library().get_published(activation.skill_id, activation.version)
+        published = _methodology_library().get_published(*pin)
         if published is None or not published.adjuntos:
             return None
         nivel = resolve_candidate_nivel(state.candidate)
@@ -2725,7 +2910,7 @@ def _convergence_specimen_markdown(
         return None
 
 
-def _native_skill_body(world: str) -> str | None:
+def _native_skill_body(world: str, state: SessionState | None = None) -> str | None:
     """Resolve the native ``SKILL.md`` body that drives the guided continuation.
 
     REQ-GN-1/REQ-GF-1: when the active channel is ``native``, the guided
@@ -2744,11 +2929,10 @@ def _native_skill_body(world: str) -> str | None:
     try:
         from skill_renderer import CO_CREATION_RULES_BLOCK
 
-        library = _methodology_library()
-        activation = library.active_for(world, GUIDED_CHARACTER_FLOW)
-        if activation is None:
+        pin = _session_method_pin(world, GUIDED_CHARACTER_FLOW, state)
+        if pin is None:
             return None
-        published = library.get_published(activation.skill_id, activation.version)
+        published = _methodology_library().get_published(*pin)
         if published is None:
             return None
         source = published.source or ""
@@ -2806,7 +2990,7 @@ def _invalidate_guided_proposal(session_id: str) -> None:
 
 def _guided_public_state(state: SessionState) -> dict:
     """Serialize only the frontend-compatible, non-provenance session view."""
-    return {
+    payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
         "world": state.world,
@@ -2841,6 +3025,41 @@ def _guided_public_state(state: SessionState) -> dict:
             "source": "canonical-graph" if state.reference_context else None,
             "goal": state.relation_goal or None,
         },
+        # Per-session method echo (S1/S6): the client renders the method that
+        # actually drives this session; it is never inferred from the library.
+        "methodology": _public_methodology(state.methodology_snapshot),
+    }
+    # Flow echo (S1): added only for sessions pinned after the profile model;
+    # legacy sessions keep the exact pre-existing envelope.
+    flow = _public_flow(state)
+    if flow is not None:
+        payload["flow"] = flow
+    return payload
+
+
+def _public_flow(state: SessionState) -> dict | None:
+    profile = session_flow_profile(state)
+    if profile is None:
+        return None
+    return {
+        "flow_id": profile.flow_id,
+        "entity_type": profile.entity_type,
+        "target_section": profile.target_section,
+        "ui_copy_key": profile.ui_copy_key,
+    }
+
+
+def _public_methodology(snapshot: MethodologySnapshot | None) -> dict | None:
+    if snapshot is None:
+        return None
+    return {
+        "skill_id": snapshot.skill_id,
+        "skill_version": snapshot.skill_version,
+        "flow_type": snapshot.flow_type,
+        "factory": (
+            snapshot.skill_id == "guided-character-v1"
+            and not snapshot.compiled_contract_digest
+        ),
     }
 
 
@@ -2896,21 +3115,28 @@ def _guided_result(response, state: SessionState | None):
 
 
 def _guided_methodology_block(state: SessionState) -> JSONResponse | None:
-    """Fail closed when the pinned methodology/version no longer matches.
+    """Fail closed only when the session's pinned method no longer resolves.
 
-    Applying a methodology change MUST require a brand-new session: resuming an
-    old session whose snapshot version differs from the active one is rejected
-    without any mutation.
+    The method is per-session (S6): another session's choice or a world-level
+    default change never invalidates an existing session (S7). Only a pinned
+    published version that was removed/soft-deleted fails closed, without any
+    mutation. Factory pins (``guided-character-v1`` + builtin) always resolve.
     """
     snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, state.authorization_binding)
     if snapshot is None or snapshot.skill_version is None:
         return None
-    flow_type = snapshot.flow_type or DEFAULT_FLOW_TYPE
-    active = _active_methodology_version(state.world, flow_type)
-    if active is not None and snapshot.skill_version != active:
+    if snapshot.profile is not None and _profile_from_snapshot(snapshot) is None:
         return _guided_error_response(StructuredError(
             ErrorCode.INVALID_INPUT,
-            "The methodology version has changed; start a new session.",
+            "The guided flow profile is unavailable; start a new session.",
+            False,
+        ))
+    if snapshot.skill_id in (None, "guided-character-v1"):
+        return None
+    if _methodology_library().is_deleted(snapshot.skill_id, snapshot.skill_version):
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The methodology version is no longer available; start a new session.",
             False,
         ))
     return None
@@ -2989,7 +3215,7 @@ async def _guided_continue(
         session_snapshot.flow_type or DEFAULT_FLOW_TYPE
         if session_snapshot is not None else DEFAULT_FLOW_TYPE
     )
-    compiled = _compiled_contract_markdown(mundo, session_flow)
+    compiled = _compiled_contract_markdown(mundo, session_flow, state)
     # Convergence specimen (④b, R10–R13): resolved pre-invocation beside the
     # compiled contract. All trigger conjuncts are evaluated against the
     # RECOVERED state (delta=None), so turn one and fast-mode turn one can
@@ -3003,7 +3229,7 @@ async def _guided_continue(
     # also ``None``) and the fail-closed ``unhealthy`` state (zero guidance,
     # D2) both stay byte-identical.
     if compiled is None:
-        compiled = _native_skill_body(mundo)
+        compiled = _native_skill_body(mundo, state)
     # Shared choke point for every guided continuation. Sessions opened by the
     # semantic chat path never called the REST start route, so the module-level
     # cache was never probed: passing it straight through sent None into
@@ -3041,8 +3267,9 @@ async def _probe_guided_capabilities() -> Capabilities | None:
         return _GUIDED_CAPABILITIES
 
 
+@app.get("/api/{mundo}/guided/session/{session_id}")
 @app.get("/api/{mundo}/guided-character/session/{session_id}")
-def recover_guided_character(mundo: str, session_id: str, request: Request):
+def recover_guided_session(mundo: str, session_id: str, request: Request):
     principal, error = _guided_principal(request)
     if error:
         return error
@@ -3057,8 +3284,9 @@ def recover_guided_character(mundo: str, session_id: str, request: Request):
     return _guided_public_state(state)
 
 
+@app.post("/api/{mundo}/guided/session")
 @app.post("/api/{mundo}/guided-character/session")
-async def start_guided_character(mundo: str, body: GuidedStartRequest, request: Request):
+async def start_guided_session(mundo: str, body: GuidedStartRequest, request: Request):
     """Start a guarded guided character session (Hermes-first).
 
     The mandatory semantic gate interprets the creation message BEFORE any
@@ -3104,16 +3332,43 @@ async def start_guided_character(mundo: str, body: GuidedStartRequest, request: 
             result.unavailable, result.attempts,
         )
         return result.as_dict()
-    intent = route_new_character_intent(body.author_input, allow_descriptive_seed=True)
-    if not intent.is_new_character:
-        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "New-character intent is required.", False))
+    flow_id = body.flow_id or GUIDED_CHARACTER_FLOW
+    if flow_id not in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, f"Unsupported guided flow {flow_id!r}.", False,
+        ))
+    try:
+        methodology_snapshot = _active_methodology_snapshot(
+            mundo, flow_id, body.method_skill_id, body.method_version,
+        )
+    except GuidedMethodError as exc:
+        return _guided_method_error_response(exc)
+    profile = _profile_from_snapshot(methodology_snapshot)
+    if profile is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The guided flow profile is unavailable; start a new session.",
+            False,
+        ))
+    intent = route_guided_intent(
+        body.author_input, profile, allow_descriptive_seed=True,
+    )
+    if not intent.is_new_entity:
+        message = (
+            "New-character intent is required."
+            if flow_id == GUIDED_CHARACTER_FLOW
+            else "New-entity intent is required."
+        )
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, message, False,
+        ))
     session_id = f"guided-{uuid.uuid4().hex}"
     relation_goal = extract_related_goal(body.author_input, reference_name=reference_name).summary
     _GUIDED_SESSIONS.create(
         session_id, mundo, principal.id,
         reference_context=reference_context, reference_name=reference_name,
         relation_goal=relation_goal, mode=intent.mode, depth=intent.depth,
-        methodology_snapshot=_active_methodology_snapshot(mundo, GUIDED_CHARACTER_FLOW),
+        methodology_snapshot=methodology_snapshot,
     )
     if intent.requires_confirmation:
         confirmed = _GUIDED_SESSIONS.begin_confirmation(
@@ -3126,8 +3381,9 @@ async def start_guided_character(mundo: str, body: GuidedStartRequest, request: 
     )
 
 
+@app.post("/api/{mundo}/guided/turn")
 @app.post("/api/{mundo}/guided-character/turn")
-async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request: Request):
+async def continue_guided_session(mundo: str, body: GuidedTurnRequest, request: Request):
     """Continue a guarded guided session (Hermes-first).
 
     The mandatory semantic gate interprets the turn message (including typed
@@ -3159,8 +3415,9 @@ async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request
     return await _guided_continue(mundo, body.session_id, body.base_revision, body.author_input, principal)
 
 
+@app.post("/api/{mundo}/guided/consent/accept")
 @app.post("/api/{mundo}/guided-character/consent/accept")
-async def accept_guided_character_consent(
+async def accept_guided_consent(
     mundo: str, body: GuidedConsentRequest, request: Request,
 ):
     """Consume a musing consent token and open the deferred guided flow.
@@ -3200,15 +3457,25 @@ async def accept_guided_character_consent(
         request_id=decision.request_id,
         session_id=decision.session_id,
     )
+    recorded_flow = str(record.get("flow_id") or GUIDED_CHARACTER_FLOW)
+    if body.flow_id is not None and body.flow_id != recorded_flow:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The consent flow does not match the issued request.",
+            False,
+        ))
     return await _open_guided_continuation(
         mundo, ask_body, result, principal, decision=decision,
         reference_context=str(record.get("reference_context") or ""),
         reference_name=record.get("reference_name") or None,
+        method_skill_id=body.method_skill_id, method_version=body.method_version,
+        flow_id=recorded_flow,
     )
 
 
+@app.post("/api/{mundo}/guided/consent/decline")
 @app.post("/api/{mundo}/guided-character/consent/decline")
-def decline_guided_character_consent(
+def decline_guided_consent(
     mundo: str, body: GuidedConsentRequest, request: Request,
 ):
     """Consume/discard a consent token and persist a durable decline (REQ-GFC-06).
@@ -3236,8 +3503,9 @@ def decline_guided_character_consent(
     return {"consent": "declined"}
 
 
+@app.post("/api/{mundo}/guided/proposal/accept")
 @app.post("/api/{mundo}/guided-character/proposal/accept")
-def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
+def accept_guided_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
     principal, error = _guided_principal(request)
     if error:
         return error
@@ -3259,8 +3527,9 @@ def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
     return _guided_public_state(state)
 
 
+@app.post("/api/{mundo}/guided/proposal/reject")
 @app.post("/api/{mundo}/guided-character/proposal/reject")
-def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
+def reject_guided_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
     principal, error = _guided_principal(request)
     if error:
         return error
@@ -3282,8 +3551,9 @@ def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
     return _guided_public_state(state)
 
 
+@app.post("/api/{mundo}/guided/proposal/serialize")
 @app.post("/api/{mundo}/guided-character/proposal/serialize")
-def serialize_guided_character(mundo: str, body: GuidedSerializeRequest, request: Request):
+def serialize_guided_proposal(mundo: str, body: GuidedSerializeRequest, request: Request):
     """Create a diskless, revision-bound new-file proposal for the review UI."""
     principal, error = _guided_principal(request)
     if error:
@@ -3299,14 +3569,26 @@ def serialize_guided_character(mundo: str, body: GuidedSerializeRequest, request
     revalidation_block = _guided_revalidation_block(body.session_id, principal.id)
     if revalidation_block is not None:
         return revalidation_block
+    profile = _flow_profile(state)
+    if profile is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The guided flow profile is unavailable; start a new session.",
+            False,
+        ))
     slug = body.slug or f"guided-{body.session_id.removeprefix('guided-')[-12:]}"
-    title = body.title or "Guided Character"
-    world_dir = _resolve_mundo_dir(mundo)
-    existing_targets = set()
-    if world_dir is not None and (world_dir / "personajes").is_dir():
-        existing_targets = {f"personajes/{path.name}" for path in (world_dir / "personajes").glob("*.md")}
+    title = body.title or profile.default_title
+    existing_targets = _existing_targets(_resolve_mundo_dir(mundo), profile.target_section)
     try:
-        proposal = serialize_ficha(state.candidate, world=mundo, slug=slug, title=title, existing_targets=existing_targets)
+        proposal = serialize_entity(
+            state.candidate, world=mundo, slug=slug, title=title,
+            entity_type=profile.entity_type,
+            target_section=profile.target_section,
+            type_label=profile.type_label,
+            provenance_default=profile.provenance_default,
+            frontmatter_fields=profile.frontmatter_fields,
+            existing_targets=existing_targets,
+        )
     except FichaValidationError as exc:
         return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, str(exc), False))
     digest = hashlib.sha256(proposal.content.encode("utf-8")).hexdigest()
@@ -3319,14 +3601,15 @@ def serialize_guided_character(mundo: str, body: GuidedSerializeRequest, request
     return {
         "proposal_id": edit_id, "target": proposal.target, "base_revision": "",
         "proposed_content": proposal.content, "proposed_digest": digest,
-        "rationale": "Review the guided character before creating the file.",
+        "rationale": "Review the guided proposal before creating the file.",
         "is_new_file": True, "guided_session_id": state.session_id,
         "guided_revision": state.revision,
     }
 
 
+@app.post("/api/{mundo}/guided/index/retry")
 @app.post("/api/{mundo}/guided-character/index/retry")
-def retry_guided_character_index(mundo: str, body: GuidedIndexRetryRequest, request: Request):
+def retry_guided_index(mundo: str, body: GuidedIndexRetryRequest, request: Request):
     principal, error = _guided_principal(request)
     if error:
         return error
@@ -3337,7 +3620,7 @@ def retry_guided_character_index(mundo: str, body: GuidedIndexRetryRequest, requ
         return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
     record = _GUIDED_INDEX_REQUESTS.get(body.session_id)
     if record is None:
-        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "No persisted character is awaiting indexing.", False))
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "No persisted entity is awaiting indexing.", False))
     operation_id, target, digest = record
     result = _GUIDED_REINDEX.reconcile(
         operation_id=operation_id, mundo=mundo, target=target, content_digest=digest,
@@ -4140,6 +4423,12 @@ def activate_co_creation(session_id: str, body: CoCreationActivateRequest, reque
     if draft is None:
         return _co_creation_error_response(CoCreationStructuredError(
             CoCreationErrorCode.INVALID_INPUT, "The session draft is unavailable.", False,
+        ))
+    if not library.is_guided_character_method(draft.skill_id):
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The skill is not a character-creation method; add it to the chat instead.",
+            False,
         ))
     try:
         activation = library.activate(body.world, draft.skill_id, draft.version)
@@ -7358,6 +7647,12 @@ GUIDED_CONSENT_SUGGESTION_TEXT = (
 )
 """Approved in-chat suggestion copy (REQ-GFC-04)."""
 
+GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY = {
+    "character": GUIDED_CONSENT_SUGGESTION_TEXT,
+    "system": "Parece que quieres crear un sistema. ¿Abrimos el flujo guiado?",
+}
+"""Flow-specific suggestion copy; the card renders its own catalogue copy."""
+
 CONSENT_TOKEN_TTL = timedelta(minutes=30)
 """A consent suggestion token stays valid for this long after issuance."""
 
@@ -7380,7 +7675,7 @@ def _sweep_guided_consent_tokens(now: datetime) -> None:
 def _issue_guided_consent_token(
     *, principal_id: str, session_id: str, mundo: str, prompt: str,
     decision: SemanticDecision, attempts: int, reference_context: str,
-    reference_name: str | None,
+    reference_name: str | None, flow_id: str,
 ) -> str:
     """Issue a one-shot consent token bound to principal + session + world.
 
@@ -7399,6 +7694,7 @@ def _issue_guided_consent_token(
         "attempts": attempts,
         "reference_context": reference_context,
         "reference_name": reference_name,
+        "flow_id": flow_id,
         "created_at": now,
     }
     return token
@@ -7503,6 +7799,11 @@ def _guided_consent_suggestion(
     """Return a token-bound consent suggestion without creating anything."""
     if _guided_consent_declined(body.session_id, mundo):
         return _declined_guided_answer(result)
+    profile = _resolve_input_flow(body.prompt)
+    if profile is None:
+        # Ambiguous or unrecognized flow: never guess, never open a session.
+        logger.info("guided consent: no unambiguous flow for the turn; blocked")
+        return _semantic_blocked_result(result)
     token = _issue_guided_consent_token(
         principal_id=principal.id,
         session_id=body.session_id,
@@ -7512,16 +7813,20 @@ def _guided_consent_suggestion(
         attempts=result.attempts,
         reference_context=reference_context,
         reference_name=reference_name,
+        flow_id=profile.flow_id,
     )
     return {
         "state": result.state,
         "action": result.action,
-        "response": GUIDED_CONSENT_SUGGESTION_TEXT,
+        "response": GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY.get(
+            profile.ui_copy_key, GUIDED_CONSENT_SUGGESTION_TEXT,
+        ),
         "request_id": result.request_id,
         "attempts": result.attempts,
         "guided_explicitness": decision.guided_explicitness,
         "consent": "required",
         "consent_token": token,
+        "flow": _public_profile(profile),
     }
 
 
@@ -7573,10 +7878,86 @@ async def _semantic_guided_continuation(
     )
 
 
+def _flow_profile(state: SessionState) -> GuidedFlowProfile | None:
+    """Profile pinned on the session, falling back to the character contract.
+
+    Sessions created before the profile model (and test fixtures that build a
+    bare session) must keep resolving exactly as before.
+    """
+    profile = session_flow_profile(state)
+    if profile is not None:
+        return profile
+    snapshot = state.methodology_snapshot
+    flow_id = (
+        snapshot.flow_type
+        if snapshot is not None and snapshot.flow_type
+        else GUIDED_CHARACTER_FLOW
+    )
+    return builtin_profile(flow_id)
+
+
+def _profile_from_snapshot(snapshot: MethodologySnapshot | None) -> GuidedFlowProfile | None:
+    """Resolve the profile pinned on a snapshot (``None`` for legacy pins)."""
+    if snapshot is None or snapshot.profile is None:
+        return None
+    return GuidedFlowProfile.from_dict(snapshot.profile)
+
+
+def _existing_targets(world_dir, section: str) -> set[str]:
+    if world_dir is None:
+        return set()
+    directory = world_dir / section
+    if not directory.is_dir():
+        return set()
+    return {f"{section}/{path.name}" for path in directory.glob("*.md")}
+
+
+def _public_profile(profile: GuidedFlowProfile) -> dict:
+    return {
+        "flow_id": profile.flow_id,
+        "entity_type": profile.entity_type,
+        "target_section": profile.target_section,
+        "ui_copy_key": profile.ui_copy_key,
+    }
+
+
+def _resolve_input_flow(
+    author_input: str, *, default_character: bool = True,
+) -> GuidedFlowProfile | None:
+    """Resolve exactly one flow for a chat turn from its declared vocabulary.
+
+    The character profile keeps its historical matcher; other flows use the
+    published declaration's terms/verbs. Multiple matches fail closed: the
+    server never guesses which entity the Author wants. With no match, the
+    character flow stays the default so every pre-existing turn behaves
+    byte-identically (the semantic gate already decided to open a flow).
+    """
+    library = _methodology_library()
+    matches: list[GuidedFlowProfile] = []
+    for flow_id in (GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW):
+        candidates = library.list_methods_for_flow(flow_id)
+        profile = builtin_profile(flow_id)
+        if profile is None and candidates:
+            profile = library.flow_profile_for(flow_id, candidates[0].skill_id)
+        if profile is None:
+            continue
+        if route_guided_intent(
+            author_input, profile, allow_descriptive_seed=True,
+        ).is_new_entity:
+            matches.append(profile)
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        return None
+    return builtin_profile(GUIDED_CHARACTER_FLOW) if default_character else None
+
+
 async def _open_guided_continuation(
     mundo: str, body: AskRequest, result: SemanticResult, principal,
     *, decision: SemanticDecision, reference_context: str = "",
     reference_name: str | None = None,
+    method_skill_id: str | None = None, method_version: str | None = None,
+    flow_id: str | None = None,
 ) -> dict:
     """Create the guarded session and expose the run's continuation.
 
@@ -7588,12 +7969,25 @@ async def _open_guided_continuation(
     """
     session_id = f"guided-{uuid.uuid4().hex}"
     relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
+    if flow_id is None:
+        resolved = _resolve_input_flow(body.prompt)
+        if resolved is None:
+            logger.info("guided continuation: no unambiguous flow; fail closed to blocked")
+            return _semantic_blocked_result(result)
+        flow_id = resolved.flow_id
+    try:
+        methodology_snapshot = _active_methodology_snapshot(
+            mundo, flow_id, method_skill_id, method_version,
+        )
+    except GuidedMethodError as exc:
+        logger.info("guided continuation: method choice rejected (%s)", exc.code)
+        return _guided_method_error_response(exc)
     try:
         _GUIDED_SESSIONS.create(
             session_id, mundo, principal.id,
             reference_context=reference_context, reference_name=reference_name,
             relation_goal=relation_goal,
-            methodology_snapshot=_active_methodology_snapshot(mundo, GUIDED_CHARACTER_FLOW),
+            methodology_snapshot=methodology_snapshot,
         )
         if decision.state == "require_confirmation":
             return _semantic_confirmation_continuation(
@@ -7657,8 +8051,26 @@ async def _semantic_proposal_continuation(
         guided_mode="full", question_depth="standard",
     )
     current = _GUIDED_SESSIONS.recover(session_id, principal.id)
-    if current is not None and not candidate_minimum_complete(current.candidate, delta=delta):
-        question = next_required_question(current.candidate, delta=delta)
+    profile = None
+    if current is not None:
+        profile = session_flow_profile(current)
+        if profile is None:
+            profile = builtin_profile(
+                current.methodology_snapshot.flow_type
+                if current.methodology_snapshot is not None
+                and current.methodology_snapshot.flow_type
+                else GUIDED_CHARACTER_FLOW
+            )
+    if current is not None and not candidate_minimum_complete(
+        current.candidate, delta=delta,
+        groups=profile.minimum_groups if profile is not None else None,
+    ):
+        question = next_required_question(
+            current.candidate, delta=delta,
+            groups=profile.minimum_groups if profile is not None else None,
+            question_keys=profile.question_keys if profile is not None else None,
+            ui_copy_key=profile.ui_copy_key if profile is not None else None,
+        )
         question_response = GuidedResponse(
             PROTOCOL_VERSION, commit_request.request_id, commit_request.session_id,
             commit_request.base_revision, Outcome.QUESTION,
@@ -7690,15 +8102,22 @@ async def _semantic_proposal_continuation(
     if state is None:
         logger.info("ai_ask: semantic proposal commit rejected; fail closed to blocked")
         return _semantic_blocked_result(result)
-    slug = _guided_character_slug(state) or f"guided-{session_id.removeprefix('guided-')[-12:]}"
-    title = _guided_character_title(state) or "Guided Character"
+    profile = _flow_profile(state)
+    if profile is None:
+        logger.info("ai_ask: session flow profile unavailable; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    slug = _guided_entity_slug(state) or f"guided-{session_id.removeprefix('guided-')[-12:]}"
+    title = _guided_entity_title(state) or profile.default_title
     world_dir = _resolve_mundo_dir(mundo)
-    existing_targets: set[str] = set()
-    if world_dir is not None and (world_dir / "personajes").is_dir():
-        existing_targets = {f"personajes/{path.name}" for path in (world_dir / "personajes").glob("*.md")}
+    existing_targets = _existing_targets(world_dir, profile.target_section)
     try:
-        proposal = serialize_ficha(
+        proposal = serialize_entity(
             state.candidate, world=mundo, slug=slug, title=title,
+            entity_type=profile.entity_type,
+            target_section=profile.target_section,
+            type_label=profile.type_label,
+            provenance_default=profile.provenance_default,
+            frontmatter_fields=profile.frontmatter_fields,
             existing_targets=existing_targets,
         )
     except FichaValidationError:
@@ -7726,7 +8145,7 @@ async def _semantic_proposal_continuation(
         "base_revision": str(state.revision),
         "proposed_content": proposal.content,
         "proposed_digest": digest,
-        "rationale": "Review the guided character before creating the file.",
+        "rationale": "Review the guided proposal before creating the file.",
         "is_new_file": True,
         "guided_session_id": session_id,
         "guided_revision": state.revision,
@@ -7742,7 +8161,7 @@ def _candidate_proposal_value(state, key: str):
     return item
 
 
-def _guided_character_slug(state) -> str | None:
+def _guided_entity_slug(state) -> str | None:
     """Derive the server-owned target slug from the candidate, never provider authority."""
     for key in ("name", "nombre", "title"):
         value = _candidate_proposal_value(state, key)
@@ -7753,7 +8172,7 @@ def _guided_character_slug(state) -> str | None:
     return None
 
 
-def _guided_character_title(state) -> str | None:
+def _guided_entity_title(state) -> str | None:
     value = _candidate_proposal_value(state, "name") or _candidate_proposal_value(state, "nombre")
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -9889,6 +10308,46 @@ def methodologies_status(request: Request):
     }
 
 
+@app.get("/api/methodologies/guided-methods")
+def methodologies_guided_methods(
+    request: Request, world: str | None = None,
+    flow: str = GUIDED_CHARACTER_FLOW,
+):
+    """Eligible methods for one guided flow (S3/S6).
+
+    Read-only: the latest published version of every method declared for (or
+    inheriting) ``flow``. ``default`` echoes the world's eligible legacy
+    activation for the same flow so a pre-existing choice stays preselected;
+    an ineligible legacy activation is never offered.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if flow not in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+        return JSONResponse(status_code=422, content={
+            "detail": f"Unsupported guided flow {flow!r}.",
+            "code": "unsupported_flow_type",
+        })
+    library = _methodology_library()
+    methods = [
+        {"skill_id": item.skill_id, "version": item.version, "name": item.name}
+        for item in library.list_methods_for_flow(flow)
+    ]
+    default = None
+    if world and _resolve_mundo_dir(world) is not None:
+        activation = library.active_for(world, flow)
+        if activation is not None and library.is_method_for_flow(flow, activation.skill_id):
+            default = {"skill_id": activation.skill_id, "version": activation.version}
+    if default is None and methods:
+        preferred = FOUNDATIONAL_METHOD_BY_FLOW.get(flow)
+        chosen = next(
+            (item for item in methods if item["skill_id"] == preferred),
+            methods[0],
+        )
+        default = {"skill_id": chosen["skill_id"], "version": chosen["version"]}
+    return {"methods": methods, "default": default, "flow": flow}
+
+
 @app.get("/api/methodologies/inventory")
 def methodologies_inventory(
     clasificacion: str | None = None,
@@ -10088,6 +10547,26 @@ def methodologies_approve_trigger(
     return {"trigger_approval": _trigger_approval_dict(approval)}
 
 
+def _ineligible_guided_method_response(
+    skill_id: str, flow_id: str = GUIDED_CHARACTER_FLOW,
+) -> JSONResponse:
+    """S6: a skill from another flow can never become this flow's method."""
+    if flow_id == GUIDED_CHARACTER_FLOW:
+        detail = (
+            f"{skill_id!r} is not a character-creation method; the guided-character "
+            "assistant only accepts the character methodology family."
+        )
+    else:
+        detail = (
+            f"{skill_id!r} is not a method for {flow_id}; the flow only accepts "
+            "skills that declare or inherit it."
+        )
+    return JSONResponse(status_code=422, content={
+        "detail": detail,
+        "code": "ineligible_guided_method",
+    })
+
+
 @app.post("/api/methodologies/activate")
 def methodologies_activate(body: MethodologyActivateRequest, request: Request):
     """Pin a published methodology version to a world's flow slot (SR1).
@@ -10107,6 +10586,11 @@ def methodologies_activate(body: MethodologyActivateRequest, request: Request):
             "code": "unsupported_flow_type",
         })
     library = _methodology_library()
+    if (
+        body.flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}
+        and not library.is_method_for_flow(body.flow_type, body.skill_id)
+    ):
+        return _ineligible_guided_method_response(body.skill_id, body.flow_type)
     try:
         activation = library.activate(body.world, body.skill_id, body.version, body.flow_type)
     except NotPublishedError as exc:
@@ -10204,6 +10688,11 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
             "code": "unsupported_flow_type",
         })
     library = _methodology_library()
+    if body.flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+        target = library.next_rollback(body.world, body.flow_type)
+        target_skill = str((target or {}).get("skill_id") or "")
+        if target and not library.is_method_for_flow(body.flow_type, target_skill):
+            return _ineligible_guided_method_response(target_skill, body.flow_type)
     activation = library.rollback(body.world, body.flow_type)
     if activation is None:
         return {"world": body.world, "flow_type": body.flow_type,

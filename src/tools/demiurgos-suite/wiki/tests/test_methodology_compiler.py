@@ -11,6 +11,7 @@ returns a result; it never writes to the filesystem, canon, or runtime.
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -478,3 +479,75 @@ class TestAdjuntosDigestExclusion:
         assert plain.compiled is not None and with_adjuntos.compiled is not None
         assert plain.compiled.digest == "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
         assert with_adjuntos.compiled.digest == plain.compiled.digest
+
+
+class TestGuidedFlowDeclaration:
+    """S1: a methodology may declare its guided flow; the kernel validates it."""
+
+    @staticmethod
+    def _guided_flow() -> dict:
+        return {
+            "flow_id": "guided-system",
+            "entity_type": "sistema",
+            "ui_copy_key": "system",
+            "index": True,
+            "intent": {"terms": ["sistema"], "verbs": ["crear", "diseñar"]},
+        }
+
+    def test_valid_declaration_is_carried_in_the_contract(self) -> None:
+        manifest = dict(_valid_manifest())
+        manifest["guided_flow"] = self._guided_flow()
+        result = _compile(manifest, _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        declaration = result.compiled.guided_flow
+        assert declaration is not None
+        assert declaration.flow_id == "guided-system"
+        assert declaration.entity_type == "sistema"
+        assert result.compiled.as_dict()["guided_flow"]["intent"]["verbs"] == [
+            "crear", "diseñar",
+        ]
+
+    def test_declaration_is_part_of_the_digest(self) -> None:
+        plain = _compile(_valid_manifest(), _valid_source())
+        declared_manifest = dict(_valid_manifest())
+        declared_manifest["guided_flow"] = self._guided_flow()
+        declared = _compile(declared_manifest, _valid_source())
+        assert plain.ok and declared.ok
+        assert plain.compiled.digest != declared.compiled.digest
+
+    def test_absent_declaration_keeps_the_pre_existing_digest(self) -> None:
+        # Conditional inclusion: adding the field to the schema must not change
+        # the digest of any already-published record (the character seed).
+        manifest = _valid_manifest()
+        result = _compile(manifest, _valid_source())
+        canonical = {
+            "skill_id": manifest["skill_id"],
+            "version": manifest["version"],
+            "name": manifest["name"],
+            "description": manifest["description"],
+            "phases": manifest["phases"],
+            "language": manifest["language"],
+            "source": _valid_source(),
+        }
+        expected = hashlib.sha256(
+            json.dumps(
+                canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        assert result.compiled.digest == expected
+
+    def test_kernel_owned_fields_are_rejected(self) -> None:
+        for key in ("target_section", "minimums", "persistence"):
+            manifest = dict(_valid_manifest())
+            manifest["guided_flow"] = {**self._guided_flow(), key: "x"}
+            result = _compile(manifest, _valid_source())
+            assert not result.ok
+            assert any(issue.code == "unknown-field" for issue in result.issues)
+
+    def test_incomplete_declaration_fails_closed(self) -> None:
+        manifest = dict(_valid_manifest())
+        manifest["guided_flow"] = {"flow_id": "guided-system"}
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert {issue.code for issue in result.issues} == {"missing-field"}

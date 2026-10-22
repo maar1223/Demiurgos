@@ -45,6 +45,9 @@ _RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 # importer identity (``::``-qualified); the guided ficha writer already emits
 # ``id: <slug>``, so ``id`` participates in identity as a first-class anchor.
 MINIMUM_IDENTITY_FIELDS = frozenset({"name", "nombre", "title", "id"})
+# The guided conversation must elicit a human title, not only the server-owned
+# slug: ``id`` alone would let an unnamed entity pass the completion gate.
+MINIMUM_NAME_FIELDS = frozenset({"name", "nombre", "title"})
 MINIMUM_DESIRE_FIELDS = frozenset({
     "desire", "deseo", "motivacion", "motivations", "motivation", "motivaciones",
 })
@@ -119,12 +122,23 @@ SHAPE_BY_TYPE: dict[str, str] = {
 MINIMUM_SISTEMA_FIELDS = frozenset({
     "origen", "fuente", "source", "principio", "premisa",
 })
+# The locked System method rail: "el límite no se evade" (foundational §4.3).
+# It stays a semantic question in the method, but the envelope also requires a
+# persisted limit so an accepted system can never be written complete without
+# one. Accepted alternatives cover singular/plural and the English label.
+MINIMUM_SISTEMA_LIMIT_FIELDS = frozenset({
+    "limite", "limites", "limitacion", "limitaciones", "limit", "limits",
+})
 MINIMUM_CRONOLOGIA_FIELDS = frozenset({
     "evento", "event", "fecha", "date", "era", "periodo",
 })
 MINIMUM_GROUPS_BY_SHAPE: dict[str, tuple[frozenset[str], ...]] = {
     "entidad": (MINIMUM_IDENTITY_FIELDS,),
-    "sistema": (MINIMUM_SISTEMA_FIELDS,),
+    "sistema": (
+        MINIMUM_IDENTITY_FIELDS,
+        MINIMUM_SISTEMA_FIELDS,
+        MINIMUM_SISTEMA_LIMIT_FIELDS,
+    ),
     "cronologia": (MINIMUM_CRONOLOGIA_FIELDS,),
 }
 
@@ -155,6 +169,43 @@ def minimums_for_shape(shape: str) -> tuple[frozenset[str], ...]:
     if not isinstance(shape, str):
         return ()
     return MINIMUM_GROUPS_BY_SHAPE.get(shape.strip().lower(), ())
+
+
+# Completion (conversation) groups per shape: what the guided flow must elicit
+# before a provider delta may become a proposal.  Deliberately narrower than the
+# file-envelope minimums: the server writes ``id`` itself, so identity here
+# means a human title (``MINIMUM_NAME_FIELDS``).  Type extras still compose in
+# through ``prompt_minimums_for``.
+PROMPT_MINIMUM_GROUPS_BY_SHAPE: dict[str, tuple[frozenset[str], ...]] = {
+    "entidad": (MINIMUM_NAME_FIELDS,),
+    "sistema": (
+        MINIMUM_NAME_FIELDS,
+        MINIMUM_SISTEMA_FIELDS,
+        MINIMUM_SISTEMA_LIMIT_FIELDS,
+    ),
+    "cronologia": (MINIMUM_NAME_FIELDS, MINIMUM_CRONOLOGIA_FIELDS),
+}
+
+
+def prompt_minimums_for(entity_type: str) -> tuple[frozenset[str], ...]:
+    """Return the groups the guided conversation must elicit for a type.
+
+    Shape base groups come first, then registered type-specific extras
+    (deduplicated), mirroring ``minimums_for`` but with the completion
+    identity group instead of the file-envelope one.
+    """
+    groups: list[frozenset[str]] = list(
+        PROMPT_MINIMUM_GROUPS_BY_SHAPE.get(shape_for_type(entity_type), ())
+    )
+    for group in OKF_MINIMUM_GROUPS_BY_TYPE.get(normalize_type(entity_type), ()):
+        # The shape's completion identity is already ``MINIMUM_NAME_FIELDS``;
+        # the file-envelope identity group (which also accepts ``id``) must not
+        # add a third group and shift the question order.
+        if group == MINIMUM_IDENTITY_FIELDS:
+            continue
+        if group not in groups:
+            groups.append(group)
+    return tuple(groups)
 
 
 # ---------------------------------------------------------------------------

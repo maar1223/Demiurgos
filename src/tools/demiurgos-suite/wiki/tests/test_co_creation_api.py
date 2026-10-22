@@ -709,6 +709,22 @@ def _materialize_ok(client: TestClient, session_id: str) -> int:
     return materialized.json()["revision"]
 
 
+def _materialize_character(client: TestClient, session_id: str) -> int:
+    """Materialize an eligible character-creation method draft (S4 fixture)."""
+    materialized = client.post(f"/api/co-creation/sessions/{session_id}/materialize", json={
+        "base_revision": 1,
+        "name": "Creación de Personajes",
+        "skill_id": "narrative-character-creation",
+        "version": "0.1.0",
+        "taller": "Mundo",
+        "categoria_funcional": "Creación",
+    })
+    assert materialized.status_code == 200, materialized.text
+    assert materialized.json()["ok"] is True
+    _approve_session_trigger(client, session_id)
+    return materialized.json()["revision"]
+
+
 def test_publish_requires_materialized_draft(client: TestClient, monkeypatch) -> None:
     _bind_principal(monkeypatch)
     _wire_provider(monkeypatch, milestone="borrador_listo")
@@ -741,7 +757,7 @@ def test_activate_requires_published_version(client: TestClient, monkeypatch) ->
     _bind_principal(monkeypatch)
     _wire_provider(monkeypatch, milestone="borrador_listo")
     session_id = _create_session(client)
-    revision = _materialize_ok(client, session_id)
+    revision = _materialize_character(client, session_id)
     before = client.post(f"/api/co-creation/sessions/{session_id}/activate", json={
         "base_revision": revision, "world": "vibrantes",
     })
@@ -753,7 +769,7 @@ def test_activate_pins_one_version_per_world(client: TestClient, monkeypatch) ->
     _bind_principal(monkeypatch)
     _wire_provider(monkeypatch, milestone="borrador_listo")
     session_id = _create_session(client)
-    revision = _materialize_ok(client, session_id)
+    revision = _materialize_character(client, session_id)
     published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
         "base_revision": revision,
     })

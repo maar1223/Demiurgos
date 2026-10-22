@@ -1,35 +1,27 @@
 import { useState } from "react";
 import type {
-  MethodologyActivation,
   MethodologyCompanion,
   PublishedMethodology,
 } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
-import { Tooltip } from "@/components/atoms/Tooltip";
-import type { GroupedSkills, SkillState } from "@/lib/tallerStates";
+import type { GroupedSkills } from "@/lib/tallerStates";
+import { isTransversalSkill } from "@/lib/tallerStates";
 import {
-  activationChip,
   AXIS_TERM_KEYS,
-  companionChip,
-  conflictExplanation,
+  chatChip,
+  scopeChip,
 } from "@/lib/vocabularyAxes";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { MessageKey } from "@/i18n/messages";
 
 interface TallerTreeProps {
   groups: GroupedSkills;
-  world: string | undefined;
-  /** Active Taller SHORT KEY (Herramientas | Mundo | Ideas) — used for the
-   *  blocked-skill conflict copy (spec REQ-TRE-6 S1). */
+  /** Active Taller SHORT KEY (Herramientas | Mundo | Ideas) — drives the
+   *  transversal chip (scope axis). */
   activeTaller: string;
-  /** Current activation for the selected world — drives the version-aware
-   *  "Activa en {world}" info line (REQ-TRE-7: one active version per world)
-   *  and the sin-taller bucket badges. Rows are selection + information only;
-   *  activation actions live in the right MethodologyStatePanel. */
-  active?: MethodologyActivation;
-  /** Companions of the current world (status-derived, R-UI): rows whose
-   *  skill@version is ON render a read-only "Método en chat" badge. */
+  /** Companions of the current world (status-derived): a row whose skill is
+   *  in this list renders the read-only "En el chat" chip (S1). */
   companions?: MethodologyCompanion[];
   /** Optional sidebar selection contract (SC-SB-2.1): when provided, rows
    *  become clickable and report the clicked `skill_id`/`version`. */
@@ -38,40 +30,24 @@ interface TallerTreeProps {
   selected?: { skill_id: string; version: string } | null;
 }
 
-/** One collapsible group. `state` is the row badge state for every skill in
- *  the group; `"sin-taller"` rows resolve per-row (activa/inactiva by the
- *  world activation, spec REQ-TRE-5). */
+/** One collapsible group. */
 interface GroupDef {
   key: keyof GroupedSkills;
   labelKey: MessageKey;
-  state: SkillState | "sin-taller";
 }
 
-/** TW3 group order (spec REQ-TRE-3) + the separate "Sin taller" bucket
- *  (REQ-TRE-1 S3). The 5th "Bloqueadas" group is Author-approved Option B.
- *  Group labels are byte-frozen (spec R7) — they carry the scope/conflict
- *  vocabulary at group level. */
+/** Group order (S1): the explorer answers "what can the chat use?" first.
+ *  Group labels are byte-frozen (spec R7). */
 const GROUP_ORDER: GroupDef[] = [
-  { key: "activas", labelKey: "tallerTree.group.activas", state: "activa" },
-  {
-    key: "transversalesActivas",
-    labelKey: "tallerTree.group.transversalesActivas",
-    state: "transversal-activa",
-  },
-  { key: "inactivas", labelKey: "tallerTree.group.inactivas", state: "inactiva" },
-  {
-    key: "transversalesInactivas",
-    labelKey: "tallerTree.group.transversalesInactivas",
-    state: "transversal-inactiva",
-  },
-  { key: "bloqueadas", labelKey: "tallerTree.group.bloqueadas", state: "bloqueada" },
-  { key: "sinTaller", labelKey: "tallerTree.group.sinTaller", state: "sin-taller" },
+  { key: "enChat", labelKey: "tallerTree.group.enChat" },
+  { key: "fueraDelChat", labelKey: "tallerTree.group.fueraDelChat" },
+  { key: "sinTaller", labelKey: "tallerTree.group.sinTaller" },
 ];
 
 /** One attributed row chip (spec R1): the registry term plus its axis
  *  attribution, surfaced as a `data-axis` marker for tests and assistive
- *  tooling. Axes 1+2 only — scope/conflict live in tooltips/panel (R3). */
-function AxisBadge({ chip }: { chip: ReturnType<typeof activationChip> }) {
+ *  tooling. Chat availability + scope only. */
+function AxisBadge({ chip }: { chip: ReturnType<typeof chatChip> }) {
   const { t } = useAppLanguage();
   return (
     <span data-axis={chip.axis} className="inline-flex">
@@ -82,16 +58,9 @@ function AxisBadge({ chip }: { chip: ReturnType<typeof activationChip> }) {
 
 interface SkillRowProps {
   skill: PublishedMethodology;
-  state: SkillState;
-  world: string | undefined;
   activeTaller: string;
-  isActive: boolean;
-  /** True when the world has an activation for the displayed flow — the
-   *  no-activation slot renders a neutral placeholder, never "Inactiva"
-   *  (spec R4). */
-  hasActivation: boolean;
-  /** Read-only companion marker (R-UI): true when this row's skill@version
-   *  is an active companion in the current world. */
+  /** Read-only chat marker (S1): true when this skill is a companion of the
+   *  current world. */
   isCompanion: boolean;
   onSelect?: (skillId: string, version: string) => void;
   selected?: { skill_id: string; version: string } | null;
@@ -99,23 +68,16 @@ interface SkillRowProps {
 
 function SkillRow({
   skill,
-  state,
-  world,
   activeTaller,
-  isActive,
-  hasActivation,
   isCompanion,
   onSelect,
   selected,
 }: SkillRowProps) {
-  const { t } = useAppLanguage();
   /** Selection highlight is skill-level (REQ-TRE-12): a version picked in the
    *  right-panel "Versiones" block highlights this skill's single explorer row
-   *  even when it is not the rendered representative. Version-exact meaning
-   *  stays in `isActive`/`isCompanion`. */
+   *  even when it is not the rendered representative. */
   const isSelected = selected?.skill_id === skill.skill_id;
-  const slotChip = activationChip({ state, hasActivation });
-  const companion = isCompanion ? companionChip() : null;
+  const transversal = isTransversalSkill(skill, activeTaller);
   return (
     <li
       onClick={() => onSelect?.(skill.skill_id, skill.version)}
@@ -140,28 +102,11 @@ function SkillRow({
         <p className="break-words font-medium text-primary">{skill.name}</p>
         <p className="break-words text-small text-muted">
           {skill.skill_id}@{skill.version}
-          {isActive && world && (
-            <span className="ml-2 text-action">
-              {t("tallerTree.activeIn", { world })}
-            </span>
-          )}
         </p>
       </button>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <AxisBadge chip={slotChip} />
-        {companion && <AxisBadge chip={companion} />}
-        {state === "bloqueada" && (
-          <Tooltip
-            id={`conflict-${skill.skill_id}@${skill.version}`}
-            content={conflictExplanation(activeTaller, skill.taller, t)}
-          >
-            <Icon
-              name="error"
-              size={16}
-              className="cursor-help text-status-error"
-            />
-          </Tooltip>
-        )}
+        {isCompanion && <AxisBadge chip={chatChip()} />}
+        {transversal && <AxisBadge chip={scopeChip()} />}
       </div>
     </li>
   );
@@ -169,19 +114,13 @@ function SkillRow({
 
 /**
  * Contextual tree of published methodologies for the active Taller (spec
- * REQ-TRE-3/4/6): five collapsible groups in TW3 order plus the "Sin taller"
- * bucket (REQ-TRE-1 S3). Empty groups are hidden (REQ-TRE-3 S3). Each row
- * shows the name, `skill_id@version`, attributed axis-1/2 chips (REQ-TRE-4,
- * axis-binding-ui R1) and the "Activa en {world}" info line for the active
- * version; blocked rows show the conflict copy in a row tooltip (R3). Rows
- * are selection + information only — activation/adaptation actions live in
- * the right MethodologyStatePanel.
+ * REQ-TRE-3/4/6): groups by chat availability (S1/S2) and shows each row's
+ * attributed chat/scope chips. Rows are selection + information only — the
+ * chat toggle and every other action live in the right MethodologyStatePanel.
  */
 export function TallerTree({
   groups,
-  world,
   activeTaller,
-  active,
   companions,
   onSelect,
   selected,
@@ -190,6 +129,7 @@ export function TallerTree({
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUP_ORDER.map((group) => [group.key, true])),
   );
+  const chatSkillIds = new Set((companions ?? []).map((entry) => entry.skill_id));
 
   const toggle = (key: keyof GroupedSkills) => {
     setExpanded((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
@@ -220,37 +160,16 @@ export function TallerTree({
             </h3>
             {isOpen && (
               <ul className="mt-3 space-y-3">
-                {skills.map((skill) => {
-                  const isActive =
-                    active?.skill_id === skill.skill_id &&
-                    active?.version === skill.version;
-                  const isCompanion =
-                    companions?.some(
-                      (companion) =>
-                        companion.skill_id === skill.skill_id &&
-                        companion.version === skill.version,
-                    ) ?? false;
-                  const rowState =
-                    group.state === "sin-taller"
-                      ? isActive
-                        ? "activa"
-                        : "inactiva"
-                      : group.state;
-                  return (
-                    <SkillRow
-                      key={skill.skill_id}
-                      skill={skill}
-                      state={rowState}
-                      world={world}
-                      activeTaller={activeTaller}
-                      isActive={isActive}
-                      hasActivation={active != null}
-                      isCompanion={isCompanion}
-                      onSelect={onSelect}
-                      selected={selected}
-                    />
-                  );
-                })}
+                {skills.map((skill) => (
+                  <SkillRow
+                    key={skill.skill_id}
+                    skill={skill}
+                    activeTaller={activeTaller}
+                    isCompanion={chatSkillIds.has(skill.skill_id)}
+                    onSelect={onSelect}
+                    selected={selected}
+                  />
+                ))}
               </ul>
             )}
           </section>

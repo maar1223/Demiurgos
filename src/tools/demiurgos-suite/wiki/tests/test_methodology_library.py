@@ -26,6 +26,7 @@ SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 from methodology_library import (  # noqa: E402
     AlreadyPublishedError,
     CO_CREATION_FLOW,
+    GUIDED_CHARACTER_FLOW,
     CompanionLimitError,
     MAX_COMPANIONS_PER_WORLD,
     MethodologyLibrary,
@@ -1569,3 +1570,202 @@ class TestNativeChannelFlag:
         assert library.get_draft(draft_id) is not None
         payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["native_channel"] == {"W": True}
+
+
+class TestGuidedMethodEligibility:
+    """S4: the guided-character assistant only consumes character methods."""
+
+    def _publish_skill(
+        self, library: MethodologyLibrary, skill_id: str, version: str = "1.0.0",
+    ) -> PublishedVersion:
+        draft = library.create_draft(
+            skill_id=skill_id,
+            version=version,
+            name=skill_id,
+            source=_valid_source(),
+            description="A safe construction methodology for guided characters.",
+        )
+        return _publish(library, draft)
+
+    def test_character_family_is_eligible(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert library.is_guided_character_method(FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert library.is_guided_character_method("guided-character-v1")
+
+    def test_unrelated_foundational_skills_are_ineligible(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, "narrative-chronology-creation")
+        self._publish_skill(library, "narrative-system-creation")
+        assert not library.is_guided_character_method("narrative-chronology-creation")
+        assert not library.is_guided_character_method("narrative-system-creation")
+        assert not library.is_guided_character_method("cualquier-otra-skill")
+
+    def test_parent_lineage_inherits_eligibility(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        library._published[library._key("mi-metodo", "1.0.0")] = {
+            "skill_id": "mi-metodo",
+            "version": "1.0.0",
+            "name": "Mi método",
+            "parent_skill_id": FOUNDATIONAL_CHARACTER_SKILL_ID,
+            "deleted_at": None,
+        }
+        assert library.is_guided_character_method("mi-metodo")
+
+    def test_lineage_cycle_is_safe(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        for skill_id, parent in (("a", "b"), ("b", "a")):
+            library._published[library._key(skill_id, "1.0.0")] = {
+                "skill_id": skill_id,
+                "version": "1.0.0",
+                "name": skill_id,
+                "parent_skill_id": parent,
+                "deleted_at": None,
+            }
+        assert not library.is_guided_character_method("a")
+
+    def test_list_guided_methods_returns_latest_per_skill(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID, "1.0.0")
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2.0")
+        self._publish_skill(library, "narrative-system-creation")
+        methods = library.list_guided_methods()
+        assert [(item.skill_id, item.version) for item in methods] == [
+            (FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2.0"),
+        ]
+
+
+class TestPerFlowEligibility:
+    """S6: a method belongs to its declared flow and to no other flow."""
+
+    def _publish_skill(
+        self, library: MethodologyLibrary, skill_id: str, version: str = "1.0.0",
+    ) -> PublishedVersion:
+        draft = library.create_draft(
+            skill_id=skill_id,
+            version=version,
+            name=skill_id,
+            source=_valid_source(),
+            description="A safe construction methodology for guided characters.",
+        )
+        return _publish(library, draft)
+
+    @staticmethod
+    def _install_declared(
+        library: MethodologyLibrary,
+        skill_id: str,
+        flow_id: str,
+        *,
+        entity_type: str = "sistema",
+        ui_copy_key: str = "system",
+        version: str = "1.1.0",
+    ) -> PublishedVersion:
+        manifest = dict(_valid_manifest())
+        manifest.update({
+            "skill_id": skill_id,
+            "version": version,
+            "guided_flow": {
+                "flow_id": flow_id,
+                "entity_type": entity_type,
+                "ui_copy_key": ui_copy_key,
+                "index": True,
+                "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+            },
+        })
+        compiled = compile_methodology(manifest, _valid_source()).compiled
+        assert compiled is not None
+        library.install_published_version(
+            compiled, clasificacion=OFFICIAL, trust_attributes=(),
+        )
+        installed = library.get_published(skill_id, version)
+        assert installed is not None
+        return installed
+
+    def test_declared_method_belongs_only_to_its_flow(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install_declared(
+            library, FOUNDATIONAL_SYSTEM_SKILL_ID, "guided-system",
+        )
+        assert library.is_method_for_flow(
+            "guided-system", FOUNDATIONAL_SYSTEM_SKILL_ID,
+        )
+        assert not library.is_method_for_flow(
+            GUIDED_CHARACTER_FLOW, FOUNDATIONAL_SYSTEM_SKILL_ID,
+        )
+
+    def test_character_family_is_not_a_system_method(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert library.is_guided_character_method(FOUNDATIONAL_CHARACTER_SKILL_ID)
+        assert not library.is_method_for_flow(
+            "guided-system", FOUNDATIONAL_CHARACTER_SKILL_ID,
+        )
+
+    def test_derived_skill_inherits_the_declared_flow(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install_declared(
+            library, FOUNDATIONAL_SYSTEM_SKILL_ID, "guided-system",
+        )
+        library._published[library._key("sistemas-de-mi-mundo", "2.0.0")] = {
+            "skill_id": "sistemas-de-mi-mundo",
+            "version": "2.0.0",
+            "name": "Sistemas de mi mundo",
+            "parent_skill_id": FOUNDATIONAL_SYSTEM_SKILL_ID,
+            "deleted_at": None,
+        }
+        assert library.is_method_for_flow("guided-system", "sistemas-de-mi-mundo")
+        assert not library.is_method_for_flow(
+            GUIDED_CHARACTER_FLOW, "sistemas-de-mi-mundo",
+        )
+
+    def test_undeclared_unrelated_skill_is_ineligible_everywhere(
+        self, tmp_path: Path,
+    ) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, "una-skill-cualquiera")
+        assert not library.is_method_for_flow(
+            "guided-system", "una-skill-cualquiera",
+        )
+        assert not library.is_method_for_flow(
+            GUIDED_CHARACTER_FLOW, "una-skill-cualquiera",
+        )
+
+    def test_declared_method_is_listed_only_for_its_flow(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        self._install_declared(
+            library, FOUNDATIONAL_SYSTEM_SKILL_ID, "guided-system",
+        )
+        system_ids = [
+            item.skill_id for item in library.list_methods_for_flow("guided-system")
+        ]
+        character_ids = [item.skill_id for item in library.list_guided_methods()]
+        assert system_ids == [FOUNDATIONAL_SYSTEM_SKILL_ID]
+        assert FOUNDATIONAL_SYSTEM_SKILL_ID not in character_ids
+        assert FOUNDATIONAL_CHARACTER_SKILL_ID in character_ids
+
+    def test_profile_resolution_uses_the_kernel_section(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._install_declared(
+            library, FOUNDATIONAL_SYSTEM_SKILL_ID, "guided-system",
+        )
+        profile = library.flow_profile_for(
+            "guided-system", FOUNDATIONAL_SYSTEM_SKILL_ID,
+        )
+        assert profile is not None
+        assert profile.target_section == "lore"
+        assert profile.type_label == "Sistema"
+        assert library.flow_profile_for(
+            GUIDED_CHARACTER_FLOW, FOUNDATIONAL_SYSTEM_SKILL_ID,
+        ) is None
+
+    def test_character_profile_remains_the_builtin(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_skill(library, FOUNDATIONAL_CHARACTER_SKILL_ID)
+        profile = library.flow_profile_for(
+            GUIDED_CHARACTER_FLOW, FOUNDATIONAL_CHARACTER_SKILL_ID,
+        )
+        assert profile is not None
+        assert profile.builtin is True
+        assert profile.target_section == "personajes"

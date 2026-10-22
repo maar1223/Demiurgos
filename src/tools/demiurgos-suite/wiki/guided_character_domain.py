@@ -88,22 +88,28 @@ def _candidate_known_fields(candidate: CandidateState, delta: Mapping[str, Any] 
     return known
 
 
-def candidate_minimum_complete(candidate: CandidateState, *, delta: Mapping[str, Any] | None = None,
-                               mode: str = "full") -> bool:
+def candidate_minimum_complete(
+    candidate: CandidateState, *,
+    delta: Mapping[str, Any] | None = None,
+    mode: str = "full",
+    groups: tuple[frozenset[str], ...] | None = None,
+) -> bool:
     """Server-authoritative minimum completeness gate for guided creation.
 
     A provider delta is never a trusted completeness claim: only the candidate
     data the server actually holds decides readiness. A candidate is minimally
-    complete when it carries both an identity anchor and a defining desire.
-    Fast mode proceeds with marked assumptions and skips the gate.
+    complete when every required group has at least one present field. The
+    groups come from the resolved flow profile (``prompt_minimums_for``); the
+    default keeps the character contract byte-identically. Fast mode proceeds
+    with marked assumptions and skips the gate.
     """
     if mode == "fast":
         return True
     known = _candidate_known_fields(candidate, delta)
-    return (
-        any(key in known for key in MINIMUM_IDENTITY_FIELDS)
-        and any(key in known for key in MINIMUM_DESIRE_FIELDS)
+    required = groups if groups is not None else (
+        MINIMUM_IDENTITY_FIELDS, MINIMUM_DESIRE_FIELDS,
     )
+    return all(any(key in known for key in group) for group in required)
 
 
 # Free-form nivel probes (D4): there is no structured nivel field on the
@@ -160,18 +166,79 @@ def _identity_question(language: str) -> str:
     return "¿Cómo se llama este personaje?"
 
 
-def next_required_question(candidate: CandidateState, *, delta: Mapping[str, Any] | None = None,
-                           language: str | None = None) -> str:
+_QUESTION_COPY: dict[str, tuple[str, str]] = {
+    # key: (Spanish, English)
+    "desire": (
+        "¿Cuál es el deseo que define a este personaje?",
+        "What is the character's defining desire?",
+    ),
+    "origin": (
+        "¿De dónde vienen las reglas de este sistema? Puede ser un dios, la "
+        "biología, una institución, la tecnología o la propia naturaleza.",
+        "Where do this system's rules come from? A god, biology, an "
+        "institution, technology, or nature itself.",
+    ),
+    "limit": (
+        "¿Qué no puede hacer este sistema y cuándo falla?",
+        "What can this system not do, and when does it fail?",
+    ),
+    "event": (
+        "¿Qué suceso o era quieres registrar en la cronología?",
+        "Which event or era do you want to record in the chronology?",
+    ),
+}
+
+
+_IDENTITY_COPY_BY_FLOW: dict[str, tuple[str, str]] = {
+    # copy key: (Spanish, English)
+    "character": ("¿Cómo se llama este personaje?", "What is this character's name?"),
+    "system": ("¿Cómo se llama este sistema?", "What is this system called?"),
+}
+
+
+def _question_for(key: str, language: str, ui_copy_key: str | None = None) -> str:
+    if key == "identity":
+        copy = _IDENTITY_COPY_BY_FLOW.get(ui_copy_key or "character")
+        if copy is None:
+            return _identity_question(language)
+        return copy[1] if language == "en" else copy[0]
+    copy = _QUESTION_COPY.get(key)
+    if copy is None:
+        return (
+            "¿Qué dato falta para completar esta entidad?"
+            if language != "en" else "Which required detail is still missing?"
+        )
+    return copy[1] if language == "en" else copy[0]
+
+
+def next_required_question(
+    candidate: CandidateState, *,
+    delta: Mapping[str, Any] | None = None,
+    language: str | None = None,
+    question_keys: tuple[str, ...] | None = None,
+    groups: tuple[frozenset[str], ...] | None = None,
+    ui_copy_key: str | None = None,
+) -> str:
     """One server-owned focused question for the first missing required field.
 
-    Asks for the missing identity anchor first, then the defining desire, in
-    the configured UI language. Never a questionnaire: exactly one question.
+    Walks the flow's required groups in order and asks the first unsatisfied
+    one, in the configured UI language. Never a questionnaire: exactly one
+    question. The character defaults preserve the existing copy verbatim.
     """
     known = _candidate_known_fields(candidate, delta)
     lang = normalize_language(language or resolve_domain_language("conversation"))
-    if not any(key in known for key in MINIMUM_IDENTITY_FIELDS):
-        return _identity_question(lang)
-    return _default_question(lang, short=True)[0]
+    keys = question_keys or ("identity", "desire")
+    required = groups if groups is not None else (
+        MINIMUM_IDENTITY_FIELDS, MINIMUM_DESIRE_FIELDS,
+    )
+    for index, group in enumerate(required):
+        if any(key in known for key in group):
+            continue
+        key = keys[index] if index < len(keys) else "identity"
+        return _question_for(key, lang, ui_copy_key)
+    # All groups satisfied: repeat the last focused prompt rather than inventing
+    # a new question shape.
+    return _question_for(keys[-1] if keys else "identity", lang, ui_copy_key)
 
 
 def _default_question(language: str, short: bool) -> tuple[str, str]:
@@ -204,6 +271,11 @@ class GuidedTurn:
     mode: str = "full"
     depth: str = "standard"
 
+    @property
+    def is_new_entity(self) -> bool:
+        """Flow-neutral alias; the field name is kept for character callers."""
+        return self.is_new_character
+
 
 def route_new_character_intent(author_input: str, *, allow_descriptive_seed: bool = False,
                                language: str | None = None) -> GuidedTurn:
@@ -234,6 +306,44 @@ def route_new_character_intent(author_input: str, *, allow_descriptive_seed: boo
     return GuidedTurn(
         True, question, response, related_creation, mode, depth,
     )
+
+
+def route_guided_intent(
+    author_input: str,
+    profile,
+    *,
+    allow_descriptive_seed: bool = False,
+    language: str | None = None,
+) -> GuidedTurn:
+    """Route new-entity intent for the session's flow (S3).
+
+    The character flow keeps its historical matcher byte-identically. Every
+    other flow uses the declaration's bounded intent vocabulary (terms and
+    verbs) supplied by the published skill; no flow-specific branch lives here.
+    """
+    if getattr(profile, "intent_matcher", "declarative") == "legacy-character":
+        return route_new_character_intent(
+            author_input,
+            allow_descriptive_seed=allow_descriptive_seed,
+            language=language,
+        )
+    lowered = author_input.casefold()
+    words = set(re.findall(r"[a-záéíóúñ]+", lowered))
+    if words & set(_EDIT_CHARACTER_TERMS):
+        return GuidedTurn(False)
+    terms = tuple(getattr(profile, "intent_terms", ()) or ())
+    verbs = tuple(getattr(profile, "intent_verbs", ()) or ())
+    if not terms or not verbs:
+        return GuidedTurn(False)
+    has_term = any(
+        re.search(rf"\b{re.escape(term.casefold())}\b", lowered) for term in terms
+    )
+    has_verb = any(
+        re.search(rf"\b{re.escape(verb.casefold())}\b", lowered) for verb in verbs
+    )
+    if not (has_term and has_verb):
+        return GuidedTurn(False)
+    return GuidedTurn(True, None, "", False, "full", "standard")
 
 
 def confirmation_decision(author_input: str) -> bool | None:
@@ -481,22 +591,43 @@ class FichaProposal:
     digest_basis: str
 
 
-def serialize_ficha(candidate: CandidateState, *, world: str, slug: str, title: str,
-                    existing_targets: set[str] | None = None) -> FichaProposal:
-    """Serialize an additive v1 ficha and validate its authorized target."""
+def serialize_entity(
+    candidate: CandidateState, *,
+    world: str, slug: str, title: str,
+    entity_type: str, target_section: str, type_label: str,
+    provenance_default: str = "guided-character-v1",
+    frontmatter_fields: tuple[str, ...] = (),
+    existing_targets: set[str] | None = None,
+) -> FichaProposal:
+    """Serialize an additive OKF v1 entity and validate its authorized target.
+
+    The flow profile supplies the kernel-owned section and type label; the body
+    shape is shared by every flow so the character output stays byte-identical.
+    """
     if not world.strip() or not _SLUG.fullmatch(slug):
-        raise FichaValidationError("invalid character slug")
-    target = f"personajes/{slug}.md"
+        raise FichaValidationError("invalid entity slug")
+    target = f"{target_section}/{slug}.md"
     path = PurePosixPath(target)
-    if path.parts[0] != "personajes" or path.name != f"{slug}.md":
-        raise FichaValidationError("unauthorized character target")
+    if path.parts[0] != target_section or path.name != f"{slug}.md":
+        raise FichaValidationError("unauthorized entity target")
     if existing_targets and target in existing_targets:
-        raise FichaValidationError("character slug collision")
-    provenance = candidate.provenance or ["guided-character-v1"]
+        raise FichaValidationError("entity slug collision")
+    provenance = candidate.provenance or [provenance_default]
     frontmatter_values = {
-        "type": "Personaje", "schema_version": 1, "id": slug,
+        "type": type_label, "schema_version": 1, "id": slug,
         "title": title, "status": "proposed", "provenance": list(provenance),
     }
+    # Flow-declared envelope fields. Accepted canon wins; the Author is
+    # reviewing a still-proposed entity (``status: proposed``), so an answered
+    # minimum that is still a proposal is promoted to the envelope as well —
+    # otherwise the file would be written without the OKF minimums. Empty for
+    # the character flow, which keeps its exact bytes.
+    for field in frontmatter_fields:
+        raw = candidate.accepted_canon.get(field, candidate.proposals.get(field))
+        if isinstance(raw, Mapping) and "value" in raw:
+            raw = raw["value"]
+        if isinstance(raw, (str, int, float)) and str(raw).strip():
+            frontmatter_values[field] = raw
     frontmatter = "---\n" + yaml.safe_dump(frontmatter_values, sort_keys=False, allow_unicode=False) + "---\n"
     def section(name: str, values: Mapping[str, Any] | list[Any]) -> str:
         if not values:
@@ -510,6 +641,16 @@ def serialize_ficha(candidate: CandidateState, *, world: str, slug: str, title: 
         section("Unresolved References", candidate.unresolved_references)
     )
     return FichaProposal(target, frontmatter + body, "\n".join((target, title, repr(candidate.accepted_canon), repr(candidate.provenance))))
+
+
+def serialize_ficha(candidate: CandidateState, *, world: str, slug: str, title: str,
+                    existing_targets: set[str] | None = None) -> FichaProposal:
+    """Character-flow wrapper over ``serialize_entity`` (byte-identical)."""
+    return serialize_entity(
+        candidate, world=world, slug=slug, title=title,
+        entity_type="personaje", target_section="personajes",
+        type_label="Personaje", existing_targets=existing_targets,
+    )
 
 
 def record_transition(state: SessionState, message_type: MessageType, content: Mapping[str, Any]) -> SessionState:

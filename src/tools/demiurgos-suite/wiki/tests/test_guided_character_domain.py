@@ -399,3 +399,113 @@ def test_resolve_candidate_nivel_table() -> None:
     assert resolve_candidate_nivel(CandidateState(
         accepted_canon={"nivel": "secundario"}, proposals={"nivel_narrativo": "3"},
     )) == "2º"
+
+
+# ---------------------------------------------------------------------------
+# Generic flow surface (S2/S3): the same domain rules driven by a profile.
+# ---------------------------------------------------------------------------
+
+
+def test_system_completion_gate_requires_identity_origin_and_limit() -> None:
+    from okf_contract import prompt_minimums_for
+
+    groups = prompt_minimums_for("sistema")
+    assert not candidate_minimum_complete(CandidateState(), groups=groups)
+    assert not candidate_minimum_complete(
+        CandidateState(proposals={"name": "Magia"}), groups=groups,
+    )
+    assert not candidate_minimum_complete(
+        CandidateState(proposals={"name": "Magia", "origen": "los dioses"}),
+        groups=groups,
+    )
+    assert candidate_minimum_complete(
+        CandidateState(proposals={
+            "name": "Magia", "origen": "los dioses", "limite": "no crea materia",
+        }),
+        groups=groups,
+    )
+
+
+def test_system_questions_walk_the_missing_group() -> None:
+    from okf_contract import prompt_minimums_for
+
+    groups = prompt_minimums_for("sistema")
+    keys = ("identity", "origin", "limit")
+    assert next_required_question(
+        CandidateState(), groups=groups, question_keys=keys, language="es",
+        ui_copy_key="system",
+    ) == "¿Cómo se llama este sistema?"
+    assert next_required_question(
+        CandidateState(proposals={"name": "Magia"}),
+        groups=groups, question_keys=keys, language="es",
+    ).startswith("¿De dónde vienen las reglas")
+    assert next_required_question(
+        CandidateState(proposals={"name": "Magia", "origen": "los dioses"}),
+        groups=groups, question_keys=keys, language="es",
+    ).startswith("¿Qué no puede hacer")
+
+
+def test_system_serializer_writes_the_kernel_section_and_type() -> None:
+    from guided_character_domain import serialize_entity
+
+    candidate = CandidateState(accepted_canon={
+        "name": "Magia", "origen": "los dioses", "limite": "no crea materia",
+    })
+    proposal = serialize_entity(
+        candidate, world="vibrantes", slug="magia", title="Magia",
+        entity_type="sistema", target_section="lore", type_label="Sistema",
+        provenance_default="guided-sistema-v1",
+        frontmatter_fields=("origen", "limite"),
+    )
+    assert proposal.target == "lore/magia.md"
+    frontmatter, body = proposal.content.split("---\n", 2)[1:]
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["type"] == "Sistema"
+    assert metadata["id"] == "magia"
+    assert metadata["origen"] == "los dioses"
+    assert metadata["limite"] == "no crea materia"
+    assert metadata["provenance"] == ["guided-sistema-v1"]
+    assert "## Identity" in body
+    from okf_contract import validate
+
+    assert validate(proposal.content).ok, validate(proposal.content).issues
+
+
+def test_system_intent_uses_the_declared_vocabulary() -> None:
+    from guided_character_domain import route_guided_intent
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    profile = resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-system",
+        "entity_type": "sistema",
+        "ui_copy_key": "system",
+        "index": True,
+        "intent": {"terms": ["sistema"], "verbs": ["crear", "diseñar"]},
+    }))
+    assert profile is not None
+    assert route_guided_intent("Quiero crear un sistema de magia", profile).is_new_entity
+    assert route_guided_intent("Quiero diseñar un sistema económico", profile).is_new_entity
+    assert not route_guided_intent("Editar el sistema existente", profile).is_new_entity
+    assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+
+
+def test_character_profile_keeps_name_then_desire_question_order() -> None:
+    """S5 regression: the profile-derived character gate must not add a third
+    identity group (which would repeat the name question forever)."""
+    from guided_flow import builtin_profile
+
+    profile = builtin_profile("guided-character")
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+    first = next_required_question(
+        CandidateState(), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    second = next_required_question(
+        CandidateState(accepted_canon={"name": {"value": "Aria"}}), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    assert first == "¿Cómo se llama este personaje?"
+    assert second == "¿Cuál es el deseo que define a este personaje?"

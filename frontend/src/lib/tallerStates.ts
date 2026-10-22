@@ -1,49 +1,13 @@
-import type {
-  MethodologyActivation,
-  PublishedMethodology,
-} from "@/api/types";
+import type { MethodologyCompanion, PublishedMethodology } from "@/api/types";
 import { isOperationalTaller } from "@/lib/constants";
 
-/** Derived state of a published methodology for a (activeTaller, world) pair
- *  (taller-selector-tree-states spec REQ-TRE-5). `"hidden"` means the skill
- *  is not part of the active Taller's context (TW2) and must not render.
- *  Sin-taller skills report `"activa"`/`"inactiva"` here and are routed to
- *  the separate "Sin taller" bucket by the caller based on their taller. */
-export type SkillState =
-  | "activa"
-  | "transversal-activa"
-  | "inactiva"
-  | "transversal-inactiva"
-  | "bloqueada";
-
-/** Skills bucketed by derived state, each sorted alphabetically by name.
- *  `sinTaller` is a separate section (REQ-TRE-1 S3), never one of the
- *  operational groups. */
+/** Skills of the active Taller (plus its transversals) bucketed by chat
+ *  availability. Activation is not a library state anymore (S1/S2): the only
+ *  per-skill state the explorer shows is whether the skill is in the chat. */
 export interface GroupedSkills {
-  activas: PublishedMethodology[];
-  transversalesActivas: PublishedMethodology[];
-  inactivas: PublishedMethodology[];
-  transversalesInactivas: PublishedMethodology[];
-  bloqueadas: PublishedMethodology[];
+  enChat: PublishedMethodology[];
+  fueraDelChat: PublishedMethodology[];
   sinTaller: PublishedMethodology[];
-}
-
-type Activations = Record<string, MethodologyActivation>;
-
-/** True when the world's active skill belongs to a published methodology of
- *  the given primary taller — the blocked-rule lookup (REQ-TRE-5). */
-export function publishedHasActiveInWorld(
-  taller: string,
-  world: string | undefined,
-  activations: Activations,
-  published: PublishedMethodology[],
-): boolean {
-  if (world == null) return false;
-  const active = activations[world];
-  if (!active) return false;
-  return published.some(
-    (s) => s.skill_id === active.skill_id && s.taller === taller,
-  );
 }
 
 /** Numeric, specificity-aware version ordering (REQ-TRE-11): dot-separated
@@ -63,156 +27,77 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /** Collapses `published` (one record per skill@version) to ONE representative
- *  record per `skill_id` (REQ-TRE-9/10): the published version equal to the
- *  world activation's version when the activation belongs to that skill, else
- *  the latest version per REQ-TRE-11. A stale activation (active version not
- *  published) falls back to latest; with no world, latest applies to every
- *  skill. The representative's own `taller`/`talleres_compatibles` drive the
- *  state routing in `groupSkillsByState`. */
+ *  record per `skill_id` (REQ-TRE-9/10): the latest version per REQ-TRE-11.
+ *  The representative's own `taller`/`talleres_compatibles` drive the
+ *  routing below. */
 function dedupeBySkill(
   published: PublishedMethodology[],
-  world: string | undefined,
-  activations: Activations,
 ): PublishedMethodology[] {
-  const active = world == null ? undefined : activations[world];
-  const isActiveVersion = (skill: PublishedMethodology): boolean =>
-    active?.skill_id === skill.skill_id && active.version === skill.version;
-
   const bySkill = new Map<string, PublishedMethodology>();
   for (const skill of published) {
     const current = bySkill.get(skill.skill_id);
-    if (!current) {
-      bySkill.set(skill.skill_id, skill);
-      continue;
-    }
-    // The world-active version always wins, regardless of iteration order.
-    if (isActiveVersion(skill)) {
-      bySkill.set(skill.skill_id, skill);
-      continue;
-    }
-    if (isActiveVersion(current)) continue;
-    // Latest wins; ties keep the current candidate (REQ-TRE-11).
-    if (compareVersions(skill.version, current.version) > 0) {
+    if (!current || compareVersions(skill.version, current.version) > 0) {
       bySkill.set(skill.skill_id, skill);
     }
   }
   return [...bySkill.values()];
 }
 
-/** First-match-wins state derivation — exact design algorithm (design
- *  §State Derivation Algorithm, spec REQ-TRE-5 table):
- *  Activa → Transversal activa → Bloqueada → Inactiva → Transversal
- *  inactiva → hidden. */
-export function computeSkillState(
+/** A skill that belongs to another operational Taller but is declared
+ *  compatible with the active one (scope axis, rendered as a chip). */
+export function isTransversalSkill(
   skill: PublishedMethodology,
   activeTaller: string,
-  world: string | undefined,
-  activations: Activations,
-  published: PublishedMethodology[],
-): SkillState | "hidden" {
-  const compatibles = skill.talleres_compatibles ?? [];
-  const isTransversal =
-    skill.taller !== activeTaller && compatibles.includes(activeTaller);
-  const activeInWorld =
-    world != null && activations[world]?.skill_id === skill.skill_id;
+): boolean {
+  if (skill.taller === activeTaller) return false;
+  if (!isOperationalTaller(skill.taller)) return false;
+  return (skill.talleres_compatibles ?? []).includes(activeTaller);
+}
 
-  // Sin taller bucket — separate section, not part of the 4+1 groups
-  // (caller routes to the sinTaller bucket based on the taller value).
-  if (!isOperationalTaller(skill.taller)) {
-    return activeInWorld ? "activa" : "inactiva";
-  }
-
-  // 1. Activa — own taller + active in world
-  if (skill.taller === activeTaller && activeInWorld) return "activa";
-
-  // 2. Transversal activa — other taller + compatible + active in world
-  if (isTransversal && activeInWorld) return "transversal-activa";
-
-  // 3. Bloqueada — transversal + NOT active + primary taller is another
-  //    operational taller that already has an active skill in this world
-  if (
-    isTransversal &&
-    !activeInWorld &&
-    isOperationalTaller(skill.taller) &&
-    skill.taller !== activeTaller &&
-    publishedHasActiveInWorld(skill.taller, world, activations, published)
-  ) {
-    return "bloqueada";
-  }
-
-  // 4. Inactiva — own taller + not active
-  if (skill.taller === activeTaller && !activeInWorld) return "inactiva";
-
-  // 5. Transversal inactiva — transversal + not active + not blocked
-  if (isTransversal && !activeInWorld) return "transversal-inactiva";
-
-  // Hidden — not a transversal, not own taller (TW2: not this Taller's context)
-  return "hidden";
+/** True when the skill is part of the active Taller's context: its own
+ *  Taller or a declared transversal. Everything else stays hidden (TW2). */
+function isInActiveContext(
+  skill: PublishedMethodology,
+  activeTaller: string,
+): boolean {
+  return skill.taller === activeTaller || isTransversalSkill(skill, activeTaller);
 }
 
 const byName = (a: PublishedMethodology, b: PublishedMethodology): number =>
   a.name.localeCompare(b.name);
 
-/** Routes every published skill into its state bucket (hidden skills are
- *  dropped) and sorts each group alphabetically by name (REQ-TRE-3 S2).
- *  `published` is first collapsed to one representative per `skill_id`
- *  (REQ-TRE-9/10) so the explorer renders a single row per skill. */
-export function groupSkillsByState(
+/** Routes every visible published skill into the chat-availability buckets
+ *  (S1) and sorts each group alphabetically by name. `companions` is the
+ *  selected world's chat list; chat membership is skill-level (a skill is in
+ *  the chat when any of its versions is a companion). */
+export function groupSkillsByChat(
   published: PublishedMethodology[],
   activeTaller: string,
-  world: string | undefined,
-  activations: Activations,
+  companions: MethodologyCompanion[],
 ): GroupedSkills {
-  const representatives = dedupeBySkill(published, world, activations);
+  const chatSkillIds = new Set(companions.map((entry) => entry.skill_id));
   const groups: GroupedSkills = {
-    activas: [],
-    transversalesActivas: [],
-    inactivas: [],
-    transversalesInactivas: [],
-    bloqueadas: [],
+    enChat: [],
+    fueraDelChat: [],
     sinTaller: [],
   };
 
-  for (const skill of representatives) {
+  for (const skill of dedupeBySkill(published)) {
     if (!isOperationalTaller(skill.taller)) {
       groups.sinTaller.push(skill);
       continue;
     }
-    switch (
-      computeSkillState(
-        skill,
-        activeTaller,
-        world,
-        activations,
-        representatives,
-      )
-    ) {
-      case "activa":
-        groups.activas.push(skill);
-        break;
-      case "transversal-activa":
-        groups.transversalesActivas.push(skill);
-        break;
-      case "inactiva":
-        groups.inactivas.push(skill);
-        break;
-      case "transversal-inactiva":
-        groups.transversalesInactivas.push(skill);
-        break;
-      case "bloqueada":
-        groups.bloqueadas.push(skill);
-        break;
-      case "hidden":
-        break;
+    if (!isInActiveContext(skill, activeTaller)) continue;
+    if (chatSkillIds.has(skill.skill_id)) {
+      groups.enChat.push(skill);
+    } else {
+      groups.fueraDelChat.push(skill);
     }
   }
 
   return {
-    activas: groups.activas.sort(byName),
-    transversalesActivas: groups.transversalesActivas.sort(byName),
-    inactivas: groups.inactivas.sort(byName),
-    transversalesInactivas: groups.transversalesInactivas.sort(byName),
-    bloqueadas: groups.bloqueadas.sort(byName),
+    enChat: groups.enChat.sort(byName),
+    fueraDelChat: groups.fueraDelChat.sort(byName),
     sinTaller: groups.sinTaller.sort(byName),
   };
 }

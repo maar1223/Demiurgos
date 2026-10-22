@@ -6,6 +6,7 @@ import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
 import { tEs } from "@/__tests__/i18nTestUtils";
+import { getGuidedMethods } from "@/api/methodologies";
 import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
@@ -14,6 +15,12 @@ vi.mock("@/hooks/useAIAssistantSessions", () => ({
 
 vi.mock("@/hooks/useAppLanguage", () => ({
   useAppLanguage: vi.fn(),
+}));
+
+vi.mock("@/api/methodologies", () => ({
+  getGuidedMethods: vi.fn(() =>
+    Promise.resolve({ methods: [], default: null }),
+  ),
 }));
 
 vi.mock("@/hooks/useWhisper", () => ({
@@ -28,6 +35,7 @@ vi.mock("@/hooks/useWhisper", () => ({
 }));
 
 const useSessionsMock = vi.mocked(useAIAssistantSessions);
+const getGuidedMethodsMock = vi.mocked(getGuidedMethods);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
 /** The hook returns `{ language, t }` (AD-3); `t` resolves the real catalogue. */
@@ -778,9 +786,184 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
     await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
-    expect(resolveGuidedConsent).toHaveBeenCalledWith(true);
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "factory",
+    });
     await user.click(screen.getByRole("button", { name: "Seguir charlando" }));
     expect(resolveGuidedConsent).toHaveBeenCalledWith(false);
+  });
+
+  it("renders flow-specific copy and methods for a declared flow (S3)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-system-creation",
+          version: "1.1",
+          name: "Creación de Sistemas",
+        },
+      ],
+      default: { skill_id: "narrative-system-creation", version: "1.1" },
+      flow: "guided-system",
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear sistema",
+        messages: [{ role: "user", content: "Quiero crear un sistema" }],
+        createdAt: 1,
+        consentToken: "ct-sys",
+        consentFlow: {
+          flow_id: "guided-system",
+          entity_type: "sistema",
+          target_section: "lore",
+          ui_copy_key: "system",
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByText(tEs("assistant.consent.body.system")),
+    ).toBeInTheDocument();
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-system-creation");
+    // A declared flow has no builtin factory contract.
+    expect(
+      screen.queryByRole("option", { name: /De fábrica/ }),
+    ).not.toBeInTheDocument();
+    expect(getGuidedMethodsMock).toHaveBeenLastCalledWith(
+      "Vibrantes", "guided-system",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-system-creation",
+      version: "1.1",
+    });
+  });
+
+  it("sends the method chosen on the consent card (S6)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-character-creation",
+          version: "1.2",
+          name: "Creación de Personajes",
+        },
+      ],
+      default: null,
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        createdAt: 1,
+        consentToken: "ct-1",
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    await user.selectOptions(select, "narrative-character-creation");
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-character-creation",
+      version: "1.2",
+    });
+  });
+
+  it("shows the pinned method while a guided session runs (S1)", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        createdAt: 1,
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "confirmation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: "Continue?",
+          messages: [],
+          candidate: {
+            accepted_canon: {},
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          methodology: {
+            skill_id: "narrative-character-creation",
+            skill_version: "1.2",
+            flow_type: "guided-character",
+            factory: false,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByText("Método: narrative-character-creation"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the factory method while a factory guided session runs (S1)", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        createdAt: 1,
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: {},
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          methodology: {
+            skill_id: "guided-character-v1",
+            skill_version: "builtin",
+            flow_type: "guided-character",
+            factory: true,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByText("Método: De fábrica (Creación de Personajes)"),
+    ).toBeInTheDocument();
   });
 
   it("renders no consent card without a pending token", () => {

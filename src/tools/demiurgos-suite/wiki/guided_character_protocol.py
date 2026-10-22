@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+from guided_flow import GuidedFlowProfile
+
 
 PROTOCOL_VERSION = "guided-character-v1"
 DEFAULT_DEADLINE_MS = 30_000
@@ -178,14 +180,22 @@ class MethodologySnapshot:
     skill_version: str | None = None
     compiled_contract_digest: str | None = None
     flow_type: str | None = None
+    # The resolved flow profile pinned for this session (S1). ``None`` for
+    # sessions created before the profile model; callers fall back to the
+    # character contract, so no stored session changes behavior.
+    profile: Mapping[str, Any] | None = None
 
-    def as_dict(self) -> dict[str, str | None]:
-        return {
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "skill_id": self.skill_id,
             "skill_version": self.skill_version,
             "compiled_contract_digest": self.compiled_contract_digest,
             "flow_type": self.flow_type,
         }
+        # Additive: legacy pins serialize byte-identically (no ``profile`` key).
+        if self.profile is not None:
+            payload["profile"] = dict(self.profile)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -223,6 +233,14 @@ class SessionState:
     mode: str = "full"
     depth: str = "standard"
     methodology_snapshot: MethodologySnapshot | None = None
+
+
+def session_flow_profile(state: SessionState) -> GuidedFlowProfile | None:
+    """Resolve the profile pinned on the session, or ``None`` for legacy pins."""
+    snapshot = state.methodology_snapshot
+    if snapshot is None or snapshot.profile is None:
+        return None
+    return GuidedFlowProfile.from_dict(snapshot.profile)
 
 
 class Provider(Protocol):
@@ -493,8 +511,17 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
         # question per turn until the minimum required identity data is present.
         # Fast mode proceeds with marked assumptions and skips the gate.
         from guided_character_domain import candidate_minimum_complete, next_required_question
-        if not candidate_minimum_complete(state.candidate, delta=response.delta, mode=request.guided_mode):
-            question = next_required_question(state.candidate, delta=response.delta)
+        profile = session_flow_profile(state)
+        if not candidate_minimum_complete(
+            state.candidate, delta=response.delta, mode=request.guided_mode,
+            groups=profile.minimum_groups if profile is not None else None,
+        ):
+            question = next_required_question(
+                state.candidate, delta=response.delta,
+                groups=profile.minimum_groups if profile is not None else None,
+                question_keys=profile.question_keys if profile is not None else None,
+                ui_copy_key=profile.ui_copy_key if profile is not None else None,
+            )
             response = GuidedResponse(
                 PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
                 Outcome.QUESTION, provenance=response.provenance, question=question,

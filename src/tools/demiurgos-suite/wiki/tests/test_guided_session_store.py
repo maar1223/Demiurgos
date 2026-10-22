@@ -292,3 +292,33 @@ def test_unknown_or_legacy_session_fails_closed_without_migration(tmp_path: Path
     count = conn.execute("SELECT COUNT(*) FROM guided_sessions").fetchone()[0]
     conn.close()
     assert count == 0
+
+
+def test_flow_profile_pin_round_trips(tmp_path: Path) -> None:
+    """S1/S8: the resolved profile is pinned with the snapshot and survives reload."""
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    profile = resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-system",
+        "entity_type": "sistema",
+        "ui_copy_key": "system",
+        "index": True,
+        "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+    }))
+    assert profile is not None
+    db = tmp_path / "sessions.sqlite3"
+    store = GuidedSessionStore(db)
+    snapshot = MethodologySnapshot(
+        skill_id="narrative-system-creation",
+        skill_version="1.1",
+        compiled_contract_digest="digest",
+        flow_type="guided-system",
+        profile=profile.as_dict(),
+    )
+    store.create("s-profile", "nec", "author-1", methodology_snapshot=snapshot)
+
+    restarted = GuidedSessionStore(db)
+    pinned = restarted.methodology_snapshot("s-profile", "author-1")
+    assert pinned is not None
+    assert pinned.profile == profile.as_dict()
+    assert pinned.as_dict()["profile"] == profile.as_dict()

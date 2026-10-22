@@ -350,7 +350,7 @@ class TestGuidedContractProjection:
         ))
         monkeypatch.setattr(
             api_server, "_compiled_contract_markdown",
-            lambda _world, _flow_type: "## Methodology: Test\n**Phases**: a → b\n",
+            lambda *_args: "## Methodology: Test\n**Phases**: a → b\n",
         )
         asyncio.run(api_server._guided_continue(
             "test_mundo", "guided-sess", 0, "answer",

@@ -476,6 +476,10 @@ class GuidedSessionStore:
             skill_version=payload.get("skill_version"),
             compiled_contract_digest=payload.get("compiled_contract_digest"),
             flow_type=payload.get("flow_type"),
+            profile=(
+                payload.get("profile")
+                if isinstance(payload.get("profile"), dict) else None
+            ),
         )
 
     def _deserialize_row(self, row: sqlite3.Row) -> SessionState:
