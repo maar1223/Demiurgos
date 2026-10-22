@@ -119,7 +119,10 @@ export function EditorLayout({
   }, []);
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] supports-[height:100dvh]:h-[calc(100dvh-3.5rem)] flex-col overflow-hidden bg-surface">
+    // Height = viewport minus the global Navbar: `h-14` (3.5rem) PLUS its 1px
+    // bottom border. Without the 1px the shell is 1px taller than the viewport,
+    // so the document scrolls and reveals a strip under the panels.
+    <div className="flex h-[calc(100vh-3.5rem-1px)] supports-[height:100dvh]:h-[calc(100dvh-3.5rem-1px)] flex-col overflow-hidden bg-surface">
       {header}
 
       <div className="relative flex flex-1 overflow-hidden">

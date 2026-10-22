@@ -305,7 +305,7 @@ export default function ToolWorkshop() {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface">
+    <div className="flex flex-col bg-surface">
       {view === "co-crear" ? (
         <EditorLayout
           header={
