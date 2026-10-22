@@ -106,6 +106,9 @@ export function MethodologyStatePanel({
   /** Export failure feedback (REQ-IMP-1): the right panel owns the inline
    *  alert the catalog rows used to render. */
   const [exportFailed, setExportFailed] = useState(false);
+  /** Trigger description fold state (UX): the approval badge stays visible
+   *  while the (potentially long) description can be collapsed. */
+  const [triggerOpen, setTriggerOpen] = useState(true);
 
   if (!selected) {
     return (
@@ -156,6 +159,8 @@ export function MethodologyStatePanel({
     entry?.trigger_approval,
     entry?.description ?? "",
   );
+  /** Stable id for the collapsible trigger body (`aria-controls` target). */
+  const triggerBodyId = `methodology-trigger-body-${selected.skill_id}-${selected.version}`;
   const isMiMundo = lens === "mi-mundo";
   /** Companions of the current world (status-derived; absent key → none).
    *  The selected version is ON when it appears in this list. */
@@ -208,7 +213,7 @@ export function MethodologyStatePanel({
   return (
     <section
       aria-label={t("methodology.state.sectionAria")}
-      className="space-y-6"
+      className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-4"
     >
       {/* Versions + world activations (SC-SB-4) */}
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
@@ -273,22 +278,42 @@ export function MethodologyStatePanel({
       </div>
 
       {/* Etapa 2 trigger approval state (D4): no tree filtering — the
-          unapproved state is visible here and never reads as ready-to-publish. */}
+          unapproved state is visible here and never reads as ready-to-publish.
+          The description is collapsible (UX): folding it keeps the panel
+          short while the approval badge stays visible either way. */}
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-heading text-small font-semibold text-primary">
             {t("triggerApproval.title")}
           </h3>
-          <span data-testid="methodology-trigger-badge">
-            <Badge variant={triggerApproved ? "success" : "warning"}>
-              {triggerApproved
-                ? t("triggerApproval.badgeApproved")
-                : t("triggerApproval.badgePending")}
-            </Badge>
+          <span className="flex items-center gap-2">
+            <span data-testid="methodology-trigger-badge">
+              <Badge variant={triggerApproved ? "success" : "warning"}>
+                {triggerApproved
+                  ? t("triggerApproval.badgeApproved")
+                  : t("triggerApproval.badgePending")}
+              </Badge>
+            </span>
+            <button
+              type="button"
+              aria-expanded={triggerOpen}
+              aria-controls={triggerBodyId}
+              aria-label={t("methodology.state.triggerToggle")}
+              onClick={() => setTriggerOpen((open) => !open)}
+              className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+            >
+              <Icon
+                name={triggerOpen ? "chevron-down" : "chevron-right"}
+                size={14}
+              />
+            </button>
           </span>
         </div>
-        {entry?.description && (
-          <p className="mt-2 break-words text-small text-muted">
+        {triggerOpen && entry?.description && (
+          <p
+            id={triggerBodyId}
+            className="mt-2 break-words text-small text-muted"
+          >
             {entry.description}
           </p>
         )}

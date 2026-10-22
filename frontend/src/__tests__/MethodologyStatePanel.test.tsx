@@ -193,6 +193,31 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     expect(props.onActivate).toHaveBeenCalledWith("eneagrama", "1.3.0");
   });
 
+  it("collapses and expands the trigger description while the badge stays visible", () => {
+    renderPanel();
+
+    const toggle = screen.getByRole("button", {
+      name: "Mostrar u ocultar el gatillo de la skill",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Tipos de personalidad")).toBeInTheDocument();
+    expect(screen.getByTestId("methodology-trigger-badge")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByText("Tipos de personalidad"),
+    ).not.toBeInTheDocument();
+    // The approval state never hides with the body.
+    expect(screen.getByTestId("methodology-trigger-badge")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Tipos de personalidad")).toBeInTheDocument();
+  });
+
   it("shows an enabled Desactivar button for the active version and fires onDeactivate (REQ-TRE-7)", () => {
     // Default fixture: eneagrama@1.2.0 IS activations.nec — the action slot
     // carries the real deactivate affordance instead of a dead-end "Activada".

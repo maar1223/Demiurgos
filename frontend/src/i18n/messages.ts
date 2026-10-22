@@ -844,6 +844,7 @@ export const messages = {
     "methodology.state.conflict": "Conflicto",
     "methodology.state.etiquetas": "Etiquetas",
     "methodology.state.actions": "Acciones",
+    "methodology.state.triggerToggle": "Mostrar u ocultar el gatillo de la skill",
     "methodology.state.deactivate": "Desactivar",
     "methodology.state.deactivateTitle":
       "Quita esta versión de las nuevas sesiones del mundo seleccionado.",
@@ -2861,6 +2862,7 @@ export const messages = {
     "methodology.state.conflict": "Conflict",
     "methodology.state.etiquetas": "Tags",
     "methodology.state.actions": "Actions",
+    "methodology.state.triggerToggle": "Show or hide the skill trigger",
     "methodology.state.deactivate": "Deactivate",
     "methodology.state.deactivateTitle":
       "Removes this version from new sessions of the selected world.",
