@@ -118,15 +118,23 @@ function SkillRow({
   const companion = isCompanion ? companionChip() : null;
   return (
     <li
+      onClick={() => onSelect?.(skill.skill_id, skill.version)}
       className={[
-        "flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-lg border border-edge/20 bg-surface-raised/40 p-3 transition-colors",
-        isSelected ? "border-action/50 bg-action/5" : "",
+        "flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-lg border p-3 transition-colors",
+        onSelect ? "cursor-pointer" : "",
+        isSelected
+          ? "border-action bg-action/10 ring-1 ring-action/40"
+          : "border-edge/20 bg-surface-raised/40 hover:border-edge/50 hover:bg-surface-raised/70",
       ].join(" ")}
     >
       <button
         type="button"
         aria-pressed={isSelected}
-        onClick={() => onSelect?.(skill.skill_id, skill.version)}
+        onClick={(event) => {
+          // The whole row card is clickable; stop the bubbling double-select.
+          event.stopPropagation();
+          onSelect?.(skill.skill_id, skill.version);
+        }}
         className="min-w-[9rem] flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
       >
         <p className="break-words font-medium text-primary">{skill.name}</p>

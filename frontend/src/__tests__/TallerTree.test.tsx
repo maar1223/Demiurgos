@@ -81,6 +81,28 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     expect(onSelect).toHaveBeenCalledWith("skill-b", "2.0.0");
   });
 
+  it("selects from the whole row card, not only the name button (REQ-TRE-12)", () => {
+    // Regression: the row card's padding/badge area used to be inert, so a
+    // click there left the previous selection in place and the right-panel
+    // "Activar" acted on the wrong skill.
+    const onSelect = vi.fn();
+    renderTree({ onSelect, selected: null });
+
+    const row = screen.getByText("Skill A").closest("li") as HTMLElement;
+    fireEvent.click(row);
+
+    expect(onSelect).toHaveBeenCalledWith("skill-a", "1.0.0");
+  });
+
+  it("selects exactly once when the row name is clicked", () => {
+    const onSelect = vi.fn();
+    renderTree({ onSelect, selected: null });
+
+    fireEvent.click(screen.getByText("Skill A"));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it("stays non-interactive when onSelect is omitted", () => {
     renderTree();
     expect(() => fireEvent.click(screen.getByText("Skill A"))).not.toThrow();
@@ -93,10 +115,11 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     });
 
     const selectedRow = screen.getByText("Skill A").closest("li");
-    expect(selectedRow).toHaveClass("border-action/50");
+    expect(selectedRow).toHaveClass("border-action");
+    expect(selectedRow).toHaveClass("ring-1");
 
     const otherRow = screen.getByText("Skill B").closest("li");
-    expect(otherRow).not.toHaveClass("border-action/50");
+    expect(otherRow).not.toHaveClass("border-action");
   });
 
   it("highlights the row when the selected version is not the rendered one (REQ-TRE-12)", () => {
@@ -106,10 +129,11 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     });
 
     const selectedRow = screen.getByText("Skill A").closest("li");
-    expect(selectedRow).toHaveClass("border-action/50");
+    expect(selectedRow).toHaveClass("border-action");
+    expect(selectedRow).toHaveClass("ring-1");
 
     const otherRow = screen.getByText("Skill B").closest("li");
-    expect(otherRow).not.toHaveClass("border-action/50");
+    expect(otherRow).not.toHaveClass("border-action");
   });
 
   it("omits the active info line when the activation version is stale (REQ-TRE-10 S5)", () => {

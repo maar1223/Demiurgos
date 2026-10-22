@@ -383,7 +383,8 @@ describe("MethodologyLibrary", () => {
     // and the single representative row stays highlighted (skill-level match).
     await user.type(screen.getByRole("searchbox"), "Multi");
     const row = screen.getByText("Multi skill").closest("li") as HTMLElement;
-    expect(row).toHaveClass("border-action/50");
+    expect(row).toHaveClass("border-action");
+    expect(row).toHaveClass("ring-1");
     expect(props.onSelect).not.toHaveBeenCalled();
   });
 
@@ -417,7 +418,8 @@ describe("MethodologyLibrary", () => {
     const row = screen.getByText("Guided character methodology").closest(
       "li",
     ) as HTMLElement;
-    expect(row).toHaveClass("border-action/50");
+    expect(row).toHaveClass("border-action");
+    expect(row).toHaveClass("ring-1");
     expect(props.onSelect).not.toHaveBeenCalled();
   });
 
