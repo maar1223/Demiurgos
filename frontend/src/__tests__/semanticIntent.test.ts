@@ -225,6 +225,32 @@ describe("semantic intent consent suggestion mapping", () => {
     });
   });
 
+  it("carries an entity flow echo (S1)", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-entity",
+      flow: {
+        flow_id: "guided-entity",
+        entity_type: "entidad",
+        target_section: "lore",
+        ui_copy_key: "entity",
+      },
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "¿Abrimos el flujo guiado?",
+      consentToken: "ct-entity",
+      flow: {
+        flow_id: "guided-entity",
+        entity_type: "entidad",
+        target_section: "lore",
+        ui_copy_key: "entity",
+      },
+    });
+  });
+
   it("drops a malformed flow echo instead of rendering it", () => {
     const result = mapSemanticDecision(envelope("require_confirmation", {
       action: "request_confirmation",

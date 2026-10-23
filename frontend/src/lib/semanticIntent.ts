@@ -136,7 +136,7 @@ function toFlowEcho(value: unknown): GuidedFlowEcho | undefined {
     typeof entity_type !== "string" || !entity_type ||
     typeof target_section !== "string" || !target_section ||
     (ui_copy_key !== "character" && ui_copy_key !== "system" &&
-      ui_copy_key !== "chronology")
+      ui_copy_key !== "chronology" && ui_copy_key !== "entity")
   ) {
     return undefined;
   }

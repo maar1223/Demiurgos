@@ -659,7 +659,7 @@ export interface GuidedFlowEcho {
   flow_id: string;
   entity_type: string;
   target_section: string;
-  ui_copy_key: "character" | "system" | "chronology";
+  ui_copy_key: "character" | "system" | "chronology" | "entity";
 }
 
 export interface GuidedCharacterSession {

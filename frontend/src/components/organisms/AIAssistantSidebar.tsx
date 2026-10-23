@@ -331,7 +331,9 @@ function ChatScreen({
       ? "system"
       : consentFlow?.ui_copy_key === "chronology"
         ? "chronology"
-        : "character";
+        : consentFlow?.ui_copy_key === "entity"
+          ? "entity"
+          : "character";
 
   /** Preselect the flow default when the consent card appears (S3/S6).
    *  The character flow keeps its factory fallback; a declared flow preselects
@@ -612,7 +614,9 @@ function ChatScreen({
                     ? t("assistant.consent.body.system")
                     : consentFlowKey === "chronology"
                       ? t("assistant.consent.body.chronology")
-                      : t("assistant.consent.body.character")}
+                      : consentFlowKey === "entity"
+                        ? t("assistant.consent.body.entity")
+                        : t("assistant.consent.body.character")}
                 </p>
                 <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
                   {t("guided.methodTitle")}

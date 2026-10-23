@@ -902,6 +902,60 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     });
   });
 
+  it("renders entity copy and methods for the entity flow (S3)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-entity-creation",
+          version: "1.0",
+          name: "Creación de Entidades",
+        },
+      ],
+      default: { skill_id: "narrative-entity-creation", version: "1.0" },
+      flow: "guided-entity",
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-entity",
+        title: "Crear entidad",
+        messages: [{ role: "user", content: "Quiero crear un lugar" }],
+        createdAt: 1,
+        consentToken: "ct-entity",
+        consentFlow: {
+          flow_id: "guided-entity",
+          entity_type: "entidad",
+          target_section: "lore",
+          ui_copy_key: "entity",
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByText(tEs("assistant.consent.body.entity")),
+    ).toBeInTheDocument();
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-entity-creation");
+    expect(
+      screen.queryByRole("option", { name: /De fábrica/ }),
+    ).not.toBeInTheDocument();
+    expect(getGuidedMethodsMock).toHaveBeenLastCalledWith(
+      "Vibrantes", "guided-entity",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-entity-creation",
+      version: "1.0",
+    });
+  });
+
   it("sends the method chosen on the consent card (S6)", async () => {
     const resolveGuidedConsent = vi.fn();
     getGuidedMethodsMock.mockResolvedValueOnce({
