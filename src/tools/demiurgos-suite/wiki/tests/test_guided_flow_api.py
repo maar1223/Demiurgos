@@ -468,3 +468,182 @@ def test_reviewing_a_system_before_accepting_cannot_persist_below_okf(monkeypatc
     assert reviewed.status_code == 200, reviewed.json()
     validation = validate(reviewed.json()["proposed_content"])
     assert validation.ok, validation.issues
+
+
+def _entity_snapshot(library: MethodologyLibrary) -> MethodologySnapshot:
+    profile = library.flow_profile_for("guided-entity", "narrative-entity-creation")
+    assert profile is not None
+    return MethodologySnapshot(
+        skill_id="narrative-entity-creation",
+        skill_version="1.0",
+        compiled_contract_digest="digest",
+        flow_type="guided-entity",
+        profile=profile.as_dict(),
+    )
+
+
+def test_guided_methods_are_listed_for_entity() -> None:
+    payload = client.get(
+        "/api/methodologies/guided-methods?world=vibrantes&flow=guided-entity",
+    )
+    assert payload.status_code == 200, payload.json()
+    body = payload.json()
+    assert body["flow"] == "guided-entity"
+    assert [item["skill_id"] for item in body["methods"]] == [
+        "narrative-entity-creation",
+    ]
+    assert body["default"] == {
+        "skill_id": "narrative-entity-creation", "version": "1.0",
+    }
+
+    for flow in ("guided-system", "guided-chronology", None):
+        url = "/api/methodologies/guided-methods?world=vibrantes"
+        if flow:
+            url += f"&flow={flow}"
+        listed = client.get(url).json()
+        assert "narrative-entity-creation" not in [
+            item["skill_id"] for item in listed["methods"]
+        ]
+
+
+def test_chat_intent_resolves_the_entity_flow(_isolated_flow_env) -> None:
+    for prompt in (
+        "Quiero crear un lugar",
+        "Quiero crear una facción",
+        "Quiero crear una criatura",
+        "Quiero inventar un artefacto",
+    ):
+        profile = api_server._resolve_input_flow(prompt)
+        assert profile is not None, prompt
+        assert profile.flow_id == "guided-entity", prompt
+        assert profile.ui_copy_key == "entity", prompt
+        assert profile.target_section == "lore", prompt
+
+    # An unmatched turn keeps the historical character default.
+    fallback = api_server._resolve_input_flow("Háblame de los personajes")
+    assert fallback is not None
+    assert fallback.flow_id == "guided-character"
+
+
+def test_entity_consent_copy_is_flow_specific() -> None:
+    copy = api_server.GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY["entity"]
+    assert "entidad" in copy
+    assert "guíado" not in copy.lower()
+
+
+def test_entity_session_start_uses_the_declared_profile(monkeypatch) -> None:
+    _allow(monkeypatch, 1)
+
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Ruinas de Vhal", "clase": "lugar"},
+        }
+
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    response = client.post("/api/vibrantes/guided/session", json={
+        "author_input": "Quiero crear un lugar",
+        "flow_id": "guided-entity",
+    })
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["flow"] == {
+        "flow_id": "guided-entity",
+        "entity_type": "entidad",
+        "target_section": "lore",
+        "ui_copy_key": "entity",
+    }
+    assert payload["methodology"]["skill_id"] == "narrative-entity-creation"
+    assert payload["methodology"]["skill_version"] == "1.0"
+    assert payload["methodology"]["factory"] is False
+    assert payload["candidate"]["proposals"]
+
+
+def test_entity_serialization_targets_lore_and_passes_okf(
+    _isolated_flow_env,
+) -> None:
+    library = _isolated_flow_env
+    sessions = api_server._GUIDED_SESSIONS
+    sessions.create(
+        "guided-entity-1", "vibrantes", "author-1",
+        methodology_snapshot=_entity_snapshot(library),
+    )
+    state = sessions.recover("guided-entity-1", "author-1")
+    assert state is not None
+    state.candidate.accepted_canon = {
+        "name": "Ruinas de Vhal", "clase": "lugar",
+        "function": "Marca el límite del reino",
+    }
+    sessions._sessions["guided-entity-1"] = state  # noqa: SLF001
+
+    response = client.post("/api/vibrantes/guided/proposal/serialize", json={
+        "session_id": "guided-entity-1", "base_revision": 0,
+        "slug": "ruinas-de-vhal", "title": "Ruinas de Vhal",
+    })
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["target"] == "lore/ruinas-de-vhal.md"
+    validation = validate(payload["proposed_content"])
+    assert validation.ok, validation.issues
+    metadata = validation.document.frontmatter
+    assert metadata["type"] == "Entidad"
+    assert metadata["clase"] == "lugar"
+
+
+def test_entity_create_writes_lore_and_indexes(monkeypatch, tmp_path) -> None:
+    """Acceptance: accepting an entity persists it in ``lore/`` with the decided
+    type, validates the OKF minimums and indexes it."""
+    library = api_server._methodology_library()
+    sessions = api_server._GUIDED_SESSIONS
+    sessions.create(
+        "guided-ent", "vibrantes", "author-1",
+        methodology_snapshot=_entity_snapshot(library),
+    )
+    state = sessions.recover("guided-ent", "author-1")
+    assert state is not None
+    state.candidate.accepted_canon = {
+        "name": "Ruinas de Vhal", "clase": "lugar",
+    }
+    sessions._sessions["guided-ent"] = state  # noqa: SLF001
+
+    serialized = client.post("/api/vibrantes/guided/proposal/serialize", json={
+        "session_id": "guided-ent", "base_revision": 0,
+        "slug": "ruinas-de-vhal", "title": "Ruinas de Vhal",
+    })
+    assert serialized.status_code == 200, serialized.json()
+    proposal = serialized.json()
+    content = proposal["proposed_content"]
+    assert validate(content).ok, validate(content).issues
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    class _Reindex:
+        def reconcile(self, **kwargs):
+            return SimpleNamespace(
+                index_status="indexed", retryable=False, message="Indexed",
+            )
+
+    monkeypatch.setattr(api_server, "_GUIDED_REINDEX", _Reindex())
+    confirmation = client.post(
+        "/api/vibrantes/lore/edit-confirmation?path=ruinas-de-vhal.md",
+        json={
+            "edit_id": proposal["proposal_id"], "kind": "new",
+            "proposed_content": content,
+        },
+    )
+    assert confirmation.status_code == 200, confirmation.json()
+    created = client.post("/api/vibrantes/lore/create?path=ruinas-de-vhal.md", json={
+        "content": content,
+        "edit_id": proposal["proposal_id"],
+        "proposed_digest": digest,
+        "token": confirmation.json()["token"],
+    })
+    assert created.status_code == 200, created.json()
+    assert created.json()["index_status"] == "indexed"
+    written = tmp_path / "vibrantes" / "lore" / "ruinas-de-vhal.md"
+    assert written.is_file()
+    assert written.read_text(encoding="utf-8") == content
+    assert "type: Entidad" in content
+    assert "clase: lugar" in content

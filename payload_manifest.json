@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "3e7608db",
+  "source_commit": "6bd8939d",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -22,6 +22,9 @@
     "data/methodology/seeds/narrative-chronology-creation/checksums.json",
     "data/methodology/seeds/narrative-chronology-creation/manifest.yaml",
     "data/methodology/seeds/narrative-chronology-creation/source.md",
+    "data/methodology/seeds/narrative-entity-creation/checksums.json",
+    "data/methodology/seeds/narrative-entity-creation/manifest.yaml",
+    "data/methodology/seeds/narrative-entity-creation/source.md",
     "data/methodology/seeds/narrative-system-creation/checksums.json",
     "data/methodology/seeds/narrative-system-creation/manifest.yaml",
     "data/methodology/seeds/narrative-system-creation/source.md",

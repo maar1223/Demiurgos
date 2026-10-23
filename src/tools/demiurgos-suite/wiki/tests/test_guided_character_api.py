@@ -1429,7 +1429,7 @@ def test_seeded_library_leaves_builtin_guided_runtime_untouched(monkeypatch, tmp
     shutil.copytree(SEED_ROOT, seed_root)
     library = MethodologyLibrary(tmp_path / "library.json")
     report = install_seeds(library, seed_root)
-    assert report.installed == 3
+    assert report.installed == 4
     monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
 
     assert api_server._BUILTIN_METHODOLOGY_VERSION == "builtin"
@@ -1478,7 +1478,7 @@ class TestConvergenceSpecimenB5:
         shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
-        assert report.installed == 3
+        assert report.installed == 4
         library.activate("vibrantes", "narrative-character-creation", "1.3")
         return library
 
@@ -1618,7 +1618,7 @@ def _wired_guided_library(tmp_path: Path) -> MethodologyLibrary:
     shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
     library = MethodologyLibrary(tmp_path / "library.json")
     report = install_seeds(library, seed_root)
-    assert report.installed == 3
+    assert report.installed == 4
     library.activate("vibrantes", "narrative-character-creation", "1.3")
     return library
 

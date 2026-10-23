@@ -3595,7 +3595,7 @@ class TestSeedFirstBoot:
         items = response.json()["items"]
         assert [item["skill_id"] for item in items] == [
             "narrative-character-creation", "narrative-chronology-creation",
-            "narrative-system-creation",
+            "narrative-entity-creation", "narrative-system-creation",
         ]
         item = items[0]
         assert item["version"] == "1.3"
@@ -3610,7 +3610,7 @@ class TestSeedFirstBoot:
         published = status["published"]
         assert [p["skill_id"] for p in published] == [
             "narrative-character-creation", "narrative-chronology-creation",
-            "narrative-system-creation",
+            "narrative-entity-creation", "narrative-system-creation",
         ]
         assert published[0]["clasificacion"] == "Oficiales"
         assert published[0]["trust_attributes"] == ["fundacional"]
@@ -3916,7 +3916,7 @@ class TestTransversalActivityConsumption:
         against future byte-edits."""
         library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
         report = install_seeds(library, SEED_ROOT)
-        assert report.installed == 3 and report.conflict == 0
+        assert report.installed == 4 and report.conflict == 0
         monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
 
         contract = api_server._transversal_contract_for(
