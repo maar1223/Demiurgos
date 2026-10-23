@@ -157,11 +157,14 @@ export function MethodologyStatePanel({
   /** Companions of the current world (status-derived; absent key → none).
    *  The selected version is ON when it appears in this list. */
   const companions = world ? status?.companions?.[world] ?? [] : [];
-  const isCompanion = companions.some(
-    (companion) =>
-      companion.skill_id === selected.skill_id &&
-      companion.version === selected.version,
-  );
+  /** One companion slot per skill_id: the chat uses exactly the pinned
+   *  version. A newer published version is NOT the one in the chat, so the
+   *  action must never read as "add" while the skill is already there. */
+  const companion = companions.find(
+    (entry) => entry.skill_id === selected.skill_id,
+  ) ?? null;
+  const isCompanion = companion?.version === selected.version;
+  const pinnedVersion = companion && !isCompanion ? companion.version : null;
   /** ideas-global is the assistant's null-mundo context, NOT a workshop
    *  world: it never gets a chat block (the companion routes 404 it). */
   const isIdeasGlobal = world === GLOBAL_ASSISTANT_CONTEXT;
@@ -407,22 +410,64 @@ export function MethodologyStatePanel({
                 {t("methodology.chat.helper")}
               </p>
             </div>
-            <Button
-              variant={isCompanion ? "secondary" : "primary"}
-              size="sm"
-              disabled={!world || busy}
-              onClick={() =>
-                onToggleCompanion?.(
-                  selected.skill_id,
-                  selected.version,
-                  !isCompanion,
-                )
-              }
-            >
-              {isCompanion
-                ? t("methodology.chat.remove")
-                : t("methodology.chat.add")}
-            </Button>
+            {pinnedVersion ? (
+              <>
+                <p className="text-small text-muted">
+                  {t("methodology.chat.pinnedVersion", {
+                    version: pinnedVersion,
+                  })}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!world || busy}
+                    onClick={() =>
+                      onToggleCompanion?.(
+                        selected.skill_id,
+                        selected.version,
+                        true,
+                      )
+                    }
+                  >
+                    {t("methodology.chat.useVersion", {
+                      version: selected.version,
+                    })}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!world || busy}
+                    onClick={() =>
+                      onToggleCompanion?.(
+                        selected.skill_id,
+                        companion!.version,
+                        false,
+                      )
+                    }
+                  >
+                    {t("methodology.chat.remove")}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button
+                variant={isCompanion ? "secondary" : "primary"}
+                size="sm"
+                disabled={!world || busy}
+                onClick={() =>
+                  onToggleCompanion?.(
+                    selected.skill_id,
+                    selected.version,
+                    !isCompanion,
+                  )
+                }
+              >
+                {isCompanion
+                  ? t("methodology.chat.remove")
+                  : t("methodology.chat.add")}
+              </Button>
+            )}
             {latencyNoticeWorld === world && (
               <p className="text-small text-muted">
                 {t("methodology.state.latencyNotice")}

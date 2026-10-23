@@ -350,6 +350,53 @@ describe("chat block (S1/S2/S5)", () => {
   });
 });
 
+describe("chat membership with a pinned older version", () => {
+  const pinned: MethodologyStatus = {
+    ...status,
+    companions: {
+      nec: [
+        {
+          world: "nec",
+          skill_id: "eneagrama",
+          version: "1.1.0",
+          description: "",
+          activated_at: "2026-01-03",
+        },
+      ],
+    },
+  };
+
+  it("never offers to add a skill that is already in the chat", () => {
+    renderPanel({ status: pinned });
+
+    expect(
+      screen.queryByRole("button", { name: "Añadir al chat" }),
+    ).not.toBeInTheDocument();
+    // The pinned version is surfaced so the mismatch is never silent.
+    expect(screen.getByText("En el chat: v1.1.0")).toBeInTheDocument();
+  });
+
+  it("offers using the selected version and removing the pinned one", () => {
+    const props = renderPanel({ status: pinned });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Usar v1.2.0 en el chat" }),
+    );
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      true,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quitar del chat" }));
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.1.0",
+      false,
+    );
+  });
+});
+
 describe("trigger approval badge", () => {
   const foundational: MethodologyStatus = {
     published: [
