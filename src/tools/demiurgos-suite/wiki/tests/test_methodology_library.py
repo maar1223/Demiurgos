@@ -1781,3 +1781,101 @@ class TestPerFlowEligibility:
         assert profile is not None
         assert profile.builtin is True
         assert profile.target_section == "personajes"
+
+
+# ---------------------------------------------------------------------------
+# Trigger/flow transit: a draft carries the declaration it was seeded with, and
+# a derived draft inherits the parent's index trigger.
+# ---------------------------------------------------------------------------
+
+
+def _declared_draft(library: MethodologyLibrary) -> str:
+    from guided_flow import GuidedFlowDeclaration
+
+    return library.create_draft(
+        skill_id="community-method",
+        version="1.0",
+        name="Community method",
+        source=_valid_source(),
+        description="A safe construction methodology.",
+        trigger="Crea sistemas con preguntas mínimas.",
+        guided_flow=GuidedFlowDeclaration.from_mapping({
+            "flow_id": "guided-system",
+            "entity_type": "sistema",
+            "ui_copy_key": "system",
+            "index": True,
+            "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+        }),
+    )
+
+
+class TestDraftTriggerAndFlowTransit:
+    def test_draft_carries_the_guided_flow_declaration(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = _declared_draft(library)
+
+        draft = library.get_draft(draft_id)
+        assert draft is not None
+        assert draft.guided_flow is not None
+        assert draft.guided_flow.flow_id == "guided-system"
+
+        manifest = library.manifest_for(draft)
+        assert manifest["trigger"] == "Crea sistemas con preguntas mínimas."
+        assert manifest["guided_flow"]["flow_id"] == "guided-system"
+
+        compiled = library.compile_draft(draft_id)
+        assert compiled.ok, compiled.issues
+        assert compiled.compiled is not None
+        assert compiled.compiled.trigger == "Crea sistemas con preguntas mínimas."
+        assert compiled.compiled.guided_flow is not None
+        assert compiled.compiled.guided_flow.flow_id == "guided-system"
+
+    def test_manifest_for_omits_absent_fields(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft = library.get_draft(_draft(library))
+        assert draft is not None
+        manifest = library.manifest_for(draft)
+        assert "trigger" not in manifest
+        assert "guided_flow" not in manifest
+
+    def test_legacy_draft_record_without_flow_loads_tolerantly(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = _draft(library)
+        assert draft_id
+        path = tmp_path / "library.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for record in payload["drafts"].values():
+            record.pop("guided_flow", None)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        reloaded = MethodologyLibrary(path)
+        drafts = reloaded.list_drafts()
+        assert len(drafts) == 1
+        assert drafts[0].guided_flow is None
+
+    def test_derived_draft_copies_the_parent_trigger(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = library.create_draft(
+            skill_id="guided-character-v1",
+            version="1.2.0",
+            name="Guided character methodology",
+            source=_valid_source(),
+            description=_valid_manifest()["description"],
+            trigger="Crea personajes con preguntas mínimas.",
+        )
+        library.approve_trigger(
+            draft_id, "Crea personajes con preguntas mínimas.", "author",
+        )
+        library.publish(draft_id)
+
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source() + "\n# adaptado\n",
+            name="Adaptada",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        assert derived.trigger == "Crea personajes con preguntas mínimas."
+        # The flow is inherited by lineage, never copied onto the fork.
+        assert derived.guided_flow is None
+        assert library.is_method_for_flow("guided-character", derived.skill_id)

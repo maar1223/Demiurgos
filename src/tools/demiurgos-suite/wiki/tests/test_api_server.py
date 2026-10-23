@@ -9467,3 +9467,67 @@ class TestTriggerApprovalApi:
         assert published.status_code == 200, published.text
         assert published.json()["trigger"] == "Trigger A"
         assert published.json()["description"] == "Resumen del método"
+
+
+# ---------------------------------------------------------------------------
+# Export leak: the package must carry the index trigger and the guided-flow
+# declaration the published record holds (round-trip fidelity).
+# ---------------------------------------------------------------------------
+
+
+def test_export_carries_the_seed_trigger_and_guided_flow(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """A published skill's label and flow declaration ship in the package and
+    re-inspect clean instead of being silently dropped."""
+    _principal(monkeypatch, "author-1")
+    library = MethodologyLibrary(tmp_path / "library.json")
+    install_seeds(library, SEED_ROOT)
+    monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+    exported = client.post(
+        "/api/methodologies/published/narrative-entity-creation/1.0/export",
+    )
+    assert exported.status_code == 200, exported.text
+    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    manifest = yaml.safe_load(archive.read("manifest.yaml"))
+    assert manifest["trigger"] == (
+        "Co-crea lugares, facciones, criaturas y otras entidades."
+    )
+    assert manifest["guided_flow"]["flow_id"] == "guided-entity"
+    assert manifest["guided_flow"]["entity_type"] == "entidad"
+
+    verdict = inspect_package(exported.content)
+    assert verdict.ok, verdict.issues
+    assert verdict.compiled is not None
+    assert verdict.compiled.trigger == manifest["trigger"]
+    assert verdict.compiled.guided_flow is not None
+    assert verdict.compiled.guided_flow.flow_id == "guided-entity"
+
+
+def test_export_without_trigger_or_flow_keeps_the_old_manifest_shape(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """Backward compatibility: a record with neither field exports exactly as
+    before — no invented keys."""
+    _principal(monkeypatch, "author-1")
+    compiled = compile_methodology({
+        "skill_id": "plain-method",
+        "version": "1.0",
+        "name": "Plain method",
+        "description": "A safe method.",
+    }, "## Método\n\nPreguntas de a una.\n").compiled
+    assert compiled is not None
+    library = MethodologyLibrary(tmp_path / "library.json")
+    library.install_published_version(
+        compiled, clasificacion="Oficiales", trust_attributes=(),
+    )
+    monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+    exported = client.post("/api/methodologies/published/plain-method/1.0/export")
+    assert exported.status_code == 200, exported.text
+    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    manifest = yaml.safe_load(archive.read("manifest.yaml"))
+    assert "trigger" not in manifest
+    assert "guided_flow" not in manifest
+    assert inspect_package(exported.content).ok

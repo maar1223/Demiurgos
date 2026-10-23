@@ -198,6 +198,10 @@ class Draft:
     # Authored index trigger (separate from the method description); None for
     # drafts that predate the field or were never approved.
     trigger: str | None = None
+    # Guided-flow declaration transited from an imported package (round-trip
+    # fidelity). Optional so every pre-existing draft deserializes without it;
+    # a derived draft leaves it None and inherits the flow by lineage.
+    guided_flow: GuidedFlowDeclaration | None = None
     phases: tuple[str, ...] = ()
     language: str | None = None
     created_at: str = ""
@@ -382,6 +386,7 @@ class MethodologyLibrary:
         source: str,
         description: str = "",
         trigger: str | None = None,
+        guided_flow: GuidedFlowDeclaration | None = None,
         phases: tuple[str, ...] = (),
         language: str | None = None,
         taller: str | None = None,
@@ -403,6 +408,9 @@ class MethodologyLibrary:
                 "source": source,
                 "description": description,
                 "trigger": trigger,
+                "guided_flow": (
+                    guided_flow.as_dict() if guided_flow is not None else None
+                ),
                 "phases": list(phases),
                 "language": language,
                 "taller": taller,
@@ -478,6 +486,9 @@ class MethodologyLibrary:
                 "description": (
                     description if description is not None else original.description
                 ),
+                # The index label travels with the fork; the flow does not
+                # (it is inherited by lineage at resolution time).
+                "trigger": original.trigger,
                 "phases": list(phases if phases is not None else original.phases),
                 "language": language if language is not None else original.language,
                 "taller": taller if taller is not None else original.taller,
@@ -677,11 +688,13 @@ class MethodologyLibrary:
         }
         if draft.trigger is not None:
             manifest["trigger"] = draft.trigger
+        if draft.guided_flow is not None:
+            manifest["guided_flow"] = draft.guided_flow.as_dict()
         return compile_methodology(manifest, draft.source)
 
     def manifest_for(self, draft: Draft) -> dict[str, Any]:
         """The bounded manifest a draft would compile under."""
-        return {
+        manifest = {
             "skill_id": draft.skill_id,
             "version": draft.version,
             "name": draft.name,
@@ -696,6 +709,8 @@ class MethodologyLibrary:
         }
         if draft.trigger is not None:
             manifest["trigger"] = draft.trigger
+        if draft.guided_flow is not None:
+            manifest["guided_flow"] = draft.guided_flow.as_dict()
         return manifest
 
     # ------------------------------------------------------------------ #
@@ -1489,6 +1504,12 @@ class MethodologyLibrary:
             source=record["source"],
             description=record.get("description", ""),
             trigger=record.get("trigger"),
+            # Tolerant read: drafts predating the field deserialize to None.
+            guided_flow=(
+                GuidedFlowDeclaration.from_mapping(record["guided_flow"])
+                if isinstance(record.get("guided_flow"), Mapping)
+                else None
+            ),
             phases=tuple(record.get("phases", ())),
             language=record.get("language"),
             created_at=record.get("created_at", ""),

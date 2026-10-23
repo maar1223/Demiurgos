@@ -654,3 +654,47 @@ class TestServerTrustOrigin:
     def test_scrub_foundational_never_invents_attributes(self) -> None:
         assert scrub_foundational(("fundacional",)) == ()
         assert "fundacional" not in scrub_foundational(("fundacional",))
+
+
+class TestTrustThreadsTriggerAndFlow:
+    """Import → trust must not drop what the package declared: the index label
+    and the guided-flow eligibility are content, not export decoration."""
+
+    def test_trust_threads_trigger_and_guided_flow_into_the_draft(
+        self, tmp_path: Path,
+    ) -> None:
+        manifest = dict(_valid_manifest())
+        manifest.update({
+            "skill_id": "community-method",
+            "version": "1.0",
+            "trigger": "Crea sistemas con preguntas mínimas.",
+            "guided_flow": {
+                "flow_id": "guided-system",
+                "entity_type": "sistema",
+                "ui_copy_key": "system",
+                "index": True,
+                "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+            },
+        })
+        package = build_package(manifest, _valid_source())
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        record = store.quarantine(package, library=library)
+        assert record.verdict.ok, record.verdict.issues
+
+        trusted = store.trust(record.package_id, library=library)
+        assert trusted is not None
+        draft = library.get_draft(trusted.draft_id)
+        assert draft is not None
+        assert draft.trigger == "Crea sistemas con preguntas mínimas."
+        assert draft.guided_flow is not None
+        assert draft.guided_flow.flow_id == "guided-system"
+        # A draft never governs runtime on its own.
+        assert not library.is_method_for_flow("guided-system", "community-method")
+
+        library.approve_trigger(draft.draft_id, draft.trigger, "author")
+        published = library.publish(draft.draft_id)
+        assert published.trigger == "Crea sistemas con preguntas mínimas."
+        assert published.guided_flow is not None
+        assert published.guided_flow.flow_id == "guided-system"
+        assert library.is_method_for_flow("guided-system", "community-method")

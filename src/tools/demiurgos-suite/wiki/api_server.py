@@ -10859,6 +10859,13 @@ def methodologies_export(skill_id: str, version: str, request: Request):
         "categoria_funcional": published.categoria_funcional,
         "etiquetas": list(published.etiquetas),
     }
+    # The package carries the authored index label and the guided-flow
+    # declaration when the record has them; both are omitted otherwise so a
+    # pre-field skill exports exactly as before (round-trip fidelity).
+    if published.trigger is not None:
+        manifest["trigger"] = published.trigger
+    if published.guided_flow is not None:
+        manifest["guided_flow"] = published.guided_flow.as_dict()
     attachments: dict[str, bytes] = {}
     if published.adjuntos:
         manifest["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
