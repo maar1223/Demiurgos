@@ -113,7 +113,7 @@ class TestFlowConstants:
         assert CO_CREATION_FLOW == "co-creation"
         assert SUPPORTED_FLOW_TYPES == frozenset({
             GUIDED_CHARACTER_FLOW, "guided-system", "guided-chronology",
-            CO_CREATION_FLOW,
+            "guided-entity", CO_CREATION_FLOW,
         })
 
 

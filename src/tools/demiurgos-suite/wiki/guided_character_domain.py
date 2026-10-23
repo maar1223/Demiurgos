@@ -186,6 +186,12 @@ _QUESTION_COPY: dict[str, tuple[str, str]] = {
         "¿Qué suceso o era quieres registrar en la cronología?",
         "Which event or era do you want to record in the chronology?",
     ),
+    "entity_class": (
+        "¿Qué clase de entidad es? Un lugar, una facción, una criatura, un "
+        "artefacto, una cultura o una especie.",
+        "What kind of entity is it? A place, a faction, a creature, an "
+        "artifact, a culture, or a species.",
+    ),
 }
 
 
@@ -196,6 +202,10 @@ _IDENTITY_COPY_BY_FLOW: dict[str, tuple[str, str]] = {
     "chronology": (
         "¿Cómo se llama este suceso o era?",
         "What is this event or era called?",
+    ),
+    "entity": (
+        "¿Cómo se llama esta entidad?",
+        "What is this entity called?",
     ),
 }
 

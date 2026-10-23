@@ -51,10 +51,16 @@ MINIMUM_NAME_FIELDS = frozenset({"name", "nombre", "title"})
 MINIMUM_DESIRE_FIELDS = frozenset({
     "desire", "deseo", "motivacion", "motivations", "motivation", "motivaciones",
 })
+# The generic `entidad` type is persisted by the entity guided flow. Its class
+# (lugar, facción, criatura, artefacto, cultura, especie) is the ONLY marker of
+# which domain the entity belongs to, because the persisted `type` is generic.
+# Kernel-owned: the skill never declares minimums (foundational skills §1).
+MINIMUM_CLASS_FIELDS = frozenset({"clase", "class"})
 
 # Extensible per-entity minimums, characters first.
 OKF_MINIMUM_GROUPS_BY_TYPE: dict[str, tuple[frozenset[str], ...]] = {
     "personaje": (MINIMUM_IDENTITY_FIELDS, MINIMUM_DESIRE_FIELDS),
+    "entidad": (MINIMUM_IDENTITY_FIELDS, MINIMUM_CLASS_FIELDS),
 }
 
 # ---------------------------------------------------------------------------
@@ -90,6 +96,7 @@ _TYPE_ALIASES: dict[str, str] = {
 # it later through a declarative seam (not built in the MVP).
 SHAPE_BY_TYPE: dict[str, str] = {
     # entidad
+    "entidad": "entidad",
     "personaje": "entidad",
     "lugar": "entidad",
     "criatura": "entidad",

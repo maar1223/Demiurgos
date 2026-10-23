@@ -150,6 +150,41 @@ class TestOkfMinimums(unittest.TestCase):
         validation = validate(_personaje_complete())
         self.assertTrue(validation.ok, validation.issues)
 
+    def test_entity_type_requires_the_class(self) -> None:
+        """S3: the kernel-owned `entidad` minimum is identity + class.
+
+        The skill never declares it; without `clase` the ficha is incomplete,
+        because the persisted type is generic and the class is the only marker
+        that says which domain the entity belongs to.
+        """
+        groups = minimums_for("entidad")
+        self.assertEqual(len(groups), 2, "entity requires identity + class")
+
+        validation = validate("---\ntype: Entidad\ntitle: Ruinas de Vhal\n---\n")
+        self.assertFalse(validation.ok)
+        class_issue = next(
+            (issue for issue in validation.issues
+             if issue.code == "missing-minimum" and issue.field
+             and "clase" in issue.field),
+            None,
+        )
+        self.assertIsNotNone(class_issue, validation.issues)
+
+    def test_entity_with_class_validates_clean(self) -> None:
+        validation = validate(
+            "---\ntype: Entidad\ntitle: Ruinas de Vhal\nclase: lugar\n---\n"
+            "Cuerpo\n"
+        )
+        self.assertTrue(validation.ok, validation.issues)
+
+    def test_entity_prompt_groups_are_name_then_class(self) -> None:
+        from wiki.okf_contract import prompt_minimums_for
+
+        groups = prompt_minimums_for("entidad")
+        self.assertEqual(len(groups), 2)
+        self.assertIn("title", groups[0])
+        self.assertIn("clase", groups[1])
+
     def test_minimums_are_extensible_per_type(self) -> None:
         register_minimums("lugar", ("poblacion",))
         try:

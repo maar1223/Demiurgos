@@ -7659,6 +7659,9 @@ GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY = {
     "chronology": (
         "Parece que quieres crear una cronología. ¿Abrimos el flujo guiado?"
     ),
+    "entity": (
+        "Parece que quieres crear una entidad. ¿Abrimos el flujo guiado?"
+    ),
 }
 """Flow-specific suggestion copy; the card renders its own catalogue copy."""
 

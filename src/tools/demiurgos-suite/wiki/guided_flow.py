@@ -26,6 +26,7 @@ from okf_contract import (
 GUIDED_CHARACTER_FLOW = "guided-character"
 GUIDED_SYSTEM_FLOW = "guided-system"
 GUIDED_CHRONOLOGY_FLOW = "guided-chronology"
+GUIDED_ENTITY_FLOW = "guided-entity"
 
 # A declared flow id is bound to exactly one kernel entity shape. A
 # declaration pairing them inconsistently (e.g. the character flow writing a
@@ -34,6 +35,7 @@ ENTITY_TYPE_BY_FLOW: dict[str, str] = {
     "guided-character": "personaje",
     "guided-system": "sistema",
     "guided-chronology": "cronologia",
+    "guided-entity": "entidad",
 }
 
 # Deterministic default for a flow that has no builtin contract: the
@@ -42,6 +44,7 @@ ENTITY_TYPE_BY_FLOW: dict[str, str] = {
 FOUNDATIONAL_METHOD_BY_FLOW: dict[str, str] = {
     "guided-system": "narrative-system-creation",
     "guided-chronology": "narrative-chronology-creation",
+    "guided-entity": "narrative-entity-creation",
 }
 
 # Flow ids the server currently accepts as activation slots. A genuinely new
@@ -50,6 +53,7 @@ GUIDED_FLOW_IDS: frozenset[str] = frozenset({
     GUIDED_CHARACTER_FLOW,
     GUIDED_SYSTEM_FLOW,
     GUIDED_CHRONOLOGY_FLOW,
+    GUIDED_ENTITY_FLOW,
 })
 
 # Kernel-owned persistence authority: an entity type may only land in one of
@@ -58,6 +62,7 @@ TARGET_SECTION_BY_ENTITY_TYPE: dict[str, str] = {
     "personaje": "personajes",
     "sistema": "lore",
     "cronologia": "lore",
+    "entidad": "lore",
 }
 
 # Frontmatter ``type`` label written by the guided serializer per entity type.
@@ -65,6 +70,7 @@ TYPE_LABEL_BY_ENTITY_TYPE: dict[str, str] = {
     "personaje": "Personaje",
     "sistema": "Sistema",
     "cronologia": "Cronologia",
+    "entidad": "Entidad",
 }
 
 # Canonical provenance fallback when a candidate carries no provenance, keyed by
@@ -76,18 +82,21 @@ FRONTMATTER_FIELDS_BY_ENTITY_TYPE: dict[str, tuple[str, ...]] = {
     "personaje": (),
     "sistema": ("origen", "limite"),
     "cronologia": ("evento",),
+    "entidad": ("clase",),
 }
 
 DEFAULT_TITLE_BY_ENTITY_TYPE: dict[str, str] = {
     "personaje": "Guided Character",
     "sistema": "Guided System",
     "cronologia": "Guided Chronology",
+    "entidad": "Guided Entity",
 }
 
 PROVENANCE_DEFAULT_BY_ENTITY_TYPE: dict[str, str] = {
     "personaje": "guided-character-v1",
     "sistema": "guided-sistema-v1",
     "cronologia": "guided-cronologia-v1",
+    "entidad": "guided-entidad-v1",
 }
 
 # Server-owned question keys per entity type, aligned with the kernel minimum
@@ -97,11 +106,14 @@ QUESTION_KEYS_BY_ENTITY_TYPE: dict[str, tuple[str, ...]] = {
     "personaje": ("identity", "desire"),
     "sistema": ("identity", "origin", "limit"),
     "cronologia": ("identity", "event"),
+    "entidad": ("identity", "entity_class"),
 }
 
 # UI copy the client may render for a flow. The client never supplies copy,
 # only selects a key the server validates.
-UI_COPY_KEYS: frozenset[str] = frozenset({"character", "system", "chronology"})
+UI_COPY_KEYS: frozenset[str] = frozenset({
+    "character", "system", "chronology", "entity",
+})
 
 DECLARATION_FIELDS: frozenset[str] = frozenset({
     "flow_id", "entity_type", "ui_copy_key", "index", "intent",
@@ -120,13 +132,22 @@ def entity_type_is_persistible(entity_type: str) -> bool:
 
     Requires a canonical type label, a known shape (so it is not silently
     defaulted to ``entidad``) and a kernel-owned target section.
+
+    The generic type ``entidad`` is the one entity-shaped label the kernel
+    authorizes as a persisted ``type``: the entity flow writes ``type: Entidad``
+    and the class travels as a field. Every other entity-shaped label (``lugar``,
+    ``criatura``, ...) still has no kernel section, so a world type can never
+    widen persistence.
     """
     normalized = normalize_type(entity_type)
     if not normalized or normalized not in TARGET_SECTION_BY_ENTITY_TYPE:
         return False
     # A type that is not in the kernel shape map would default to ``entidad``;
     # reject it explicitly instead of writing an unexpected shape.
-    if shape_for_type(normalized) == "entidad" and normalized != "personaje":
+    if (
+        shape_for_type(normalized) == "entidad"
+        and normalized not in {"personaje", "entidad"}
+    ):
         return False
     return True
 

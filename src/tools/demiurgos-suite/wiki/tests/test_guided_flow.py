@@ -124,6 +124,32 @@ class TestProfileResolution:
         assert any("evento" in group for group in profile.minimum_groups)
         assert not profile.builtin
 
+    def test_entity_profile_uses_the_kernel_section_and_minimums(self) -> None:
+        declaration = _declaration(
+            flow_id="guided-entity",
+            entity_type="entidad",
+            ui_copy_key="entity",
+            intent={"terms": ["entidad", "lugar", "facción"], "verbs": ["crear"]},
+        )
+        assert guided_flow_issues(declaration) == []
+        profile = resolve_profile(GuidedFlowDeclaration.from_mapping(declaration))
+        assert profile is not None
+        assert profile.flow_id == "guided-entity"
+        assert profile.entity_type == "entidad"
+        assert profile.target_section == "lore"
+        assert profile.index_target == "lore"
+        assert profile.type_label == "Entidad"
+        assert profile.ui_copy_key == "entity"
+        assert profile.question_keys == ("identity", "entity_class")
+        assert profile.frontmatter_fields == ("clase",)
+        assert profile.provenance_default == "guided-entidad-v1"
+        class_groups = [
+            group for group in profile.minimum_groups if "clase" in group
+        ]
+        assert class_groups, "the entity class is a kernel-owned minimum"
+        assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+        assert not profile.builtin
+
     def test_character_builtin_profile_is_server_owned(self) -> None:
         profile = builtin_profile(GUIDED_CHARACTER_FLOW)
         assert profile is not None
@@ -150,3 +176,28 @@ def test_flow_id_must_match_the_declared_entity_shape() -> None:
     """A flow id is bound to one kernel entity shape (S7)."""
     codes = _codes(_declaration(flow_id=GUIDED_CHARACTER_FLOW, entity_type="sistema"))
     assert codes == {"invalid-value"}
+
+
+def test_the_generic_entity_type_is_only_persistible_as_the_explicit_type() -> None:
+    """S1/S3: the entity flow writes ``type: Entidad``; the class is a field.
+
+    The relaxation is exact: ``entidad`` becomes a kernel-known persistible
+    type, while every other entity-shaped label still has no kernel section and
+    stays rejected (a world type never widens persistence).
+    """
+    assert guided_flow.entity_type_is_persistible("entidad")
+    assert guided_flow.entity_type_is_persistible("Personaje")
+    assert not guided_flow.entity_type_is_persistible("lugar")
+    assert not guided_flow.entity_type_is_persistible("planeta")
+
+    for entity_type in ("lugar", "planeta"):
+        codes = _codes(_declaration(
+            flow_id="guided-entity", entity_type=entity_type,
+            ui_copy_key="entity",
+        ))
+        assert codes == {"invalid-value"}, entity_type
+
+    mismatched = _codes(_declaration(
+        flow_id="guided-entity", entity_type="personaje", ui_copy_key="entity",
+    ))
+    assert mismatched == {"invalid-value"}
