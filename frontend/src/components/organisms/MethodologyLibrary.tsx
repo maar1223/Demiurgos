@@ -35,6 +35,8 @@ interface MethodologyLibraryProps {
   /** UL-5: empty-state CTA — navigates the Author to the "Crear skill" tab
    *  (wired by the page through TallerExplorerSidebar). */
   onGoToCoCrear?: () => void;
+  /** One-click chat update when the chat still pins an older version. */
+  onUpdateCompanion?: (skillId: string, version: string) => void;
 }
 
 /**
@@ -57,6 +59,7 @@ export function MethodologyLibrary({
   error,
   onRetry,
   onGoToCoCrear,
+  onUpdateCompanion,
 }: MethodologyLibraryProps) {
   const { t } = useAppLanguage();
   /** Client-side filter over the grouped tree (SC-SB-1.1 "filters"). */
@@ -167,6 +170,7 @@ export function MethodologyLibrary({
           activeTaller={activeTaller}
           companions={world ? status.companions?.[world] ?? [] : []}
           onSelect={(skillId, version) => onSelect({ skill_id: skillId, version })}
+          onUpdateCompanion={onUpdateCompanion}
           selected={selected}
         />
       )}

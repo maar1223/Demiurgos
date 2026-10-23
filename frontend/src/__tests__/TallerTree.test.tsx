@@ -173,3 +173,43 @@ describe("row actions stay in the right panel", () => {
     expect(screen.queryByRole("button", { name: "Quitar del chat" })).not.toBeInTheDocument();
   });
 });
+
+describe("chat version drift", () => {
+  function rowOf(name: string): HTMLElement {
+    return screen.getByText(name).closest("li") as HTMLElement;
+  }
+
+  it("offers a one-click update when the chat uses an older version", () => {
+    const onUpdateCompanion = vi.fn();
+    renderTree({
+      companions: [companion("skill-a", "0.9.0")],
+      onUpdateCompanion,
+    });
+
+    const row = rowOf("Skill A");
+    const update = within(row).getByRole("button", {
+      name: /actualizar chat/i,
+    });
+    fireEvent.click(update);
+    expect(onUpdateCompanion).toHaveBeenCalledWith("skill-a", "1.0.0");
+  });
+
+  it("does not offer the update when the chat already uses the row version", () => {
+    renderTree({
+      companions: [companion("skill-a", "1.0.0")],
+      onUpdateCompanion: vi.fn(),
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /actualizar chat/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never offers the update for a skill that is not in the chat", () => {
+    renderTree({ companions: [], onUpdateCompanion: vi.fn() });
+
+    expect(
+      screen.queryByRole("button", { name: /actualizar chat/i }),
+    ).not.toBeInTheDocument();
+  });
+});

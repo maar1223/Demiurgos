@@ -292,6 +292,9 @@ export default function ToolWorkshop() {
               activeTaller={activeTaller}
               onWorldChange={setWorld}
               onTallerChange={setCurrentTaller}
+              onUpdateCompanion={(skillId, version) =>
+                void handleToggleCompanion(skillId, version, true)
+              }
               onRequestCreateWorld={() => setCreatingWorld(true)}
               status={status}
               statusError={statusErrorKey ? t(statusErrorKey) : null}

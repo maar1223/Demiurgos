@@ -292,6 +292,43 @@ describe("ToolWorkshop", () => {
     });
   });
 
+  it("updates a drifted chat companion to the published version", async () => {
+    window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    (getMethodologyStatus as Mock).mockResolvedValue({
+      ...status,
+      companions: {
+        Vibrantes: [
+          {
+            world: "Vibrantes",
+            skill_id: "guided-character-v1",
+            version: "1.0.0",
+            description: "",
+            activated_at: "2026-01-01",
+          },
+        ],
+      },
+    });
+    (activateCompanion as Mock).mockResolvedValue({ world: "Vibrantes" });
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    const update = await screen.findByRole("button", {
+      name: "Actualizar chat",
+    });
+    await user.click(update);
+
+    await waitFor(() => {
+      expect(activateCompanion).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
+    await waitFor(() => {
+      expect(getMethodologyStatus).toHaveBeenCalled();
+    });
+  });
+
   it("shows an honest loading state while worlds load", () => {
     (useWorlds as Mock).mockReturnValue({
       worlds: [],

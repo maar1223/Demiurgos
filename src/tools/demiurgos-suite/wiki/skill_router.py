@@ -174,17 +174,25 @@ class SkillRouter:
         return collapsed[:_DESCRIPTION_MAX_CHARS]
 
     def _description_for(self, skill_id: str, version: str | None) -> str | None:
-        """Published description for a skill/version, clipped, or None."""
+        """Published index label for a skill/version, clipped, or None.
+
+        Prefers the authored ``trigger`` (the same label the skills index and
+        the renderer use); records that predate the field fall back to the
+        method description, byte-identically.
+        """
         if not version or self._library is None:
             return None
         try:
             published = self._library.get_published(skill_id, version)
         except Exception:
             return None
-        description = getattr(published, "description", None)
-        if not description:
+        label = (
+            getattr(published, "trigger", None)
+            or getattr(published, "description", None)
+        )
+        if not label:
             return None
-        return self._clip_description(description)
+        return self._clip_description(label)
 
     def _companion_candidates(
         self, mundo: str,

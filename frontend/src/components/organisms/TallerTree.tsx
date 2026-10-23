@@ -4,6 +4,7 @@ import type {
   PublishedMethodology,
 } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
+import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import type { GroupedSkills } from "@/lib/tallerStates";
 import { isTransversalSkill } from "@/lib/tallerStates";
@@ -26,6 +27,9 @@ interface TallerTreeProps {
   /** Optional sidebar selection contract (SC-SB-2.1): when provided, rows
    *  become clickable and report the clicked `skill_id`/`version`. */
   onSelect?: (skillId: string, version: string) => void;
+  /** One-click chat update (drift affordance): fired with the row's version
+   *  when the chat still pins an older published version of that skill. */
+  onUpdateCompanion?: (skillId: string, version: string) => void;
   /** Currently selected row — highlighted when it matches (SC-SB-2.1). */
   selected?: { skill_id: string; version: string } | null;
 }
@@ -62,7 +66,10 @@ interface SkillRowProps {
   /** Read-only chat marker (S1): true when this skill is a companion of the
    *  current world. */
   isCompanion: boolean;
+  /** Version the world's chat currently pins, when the skill is a companion. */
+  companionVersion?: string | null;
   onSelect?: (skillId: string, version: string) => void;
+  onUpdateCompanion?: (skillId: string, version: string) => void;
   selected?: { skill_id: string; version: string } | null;
 }
 
@@ -70,9 +77,14 @@ function SkillRow({
   skill,
   activeTaller,
   isCompanion,
+  companionVersion,
   onSelect,
+  onUpdateCompanion,
   selected,
 }: SkillRowProps) {
+  const { t } = useAppLanguage();
+  const chatIsBehind =
+    isCompanion && !!companionVersion && companionVersion !== skill.version;
   /** Selection highlight is skill-level (REQ-TRE-12): a version picked in the
    *  right-panel "Versiones" block highlights this skill's single explorer row
    *  even when it is not the rendered representative. */
@@ -107,6 +119,24 @@ function SkillRow({
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         {isCompanion && <AxisBadge chip={chatChip()} />}
         {transversal && <AxisBadge chip={scopeChip()} />}
+        {chatIsBehind && (
+          <Button
+            variant="secondary"
+            size="sm"
+            title={t("tallerTree.chatUpdateTitle", {
+              pinned: companionVersion ?? "",
+              latest: skill.version,
+            })}
+            onClick={(event) => {
+              // Rows are selection-only; this affordance must never also
+              // select the skill.
+              event.stopPropagation();
+              onUpdateCompanion?.(skill.skill_id, skill.version);
+            }}
+          >
+            {t("tallerTree.chatUpdate")}
+          </Button>
+        )}
       </div>
     </li>
   );
@@ -123,6 +153,7 @@ export function TallerTree({
   activeTaller,
   companions,
   onSelect,
+  onUpdateCompanion,
   selected,
 }: TallerTreeProps) {
   const { t } = useAppLanguage();
@@ -130,6 +161,9 @@ export function TallerTree({
     Object.fromEntries(GROUP_ORDER.map((group) => [group.key, true])),
   );
   const chatSkillIds = new Set((companions ?? []).map((entry) => entry.skill_id));
+  const companionVersionBySkill = new Map(
+    (companions ?? []).map((entry) => [entry.skill_id, entry.version]),
+  );
 
   const toggle = (key: keyof GroupedSkills) => {
     setExpanded((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
@@ -166,7 +200,11 @@ export function TallerTree({
                     skill={skill}
                     activeTaller={activeTaller}
                     isCompanion={chatSkillIds.has(skill.skill_id)}
+                    companionVersion={
+                      companionVersionBySkill.get(skill.skill_id) ?? null
+                    }
                     onSelect={onSelect}
+                    onUpdateCompanion={onUpdateCompanion}
                     selected={selected}
                   />
                 ))}

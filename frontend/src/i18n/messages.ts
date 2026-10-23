@@ -1556,6 +1556,9 @@ export const messages = {
     "section.tabsAria": "Secciones del mundo",
     "wikiEditor.movedTo": "Movido a {target}",
     "tallerTree.group.enChat": "En el chat",
+    "tallerTree.chatUpdate": "Actualizar chat",
+    "tallerTree.chatUpdateTitle":
+      "El chat usa v{pinned}; esta versión es v{latest}.",
     "tallerTree.group.fueraDelChat": "Fuera del chat",
     "tallerTree.group.sinTaller": "Sin taller",
     "status.draft": "Borrador",
@@ -3573,6 +3576,9 @@ export const messages = {
     "section.tabsAria": "World sections",
     "wikiEditor.movedTo": "Moved to {target}",
     "tallerTree.group.enChat": "In chat",
+    "tallerTree.chatUpdate": "Update chat",
+    "tallerTree.chatUpdateTitle":
+      "The chat uses v{pinned}; this version is v{latest}.",
     "tallerTree.group.fueraDelChat": "Not in chat",
     "tallerTree.group.sinTaller": "No workshop",
     "status.draft": "Draft",

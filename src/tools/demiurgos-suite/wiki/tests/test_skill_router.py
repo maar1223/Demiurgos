@@ -83,6 +83,7 @@ class _Activation:
 class _Published:
     description: str
     name: str = ""
+    trigger: str | None = None
 
 
 def _result(router: SkillRouter, prompt: str, mundo: str = "vibrantes") -> SkillRouteResult:
@@ -289,6 +290,26 @@ def test_companion_free_world_prompt_byte_identical() -> None:
     # The companion prompt format (bullets / tie sentence) is absent.
     assert "prefer the world-specific" not in runs.prompts[0]
     assert "- narrative-character-creation" not in runs.prompts[0]
+
+
+def test_candidate_label_prefers_the_authored_trigger() -> None:
+    """The classifier sees the same short label the skills index renders."""
+    library = _Library(
+        companions=[_Activation(skill_id="alpha", version="1.0")],
+        published={
+            ("alpha", "1.0"): _Published(
+                description="Metodología fundacional para co-crear un sistema "
+                            "nuevo, agnóstica al mundo.",
+                trigger="Co-crea sistemas: origen, qué exige y límite.",
+            ),
+        },
+    )
+    runs = _Runs({"skill_id": "alpha", "confidence": 0.9})
+    router = SkillRouter(methodology_library=library, provider=runs)
+    _result(router, "quiero crear un sistema")
+    prompt = runs.prompts[0]
+    assert "- alpha: Co-crea sistemas: origen, qué exige y límite." in prompt
+    assert "Metodología fundacional" not in prompt
 
 
 def test_description_clipped_at_160() -> None:
