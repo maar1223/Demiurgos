@@ -1801,10 +1801,12 @@ def test_session_approve_endpoint_records_and_enables_publish(
     assert body["trigger_approval"]["digest"]
     assert body["revision"] == revision + 1
 
-    # The approved value lands in the canvas AND is exposed by the state view,
-    # so the value approved is the value publish will use.
+    # The approved value lands in the canvas as the trigger (never overwriting
+    # the method summary) AND is exposed by the state view, so the value
+    # approved is the value publish will use.
     recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
-    assert recovered["draft_payload"]["description"] == "Cuenta batallas épicas"
+    assert recovered["draft_payload"]["trigger"] == "Cuenta batallas épicas"
+    assert recovered["draft_payload"].get("description") != "Cuenta batallas épicas"
     assert recovered["trigger_approval"]["text"] == "Cuenta batallas épicas"
 
     published = client.post(
@@ -1813,7 +1815,8 @@ def test_session_approve_endpoint_records_and_enables_publish(
     )
     assert published.status_code == 200, published.text
     assert published.json()["phase"] == "complete"
-    assert published.json()["published"]["description"] == "Cuenta batallas épicas"
+    assert published.json()["published"]["trigger"] == "Cuenta batallas épicas"
+    assert published.json()["published"]["description"] != "Cuenta batallas épicas"
 
 
 def test_session_approve_rejects_stale_revision_and_over_bound(

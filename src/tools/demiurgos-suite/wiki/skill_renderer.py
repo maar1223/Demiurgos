@@ -226,19 +226,21 @@ def _render_attachments(
 def _trigger_issues(published: PublishedVersion) -> tuple[RenderIssue, ...]:
     """Surface a missing or mismatched trigger approval; never raise (TD-E).
 
-    The renderer consumes an approved description by construction: the approval
+    The renderer consumes an approved trigger by construction: the approval
     echoed onto the immutable published record is compared against the
-    normalized description digest. A matching approval yields no issue. A
-    present approval whose digest does not match yields ``trigger-mismatch``. An
-    absent approval yields ``trigger-unapproved`` **unless** the record is a
+    normalized **trigger** digest (falling back to the description for records
+    that predate the field). A matching approval yields no issue. A present
+    approval whose digest does not match yields ``trigger-mismatch``. An absent
+    approval yields ``trigger-unapproved`` **unless** the record is a
     grandfathered foundational seed (``fundacional`` in ``trust_attributes``),
     which is exempted to avoid flagging every transversal seed (D5/TD-E). In
-    every case the bounded description is still rendered and the renderer never
+    every case the bounded trigger is still rendered and the renderer never
     raises and never exceeds the 57-character render bound.
     """
     approval = published.trigger_approval
     if approval is not None:
-        if approval.digest == normalized_trigger_digest(published.description):
+        effective = published.trigger or published.description
+        if approval.digest == normalized_trigger_digest(effective):
             return ()
         return (
             RenderIssue(
@@ -299,7 +301,10 @@ def render_skill(
         directory_name = f"demiurgos-{token}-{skill_id}@{version}"
         skill_name = f"demiurgos-{token}-{skill_id}"
 
-    description, description_issues = _bound_description(published.description)
+    # The skills index renders the authored trigger when present; records that
+    # predate the field fall back to the method description (byte-identical).
+    trigger_text = published.trigger or published.description
+    description, description_issues = _bound_description(trigger_text)
     trigger_issues = _trigger_issues(published)
 
     frontmatter = {

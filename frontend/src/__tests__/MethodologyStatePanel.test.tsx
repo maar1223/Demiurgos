@@ -416,6 +416,48 @@ describe("trigger approval badge", () => {
   });
 });
 
+describe("authored trigger vs method description", () => {
+  const withTrigger = (overrides: Record<string, unknown> = {}) => ({
+    ...status,
+    published: [
+      {
+        ...status.published[0],
+        trigger: "Gatillo corto.",
+        description: "Resumen largo del método que no debe ir al índice.",
+        ...overrides,
+      },
+      ...status.published.slice(1),
+    ],
+  });
+
+  it("renders the trigger in the gatillo block", () => {
+    renderPanel({ status: withTrigger() });
+
+    expect(screen.getByText("Gatillo corto.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Resumen largo del método que no debe ir al índice."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("binds the approval to the trigger, not the description", () => {
+    renderPanel({
+      status: withTrigger({
+        trigger_approval: {
+          text: "Gatillo corto.",
+          digest: "d",
+          approved_by: "author-1",
+          approved_at: "2026-01-02",
+        },
+      }),
+    });
+
+    expect(screen.getByText("Aprobado")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("guided assistant info (S1/S6)", () => {
   it("explains that the method is chosen at session start", () => {
     renderPanel();

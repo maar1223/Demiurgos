@@ -2658,9 +2658,12 @@ class TestMethodologyApi:
         published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
         assert published.status_code == 200, published.text
         assert "adjuntos" not in published.json()
+        # The approved trigger rides along; nothing else is added.
         assert set(published.json()) == {
-            "skill_id", "version", "name", "description", "digest", "published_at",
+            "skill_id", "version", "name", "description", "trigger", "digest",
+            "published_at",
         }
+        assert published.json()["trigger"] == "Approved test trigger"
 
     def test_activate_requires_published_version(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
@@ -3595,7 +3598,7 @@ class TestSeedFirstBoot:
             "narrative-system-creation",
         ]
         item = items[0]
-        assert item["version"] == "1.2"
+        assert item["version"] == "1.3"
         assert item["clasificacion"] == "Oficiales"
         assert item["trust_attributes"] == ["fundacional"]
         entry = load_seed_catalog(SEED_ROOT)[0]
@@ -3657,7 +3660,7 @@ class TestSeedFirstBoot:
         assert len(versions) == 1
         reloaded = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
         assert [v["version"] for v in
-                reloaded.published_versions_for("narrative-character-creation")] == ["1.2"]
+                reloaded.published_versions_for("narrative-character-creation")] == ["1.3"]
         # Leave the module global clean for later tests.
         api_server._METHODOLOGY_LIBRARY = None
 
@@ -9375,7 +9378,9 @@ class TestTriggerApprovalApi:
         assert approval["approved_at"]
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
-        assert published.json()["description"] == "Ayuda a crear personajes"
+        # The approval binds the trigger; the method description is untouched.
+        assert published.json()["trigger"] == "Ayuda a crear personajes"
+        assert published.json()["description"] == ""
 
     def test_approve_requires_authentication(self, client: TestClient):
         denied = client.post(
@@ -9429,7 +9434,7 @@ class TestTriggerApprovalApi:
         )
         assert entry["trigger_approval"]["text"] == "Trigger visible en estado"
 
-    def test_description_drift_after_approval_fails_closed(
+    def test_trigger_drift_after_approval_fails_closed(
         self, client: TestClient, monkeypatch,
     ):
         _principal(monkeypatch, "author-1")
@@ -9438,8 +9443,27 @@ class TestTriggerApprovalApi:
             f"/api/methodologies/drafts/{draft_id}/trigger/approve",
             json={"description": "Trigger A"},
         )
-        # A later description edit invalidates the prior approval (fail closed).
-        api_server._methodology_library().update_draft(draft_id, description="Trigger B")
+        # A later trigger edit invalidates the prior approval (fail closed).
+        api_server._methodology_library().update_draft(draft_id, trigger="Trigger B")
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 409
         assert published.json()["code"] == "trigger_not_approved"
+
+    def test_description_drift_after_approval_keeps_the_gate_open(
+        self, client: TestClient, monkeypatch,
+    ):
+        """The method summary is a separate surface: editing it never revokes
+        the trigger approval."""
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "Trigger A"},
+        )
+        api_server._methodology_library().update_draft(
+            draft_id, description="Resumen del método",
+        )
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        assert published.json()["trigger"] == "Trigger A"
+        assert published.json()["description"] == "Resumen del método"

@@ -464,7 +464,7 @@ class TestAdjuntosDigestExclusion:
         assert base.compiled.digest == with_adjuntos.compiled.digest
 
     def test_seed_canonical_digest_is_unchanged_with_adjuntos(self) -> None:
-        """Regression pin: ``narrative-character-creation@1.2`` stays ``5a28ca7a…``."""
+        """Regression pin: ``narrative-character-creation@1.3`` stays ``b484b581…``."""
         seed_dir = (
             REPO_ROOT / "data" / "methodology" / "seeds"
             / "narrative-character-creation"
@@ -477,8 +477,54 @@ class TestAdjuntosDigestExclusion:
             dict(manifest, adjuntos=[_valid_adjunto()]), source,
         )
         assert plain.compiled is not None and with_adjuntos.compiled is not None
-        assert plain.compiled.digest == "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
+        assert plain.compiled.digest == "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
         assert with_adjuntos.compiled.digest == plain.compiled.digest
+
+
+class TestTriggerField:
+    """The index trigger is authored separately from the method description."""
+
+    def test_trigger_is_compiled_and_exposed(self) -> None:
+        manifest = dict(
+            _valid_manifest(),
+            trigger="Co-crea sistemas: origen, qué exige y límite.",
+        )
+        result = _compile(manifest, _valid_source())
+        assert result.ok, [issue.message for issue in result.issues]
+        assert result.compiled is not None
+        assert result.compiled.trigger == "Co-crea sistemas: origen, qué exige y límite."
+        assert result.compiled.as_dict()["trigger"] == (
+            "Co-crea sistemas: origen, qué exige y límite."
+        )
+        assert result.compiled.description == (
+            "A safe construction methodology for guided characters."
+        )
+
+    def test_absent_trigger_is_none(self) -> None:
+        result = _compile(_valid_manifest(), _valid_source())
+        assert result.compiled is not None
+        assert result.compiled.trigger is None
+
+    def test_trigger_over_sixty_characters_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), trigger="x" * 61)
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.field == "trigger" for issue in result.issues)
+
+    def test_empty_trigger_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), trigger="   ")
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.field == "trigger" for issue in result.issues)
+
+    def test_trigger_changes_the_digest(self) -> None:
+        plain = _compile(_valid_manifest(), _valid_source())
+        with_trigger = _compile(
+            dict(_valid_manifest(), trigger="Co-crea personajes: identidad y deseo."),
+            _valid_source(),
+        )
+        assert plain.compiled is not None and with_trigger.compiled is not None
+        assert plain.compiled.digest != with_trigger.compiled.digest
 
 
 class TestGuidedFlowDeclaration:

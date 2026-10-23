@@ -4176,6 +4176,7 @@ def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest,
             version=body.version or "0.1.0",
             name=body.name or payload.get("name") or "Co-created skill",
             description=body.description or payload.get("description") or "",
+            trigger=payload.get("trigger"),
             taller=body.taller or payload.get("taller"),
             etiquetas=tuple(body.etiquetas or payload.get("etiquetas") or ()),
             categoria_funcional=body.categoria_funcional or payload.get("categoria_funcional"),
@@ -4335,6 +4336,7 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
             "version": published.version,
             "name": published.name,
             "description": published.description,
+            "trigger": published.trigger,
             "digest": published.digest,
             "published_at": published.published_at,
         },
@@ -4369,7 +4371,9 @@ def approve_co_creation_trigger(
         return invalid
     merged = _CO_CREATION_SESSIONS.autosave_payload(
         session_id, principal.id, body.base_revision,
-        {"description": normalized}, source="author",
+        # The approval binds the trigger, never the method description: the
+        # canvas summary must survive an approval.
+        {"trigger": normalized}, source="author",
     )
     if merged is None:
         return _co_creation_error_response(CoCreationStructuredError(
@@ -10172,6 +10176,7 @@ def methodology_published_detail(skill_id: str, version: str, request: Request):
         "version": published.version,
         "name": published.name,
         "description": published.description,
+        "trigger": published.trigger,
         "phases": list(published.phases),
         "language": published.language,
         "source": published.source,
@@ -10243,6 +10248,7 @@ def methodologies_status(request: Request):
             "version": item.version,
             "name": item.name,
             "description": item.description,
+            "trigger": item.trigger,
             "digest": item.digest,
             "published_at": item.published_at,
             "taller": item.taller,
@@ -10282,6 +10288,7 @@ def methodologies_status(request: Request):
             "name": draft.name,
             "source": draft.source,
             "description": draft.description,
+            "trigger": draft.trigger,
             "updated_at": draft.updated_at,
             "trigger_approval": _trigger_approval_dict(draft.trigger_approval),
         }
@@ -10464,6 +10471,7 @@ def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
         "name": draft.name,
         "source": draft.source,
         "description": draft.description,
+        "trigger": draft.trigger,
         "updated_at": draft.updated_at,
         "taller": draft.taller,
         "categoria_funcional": draft.categoria_funcional,
@@ -10519,6 +10527,10 @@ def methodologies_publish(draft_id: str, request: Request):
         "digest": published.digest,
         "published_at": published.published_at,
     }
+    # Conditional echo: the response gains ``trigger`` only when the record
+    # carries one, so pre-field payloads stay byte-identical.
+    if published.trigger is not None:
+        payload["trigger"] = published.trigger
     # Conditional echo (4.2): the response gains ``adjuntos`` only when entries
     # exist, so pre-PR③ payloads stay byte-identical.
     if published.adjuntos:
@@ -10533,9 +10545,9 @@ def methodologies_approve_trigger(
     """Record the Author's explicit approval of a draft's trigger (Etapa 2).
 
     The library normalizes and re-validates the bound (server-authoritative),
-    then writes the approved value as the draft description AND the auditable
+    then writes the approved value as the draft **trigger** AND the auditable
     approval sub-record in one atomic save (TD-B) — so the approved value is
-    the value publish will use.
+    the index label publish will use, and the method description is untouched.
     """
     principal = _resolve_principal(request)
     if principal is None:

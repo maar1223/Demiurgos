@@ -195,6 +195,9 @@ class Draft:
     name: str
     source: str
     description: str = ""
+    # Authored index trigger (separate from the method description); None for
+    # drafts that predate the field or were never approved.
+    trigger: str | None = None
     phases: tuple[str, ...] = ()
     language: str | None = None
     created_at: str = ""
@@ -237,6 +240,9 @@ class PublishedVersion:
     source: str
     digest: str
     published_at: str
+    # Authored index trigger; None for pre-field records (renderer falls back
+    # to the bounded description).
+    trigger: str | None = None
     # Inventory metadata + system-derived classification/trust attributes
     # (Taller de Herramientas, Fase 1). Optional with defaults for
     # backward-compatible deserialization of old records.
@@ -375,6 +381,7 @@ class MethodologyLibrary:
         name: str,
         source: str,
         description: str = "",
+        trigger: str | None = None,
         phases: tuple[str, ...] = (),
         language: str | None = None,
         taller: str | None = None,
@@ -395,6 +402,7 @@ class MethodologyLibrary:
                 "name": name,
                 "source": source,
                 "description": description,
+                "trigger": trigger,
                 "phases": list(phases),
                 "language": language,
                 "taller": taller,
@@ -527,6 +535,7 @@ class MethodologyLibrary:
         *,
         source: str | None = None,
         description: str | None = None,
+        trigger: str | None = None,
         name: str | None = None,
         phases: tuple[str, ...] | None = None,
         language: str | None = None,
@@ -567,6 +576,8 @@ class MethodologyLibrary:
                 record["source"] = source
             if description is not None:
                 record["description"] = description
+            if trigger is not None:
+                record["trigger"] = trigger
             if name is not None:
                 record["name"] = name
             if phases is not None:
@@ -606,13 +617,14 @@ class MethodologyLibrary:
         Normalizes ``text`` (whitespace-collapsed) and refuses an empty result
         or one longer than ``TRIGGER_INTAKE_LIMIT`` with ``TriggerInvalidError``
         (the server bound is authoritative over the client). Then, under ONE
-        lock, writes the normalized value as the draft's ``description`` AND the
+        lock, writes the normalized value as the draft's ``trigger`` AND the
         auditable ``trigger_approval`` sub-record in a single atomic save
-        (TD-B), so the approved value equals the draft description by
-        construction. The approval stays bound to the value it was granted for:
-        a later ``update_draft(description=...)`` does not mutate it
-        (distinctness — REQ ``skill-trigger-approval``). Raises ``KeyError`` for
-        an unknown draft.
+        (TD-B), so the approved trigger equals the rendered index label by
+        construction. The method ``description`` is never touched: it stays the
+        summary projected into the injected contract. The approval stays bound
+        to the trigger it was granted for, so a later
+        ``update_draft(trigger=...)`` invalidates it while a ``description``
+        edit does not. Raises ``KeyError`` for an unknown draft.
         """
         normalized = normalize_trigger(text)
         if not normalized or len(normalized) > TRIGGER_INTAKE_LIMIT:
@@ -630,7 +642,7 @@ class MethodologyLibrary:
             record = self._drafts.get(draft_id)
             if record is None:
                 raise KeyError(f"draft {draft_id!r} not found")
-            record["description"] = normalized
+            record["trigger"] = normalized
             record["trigger_approval"] = asdict(approval)
             self._save_locked()
         return approval
@@ -663,6 +675,8 @@ class MethodologyLibrary:
             "etiquetas": list(draft.etiquetas),
             "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
+        if draft.trigger is not None:
+            manifest["trigger"] = draft.trigger
         return compile_methodology(manifest, draft.source)
 
     def manifest_for(self, draft: Draft) -> dict[str, Any]:
@@ -680,6 +694,9 @@ class MethodologyLibrary:
             "etiquetas": list(draft.etiquetas),
             "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
+        if draft.trigger is not None:
+            manifest["trigger"] = draft.trigger
+        return manifest
 
     # ------------------------------------------------------------------ #
     # Publishing (immutable)
@@ -742,16 +759,18 @@ class MethodologyLibrary:
             # Trigger approval gate (Etapa 2, TD-A). It sits AFTER the
             # idempotent early-return above so an identical re-publish is never
             # newly refused (forward-only grandfathering, D5), and it validates
-            # the digest of ``compiled.description`` — the exact value
-            # ``_published_record`` writes — so any change between approval and
-            # publish (including a last-moment ``draft_payload["description"]``
-            # sync) fails closed by construction. No immutable version is
+            # the digest of the effective trigger (``compiled.trigger`` or, for
+            # pre-field records, the description) — the exact value the renderer
+            # bounds for the index — so any change between approval and publish
+            # fails closed by construction. No immutable version is
             # created on refusal and no publish-side state advances.
             approval_record = draft_record.get("trigger_approval")
             if (
                 not approval_record
                 or approval_record.get("digest")
-                != normalized_trigger_digest(compiled.description)
+                != normalized_trigger_digest(
+                    compiled.trigger or compiled.description
+                )
             ):
                 raise TriggerNotApprovedError("trigger_not_approved")
             record = self._published_record(
@@ -822,6 +841,7 @@ class MethodologyLibrary:
             "version": compiled.version,
             "name": compiled.name,
             "description": compiled.description,
+            "trigger": compiled.trigger,
             "phases": list(compiled.phases),
             "language": compiled.language,
             "source": compiled.source,
@@ -1468,6 +1488,7 @@ class MethodologyLibrary:
             name=record["name"],
             source=record["source"],
             description=record.get("description", ""),
+            trigger=record.get("trigger"),
             phases=tuple(record.get("phases", ())),
             language=record.get("language"),
             created_at=record.get("created_at", ""),
@@ -1499,6 +1520,7 @@ class MethodologyLibrary:
             version=record["version"],
             name=record["name"],
             description=record.get("description", ""),
+            trigger=record.get("trigger"),
             phases=tuple(record.get("phases", ())),
             language=record.get("language"),
             source=record["source"],

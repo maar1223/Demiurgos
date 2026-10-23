@@ -138,9 +138,12 @@ export function MethodologyStatePanel({
   const etiquetas = entry?.etiquetas ?? [];
   /** Etapa 2 trigger approval state (D4): the selected version's approved
    *  trigger is shown distinguishably from an unapproved/legacy one. */
+  /** The index label: the authored trigger when present, else the legacy
+   *  description (records that predate the separate field). */
+  const triggerText = entry?.trigger ?? entry?.description ?? "";
   const triggerApproved = isTriggerApproved(
     entry?.trigger_approval,
-    entry?.description ?? "",
+    triggerText,
   );
   /** Foundational skills ship with the product: their trigger is approved by
    *  Demiurgos itself, never by an Author draft. Showing them as "pending"
@@ -267,12 +270,12 @@ export function MethodologyStatePanel({
             </button>
           </span>
         </div>
-        {triggerOpen && entry?.description && (
+        {triggerOpen && triggerText && (
           <p
             id={triggerBodyId}
             className="mt-2 break-words text-small text-muted"
           >
-            {entry.description}
+            {triggerText}
           </p>
         )}
       </div>

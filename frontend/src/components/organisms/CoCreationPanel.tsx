@@ -306,7 +306,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
    *  value; the Author may edit it locally, and the recorded approval drives
    *  the pending/approved state. `null` means untouched. */
   const serverTrigger =
-    typeof reviewPayload.description === "string" ? reviewPayload.description : "";
+    typeof reviewPayload.trigger === "string"
+      ? reviewPayload.trigger
+      : typeof reviewPayload.description === "string"
+        ? reviewPayload.description
+        : "";
   const triggerValue = triggerDraft ?? serverTrigger;
   /** The publish gate (D2/D4): publish stays disabled until the recorded
    *  approval matches the value that will be published. */

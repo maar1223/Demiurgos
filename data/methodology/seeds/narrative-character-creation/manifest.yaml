@@ -1,5 +1,5 @@
 skill_id: narrative-character-creation
-version: "1.2"
+version: "1.3"
 name: Creación de Personajes
 description: >-
   Metodología fundacional para co-crear personajes narrativos nuevos, agnóstica
@@ -7,6 +7,7 @@ description: >-
   Subtipo, Arquetipo, Alineamiento, conflicto y arco. Principio 40/60
   (diálogo, no cuestionario) y densidad por nivel narrativo (1º, 2º y 3º).
   El color del mundo lo aporta la skill personalizada de mundo.
+trigger: "Co-crea personajes: identidad, deseo, conflicto y arco."
 phases:
   - Objetivo y contexto
   - Consulta de grafo

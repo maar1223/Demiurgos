@@ -1409,25 +1409,37 @@ class TestPublishTriggerGate:
         assert stored.trigger_approval == published.trigger_approval
         assert stored.description == "Gatillo original"
 
-    def test_description_drift_fails_closed(self, tmp_path: Path) -> None:
+    def test_trigger_drift_fails_closed(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
         draft_id = self._approved_draft(library, description="Gatillo A")
-        # The description changes after approval (the co-creation route's
-        # last-moment sync is the same seam): publish must fail closed.
-        library.update_draft(draft_id, description="Gatillo B")
+        # The approved trigger changes after approval: publish must fail closed.
+        library.update_draft(draft_id, trigger="Gatillo B")
         with pytest.raises(TriggerNotApprovedError):
             library.publish(draft_id)
         assert library.get_published("guided-character-v1", "1.2.0") is None
+
+    def test_description_drift_keeps_the_approval(self, tmp_path: Path) -> None:
+        """The approval binds the trigger, not the method summary.
+
+        Editing the description after approval must NOT invalidate the gate:
+        the description is the injected contract, a separate surface.
+        """
+        library = _library(tmp_path)
+        draft_id = self._approved_draft(library, description="Gatillo A")
+        library.update_draft(draft_id, description="Resumen del método editado")
+        published = library.publish(draft_id)
+        assert published.trigger == "Gatillo A"
+        assert published.description == "Resumen del método editado"
 
     def test_whitespace_only_difference_does_not_invalidate_approval(
         self, tmp_path: Path
     ) -> None:
         library = _library(tmp_path)
-        draft_id = self._draft_with(library, description="Gatillo  con   espacios")
+        draft_id = self._draft_with(library, description="Resumen del método")
         library.approve_trigger(draft_id, "Gatillo con espacios", "author")
         # A later save re-introduces insignificant whitespace; the normalized
         # digests still match, so publish is not refused for drift.
-        library.update_draft(draft_id, description="Gatillo   con  espacios")
+        library.update_draft(draft_id, trigger="Gatillo   con  espacios")
         published = library.publish(draft_id)
         assert published.trigger_approval is not None
         assert published.trigger_approval.digest == normalized_trigger_digest(
@@ -1498,11 +1510,11 @@ class TestFoundationalSeedV12Channels:
         report = install_seeds(library, seed_root)
         assert report.installed == 3 and report.conflict == 0
         assert [v["version"] for v in
-                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.2"]
-        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")
-        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")
-        assert library.active_for("Vibrantes").version == "1.2"
-        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.2"]
+                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.3"]
+        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.3")
+        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.3")
+        assert library.active_for("Vibrantes").version == "1.3"
+        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.3"]
 
 
 class TestNativeChannelFlag:

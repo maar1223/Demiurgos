@@ -1,5 +1,5 @@
 skill_id: narrative-system-creation
-version: "1.1"
+version: "1.2"
 name: Creación de Sistemas
 description: >-
   Metodología fundacional para co-crear un SISTEMA nuevo, agnóstica al mundo.
@@ -16,6 +16,7 @@ description: >-
   impersonal" y marcan la (6) N/A. Frontera con Cronología: la estabilidad (9)
   se declara aquí; los cambios se narran en Cronología. El color del mundo lo
   aporta la skill de mundo.
+trigger: "Co-crea sistemas: origen, qué exige y límite."
 phases:
   - Nombre y clase de sistema
   - Origen o fuente

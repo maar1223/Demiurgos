@@ -1,10 +1,11 @@
 skill_id: narrative-chronology-creation
-version: "1.1"
+version: "1.2"
 name: Creación de Cronologías
 # The rendered trigger IS this description: the skills index truncates at 57
 # characters, so it is deliberately one self-contained sentence. The method
 # itself lives in source.md.
 description: "Co-crea sucesos y eras de la historia de un mundo."
+trigger: "Co-crea sucesos y eras: qué ocurrió, cuándo y qué cambió."
 phases:
   - Nombre y escala del suceso
   - Ubicación temporal (riel)

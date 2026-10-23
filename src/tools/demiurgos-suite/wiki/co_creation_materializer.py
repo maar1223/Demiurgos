@@ -457,6 +457,7 @@ class CoCreationMaterializer:
         version: str,
         name: str,
         description: str = "",
+        trigger: str | None = None,
         taller: str | None = None,
         etiquetas: tuple[str, ...] = (),
         categoria_funcional: str | None = None,
@@ -482,7 +483,8 @@ class CoCreationMaterializer:
         entries = _payload_adjuntos(payload)
         draft_kwargs = {
             "skill_id": skill_id, "version": version, "name": name,
-            "source": source, "description": description, "taller": taller,
+            "source": source, "description": description, "trigger": trigger,
+            "taller": taller,
             "etiquetas": tuple(etiquetas),
             "categoria_funcional": categoria_funcional, "language": language,
         }

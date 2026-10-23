@@ -91,7 +91,7 @@ def _system_snapshot(library: MethodologyLibrary) -> MethodologySnapshot:
     assert profile is not None
     return MethodologySnapshot(
         skill_id="narrative-system-creation",
-        skill_version="1.1",
+        skill_version="1.2",
         compiled_contract_digest="digest",
         flow_type="guided-system",
         profile=profile.as_dict(),
@@ -127,7 +127,7 @@ def test_guided_methods_are_listed_per_flow() -> None:
         "narrative-system-creation",
     ]
     assert payload["default"] == {
-        "skill_id": "narrative-system-creation", "version": "1.1",
+        "skill_id": "narrative-system-creation", "version": "1.2",
     }
 
     character = client.get(
@@ -152,7 +152,7 @@ def _chronology_snapshot(library: MethodologyLibrary) -> MethodologySnapshot:
     assert profile is not None
     return MethodologySnapshot(
         skill_id="narrative-chronology-creation",
-        skill_version="1.1",
+        skill_version="1.2",
         compiled_contract_digest="digest",
         flow_type="guided-chronology",
         profile=profile.as_dict(),
@@ -170,7 +170,7 @@ def test_guided_methods_are_listed_for_chronology() -> None:
         "narrative-chronology-creation",
     ]
     assert body["default"] == {
-        "skill_id": "narrative-chronology-creation", "version": "1.1",
+        "skill_id": "narrative-chronology-creation", "version": "1.2",
     }
 
     for flow in ("guided-system", None):
@@ -232,7 +232,7 @@ def test_chronology_session_start_uses_the_declared_profile(monkeypatch) -> None
         "ui_copy_key": "chronology",
     }
     assert payload["methodology"]["skill_id"] == "narrative-chronology-creation"
-    assert payload["methodology"]["skill_version"] == "1.1"
+    assert payload["methodology"]["skill_version"] == "1.2"
     assert payload["methodology"]["factory"] is False
     assert payload["candidate"]["proposals"]
 
@@ -296,7 +296,7 @@ def test_system_session_start_uses_the_declared_profile(monkeypatch) -> None:
         "ui_copy_key": "system",
     }
     assert payload["methodology"]["skill_id"] == "narrative-system-creation"
-    assert payload["methodology"]["skill_version"] == "1.1"
+    assert payload["methodology"]["skill_version"] == "1.2"
     assert payload["methodology"]["factory"] is False
     assert payload["candidate"]["proposals"]
 
@@ -312,7 +312,7 @@ def test_system_session_rejects_a_character_method(monkeypatch) -> None:
         "author_input": "Quiero crear un sistema de magia",
         "flow_id": "guided-system",
         "method_skill_id": "narrative-character-creation",
-        "method_version": "1.2",
+        "method_version": "1.3",
     })
     assert response.status_code == 422
     body = response.json()
@@ -326,7 +326,7 @@ def test_system_activation_rejects_a_character_method() -> None:
     response = client.post("/api/methodologies/activate", json={
         "world": "vibrantes",
         "skill_id": "narrative-character-creation",
-        "version": "1.2",
+        "version": "1.3",
         "flow_type": "guided-system",
     })
     assert response.status_code == 422

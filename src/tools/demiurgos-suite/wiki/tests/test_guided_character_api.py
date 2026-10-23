@@ -1479,7 +1479,7 @@ class TestConvergenceSpecimenB5:
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
         assert report.installed == 3
-        library.activate("vibrantes", "narrative-character-creation", "1.2")
+        library.activate("vibrantes", "narrative-character-creation", "1.3")
         return library
 
     def _harness(self, monkeypatch, tmp_path: Path, *, mode: str = "full",
@@ -1570,7 +1570,7 @@ class TestConvergenceSpecimenB5:
             encoding="utf-8",
         )
         stripped = MethodologyLibrary(tmp_path / "library.json")
-        stripped.activate("vibrantes", "narrative-character-creation", "1.2")
+        stripped.activate("vibrantes", "narrative-character-creation", "1.3")
         provider, store = self._harness(monkeypatch, tmp_path, library=stripped)
         self._finish_exchange(store)
         asyncio.run(api_server._guided_continue(
@@ -1619,7 +1619,7 @@ def _wired_guided_library(tmp_path: Path) -> MethodologyLibrary:
     library = MethodologyLibrary(tmp_path / "library.json")
     report = install_seeds(library, seed_root)
     assert report.installed == 3
-    library.activate("vibrantes", "narrative-character-creation", "1.2")
+    library.activate("vibrantes", "narrative-character-creation", "1.3")
     return library
 
 

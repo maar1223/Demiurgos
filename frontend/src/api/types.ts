@@ -885,6 +885,8 @@ export interface DerivedFrom {
 export interface DraftPayload {
   name: string;
   description: string;
+  /** Authored index trigger (separate from the method description). */
+  trigger?: string | null;
   purpose: string;
   scope: string;
   main_flow: string;
@@ -1726,6 +1728,9 @@ export interface PublishedMethodology {
   version: string;
   name: string;
   description: string;
+  /** Authored skills-index trigger (≤57 rendered). Absent on records that
+   *  predate the field; the renderer and UI fall back to the description. */
+  trigger?: string | null;
   digest: string;
   published_at: string;
   /** Taller de Herramientas inventory metadata (Fase 1). */
@@ -1788,6 +1793,8 @@ export interface MethodologyDraft {
   name: string;
   source: string;
   description: string;
+  /** Authored index trigger (separate from the method description). */
+  trigger?: string | null;
   updated_at: string;
   /** Taller de Herramientas inventory metadata (Fase 1). */
   taller?: string | null;

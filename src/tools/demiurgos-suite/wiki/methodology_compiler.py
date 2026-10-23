@@ -39,6 +39,11 @@ MAX_SKILL_ID_LEN = 64
 MAX_VERSION_LEN = 32
 MAX_NAME_LEN = 120
 MAX_DESCRIPTION_LEN = 2_000
+# The authored index trigger (the skills-index label). Deliberately separate
+# from ``description``: the trigger is what the index renders and what the
+# Author approves, while ``description`` stays the method summary projected
+# into the injected contract.
+MAX_TRIGGER_LEN = 60
 MAX_PHASES = 12
 MAX_PHASE_LEN = 64
 MAX_LANGUAGE_LEN = 16
@@ -67,9 +72,9 @@ CATEGORIA_FUNCIONAL_ALLOWED = frozenset({
 
 # The bounded manifest contract: only these keys may appear.
 ALLOWED_MANIFEST_FIELDS = frozenset({
-    "skill_id", "version", "name", "description", "phases", "language",
-    "taller", "talleres_compatibles", "categoria_funcional", "etiquetas",
-    "adjuntos", "guided_flow",
+    "skill_id", "version", "name", "description", "trigger", "phases",
+    "language", "taller", "talleres_compatibles", "categoria_funcional",
+    "etiquetas", "adjuntos", "guided_flow",
 })
 
 # Kernel-owned fields a methodology must NEVER claim. Present in the manifest
@@ -158,6 +163,10 @@ class CompiledMethodology:
     language: str | None
     source: str
     digest: str
+    # Authored index trigger (≤60), or None for records that predate the field.
+    # The renderer falls back to the bounded description when absent. Declared
+    # with a default so every pre-existing construction keeps working.
+    trigger: str | None = None
     # Inventory metadata (Taller de Herramientas, Fase 1) — optional, and
     # deliberately excluded from the digest canonical: metadata, not identity.
     taller: str | None = None
@@ -178,6 +187,7 @@ class CompiledMethodology:
             "version": self.version,
             "name": self.name,
             "description": self.description,
+            "trigger": self.trigger,
             "phases": list(self.phases),
             "language": self.language,
             "source": self.source,
@@ -247,6 +257,8 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
     version = str(manifest["version"]).strip()
     name = str(manifest["name"]).strip()
     description = str(manifest.get("description") or "").strip()
+    raw_trigger = manifest.get("trigger")
+    trigger = str(raw_trigger).strip() if raw_trigger is not None else None
     raw_phases = manifest.get("phases") or []
     phases = tuple(str(p).strip() for p in raw_phases)
     language_raw = manifest.get("language")
@@ -300,6 +312,12 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
     # of every already-published record (the character seed included).
     if guided_flow is not None:
         canonical["guided_flow"] = guided_flow.as_dict()
+    # Conditionally included for the same reason: records without an authored
+    # trigger keep their digest byte-identically. A trigger identical to the
+    # method description is canonical-equivalent to having none, so approving
+    # an unchanged description never moves a pre-existing digest.
+    if trigger is not None and trigger != description:
+        canonical["trigger"] = trigger
     digest = hashlib.sha256(
         json.dumps(canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -309,6 +327,7 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
         version=version,
         name=name,
         description=description,
+        trigger=trigger,
         phases=phases,
         language=language,
         source=source,
@@ -371,6 +390,19 @@ def _collect_manifest_issues(manifest: Mapping, issues: list[MethodologyIssue]) 
         issues.append(MethodologyIssue(
             "invalid-value", "description must be text within bounds.", "description",
         ))
+
+    trigger = manifest.get("trigger")
+    if trigger is not None:
+        if (
+            not isinstance(trigger, str)
+            or not trigger.strip()
+            or len(trigger.strip()) > MAX_TRIGGER_LEN
+        ):
+            issues.append(MethodologyIssue(
+                "invalid-value",
+                f"trigger must be non-empty text of at most {MAX_TRIGGER_LEN} characters.",
+                "trigger",
+            ))
 
     language = manifest.get("language")
     if language is not None and (

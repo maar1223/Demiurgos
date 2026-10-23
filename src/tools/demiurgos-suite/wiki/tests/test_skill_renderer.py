@@ -65,10 +65,10 @@ def _published(**overrides) -> PublishedVersion:
     # are not about the trigger. Tests pass ``trigger_approval`` explicitly
     # (including ``None``) to exercise the approved/missing/mismatched paths.
     if "trigger_approval" not in overrides:
-        description = base["description"]
+        effective = base.get("trigger") or base["description"]
         base["trigger_approval"] = TriggerApproval(
-            text=normalize_trigger(description),
-            digest=normalized_trigger_digest(description),
+            text=normalize_trigger(effective),
+            digest=normalized_trigger_digest(effective),
             approved_by="author",
             approved_at="2026-01-01T00:00:00+00:00",
         )
@@ -212,6 +212,40 @@ def test_approved_description_renders_without_trigger_issue(tmp_path):
     assert _frontmatter(rendered)["description"] == (
         "Craft a coherent story with the author"
     )
+
+
+def test_trigger_renders_instead_of_the_description(tmp_path):
+    """The index label is the authored trigger; the method description never
+    leaks into the skills index."""
+    rendered = _transversal(
+        _published(
+            description="Resumen largo del método que no debe ir al índice.",
+            trigger="Co-crea sistemas: origen, qué exige y límite.",
+        ),
+        tmp_path,
+    )
+    assert rendered.issues == ()
+    assert _frontmatter(rendered)["description"] == (
+        "Co-crea sistemas: origen, qué exige y límite."
+    )
+
+
+def test_approval_binds_the_trigger_not_the_description(tmp_path):
+    published = _published(
+        description="Resumen del método distinto del gatillo.",
+        trigger="Gatillo corto aprobado.",
+    )
+    assert published.trigger_approval is not None
+    assert published.trigger_approval.digest == normalized_trigger_digest(
+        "Gatillo corto aprobado."
+    )
+    assert _transversal(published, tmp_path).issues == ()
+
+
+def test_trigger_over_render_bound_is_bounded_and_flagged(tmp_path):
+    rendered = _transversal(_published(trigger="z" * 59), tmp_path)
+    assert "description-overflow" in [issue.code for issue in rendered.issues]
+    assert len(_frontmatter(rendered)["description"]) <= DESCRIPTION_RENDER_LIMIT
 
 
 def test_missing_approval_on_non_seed_is_flagged_without_raising(tmp_path):
