@@ -1,5 +1,10 @@
 import { useState } from "react";
-import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
+import type {
+  GuidedFlowCopyKey,
+  MethodologyInventoryItem,
+  MethodologyStatus,
+} from "@/api/types";
+import type { MessageKey } from "@/i18n/messages";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
@@ -24,6 +29,16 @@ const SCOPE_TERM_KEY =
   AXIS_TERM_KEYS[
     Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? ""
   ];
+
+/** Guided-flow card copy (S1/S4): the server resolves which flow the selected
+ *  skill governs; the panel only maps that key to catalogue strings. A skill
+ *  with no flow never advertises an assistant it cannot drive. */
+const GUIDED_TITLE_KEY: Record<GuidedFlowCopyKey, MessageKey> = {
+  character: "methodology.guided.title",
+  system: "methodology.guided.title.system",
+  chronology: "methodology.guided.title.chronology",
+  entity: "methodology.guided.title.entity",
+};
 
 interface MethodologySelection {
   skill_id: string;
@@ -154,6 +169,9 @@ export function MethodologyStatePanel({
   /** Stable id for the collapsible trigger body (`aria-controls` target). */
   const triggerBodyId = `methodology-trigger-body-${selected.skill_id}-${selected.version}`;
   const isMiMundo = lens === "mi-mundo";
+  /** Guided flow this published skill governs (S1/S4); null for a skill that
+   *  cannot drive a guided session, so the card stays hidden. */
+  const guidedFlowKey = entry?.guided_flow_key ?? null;
   /** Companions of the current world (status-derived; absent key → none).
    *  The selected version is ON when it appears in this list. */
   const companions = world ? status?.companions?.[world] ?? [] : [];
@@ -478,14 +496,20 @@ export function MethodologyStatePanel({
       </div>
 
       {/* Guided assistant (S1/S6): the method is chosen at session start,
-          never pinned from this library. */}
-      {isMiMundo && (
+          never pinned from this library. Scoped to the flow the skill
+          actually governs — a skill that drives no guided session shows no
+          assistant card at all. */}
+      {isMiMundo && guidedFlowKey && (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <h3 className="font-heading text-small font-semibold text-primary">
-            {t("methodology.guided.title")}
+            {t(GUIDED_TITLE_KEY[guidedFlowKey])}
           </h3>
           <p className="mt-2 text-small text-muted">
-            {t("methodology.guided.info")}
+            {t(
+              guidedFlowKey === "character"
+                ? "methodology.guided.info"
+                : "methodology.guided.info.flow",
+            )}
           </p>
         </div>
       )}

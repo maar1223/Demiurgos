@@ -2663,6 +2663,20 @@ def _methodology_quarantine() -> QuarantineStore:
     return _METHODOLOGY_QUARANTINE
 
 
+def _guided_flow_key(library: MethodologyLibrary, skill_id: str) -> str | None:
+    """The guided-flow copy key a published skill binds, server-resolved.
+
+    Uses the same eligibility the guided session uses (a declared flow, or the
+    builtin character lineage), so the library never advertises a guided
+    assistant for a skill that cannot govern one.
+    """
+    for flow_id in sorted(GUIDED_FLOW_IDS):
+        profile = library.flow_profile_for(flow_id, skill_id)
+        if profile is not None:
+            return profile.ui_copy_key
+    return None
+
+
 def _factory_method_snapshot(flow_type: str = GUIDED_CHARACTER_FLOW) -> MethodologySnapshot:
     active = _ACTIVE_METHODOLOGY_VERSION or _BUILTIN_METHODOLOGY_VERSION
     profile = builtin_profile(flow_type)
@@ -10266,6 +10280,10 @@ def methodologies_status(request: Request):
             "parent_version": item.parent_version,
             # Additive metadata-only pins (R15): absent/empty -> [].
             "adjuntos": [entry.as_dict() for entry in item.adjuntos],
+            # Guided-flow copy key this skill governs (S1/S4): the library
+            # only advertises an assistant for a skill that can drive that
+            # flow. Null when the skill is not a guided method.
+            "guided_flow_key": _guided_flow_key(library, item.skill_id),
         }
         for item in library.list_published()
     ]

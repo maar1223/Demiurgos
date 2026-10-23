@@ -653,13 +653,17 @@ export interface GuidedMethodsResponse {
   flow?: string;
 }
 
+/** Copy discriminator for a guided flow (S1). The server resolves it; the
+ *  client only maps it to catalogue keys. */
+export type GuidedFlowCopyKey = "character" | "system" | "chronology" | "entity";
+
 /** Server-resolved flow echo (S1). The client renders copy from `ui_copy_key`
  *  and never supplies the binding. */
 export interface GuidedFlowEcho {
   flow_id: string;
   entity_type: string;
   target_section: string;
-  ui_copy_key: "character" | "system" | "chronology" | "entity";
+  ui_copy_key: GuidedFlowCopyKey;
 }
 
 export interface GuidedCharacterSession {
@@ -1752,6 +1756,11 @@ export interface PublishedMethodology {
   /** Etapa 2: immutable echo of the trigger approval recorded at publish time.
    *  Additive/tolerant-read: absent on pre-Etapa-2 records. */
   trigger_approval?: TriggerApproval | null;
+  /** Guided-flow copy key this skill governs (S1/S4), server-resolved from the
+   *  declared flow or the builtin character lineage. Null/absent when the
+   *  skill cannot drive a guided session; the library must not advertise an
+   *  assistant for it. */
+  guided_flow_key?: GuidedFlowCopyKey | null;
 }
 
 /** Full published version + source from

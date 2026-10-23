@@ -871,8 +871,13 @@ export const messages = {
     "methodology.chat.pinnedVersion": "En el chat: v{version}",
     "methodology.chat.useVersion": "Usar v{version} en el chat",
     "methodology.guided.title": "Asistente de personajes",
+    "methodology.guided.title.system": "Asistente de sistemas",
+    "methodology.guided.title.chronology": "Asistente de cronologías",
+    "methodology.guided.title.entity": "Asistente de entidades",
     "methodology.guided.info":
       "El asistente elige su método al iniciar la sesión; si no eliges, usa el de fábrica.",
+    "methodology.guided.info.flow":
+      "El asistente elige su método al iniciar la sesión; si no eliges, usa el predeterminado de su flujo.",
     "methodology.state.latencyNotice":
       "Las charlas de IA en este mundo pueden tardar un poco más mientras haya skills de metodología de chat activas.",
     "methodology.state.clear": "Limpiar",
@@ -2897,8 +2902,13 @@ export const messages = {
     "methodology.chat.pinnedVersion": "In the chat: v{version}",
     "methodology.chat.useVersion": "Use v{version} in the chat",
     "methodology.guided.title": "Character assistant",
+    "methodology.guided.title.system": "System assistant",
+    "methodology.guided.title.chronology": "Chronology assistant",
+    "methodology.guided.title.entity": "Entity assistant",
     "methodology.guided.info":
       "The assistant chooses its method when a session starts; if you do not choose, it uses the factory method.",
+    "methodology.guided.info.flow":
+      "The assistant chooses its method when a session starts; if you do not choose, it uses the flow's default.",
     "methodology.state.latencyNotice":
       "AI chats in this world may take a bit longer while chat methodology skills are active.",
     "methodology.state.clear": "Clear",

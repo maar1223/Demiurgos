@@ -6,7 +6,7 @@ import {
   markCompanionLatencyNotified,
 } from "@/lib/companionLatency";
 import { AXIS_SCOPE, AXIS_TERMS } from "@/lib/vocabularyAxes";
-import type { MethodologyStatus } from "@/api/types";
+import type { GuidedFlowCopyKey, MethodologyStatus } from "@/api/types";
 
 const status: MethodologyStatus = {
   published: [
@@ -94,6 +94,17 @@ const companionStatus: MethodologyStatus = {
     ],
   },
 };
+
+/** Status whose selected skill governs one guided flow (server-resolved key). */
+function guidedStatus(guidedFlowKey: GuidedFlowCopyKey): MethodologyStatus {
+  return {
+    ...status,
+    published: [
+      { ...status.published[0], guided_flow_key: guidedFlowKey },
+      ...status.published.slice(1),
+    ],
+  };
+}
 
 function renderPanel(
   overrides: Partial<Parameters<typeof MethodologyStatePanel>[0]> = {},
@@ -506,8 +517,18 @@ describe("authored trigger vs method description", () => {
 });
 
 describe("guided assistant info (S1/S6)", () => {
-  it("explains that the method is chosen at session start", () => {
+  it("is not advertised for a skill that does not govern a guided flow", () => {
     renderPanel();
+    expect(
+      screen.queryByText("Asistente de personajes"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/El asistente elige su método/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names the character flow and its factory fallback", () => {
+    renderPanel({ status: guidedStatus("character") });
     expect(screen.getByText("Asistente de personajes")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -516,8 +537,21 @@ describe("guided assistant info (S1/S6)", () => {
     ).toBeInTheDocument();
   });
 
+  it("adapts the card to a declared non-character flow", () => {
+    renderPanel({ status: guidedStatus("system") });
+    expect(screen.getByText("Asistente de sistemas")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "El asistente elige su método al iniciar la sesión; si no eliges, usa el predeterminado de su flujo.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Asistente de personajes"),
+    ).not.toBeInTheDocument();
+  });
+
   it("never pins a guided method from the panel", () => {
-    renderPanel();
+    renderPanel({ status: guidedStatus("character") });
     expect(screen.queryByText(/Activar/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Desactivar/)).not.toBeInTheDocument();
   });

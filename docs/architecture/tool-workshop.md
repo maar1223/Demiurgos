@@ -211,6 +211,7 @@ Una metodología publicada puede declarar que produce una entidad persistible (`
 - El canvas de co-creación **todavía no recoge** esta declaración (fase dos): una skill co-creada hereda el flujo de su raíz por linaje, y una importada solo hereda. No hay que reescribir una skill existente para que siga funcionando.
 - Un flujo declarado no ofrece la opción "De fábrica"; su selector preselecciona el método fundacional del flujo.
 - El método de un flujo no puede gobernar otro: el servidor responde 422 `ineligible_guided_method` sin mutar la biblioteca.
+- El panel de estado de la biblioteca solo presenta la tarjeta del asistente guiado cuando la skill seleccionada gobierna un flujo (declarado o por linaje de personajes). Una skill sin flujo no anuncia un asistente que no puede conducir; título y copia se resuelven por flujo (`character`, `system`, `chronology`, `entity`) con `guided_flow_key` resuelto por el servidor en `GET /api/methodologies/status`.
 
 ## 7. Frontera con el Taller de Mundo y futuros Talleres
 

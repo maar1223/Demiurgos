@@ -2879,6 +2879,35 @@ class TestMethodologyApi:
         assert entry["clasificacion"] == "Oficiales"
         assert entry["trust_attributes"] == ["verified"]
 
+    def test_status_exposes_the_guided_flow_key_per_skill(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """S1: the library only advertises the guided assistant for a skill
+        that actually governs a guided flow (declared or builtin lineage)."""
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+        plain = library.create_draft(
+            skill_id="plain-method", version="1.0",
+            name="Plain method",
+            source="## Método\n\nPreguntas de a una.\n",
+        )
+        _approve_library_trigger(library, plain)
+        library.publish(plain)
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        _principal(monkeypatch, "author-1")
+
+        status = client.get("/api/methodologies/status")
+        assert status.status_code == 200
+        keys = {
+            item["skill_id"]: item["guided_flow_key"]
+            for item in status.json()["published"]
+        }
+        assert keys["narrative-character-creation"] == "character"
+        assert keys["narrative-system-creation"] == "system"
+        assert keys["narrative-chronology-creation"] == "chronology"
+        assert keys["narrative-entity-creation"] == "entity"
+        assert keys["plain-method"] is None
+
     # ------------------------------------------------------------------ #
     # Fase 5b (PR 2): skill import/export/quarantine/trust + reserved-id
     # guard (REQ-IMP-1..6).
