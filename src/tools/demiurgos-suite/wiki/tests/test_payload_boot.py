@@ -124,7 +124,7 @@ class TestPayloadBoot:
         staged_root, _ = staged_payload
         assert not (staged_root / _DENIED_SUBTREE).exists()
 
-    def test_seeds_are_thirteen_files(self, staged_payload):
+    def test_seeds_are_sixteen_files(self, staged_payload):
         staged_root, _ = staged_payload
         seeds = [p for p in (staged_root / "data/methodology/seeds").rglob("*") if p.is_file()]
-        assert len(seeds) == 13, f"expected 13 seeded files, found {len(seeds)}"
+        assert len(seeds) == 16, f"expected 16 seeded files, found {len(seeds)}"

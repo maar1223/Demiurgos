@@ -848,6 +848,60 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     });
   });
 
+  it("renders chronology copy and methods for the chronology flow (S3)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-chronology-creation",
+          version: "1.1",
+          name: "Creación de Cronologías",
+        },
+      ],
+      default: { skill_id: "narrative-chronology-creation", version: "1.1" },
+      flow: "guided-chronology",
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear cronología",
+        messages: [{ role: "user", content: "Quiero crear una cronología" }],
+        createdAt: 1,
+        consentToken: "ct-chron",
+        consentFlow: {
+          flow_id: "guided-chronology",
+          entity_type: "cronologia",
+          target_section: "lore",
+          ui_copy_key: "chronology",
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByText(tEs("assistant.consent.body.chronology")),
+    ).toBeInTheDocument();
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-chronology-creation");
+    expect(
+      screen.queryByRole("option", { name: /De fábrica/ }),
+    ).not.toBeInTheDocument();
+    expect(getGuidedMethodsMock).toHaveBeenLastCalledWith(
+      "Vibrantes", "guided-chronology",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-chronology-creation",
+      version: "1.1",
+    });
+  });
+
   it("sends the method chosen on the consent card (S6)", async () => {
     const resolveGuidedConsent = vi.fn();
     getGuidedMethodsMock.mockResolvedValueOnce({

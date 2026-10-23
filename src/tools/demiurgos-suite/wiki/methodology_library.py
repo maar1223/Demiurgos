@@ -41,6 +41,7 @@ from methodology_compiler import (
 from methodology_trust import FOUNDATIONAL, OFFICIAL, PERSONALIZADAS, scrub_foundational
 from guided_flow import (
     GUIDED_CHARACTER_FLOW,
+    GUIDED_FLOW_IDS,
     GUIDED_SYSTEM_FLOW,
     GuidedFlowDeclaration,
     GuidedFlowProfile,
@@ -95,11 +96,9 @@ GUIDED_CHARACTER_METHOD_ROOTS: frozenset[str] = frozenset({
 # remove it; do not bind it without also unioning co-creation slots into the
 # router pool.
 CO_CREATION_FLOW = "co-creation"
-SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
-    GUIDED_CHARACTER_FLOW,
-    GUIDED_SYSTEM_FLOW,
+SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset(GUIDED_FLOW_IDS) | {
     CO_CREATION_FLOW,
-})
+}
 DEFAULT_FLOW_TYPE = GUIDED_CHARACTER_FLOW
 
 

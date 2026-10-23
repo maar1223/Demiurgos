@@ -1496,7 +1496,7 @@ class TestFoundationalSeedV12Channels:
         shutil.copytree(SEED_ROOT, seed_root)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
-        assert report.installed == 2 and report.conflict == 0
+        assert report.installed == 3 and report.conflict == 0
         assert [v["version"] for v in
                 library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.2"]
         library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")

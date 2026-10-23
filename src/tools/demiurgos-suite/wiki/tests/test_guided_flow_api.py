@@ -145,6 +145,128 @@ def test_guided_methods_are_listed_per_flow() -> None:
     assert invalid.json()["code"] == "unsupported_flow_type"
 
 
+def _chronology_snapshot(library: MethodologyLibrary) -> MethodologySnapshot:
+    profile = library.flow_profile_for(
+        "guided-chronology", "narrative-chronology-creation",
+    )
+    assert profile is not None
+    return MethodologySnapshot(
+        skill_id="narrative-chronology-creation",
+        skill_version="1.1",
+        compiled_contract_digest="digest",
+        flow_type="guided-chronology",
+        profile=profile.as_dict(),
+    )
+
+
+def test_guided_methods_are_listed_for_chronology() -> None:
+    payload = client.get(
+        "/api/methodologies/guided-methods?world=vibrantes&flow=guided-chronology",
+    )
+    assert payload.status_code == 200, payload.json()
+    body = payload.json()
+    assert body["flow"] == "guided-chronology"
+    assert [item["skill_id"] for item in body["methods"]] == [
+        "narrative-chronology-creation",
+    ]
+    assert body["default"] == {
+        "skill_id": "narrative-chronology-creation", "version": "1.1",
+    }
+
+    for flow in ("guided-system", None):
+        url = "/api/methodologies/guided-methods?world=vibrantes"
+        if flow:
+            url += f"&flow={flow}"
+        listed = client.get(url).json()
+        assert "narrative-chronology-creation" not in [
+            item["skill_id"] for item in listed["methods"]
+        ]
+
+
+def test_chat_intent_resolves_the_chronology_flow(_isolated_flow_env) -> None:
+    profile = api_server._resolve_input_flow("Quiero crear una cronología")
+    assert profile is not None
+    assert profile.flow_id == "guided-chronology"
+    assert profile.ui_copy_key == "chronology"
+    assert profile.target_section == "lore"
+
+    seeded = api_server._resolve_input_flow("Quiero registrar una era")
+    assert seeded is not None
+    assert seeded.flow_id == "guided-chronology"
+
+    # An unmatched turn keeps the historical character default.
+    fallback = api_server._resolve_input_flow("Háblame de los personajes")
+    assert fallback is not None
+    assert fallback.flow_id == "guided-character"
+
+
+def test_chronology_consent_copy_is_flow_specific() -> None:
+    copy = api_server.GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY["chronology"]
+    assert "cronología" in copy
+    assert "guíado" not in copy.lower()
+
+
+def test_chronology_session_start_uses_the_declared_profile(monkeypatch) -> None:
+    _allow(monkeypatch, 1)
+
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"name": "La Caída", "evento": "El imperio se parte"},
+        }
+
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    response = client.post("/api/vibrantes/guided/session", json={
+        "author_input": "Quiero crear una cronología",
+        "flow_id": "guided-chronology",
+    })
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["flow"] == {
+        "flow_id": "guided-chronology",
+        "entity_type": "cronologia",
+        "target_section": "lore",
+        "ui_copy_key": "chronology",
+    }
+    assert payload["methodology"]["skill_id"] == "narrative-chronology-creation"
+    assert payload["methodology"]["skill_version"] == "1.1"
+    assert payload["methodology"]["factory"] is False
+    assert payload["candidate"]["proposals"]
+
+
+def test_chronology_serialization_targets_lore_and_passes_okf(
+    _isolated_flow_env,
+) -> None:
+    library = _isolated_flow_env
+    sessions = api_server._GUIDED_SESSIONS
+    sessions.create(
+        "guided-chron", "vibrantes", "author-1",
+        methodology_snapshot=_chronology_snapshot(library),
+    )
+    state = sessions.recover("guided-chron", "author-1")
+    assert state is not None
+    state.candidate.accepted_canon = {
+        "name": "La Caída", "evento": "El imperio se parte en dos",
+    }
+    sessions._sessions["guided-chron"] = state  # noqa: SLF001
+
+    response = client.post("/api/vibrantes/guided/proposal/serialize", json={
+        "session_id": "guided-chron", "base_revision": 0,
+        "slug": "la-caida", "title": "La Caída",
+    })
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["target"] == "lore/la-caida.md"
+    validation = validate(payload["proposed_content"])
+    assert validation.ok, validation.issues
+    metadata = validation.document.frontmatter
+    assert metadata["type"] == "Cronologia"
+    assert metadata["evento"] == "El imperio se parte en dos"
+
+
 def test_system_session_start_uses_the_declared_profile(monkeypatch) -> None:
     _allow(monkeypatch, 1)
 

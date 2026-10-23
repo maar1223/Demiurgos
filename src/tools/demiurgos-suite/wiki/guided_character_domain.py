@@ -193,6 +193,10 @@ _IDENTITY_COPY_BY_FLOW: dict[str, tuple[str, str]] = {
     # copy key: (Spanish, English)
     "character": ("¿Cómo se llama este personaje?", "What is this character's name?"),
     "system": ("¿Cómo se llama este sistema?", "What is this system called?"),
+    "chronology": (
+        "¿Cómo se llama este suceso o era?",
+        "What is this event or era called?",
+    ),
 }
 
 

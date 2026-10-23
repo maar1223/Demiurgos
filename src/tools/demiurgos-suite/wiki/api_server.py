@@ -88,6 +88,8 @@ from convergence_injection import (
     read_adjunto_text,
 )
 from guided_flow import (
+    GUIDED_CHARACTER_FLOW,
+    GUIDED_FLOW_IDS,
     FOUNDATIONAL_METHOD_BY_FLOW,
     GUIDED_SYSTEM_FLOW,
     GuidedFlowProfile,
@@ -2802,7 +2804,7 @@ def _active_methodology_snapshot(
     (S1/S6); the reserved co-creation slot keeps its legacy activation-only
     behavior.
     """
-    if flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+    if flow_type in GUIDED_FLOW_IDS:
         return _resolve_guided_method_snapshot(
             world, method_skill_id, method_version, flow_type,
         )
@@ -3333,7 +3335,7 @@ async def start_guided_session(mundo: str, body: GuidedStartRequest, request: Re
         )
         return result.as_dict()
     flow_id = body.flow_id or GUIDED_CHARACTER_FLOW
-    if flow_id not in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+    if flow_id not in GUIDED_FLOW_IDS:
         return _guided_error_response(StructuredError(
             ErrorCode.INVALID_INPUT, f"Unsupported guided flow {flow_id!r}.", False,
         ))
@@ -7650,6 +7652,9 @@ GUIDED_CONSENT_SUGGESTION_TEXT = (
 GUIDED_CONSENT_SUGGESTION_TEXT_BY_COPY_KEY = {
     "character": GUIDED_CONSENT_SUGGESTION_TEXT,
     "system": "Parece que quieres crear un sistema. ¿Abrimos el flujo guiado?",
+    "chronology": (
+        "Parece que quieres crear una cronología. ¿Abrimos el flujo guiado?"
+    ),
 }
 """Flow-specific suggestion copy; the card renders its own catalogue copy."""
 
@@ -7934,7 +7939,7 @@ def _resolve_input_flow(
     """
     library = _methodology_library()
     matches: list[GuidedFlowProfile] = []
-    for flow_id in (GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW):
+    for flow_id in sorted(GUIDED_FLOW_IDS):
         candidates = library.list_methods_for_flow(flow_id)
         profile = builtin_profile(flow_id)
         if profile is None and candidates:
@@ -10323,7 +10328,7 @@ def methodologies_guided_methods(
     principal = _resolve_principal(request)
     if principal is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required."})
-    if flow not in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+    if flow not in GUIDED_FLOW_IDS:
         return JSONResponse(status_code=422, content={
             "detail": f"Unsupported guided flow {flow!r}.",
             "code": "unsupported_flow_type",
@@ -10587,7 +10592,7 @@ def methodologies_activate(body: MethodologyActivateRequest, request: Request):
         })
     library = _methodology_library()
     if (
-        body.flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}
+        body.flow_type in GUIDED_FLOW_IDS
         and not library.is_method_for_flow(body.flow_type, body.skill_id)
     ):
         return _ineligible_guided_method_response(body.skill_id, body.flow_type)
@@ -10688,7 +10693,7 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
             "code": "unsupported_flow_type",
         })
     library = _methodology_library()
-    if body.flow_type in {GUIDED_CHARACTER_FLOW, GUIDED_SYSTEM_FLOW}:
+    if body.flow_type in GUIDED_FLOW_IDS:
         target = library.next_rollback(body.world, body.flow_type)
         target_skill = str((target or {}).get("skill_id") or "")
         if target and not library.is_method_for_flow(body.flow_type, target_skill):

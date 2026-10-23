@@ -25,6 +25,7 @@ from okf_contract import (
 
 GUIDED_CHARACTER_FLOW = "guided-character"
 GUIDED_SYSTEM_FLOW = "guided-system"
+GUIDED_CHRONOLOGY_FLOW = "guided-chronology"
 
 # A declared flow id is bound to exactly one kernel entity shape. A
 # declaration pairing them inconsistently (e.g. the character flow writing a
@@ -32,6 +33,7 @@ GUIDED_SYSTEM_FLOW = "guided-system"
 ENTITY_TYPE_BY_FLOW: dict[str, str] = {
     "guided-character": "personaje",
     "guided-system": "sistema",
+    "guided-chronology": "cronologia",
 }
 
 # Deterministic default for a flow that has no builtin contract: the
@@ -39,6 +41,7 @@ ENTITY_TYPE_BY_FLOW: dict[str, str] = {
 # Author did not pick a method, mirroring the character factory fallback.
 FOUNDATIONAL_METHOD_BY_FLOW: dict[str, str] = {
     "guided-system": "narrative-system-creation",
+    "guided-chronology": "narrative-chronology-creation",
 }
 
 # Flow ids the server currently accepts as activation slots. A genuinely new
@@ -46,6 +49,7 @@ FOUNDATIONAL_METHOD_BY_FLOW: dict[str, str] = {
 GUIDED_FLOW_IDS: frozenset[str] = frozenset({
     GUIDED_CHARACTER_FLOW,
     GUIDED_SYSTEM_FLOW,
+    GUIDED_CHRONOLOGY_FLOW,
 })
 
 # Kernel-owned persistence authority: an entity type may only land in one of
@@ -97,7 +101,7 @@ QUESTION_KEYS_BY_ENTITY_TYPE: dict[str, tuple[str, ...]] = {
 
 # UI copy the client may render for a flow. The client never supplies copy,
 # only selects a key the server validates.
-UI_COPY_KEYS: frozenset[str] = frozenset({"character", "system"})
+UI_COPY_KEYS: frozenset[str] = frozenset({"character", "system", "chronology"})
 
 DECLARATION_FIELDS: frozenset[str] = frozenset({
     "flow_id", "entity_type", "ui_copy_key", "index", "intent",

@@ -103,6 +103,27 @@ class TestProfileResolution:
         assert any("limite" in group for group in fields)
         assert not profile.builtin
 
+    def test_chronology_profile_uses_the_kernel_section_and_minimums(self) -> None:
+        declaration = _declaration(
+            flow_id="guided-chronology",
+            entity_type="cronologia",
+            ui_copy_key="chronology",
+            intent={"terms": ["cronologia"], "verbs": ["crear"]},
+        )
+        assert guided_flow_issues(declaration) == []
+        profile = resolve_profile(GuidedFlowDeclaration.from_mapping(declaration))
+        assert profile is not None
+        assert profile.flow_id == "guided-chronology"
+        assert profile.entity_type == "cronologia"
+        assert profile.target_section == "lore"
+        assert profile.index_target == "lore"
+        assert profile.type_label == "Cronologia"
+        assert profile.ui_copy_key == "chronology"
+        assert profile.question_keys == ("identity", "event")
+        assert profile.frontmatter_fields == ("evento",)
+        assert any("evento" in group for group in profile.minimum_groups)
+        assert not profile.builtin
+
     def test_character_builtin_profile_is_server_owned(self) -> None:
         profile = builtin_profile(GUIDED_CHARACTER_FLOW)
         assert profile is not None

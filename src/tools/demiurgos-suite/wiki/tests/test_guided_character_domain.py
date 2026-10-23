@@ -489,6 +489,86 @@ def test_system_intent_uses_the_declared_vocabulary() -> None:
     assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
 
 
+def _chronology_profile():
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    return resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-chronology",
+        "entity_type": "cronologia",
+        "ui_copy_key": "chronology",
+        "index": True,
+        "intent": {
+            "terms": ["cronología", "cronologia", "suceso", "era"],
+            "verbs": ["crear", "narrar", "registrar"],
+        },
+    }))
+
+
+def test_chronology_questions_walk_the_missing_group() -> None:
+    profile = _chronology_profile()
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+
+    def ask(candidate: CandidateState) -> str:
+        return next_required_question(
+            candidate, language="es",
+            groups=profile.minimum_groups, question_keys=profile.question_keys,
+            ui_copy_key=profile.ui_copy_key,
+        )
+
+    assert ask(CandidateState()) == "¿Cómo se llama este suceso o era?"
+    assert ask(CandidateState(accepted_canon={"name": {"value": "La Caída"}})).startswith(
+        "¿Qué suceso o era quieres registrar"
+    )
+
+
+def test_chronology_questions_are_english_in_english() -> None:
+    profile = _chronology_profile()
+    assert profile is not None
+    assert next_required_question(
+        CandidateState(), language="en",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    ) == "What is this event or era called?"
+
+
+def test_chronology_serializer_writes_the_kernel_section_and_type() -> None:
+    from guided_character_domain import serialize_entity
+
+    candidate = CandidateState(accepted_canon={
+        "name": "La Caída", "evento": "El imperio se parte en dos",
+    })
+    proposal = serialize_entity(
+        candidate, world="vibrantes", slug="la-caida", title="La Caída",
+        entity_type="cronologia", target_section="lore", type_label="Cronologia",
+        provenance_default="guided-cronologia-v1",
+        frontmatter_fields=("evento",),
+    )
+    assert proposal.target == "lore/la-caida.md"
+    frontmatter, body = proposal.content.split("---\n", 2)[1:]
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["type"] == "Cronologia"
+    assert metadata["id"] == "la-caida"
+    assert metadata["evento"] == "El imperio se parte en dos"
+    assert metadata["provenance"] == ["guided-cronologia-v1"]
+    assert "## Identity" in body
+    from okf_contract import validate
+
+    assert validate(proposal.content).ok, validate(proposal.content).issues
+
+
+def test_chronology_intent_uses_the_declared_vocabulary() -> None:
+    from guided_character_domain import route_guided_intent
+
+    profile = _chronology_profile()
+    assert profile is not None
+    assert route_guided_intent("Quiero crear una cronología", profile).is_new_entity
+    assert route_guided_intent("Quiero narrar un suceso de la historia", profile).is_new_entity
+    assert route_guided_intent("Quiero registrar una era", profile).is_new_entity
+    assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+    assert not route_guided_intent("Editar la cronología existente", profile).is_new_entity
+
+
 def test_character_profile_keeps_name_then_desire_question_order() -> None:
     """S5 regression: the profile-derived character gate must not add a third
     identity group (which would repeat the name question forever)."""
