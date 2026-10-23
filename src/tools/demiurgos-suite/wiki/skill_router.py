@@ -20,16 +20,16 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assistant_activity import HermesActivityRequest
-from methodology_library import FOUNDATIONAL_CHARACTER_SKILL_ID, GUIDED_CHARACTER_FLOW
+from methodology_library import FOUNDATIONAL_SKILL_IDS, GUIDED_CHARACTER_FLOW
 
-# Audit-derived transversal pool (SR2): the methodology library publishes exactly
-# one foundational transversal today — narrative-character-creation (1 recoverable
-# of the 20 audited skills; 19 are legacy). The six legacy transversal slugs and
-# the keyword fallback layer were retired in PR ② so every routing candidate
-# traces to a foundational / companion / flow-slot class (pool traceability).
-TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
-    FOUNDATIONAL_CHARACTER_SKILL_ID,
-})
+# Transversal candidate pool (SR2): every server-seeded foundational skill is a
+# routing candidate in every world, sourced from the methodology library's
+# reserved-id set (single source of truth — no duplicated literals). Today that
+# is narrative-character-creation and narrative-system-creation; the six legacy
+# transversal slugs and the keyword fallback layer were retired in PR ② so
+# every routing candidate traces to a foundational / companion / flow-slot
+# class (pool traceability).
+TRANSVERSAL_SKILLS: frozenset[str] = FOUNDATIONAL_SKILL_IDS
 
 CONFIDENCE_THRESHOLD = 0.7
 
@@ -174,17 +174,25 @@ class SkillRouter:
         return collapsed[:_DESCRIPTION_MAX_CHARS]
 
     def _description_for(self, skill_id: str, version: str | None) -> str | None:
-        """Published description for a skill/version, clipped, or None."""
+        """Published index label for a skill/version, clipped, or None.
+
+        Prefers the authored ``trigger`` (the same label the skills index and
+        the renderer use); records that predate the field fall back to the
+        method description, byte-identically.
+        """
         if not version or self._library is None:
             return None
         try:
             published = self._library.get_published(skill_id, version)
         except Exception:
             return None
-        description = getattr(published, "description", None)
-        if not description:
+        label = (
+            getattr(published, "trigger", None)
+            or getattr(published, "description", None)
+        )
+        if not label:
             return None
-        return self._clip_description(description)
+        return self._clip_description(label)
 
     def _companion_candidates(
         self, mundo: str,

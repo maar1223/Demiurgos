@@ -111,9 +111,10 @@ class TestFlowConstants:
         """D2: one guided-character default; the set is the supported enum."""
         assert DEFAULT_FLOW_TYPE == GUIDED_CHARACTER_FLOW == "guided-character"
         assert CO_CREATION_FLOW == "co-creation"
-        assert SUPPORTED_FLOW_TYPES == frozenset(
-            {GUIDED_CHARACTER_FLOW, CO_CREATION_FLOW}
-        )
+        assert SUPPORTED_FLOW_TYPES == frozenset({
+            GUIDED_CHARACTER_FLOW, "guided-system", "guided-chronology",
+            "guided-entity", CO_CREATION_FLOW,
+        })
 
 
 class TestLegacyCoercion:

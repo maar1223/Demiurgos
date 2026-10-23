@@ -39,6 +39,15 @@ from methodology_compiler import (
     compile_methodology,
 )
 from methodology_trust import FOUNDATIONAL, OFFICIAL, PERSONALIZADAS, scrub_foundational
+from guided_flow import (
+    GUIDED_CHARACTER_FLOW,
+    GUIDED_FLOW_IDS,
+    GUIDED_SYSTEM_FLOW,
+    GuidedFlowDeclaration,
+    GuidedFlowProfile,
+    builtin_profile,
+    profile_for_declaration,
+)
 
 logger = logging.getLogger("demiurgos-api")
 
@@ -48,12 +57,35 @@ logger = logging.getLogger("demiurgos-api")
 # truth shared with the skill router and the API trust boundary.
 FOUNDATIONAL_CHARACTER_SKILL_ID = "narrative-character-creation"
 
+# The id of the author-created foundational system-creation skill (Sistema).
+# Reserved exactly like the character id: never publishable from an
+# import-derived draft (REQ-IMP-6).
+FOUNDATIONAL_SYSTEM_SKILL_ID = "narrative-system-creation"
+
+# Every reserved foundational id. Import-derived publishing is refused for any
+# member; the skill router's transversal pool and the API trust boundary share
+# this single set instead of duplicating literals.
+FOUNDATIONAL_SKILL_IDS: frozenset[str] = frozenset({
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
+    FOUNDATIONAL_SYSTEM_SKILL_ID,
+})
+
+# Root ids of the character-creation method family: the guided-character
+# assistant only consumes methods declared by this lineage. ``guided-character-v1``
+# is the builtin contract id (also honored as a legacy activation); every
+# Author skill derived from the foundational one inherits eligibility through
+# its ``parent_skill_id`` chain.
+GUIDED_CHARACTER_METHOD_ROOTS: frozenset[str] = frozenset({
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
+    "guided-character-v1",
+})
+
 # Guided flow types (SR1 — one activation slot per guided-flow type per world;
-# contract §2). ``guided-character`` is the shipped guided flow; ``co-creation``
-# is the Author-facing skill-creation flow. The set is the enumeration for the
-# per-flow slot mechanism: adding a guided flow costs one constant + one set
-# entry + its fallback branch (design D2 — no registry object).
-GUIDED_CHARACTER_FLOW = "guided-character"
+# contract §2). ``guided-character`` is the shipped guided flow; ``guided-system``
+# is the first declared (skill-owned) flow; ``co-creation`` is the Author-facing
+# skill-creation flow. The set is the enumeration for the per-flow slot
+# mechanism: adding a guided flow costs one kernel entity mapping + one set
+# entry (design D2 — no registry object).
 # RESERVED (WARNING-1 resolution, PR ②): ``co-creation`` is documented and
 # kept but deliberately NOT bound as an activation slot. Co-created skills
 # activate into the guided-character slot (``activate_co_creation`` calls
@@ -64,10 +96,9 @@ GUIDED_CHARACTER_FLOW = "guided-character"
 # remove it; do not bind it without also unioning co-creation slots into the
 # router pool.
 CO_CREATION_FLOW = "co-creation"
-SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
-    GUIDED_CHARACTER_FLOW,
+SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset(GUIDED_FLOW_IDS) | {
     CO_CREATION_FLOW,
-})
+}
 DEFAULT_FLOW_TYPE = GUIDED_CHARACTER_FLOW
 
 
@@ -164,6 +195,13 @@ class Draft:
     name: str
     source: str
     description: str = ""
+    # Authored index trigger (separate from the method description); None for
+    # drafts that predate the field or were never approved.
+    trigger: str | None = None
+    # Guided-flow declaration transited from an imported package (round-trip
+    # fidelity). Optional so every pre-existing draft deserializes without it;
+    # a derived draft leaves it None and inherits the flow by lineage.
+    guided_flow: GuidedFlowDeclaration | None = None
     phases: tuple[str, ...] = ()
     language: str | None = None
     created_at: str = ""
@@ -206,6 +244,9 @@ class PublishedVersion:
     source: str
     digest: str
     published_at: str
+    # Authored index trigger; None for pre-field records (renderer falls back
+    # to the bounded description).
+    trigger: str | None = None
     # Inventory metadata + system-derived classification/trust attributes
     # (Taller de Herramientas, Fase 1). Optional with defaults for
     # backward-compatible deserialization of old records.
@@ -227,6 +268,9 @@ class PublishedVersion:
     # deserialize safely; EXCLUDED from the manifest/digest (metadata, not
     # identity — like ``parent_skill_id``/``adjuntos``).
     trigger_approval: TriggerApproval | None = None
+    # Guided-flow declaration copied from the compiled contract (S1). Optional
+    # so every pre-existing published record deserializes without it.
+    guided_flow: GuidedFlowDeclaration | None = None
 
 
 @dataclass(frozen=True)
@@ -341,6 +385,8 @@ class MethodologyLibrary:
         name: str,
         source: str,
         description: str = "",
+        trigger: str | None = None,
+        guided_flow: GuidedFlowDeclaration | None = None,
         phases: tuple[str, ...] = (),
         language: str | None = None,
         taller: str | None = None,
@@ -361,6 +407,10 @@ class MethodologyLibrary:
                 "name": name,
                 "source": source,
                 "description": description,
+                "trigger": trigger,
+                "guided_flow": (
+                    guided_flow.as_dict() if guided_flow is not None else None
+                ),
                 "phases": list(phases),
                 "language": language,
                 "taller": taller,
@@ -436,6 +486,9 @@ class MethodologyLibrary:
                 "description": (
                     description if description is not None else original.description
                 ),
+                # The index label travels with the fork; the flow does not
+                # (it is inherited by lineage at resolution time).
+                "trigger": original.trigger,
                 "phases": list(phases if phases is not None else original.phases),
                 "language": language if language is not None else original.language,
                 "taller": taller if taller is not None else original.taller,
@@ -493,6 +546,7 @@ class MethodologyLibrary:
         *,
         source: str | None = None,
         description: str | None = None,
+        trigger: str | None = None,
         name: str | None = None,
         phases: tuple[str, ...] | None = None,
         language: str | None = None,
@@ -533,6 +587,8 @@ class MethodologyLibrary:
                 record["source"] = source
             if description is not None:
                 record["description"] = description
+            if trigger is not None:
+                record["trigger"] = trigger
             if name is not None:
                 record["name"] = name
             if phases is not None:
@@ -572,13 +628,14 @@ class MethodologyLibrary:
         Normalizes ``text`` (whitespace-collapsed) and refuses an empty result
         or one longer than ``TRIGGER_INTAKE_LIMIT`` with ``TriggerInvalidError``
         (the server bound is authoritative over the client). Then, under ONE
-        lock, writes the normalized value as the draft's ``description`` AND the
+        lock, writes the normalized value as the draft's ``trigger`` AND the
         auditable ``trigger_approval`` sub-record in a single atomic save
-        (TD-B), so the approved value equals the draft description by
-        construction. The approval stays bound to the value it was granted for:
-        a later ``update_draft(description=...)`` does not mutate it
-        (distinctness — REQ ``skill-trigger-approval``). Raises ``KeyError`` for
-        an unknown draft.
+        (TD-B), so the approved trigger equals the rendered index label by
+        construction. The method ``description`` is never touched: it stays the
+        summary projected into the injected contract. The approval stays bound
+        to the trigger it was granted for, so a later
+        ``update_draft(trigger=...)`` invalidates it while a ``description``
+        edit does not. Raises ``KeyError`` for an unknown draft.
         """
         normalized = normalize_trigger(text)
         if not normalized or len(normalized) > TRIGGER_INTAKE_LIMIT:
@@ -596,7 +653,7 @@ class MethodologyLibrary:
             record = self._drafts.get(draft_id)
             if record is None:
                 raise KeyError(f"draft {draft_id!r} not found")
-            record["description"] = normalized
+            record["trigger"] = normalized
             record["trigger_approval"] = asdict(approval)
             self._save_locked()
         return approval
@@ -629,11 +686,15 @@ class MethodologyLibrary:
             "etiquetas": list(draft.etiquetas),
             "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
+        if draft.trigger is not None:
+            manifest["trigger"] = draft.trigger
+        if draft.guided_flow is not None:
+            manifest["guided_flow"] = draft.guided_flow.as_dict()
         return compile_methodology(manifest, draft.source)
 
     def manifest_for(self, draft: Draft) -> dict[str, Any]:
         """The bounded manifest a draft would compile under."""
-        return {
+        manifest = {
             "skill_id": draft.skill_id,
             "version": draft.version,
             "name": draft.name,
@@ -646,6 +707,11 @@ class MethodologyLibrary:
             "etiquetas": list(draft.etiquetas),
             "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
+        if draft.trigger is not None:
+            manifest["trigger"] = draft.trigger
+        if draft.guided_flow is not None:
+            manifest["guided_flow"] = draft.guided_flow.as_dict()
+        return manifest
 
     # ------------------------------------------------------------------ #
     # Publishing (immutable)
@@ -676,12 +742,12 @@ class MethodologyLibrary:
         now = _utcnow()
         with self._lock:
             draft_record = self._drafts.get(draft_id) or {}
-            # REQ-IMP-6: this id belongs to the author-created foundational
-            # character-creation skill and is never publishable from an import-derived
+            # REQ-IMP-6: this id is a reserved foundational skill (character- or
+            # system-creation) and is never publishable from an import-derived
             # draft (server-injected ``parent_skill_id``). The Skill Madre is a core
             # co-creation capability outside this library (G13) — no guard needed here.
             if (
-                compiled.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID
+                compiled.skill_id in FOUNDATIONAL_SKILL_IDS
                 and draft_record.get("parent_skill_id")
             ):
                 raise MethodologyLibraryError("reserved_skill_id")
@@ -708,16 +774,18 @@ class MethodologyLibrary:
             # Trigger approval gate (Etapa 2, TD-A). It sits AFTER the
             # idempotent early-return above so an identical re-publish is never
             # newly refused (forward-only grandfathering, D5), and it validates
-            # the digest of ``compiled.description`` — the exact value
-            # ``_published_record`` writes — so any change between approval and
-            # publish (including a last-moment ``draft_payload["description"]``
-            # sync) fails closed by construction. No immutable version is
+            # the digest of the effective trigger (``compiled.trigger`` or, for
+            # pre-field records, the description) — the exact value the renderer
+            # bounds for the index — so any change between approval and publish
+            # fails closed by construction. No immutable version is
             # created on refusal and no publish-side state advances.
             approval_record = draft_record.get("trigger_approval")
             if (
                 not approval_record
                 or approval_record.get("digest")
-                != normalized_trigger_digest(compiled.description)
+                != normalized_trigger_digest(
+                    compiled.trigger or compiled.description
+                )
             ):
                 raise TriggerNotApprovedError("trigger_not_approved")
             record = self._published_record(
@@ -788,6 +856,7 @@ class MethodologyLibrary:
             "version": compiled.version,
             "name": compiled.name,
             "description": compiled.description,
+            "trigger": compiled.trigger,
             "phases": list(compiled.phases),
             "language": compiled.language,
             "source": compiled.source,
@@ -807,6 +876,11 @@ class MethodologyLibrary:
             # (no draft, no approval) and for pre-Etapa-2 records; tolerant read.
             "trigger_approval": (
                 asdict(trigger_approval) if trigger_approval is not None else None
+            ),
+            # S1: present only when the compiled contract declared a flow.
+            "guided_flow": (
+                compiled.guided_flow.as_dict()
+                if compiled.guided_flow is not None else None
             ),
         }
 
@@ -897,6 +971,31 @@ class MethodologyLibrary:
                 if not r.get("deleted_at")
             ]
 
+    def latest_published(self, skill_id: str) -> PublishedVersion | None:
+        """Resolve the greatest non-deleted published version for ``skill_id``.
+
+        Transversal winners carry no activation pin, so the consumer seam needs
+        the newest published record by ``skill_id`` alone. Version ordering uses
+        ``_version_key`` (``1.10 > 1.9``); soft-deleted records and other
+        ``skill_id`` values are skipped. Returns ``None`` when nothing matches.
+        """
+        with self._lock:
+            best = None
+            for record in self._published.values():
+                if record.get("skill_id") != skill_id or record.get("deleted_at"):
+                    continue
+                if best is None or _version_key(record["version"]) > _version_key(
+                    best["version"]
+                ):
+                    best = record
+            return self._published_from(best) if best else None
+
+    def is_deleted(self, skill_id: str, version: str) -> bool:
+        """True when the exact version exists but has been soft-deleted."""
+        with self._lock:
+            record = self._published.get(self._key(skill_id, version))
+            return bool(record is not None and record.get("deleted_at"))
+
     def soft_delete(self, skill_id: str, version: str) -> None:
         key = self._key(skill_id, version)
         with self._lock:
@@ -940,6 +1039,144 @@ class MethodologyLibrary:
                 raise NotPublishedError(f"{skill_id}@{version} is not published")
             record["deleted_at"] = None
             self._save_locked()
+
+    # ------------------------------------------------------------------ #
+    # Per-flow guided method eligibility
+    # ------------------------------------------------------------------ #
+
+    def is_guided_character_method(self, skill_id: str) -> bool:
+        """True when ``skill_id`` belongs to the character-creation family.
+
+        Compatibility wrapper over ``is_method_for_flow``: the character flow
+        keeps its lineage rule (foundational character skill, the builtin
+        contract id, and every skill derived through ``parent_skill_id``). A
+        skill that declares another flow is never a character method.
+        """
+        with self._lock:
+            return self._is_method_for_flow_locked(GUIDED_CHARACTER_FLOW, skill_id)
+
+    def is_method_for_flow(self, flow_id: str, skill_id: str) -> bool:
+        """True when ``skill_id`` may govern ``flow_id``.
+
+        Eligibility order (S6): an explicit declaration is authoritative and
+        binds the skill to exactly that flow; without a declaration, the
+        builtin character family keeps its lineage rule. Other flows have no
+        implicit eligibility — only a declared (or inherited) declaration.
+        """
+        with self._lock:
+            return self._is_method_for_flow_locked(flow_id, skill_id)
+
+    def _is_method_for_flow_locked(self, flow_id: str, skill_id: str) -> bool:
+        declared = self._declared_flow_locked(skill_id)
+        if declared is not None:
+            return declared == flow_id
+        if flow_id == GUIDED_CHARACTER_FLOW:
+            return self._is_guided_character_method_locked(skill_id)
+        return False
+
+    def _is_guided_character_method_locked(self, skill_id: str) -> bool:
+        current = skill_id
+        seen: set[str] = set()
+        for _ in range(32):
+            if current in GUIDED_CHARACTER_METHOD_ROOTS:
+                return True
+            if not current or current in seen:
+                return False
+            seen.add(current)
+            parent = self._parent_skill_id_locked(current)
+            if parent is None:
+                return False
+            current = parent
+        return False
+
+    def _declared_flow_locked(self, skill_id: str) -> str | None:
+        """Flow declared by ``skill_id`` or its nearest declaring ancestor."""
+        declaration = self._declared_declaration_locked(skill_id)
+        return declaration.flow_id if declaration is not None else None
+
+    def _declared_declaration_locked(
+        self, skill_id: str,
+    ) -> GuidedFlowDeclaration | None:
+        current = skill_id
+        seen: set[str] = set()
+        for _ in range(32):
+            if not current or current in seen:
+                return None
+            seen.add(current)
+            record = self._latest_published_record_locked(current)
+            if record is not None:
+                raw = record.get("guided_flow")
+                if isinstance(raw, Mapping):
+                    return GuidedFlowDeclaration.from_mapping(raw)
+            parent = self._parent_skill_id_locked(current)
+            if parent is None:
+                return None
+            current = parent
+        return None
+
+    def _latest_published_record_locked(self, skill_id: str) -> Mapping[str, Any] | None:
+        records = [
+            record
+            for record in self._published.values()
+            if record.get("skill_id") == skill_id and not record.get("deleted_at")
+        ]
+        if not records:
+            return None
+        return max(records, key=lambda record: _version_key(record["version"]))
+
+    def flow_profile_for(self, flow_id: str, skill_id: str) -> GuidedFlowProfile | None:
+        """Resolve the kernel profile a published method binds for ``flow_id``."""
+        with self._lock:
+            if not self._is_method_for_flow_locked(flow_id, skill_id):
+                return None
+            declaration = self._declared_declaration_locked(skill_id)
+        if declaration is not None:
+            profile = profile_for_declaration(declaration)
+            return profile if profile is not None and profile.flow_id == flow_id else None
+        return builtin_profile(flow_id)
+
+    def _parent_skill_id_locked(self, skill_id: str) -> str | None:
+        records = sorted(
+            (
+                record
+                for record in self._published.values()
+                if record.get("skill_id") == skill_id
+                and not record.get("deleted_at")
+                and record.get("parent_skill_id")
+            ),
+            key=lambda record: _version_key(record["version"]),
+        )
+        if not records:
+            return None
+        return str(records[-1]["parent_skill_id"])
+
+    def list_guided_methods(self) -> list[PublishedVersion]:
+        """Latest published version of every eligible character method."""
+        return self.list_methods_for_flow(GUIDED_CHARACTER_FLOW)
+
+    def list_methods_for_flow(self, flow_id: str) -> list[PublishedVersion]:
+        """Latest published version of every eligible method for ``flow_id``."""
+        with self._lock:
+            latest: dict[str, dict[str, Any]] = {}
+            for record in self._published.values():
+                if record.get("deleted_at"):
+                    continue
+                skill_id = str(record["skill_id"])
+                if not self._is_method_for_flow_locked(flow_id, skill_id):
+                    continue
+                current = latest.get(skill_id)
+                if current is None or _version_key(record["version"]) > _version_key(
+                    current["version"]
+                ):
+                    latest[skill_id] = record
+            ordered = sorted(
+                latest.values(),
+                key=lambda record: (
+                    str(record.get("name") or record["skill_id"]).lower(),
+                    str(record["skill_id"]),
+                ),
+            )
+            return [self._published_from(record) for record in ordered]
 
     # ------------------------------------------------------------------ #
     # Activation by world and flow type
@@ -1001,6 +1238,20 @@ class MethodologyLibrary:
                 if not flows:
                     self._activations.pop(world, None)
             self._save_locked()
+
+    def next_rollback(
+        self,
+        world: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> dict[str, Any] | None:
+        """Read-only peek at the record a ``rollback`` would restore.
+
+        Used by the API boundary to refuse restoring an ineligible guided
+        method before any mutation (S4).
+        """
+        with self._lock:
+            history = (self._history.get(world) or {}).get(flow_type) or []
+            return dict(history[-1]) if history else None
 
     def rollback(
         self,
@@ -1252,6 +1503,13 @@ class MethodologyLibrary:
             name=record["name"],
             source=record["source"],
             description=record.get("description", ""),
+            trigger=record.get("trigger"),
+            # Tolerant read: drafts predating the field deserialize to None.
+            guided_flow=(
+                GuidedFlowDeclaration.from_mapping(record["guided_flow"])
+                if isinstance(record.get("guided_flow"), Mapping)
+                else None
+            ),
             phases=tuple(record.get("phases", ())),
             language=record.get("language"),
             created_at=record.get("created_at", ""),
@@ -1283,6 +1541,7 @@ class MethodologyLibrary:
             version=record["version"],
             name=record["name"],
             description=record.get("description", ""),
+            trigger=record.get("trigger"),
             phases=tuple(record.get("phases", ())),
             language=record.get("language"),
             source=record["source"],
@@ -1304,6 +1563,11 @@ class MethodologyLibrary:
             trigger_approval=(
                 TriggerApproval(**record["trigger_approval"])
                 if record.get("trigger_approval")
+                else None
+            ),
+            guided_flow=(
+                GuidedFlowDeclaration.from_mapping(record["guided_flow"])
+                if isinstance(record.get("guided_flow"), Mapping)
                 else None
             ),
         )

@@ -102,9 +102,10 @@ class TestApprovalRecord:
         draft = library.get_draft(draft_id)
         assert draft is not None
         assert draft.trigger_approval == approval
-        # TD-B: the approved value is written as the draft description in the
-        # same locked write.
-        assert draft.description == "Aprueba este gatillo"
+        # TD-B: the approved value is written as the draft trigger in the same
+        # locked write; the method description is never overwritten.
+        assert draft.trigger == "Aprueba este gatillo"
+        assert draft.description == "placeholder"
 
     def test_record_persists_across_reload(self, tmp_path: Path) -> None:
         path = tmp_path / "library.json"
@@ -189,6 +190,7 @@ class TestDistinctnessFromDraftDescription:
         draft = library.get_draft(draft_id)
         assert draft is not None
         assert draft.description == "Un gatillo distinto"
+        assert draft.trigger == "gatillo original"
         assert draft.trigger_approval == approval
         assert draft.trigger_approval is not None
         assert draft.trigger_approval.text == "gatillo original"
@@ -198,14 +200,18 @@ class TestDistinctnessFromDraftDescription:
     ) -> None:
         library = _library(tmp_path)
         plain = _draft(library, description="Gatillo coincidente")
-        approved = _draft(library, description="placeholder")
+        approved = _draft(library, description="Gatillo coincidente")
         library.approve_trigger(approved, "Gatillo coincidente", "author")
 
         plain_digest = library.compile_draft(plain).compiled.digest
         approved_digest = library.compile_draft(approved).compiled.digest
-        # Same description both sides; the additive trigger_approval field is
-        # metadata and must not enter the identity digest.
-        assert library.get_draft(approved).description == "Gatillo coincidente"
+        # A trigger identical to the method description is canonical-equivalent
+        # to having none: approving an unchanged description never moves a
+        # pre-existing digest.
+        approved_draft = library.get_draft(approved)
+        assert approved_draft is not None
+        assert approved_draft.trigger == "Gatillo coincidente"
+        assert approved_draft.description == "Gatillo coincidente"
         assert plain_digest == approved_digest
 
 

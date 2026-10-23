@@ -47,7 +47,7 @@
 | `shape` | **NUEVO**, derivado de `type` si falta | `entidad` \| `sistema` \| `cronologia` (`relacion` reservada) |
 | `canon_state` | **NUEVO**, derivado de `status` | 7 estados propios del mundo (ver §3) |
 | `type` | normalizado | lowercase + mapa de alias (`Criatura`→`criatura`) |
-| mínimos | por **forma** + extras por tipo | `entidad`=identidad; `sistema`=origen/fuente; `cronologia`=evento/fecha; `personaje` además=deseo |
+| mínimos | por **forma** + extras por tipo | `entidad`=identidad (+ `clase`, exigida al tipo genérico que escribe el flujo de entidad); `sistema`=identidad + origen/fuente + límite; `cronologia`=evento/fecha; `personaje` además=deseo |
 | `taller` | **NO va en la ficha** | registro aparte de qué formas/tipos muestra cada taller |
 
 **Lectura tolerante:** datos viejos siguen válidos (normalización + defaults, sin migración masiva).
@@ -96,6 +96,8 @@ Ejemplo de la pregunta 4 re-instanciada: magia → *energía/material*; economí
 
 ### 4.3 Rieles 40% (siempre verificables, pero semánticos — no campos)
 Un sistema está **incompleto** si no responde **origen (2) + exigencia-o-justificación (4) + límite (5)**. No son columnas de una ficha: son preguntas que **deben tener respuesta**. (En sistemas impersonales, la pregunta 4 se responde como "sin costo, impersonal".)
+
+**Envelope persistido (implementado):** la forma `sistema` exige además un límite en el frontmatter (`limite`/`limites`/`limitacion`/`limitaciones`) — "el límite no se evade" también en el archivo. El seed `narrative-system-creation@1.2` declara su flujo guiado `guided-system` y aterriza en `lore/` con `type: Sistema`.
 
 ### 4.4 Validación anti-sobreajuste (corregida)
 Hay que validar contra **al menos un sistema NO-mágico** (economía, ley o religión). La lista anterior (Vibrastal, La Fuerza, Dune, HP, Red Rising) era **toda mágica/blanda → sesgo de sobreajuste**.
@@ -294,7 +296,7 @@ Migración **por etapas**; el producto **sigue funcionando** hasta la Etapa 3. R
    - **Observabilidad de arranque:** el estado de registro es observable en el gestor de plugins (eventos de hook registrados: `pre_gateway_dispatch`, `pre_llm_call`, `pre_tool_call`) y en los logs del gateway (la carga del plugin emite los nombres de hook registrados); un registro ausente es detectable, no silencioso. Nota de la sonda: `hermes hooks list` solo lista shell hooks de config, no callbacks de plugin. La sonda de integración de este cambio verifica que ambos hooks estén vivos antes de que la Etapa 3 (el corte) pueda encender el toolset.
 
 ### Etapa 1 — Materializador (aditivo; escribe a *staging*, sin conectar)
-4. **Render** metodología → `SKILL.md` (gatillo ≤60; `version`/`scope`; cuerpo = método + reglas de co-creación; adjuntos; namespaces).
+4. **Render** metodología → `SKILL.md` (gatillo como campo `trigger` propio, ≤60 y separado de la descripción del método; `version`/`scope`; cuerpo = método + reglas de co-creación; adjuntos; namespaces).
 5. **Materializador + reconciliación** (transversal + mundo; atómico; GC de huérfanos contra la biblioteca).
 6. **Sesión nueva por mundo/revisión**.
 

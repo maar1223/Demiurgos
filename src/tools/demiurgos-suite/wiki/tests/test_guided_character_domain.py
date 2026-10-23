@@ -399,3 +399,304 @@ def test_resolve_candidate_nivel_table() -> None:
     assert resolve_candidate_nivel(CandidateState(
         accepted_canon={"nivel": "secundario"}, proposals={"nivel_narrativo": "3"},
     )) == "2º"
+
+
+# ---------------------------------------------------------------------------
+# Generic flow surface (S2/S3): the same domain rules driven by a profile.
+# ---------------------------------------------------------------------------
+
+
+def test_system_completion_gate_requires_identity_origin_and_limit() -> None:
+    from okf_contract import prompt_minimums_for
+
+    groups = prompt_minimums_for("sistema")
+    assert not candidate_minimum_complete(CandidateState(), groups=groups)
+    assert not candidate_minimum_complete(
+        CandidateState(proposals={"name": "Magia"}), groups=groups,
+    )
+    assert not candidate_minimum_complete(
+        CandidateState(proposals={"name": "Magia", "origen": "los dioses"}),
+        groups=groups,
+    )
+    assert candidate_minimum_complete(
+        CandidateState(proposals={
+            "name": "Magia", "origen": "los dioses", "limite": "no crea materia",
+        }),
+        groups=groups,
+    )
+
+
+def test_system_questions_walk_the_missing_group() -> None:
+    from okf_contract import prompt_minimums_for
+
+    groups = prompt_minimums_for("sistema")
+    keys = ("identity", "origin", "limit")
+    assert next_required_question(
+        CandidateState(), groups=groups, question_keys=keys, language="es",
+        ui_copy_key="system",
+    ) == "¿Cómo se llama este sistema?"
+    assert next_required_question(
+        CandidateState(proposals={"name": "Magia"}),
+        groups=groups, question_keys=keys, language="es",
+    ).startswith("¿De dónde vienen las reglas")
+    assert next_required_question(
+        CandidateState(proposals={"name": "Magia", "origen": "los dioses"}),
+        groups=groups, question_keys=keys, language="es",
+    ).startswith("¿Qué no puede hacer")
+
+
+def test_system_serializer_writes_the_kernel_section_and_type() -> None:
+    from guided_character_domain import serialize_entity
+
+    candidate = CandidateState(accepted_canon={
+        "name": "Magia", "origen": "los dioses", "limite": "no crea materia",
+    })
+    proposal = serialize_entity(
+        candidate, world="vibrantes", slug="magia", title="Magia",
+        entity_type="sistema", target_section="lore", type_label="Sistema",
+        provenance_default="guided-sistema-v1",
+        frontmatter_fields=("origen", "limite"),
+    )
+    assert proposal.target == "lore/magia.md"
+    frontmatter, body = proposal.content.split("---\n", 2)[1:]
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["type"] == "Sistema"
+    assert metadata["id"] == "magia"
+    assert metadata["origen"] == "los dioses"
+    assert metadata["limite"] == "no crea materia"
+    assert metadata["provenance"] == ["guided-sistema-v1"]
+    assert "## Identity" in body
+    from okf_contract import validate
+
+    assert validate(proposal.content).ok, validate(proposal.content).issues
+
+
+def test_system_intent_uses_the_declared_vocabulary() -> None:
+    from guided_character_domain import route_guided_intent
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    profile = resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-system",
+        "entity_type": "sistema",
+        "ui_copy_key": "system",
+        "index": True,
+        "intent": {"terms": ["sistema"], "verbs": ["crear", "diseñar"]},
+    }))
+    assert profile is not None
+    assert route_guided_intent("Quiero crear un sistema de magia", profile).is_new_entity
+    assert route_guided_intent("Quiero diseñar un sistema económico", profile).is_new_entity
+    assert not route_guided_intent("Editar el sistema existente", profile).is_new_entity
+    assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+
+
+def _chronology_profile():
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    return resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-chronology",
+        "entity_type": "cronologia",
+        "ui_copy_key": "chronology",
+        "index": True,
+        "intent": {
+            "terms": ["cronología", "cronologia", "suceso", "era"],
+            "verbs": ["crear", "narrar", "registrar"],
+        },
+    }))
+
+
+def test_chronology_questions_walk_the_missing_group() -> None:
+    profile = _chronology_profile()
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+
+    def ask(candidate: CandidateState) -> str:
+        return next_required_question(
+            candidate, language="es",
+            groups=profile.minimum_groups, question_keys=profile.question_keys,
+            ui_copy_key=profile.ui_copy_key,
+        )
+
+    assert ask(CandidateState()) == "¿Cómo se llama este suceso o era?"
+    assert ask(CandidateState(accepted_canon={"name": {"value": "La Caída"}})).startswith(
+        "¿Qué suceso o era quieres registrar"
+    )
+
+
+def test_chronology_questions_are_english_in_english() -> None:
+    profile = _chronology_profile()
+    assert profile is not None
+    assert next_required_question(
+        CandidateState(), language="en",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    ) == "What is this event or era called?"
+
+
+def test_chronology_serializer_writes_the_kernel_section_and_type() -> None:
+    from guided_character_domain import serialize_entity
+
+    candidate = CandidateState(accepted_canon={
+        "name": "La Caída", "evento": "El imperio se parte en dos",
+    })
+    proposal = serialize_entity(
+        candidate, world="vibrantes", slug="la-caida", title="La Caída",
+        entity_type="cronologia", target_section="lore", type_label="Cronologia",
+        provenance_default="guided-cronologia-v1",
+        frontmatter_fields=("evento",),
+    )
+    assert proposal.target == "lore/la-caida.md"
+    frontmatter, body = proposal.content.split("---\n", 2)[1:]
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["type"] == "Cronologia"
+    assert metadata["id"] == "la-caida"
+    assert metadata["evento"] == "El imperio se parte en dos"
+    assert metadata["provenance"] == ["guided-cronologia-v1"]
+    assert "## Identity" in body
+    from okf_contract import validate
+
+    assert validate(proposal.content).ok, validate(proposal.content).issues
+
+
+def test_chronology_intent_uses_the_declared_vocabulary() -> None:
+    from guided_character_domain import route_guided_intent
+
+    profile = _chronology_profile()
+    assert profile is not None
+    assert route_guided_intent("Quiero crear una cronología", profile).is_new_entity
+    assert route_guided_intent("Quiero narrar un suceso de la historia", profile).is_new_entity
+    assert route_guided_intent("Quiero registrar una era", profile).is_new_entity
+    assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+    assert not route_guided_intent("Editar la cronología existente", profile).is_new_entity
+
+
+def _entity_profile():
+    from guided_flow import GuidedFlowDeclaration, resolve_profile
+
+    return resolve_profile(GuidedFlowDeclaration.from_mapping({
+        "flow_id": "guided-entity",
+        "entity_type": "entidad",
+        "ui_copy_key": "entity",
+        "index": True,
+        "intent": {
+            "terms": [
+                "entidad", "lugar", "lugares", "facción", "faccion",
+                "criatura", "criaturas", "artefacto", "cultura", "especie",
+            ],
+            "verbs": ["crear", "inventar", "diseñar"],
+        },
+    }))
+
+
+def test_entity_questions_walk_identity_then_class() -> None:
+    profile = _entity_profile()
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+
+    def ask(candidate: CandidateState) -> str:
+        return next_required_question(
+            candidate, language="es",
+            groups=profile.minimum_groups, question_keys=profile.question_keys,
+            ui_copy_key=profile.ui_copy_key,
+        )
+
+    assert ask(CandidateState()) == "¿Cómo se llama esta entidad?"
+    class_question = ask(
+        CandidateState(accepted_canon={"name": {"value": "Ruinas de Vhal"}})
+    )
+    assert class_question.startswith("¿Qué clase de entidad es?")
+    for clase in ("lugar", "facción", "criatura", "artefacto", "cultura", "especie"):
+        assert clase in class_question, clase
+
+
+def test_entity_completion_gate_requires_the_class() -> None:
+    profile = _entity_profile()
+    assert profile is not None
+    name_only = CandidateState(accepted_canon={"name": {"value": "Ruinas de Vhal"}})
+    assert not candidate_minimum_complete(name_only, groups=profile.minimum_groups)
+    with_class = CandidateState(accepted_canon={
+        "name": {"value": "Ruinas de Vhal"},
+        "clase": {"value": "lugar"},
+    })
+    assert candidate_minimum_complete(with_class, groups=profile.minimum_groups)
+
+
+def test_entity_questions_are_english_in_english() -> None:
+    profile = _entity_profile()
+    assert profile is not None
+    assert next_required_question(
+        CandidateState(), language="en",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    ) == "What is this entity called?"
+    assert next_required_question(
+        CandidateState(accepted_canon={"name": {"value": "Vhal"}}), language="en",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    ).startswith("What kind of entity is it?")
+
+
+def test_entity_serializer_writes_lore_and_the_class() -> None:
+    from guided_character_domain import serialize_entity
+
+    candidate = CandidateState(accepted_canon={
+        "name": "Ruinas de Vhal",
+        "clase": "lugar",
+        "function": "Marca el límite del reino",
+    })
+    proposal = serialize_entity(
+        candidate, world="vibrantes", slug="ruinas-de-vhal",
+        title="Ruinas de Vhal",
+        entity_type="entidad", target_section="lore", type_label="Entidad",
+        provenance_default="guided-entidad-v1",
+        frontmatter_fields=("clase",),
+    )
+    assert proposal.target == "lore/ruinas-de-vhal.md"
+    frontmatter = proposal.content.split("---\n", 2)[1]
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["type"] == "Entidad"
+    assert metadata["id"] == "ruinas-de-vhal"
+    assert metadata["clase"] == "lugar"
+    assert metadata["provenance"] == ["guided-entidad-v1"]
+    from okf_contract import validate
+
+    validation = validate(proposal.content)
+    assert validation.ok, validation.issues
+
+
+def test_entity_intent_uses_the_declared_vocabulary() -> None:
+    from guided_character_domain import route_guided_intent
+
+    profile = _entity_profile()
+    assert profile is not None
+    for prompt in (
+        "Quiero crear un lugar",
+        "Quiero crear una facción",
+        "Quiero crear una criatura",
+        "Quiero inventar un artefacto",
+        "Quiero diseñar una cultura",
+    ):
+        assert route_guided_intent(prompt, profile).is_new_entity, prompt
+    assert not route_guided_intent("Háblame de los personajes", profile).is_new_entity
+    assert not route_guided_intent("Editar una cultura existente", profile).is_new_entity
+
+
+def test_character_profile_keeps_name_then_desire_question_order() -> None:
+    """S5 regression: the profile-derived character gate must not add a third
+    identity group (which would repeat the name question forever)."""
+    from guided_flow import builtin_profile
+
+    profile = builtin_profile("guided-character")
+    assert profile is not None
+    assert len(profile.minimum_groups) == len(profile.question_keys) == 2
+    first = next_required_question(
+        CandidateState(), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    second = next_required_question(
+        CandidateState(accepted_canon={"name": {"value": "Aria"}}), language="es",
+        groups=profile.minimum_groups, question_keys=profile.question_keys,
+        ui_copy_key=profile.ui_copy_key,
+    )
+    assert first == "¿Cómo se llama este personaje?"
+    assert second == "¿Cuál es el deseo que define a este personaje?"

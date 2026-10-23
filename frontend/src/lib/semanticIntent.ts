@@ -1,4 +1,9 @@
-import type { AppLanguage, EditProposal, GuidedCharacterSession } from "@/api/types";
+import type {
+  AppLanguage,
+  EditProposal,
+  GuidedCharacterSession,
+  GuidedFlowEcho,
+} from "@/api/types";
 import { translate } from "@/i18n/messages";
 
 /**
@@ -32,7 +37,7 @@ export type SemanticClientOutcome =
   | { kind: "question"; text: string }
   | { kind: "confirmation"; text: string; guided: GuidedCharacterSession }
   | { kind: "review"; text: string; proposal: EditProposal; guided?: GuidedCharacterSession }
-  | { kind: "suggestion"; text: string; consentToken: string }
+  | { kind: "suggestion"; text: string; consentToken: string; flow?: GuidedFlowEcho }
   | { kind: "blocked"; text: string };
 
 const KNOWN_STATES = new Set([
@@ -123,6 +128,21 @@ function toEditProposal(value: Record<string, unknown>): EditProposal | null {
  * shape stays fail-closed, so a malformed or legacy envelope can never be
  * read as permission to open the guided surface.
  */
+function toFlowEcho(value: unknown): GuidedFlowEcho | undefined {
+  if (!isRecord(value)) return undefined;
+  const { flow_id, entity_type, target_section, ui_copy_key } = value;
+  if (
+    typeof flow_id !== "string" || !flow_id ||
+    typeof entity_type !== "string" || !entity_type ||
+    typeof target_section !== "string" || !target_section ||
+    (ui_copy_key !== "character" && ui_copy_key !== "system" &&
+      ui_copy_key !== "chronology" && ui_copy_key !== "entity")
+  ) {
+    return undefined;
+  }
+  return { flow_id, entity_type, target_section, ui_copy_key };
+}
+
 function toConsentSuggestion(
   value: Record<string, unknown>,
 ): SemanticClientOutcome | null {
@@ -130,7 +150,12 @@ function toConsentSuggestion(
   if (isGuidedSession(value.guided_state)) return null;
   if (typeof value.consent_token !== "string" || !value.consent_token) return null;
   const text = typeof value.response === "string" ? value.response : "";
-  return { kind: "suggestion", text, consentToken: value.consent_token };
+  return {
+    kind: "suggestion",
+    text,
+    consentToken: value.consent_token,
+    flow: toFlowEcho(value.flow),
+  };
 }
 
 export function mapSemanticDecision(

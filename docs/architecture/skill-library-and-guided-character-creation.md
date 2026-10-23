@@ -406,6 +406,19 @@ Los demás ejemplos (detalle que profundiza el mundo, hecho vs hipótesis, refer
 - La relación permanece en la partición **`proposals`** (o como aclaración pendiente) hasta la **aprobación explícita del Autor**; nunca se promueve a canon automáticamente.
 - Crear un personaje **relacionado** es una **rama/contexto de la Skill general de creación de personajes**, no una Skill separada (ver árbol/scoping, 3.3).
 
+### 10.7 Motor de flujos guiados agnóstico `[ACTUAL]`
+
+El motor dejó de estar cableado a personajes. Una metodología publicada declara su flujo en el manifest (`guided_flow`) y el servidor resuelve un **perfil** (`GuidedFlowProfile`) que fija la sección de destino, el tipo, los grupos de completitud, las preguntas, el copy y los campos de envelope. El perfil se fija en el snapshot de la sesión junto al método.
+
+- **Frontera de autoridad**: la skill declara la *forma* (`entity_type`), el vocabulario de intención, la clave de copy y si indexa; el **kernel** decide la sección (`personaje` → `personajes/`, `sistema`/`cronologia`/`entidad` → `lore/`), los mínimos (`okf_contract`) y el tipo escrito. Una declaración que intente reclamar persistencia o mínimos falla en publish.
+- **Personaje** sigue siendo el contrato integrado (`guided-character-v1`); su familia conserva la regla de linaje y su comportamiento byte a byte. **Sistemas** es el primer flujo declarado (`narrative-system-creation@1.2`): su ficha aterriza en `lore/`, con `type: Sistema` y mínimos identidad + origen + límite, y se indexa desde el grafo.
+- **Cronología** es el segundo flujo declarado (`narrative-chronology-creation@1.2`): su ficha aterriza en `lore/`, con `type: Cronologia` y mínimos identidad + `evento`, y se indexa desde el grafo. Su vocabulario de intención (`cronología`, `suceso`, `era`) lo resuelve el servidor en chat; el método `1.0` permanece sin declaración en el historial.
+- **Entidad** es el tercer flujo declarado (`narrative-entity-creation@1.0`): su ficha aterriza en `lore/` con `type: Entidad` y mínimos identidad + `clase`, y se indexa desde el grafo. La clase (lugar, facción, criatura, artefacto, cultura, especie) es un campo, no el `type`: el dominio es parámetro, no código. Su vocabulario de intención (`entidad`, `lugar`, `facción`, `criatura`, `artefacto`, `cultura`, `especie`) lo resuelve el servidor en chat.
+- **Elegibilidad**: declaración autoritativa + herencia por `parent_skill_id`; un método de otro flujo se rechaza en el arranque, la activación y el rollback (422, cero mutación). Una skill derivada hereda el flujo de su raíz; una importada conserva la declaración validada de su paquete (el import no inventa ninguna) y, si su paquete no declaró flujo, no gobierna ninguno.
+- **Fidelidad del paquete**: el export incluye `trigger` y `guided_flow` cuando el registro publicado los tiene (y los omite cuando no, manteniendo el paquete previo byte-compatible); la promoción de un import conserva ambos en el borrador, de modo que el round-trip no pierde la etiqueta del índice ni la elegibilidad de flujo. Un borrador nunca gobierna el runtime por sí solo.
+- **Sesión**: el perfil queda fijado al crear la sesión. Cambiar el método o republicar no altera sesiones existentes; solo se rechaza si la versión fijada desaparece.
+- **API**: `/api/{mundo}/guided/*` es la forma genérica; `/guided-character/*` se conserva como alias. El estado público y la sugerencia de consentimiento ecoan el flujo; la lista de métodos se pide por flujo.
+
 ---
 
 ## 11. Principio 40/60
@@ -560,6 +573,7 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 - **C8.** El gate semántico (Hermes) es la frontera de intención; sin fallback léxico autónomo como autoridad.
 - **C9.** La constitución global prevalece sobre este documento; este documento no duplica la definición global (sección 0).
 - **C10.** La co-creación, la intención semántica y la **Skill Madre** son decisiones globales de la constitución (secciones 2.3, 5, G13/10.5); esta iniciativa las referencia sin duplicarlas y regula solo la **biblioteca gestionada por el Autor**.
+- **C12.** El motor guiado es agnóstico: la skill declara la forma y el kernel conserva la sección de destino y los mínimos. `guided-character` conserva su contrato integrado; `guided-system` es el primer flujo declarado. Una skill co-creada o importada hereda el flujo por linaje y no declara uno propio en esta fase (sección 10.7).
 - **C11.** El **diseño UX del Taller de Herramientas y de la co-creación con la Skill Madre** está cerrado y consolidado en el contrato de superficie `docs/architecture/tool-workshop.md` (decisiones TW1–TW19): selector/árbol, estados, categorías, Skill Madre, detección/handoff, ritmo conversacional, borrador visual, adaptación, revisión/publicación y transparencia. Este documento referencia ese contrato sin duplicarlo.
 
 ### 16.2 Decisiones 16.a–16.w (todas cerradas; las de superficie 16.l–16.w se consolidan en `tool-workshop.md`, TW1–TW19)

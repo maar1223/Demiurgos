@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { TallerExplorerSidebar } from "@/components/organisms/TallerExplorerSidebar";
 import type { MethodologyStatus, WorldInfo } from "@/api/types";
 
@@ -13,8 +13,7 @@ const worlds: WorldInfo[] = [
   },
 ];
 
-/** One published skill that is ON as a companion in "Vibrantes" (no slot
- *  activation — the companion badge is independent of it). */
+/** One published skill that is added to the chat of "Vibrantes". */
 const status: MethodologyStatus = {
   published: [
     {
@@ -67,14 +66,13 @@ function renderSidebar(
   return props;
 }
 
-describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
+describe("TallerExplorerSidebar chat badge (S1)", () => {
   it("marks ON rows whose skill is an active companion in the current world", () => {
     renderSidebar();
 
-    expect(screen.getByText("Eneagrama")).toBeInTheDocument();
-    // "Método en chat" renders as an attributed axis-2 chip (axis-binding-ui R1) —
-    // copy committed in ⑥, the assertion targets the attributed surface.
-    const companionChip = screen.getByText("Método en chat").closest("[data-axis]");
+    const row = screen.getByText("Eneagrama").closest("li") as HTMLElement;
+    // "En el chat" renders as an attributed companion-axis chip.
+    const companionChip = within(row).getByText("En el chat").closest("[data-axis]");
     expect(companionChip).toHaveAttribute("data-axis", "companion");
   });
 
@@ -82,7 +80,7 @@ describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
     renderSidebar({ status: { ...status, companions: {} } });
 
     expect(screen.getByText("Eneagrama")).toBeInTheDocument();
-    expect(screen.queryByText("Método en chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("En el chat")).not.toBeInTheDocument();
   });
 
   it("renders the lens toggle above the world selector (header order)", () => {

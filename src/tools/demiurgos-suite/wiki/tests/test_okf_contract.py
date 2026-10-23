@@ -150,6 +150,41 @@ class TestOkfMinimums(unittest.TestCase):
         validation = validate(_personaje_complete())
         self.assertTrue(validation.ok, validation.issues)
 
+    def test_entity_type_requires_the_class(self) -> None:
+        """S3: the kernel-owned `entidad` minimum is identity + class.
+
+        The skill never declares it; without `clase` the ficha is incomplete,
+        because the persisted type is generic and the class is the only marker
+        that says which domain the entity belongs to.
+        """
+        groups = minimums_for("entidad")
+        self.assertEqual(len(groups), 2, "entity requires identity + class")
+
+        validation = validate("---\ntype: Entidad\ntitle: Ruinas de Vhal\n---\n")
+        self.assertFalse(validation.ok)
+        class_issue = next(
+            (issue for issue in validation.issues
+             if issue.code == "missing-minimum" and issue.field
+             and "clase" in issue.field),
+            None,
+        )
+        self.assertIsNotNone(class_issue, validation.issues)
+
+    def test_entity_with_class_validates_clean(self) -> None:
+        validation = validate(
+            "---\ntype: Entidad\ntitle: Ruinas de Vhal\nclase: lugar\n---\n"
+            "Cuerpo\n"
+        )
+        self.assertTrue(validation.ok, validation.issues)
+
+    def test_entity_prompt_groups_are_name_then_class(self) -> None:
+        from wiki.okf_contract import prompt_minimums_for
+
+        groups = prompt_minimums_for("entidad")
+        self.assertEqual(len(groups), 2)
+        self.assertIn("title", groups[0])
+        self.assertIn("clase", groups[1])
+
     def test_minimums_are_extensible_per_type(self) -> None:
         register_minimums("lugar", ("poblacion",))
         try:
@@ -603,16 +638,40 @@ class TestEnvelopeDerivation(unittest.TestCase):
 class TestShapeMinimums(unittest.TestCase):
     """Shape base minimums compose with type-specific extras."""
 
-    def test_sistema_requires_origen(self) -> None:
+    def test_sistema_requires_identity_origin_and_limit(self) -> None:
         missing = validate("---\ntype: sistema\ntitle: Magia\n---\nCuerpo\n")
         codes = {issue.code for issue in missing.issues}
         self.assertIn("missing-minimum", codes)
         self.assertFalse(missing.ok)
 
         complete = validate(
-            "---\ntype: sistema\norigen: los dioses\n---\nCuerpo\n"
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "origen: los dioses\nlimite: no crea materia\n---\nCuerpo\n"
         )
         self.assertTrue(complete.ok, complete.issues)
+
+    def test_sistema_without_limit_is_incomplete(self) -> None:
+        # Locked rail: "el límite no se evade" — origin alone is not enough.
+        partial = validate(
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "origen: los dioses\n---\nCuerpo\n"
+        )
+        self.assertFalse(partial.ok)
+        self.assertIn(
+            "limit, limitacion, limitaciones, limite, limites, limits",
+            {issue.field for issue in partial.issues},
+        )
+
+    def test_sistema_without_origin_is_incomplete(self) -> None:
+        partial = validate(
+            "---\ntype: sistema\nid: magia\ntitle: Magia\n"
+            "limite: no crea materia\n---\nCuerpo\n"
+        )
+        self.assertFalse(partial.ok)
+        self.assertIn(
+            "fuente, origen, premisa, principio, source",
+            {issue.field for issue in partial.issues},
+        )
 
     def test_cronologia_requires_event_field(self) -> None:
         missing = validate("---\ntype: cronologia\ntitle: Era\n---\nCuerpo\n")

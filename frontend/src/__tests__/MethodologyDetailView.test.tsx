@@ -73,12 +73,15 @@ describe("MethodologyDetailView (SC-SB-3)", () => {
     render(<MethodologyDetailView selected={selected} />);
 
     // Metadata header card: name as h2 (distinct from the h1 the markdown
-    // source renders), identity line, description.
+    // source renders) and identity line. The trigger/description is NOT
+    // repeated here: it lives once, in the right state panel.
     expect(
       await screen.findByRole("heading", { level: 2, name: "Eneagrama" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/eneagrama@1\.2\.0/)).toBeInTheDocument();
-    expect(screen.getByText("Tipos de personalidad")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Tipos de personalidad"),
+    ).not.toBeInTheDocument();
     // Source body rendered via MarkdownViewer.
     expect(screen.getByText(/Modelar los nueve eneatipos/)).toBeInTheDocument();
     expect(mockGetPublishedDetail).toHaveBeenCalledWith("eneagrama", "1.2.0");

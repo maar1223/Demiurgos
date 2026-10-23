@@ -56,18 +56,12 @@ const status: MethodologyStatus = {
 
 const selected = { skill_id: "eneagrama", version: "1.2.0" };
 
-/** Registry scope term for axis-3 — reverse lookup so the test never
+/** Registry scope term for the scope axis — reverse lookup so the test never
  *  hardcodes the vocabulary (spec R1: visible text equals registry value). */
 const SCOPE_TERM =
   Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? "";
 
-/** REQ-TRE-6 S1 conflict copy — verbatim, taller names interpolated via
- *  OPERATIONAL_TALLER_LABELS (Taller de Mundo / Taller de Ideas). */
-const BLOCKED_COPY =
-  "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.";
-
-/** A transversal skill of the active taller "Mundo" (own taller Ideas) that
- *  is NOT active and NOT blocked — the scope block surface. */
+/** A transversal skill of the active taller "Mundo" (own taller Ideas). */
 const transversalStatus: MethodologyStatus = {
   published: [
     {
@@ -84,46 +78,6 @@ const transversalStatus: MethodologyStatus = {
   activations: {},
   drafts: [],
 };
-
-/** Blocked scenario (REQ-TRE-5): the Ideas slot in world "nec" is taken by
- *  sk-ideas-activa, so the Ideas-transversal sk-ideas-bloqueada is blocked
- *  for the active taller "Mundo". */
-const blockedStatus: MethodologyStatus = {
-  published: [
-    {
-      skill_id: "sk-ideas-activa",
-      version: "1.0.0",
-      name: "Skill ideas activa",
-      description: "",
-      digest: "f",
-      published_at: "2026-01-01",
-      taller: "Ideas",
-      talleres_compatibles: ["Mundo"],
-    },
-    {
-      skill_id: "sk-ideas-bloqueada",
-      version: "1.0.0",
-      name: "Skill ideas bloqueada",
-      description: "",
-      digest: "g",
-      published_at: "2026-01-01",
-      taller: "Ideas",
-      talleres_compatibles: ["Mundo"],
-    },
-  ],
-  activations: {
-    nec: {
-      world: "nec",
-      skill_id: "sk-ideas-activa",
-      version: "1.0.0",
-      digest: "f",
-      activated_at: "2026-01-01",
-    },
-  },
-  drafts: [],
-};
-
-const blockedSelected = { skill_id: "sk-ideas-bloqueada", version: "1.0.0" };
 
 /** Status carrying one active companion (eneagrama@1.2.0) in world "nec". */
 const companionStatus: MethodologyStatus = {
@@ -150,8 +104,6 @@ function renderPanel(
     lens: "mi-mundo" as const,
     world: "nec",
     activeTaller: "Mundo",
-    onActivate: vi.fn(),
-    onDeactivate: vi.fn(),
     onAdaptar: vi.fn(),
     onComparar: vi.fn(),
     onExportar: vi.fn(),
@@ -165,59 +117,47 @@ function renderPanel(
 }
 
 describe("MethodologyStatePanel (SC-SB-4)", () => {
-  it("renders versions/activations filtered by skill_id", () => {
+  it("renders versions filtered by skill_id and no activation line (S1/S2)", () => {
     renderPanel();
 
-    // Only eneagrama versions are listed (SC-SB-4: filtered by skill_id) —
-    // "otra-skill" is not in the list, "1.3.0" is.
     expect(screen.getByText("v1.2.0")).toBeInTheDocument();
     expect(screen.getByText("v1.3.0")).toBeInTheDocument();
     expect(screen.queryByText("v1.0.0")).not.toBeInTheDocument();
-    // The 1.2.0 activation for world "nec" surfaces as "Activa en nec".
-    expect(screen.getByText("Activa en nec")).toBeInTheDocument();
+    expect(screen.queryByText(/Activa en/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activar" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Desactivar" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows Activar + Adaptar in mi-mundo (SC-SB-4.1)", () => {
-    // 1.3.0 is published but NOT the world activation — Activar stays enabled.
+  it("shows Adaptar in mi-mundo (SC-SB-4.1)", () => {
     const props = renderPanel({
       selected: { skill_id: "eneagrama", version: "1.3.0" },
     });
 
-    const activar = screen.getByRole("button", { name: "Activar" });
     const adaptar = screen.getByRole("button", { name: "Adaptar" });
-    expect(activar).toBeInTheDocument();
     expect(adaptar).toBeInTheDocument();
-    expect(activar).toBeEnabled();
-
-    fireEvent.click(activar);
-    expect(props.onActivate).toHaveBeenCalledWith("eneagrama", "1.3.0");
-  });
-
-  it("shows an enabled Desactivar button for the active version and fires onDeactivate (REQ-TRE-7)", () => {
-    // Default fixture: eneagrama@1.2.0 IS activations.nec — the action slot
-    // carries the real deactivate affordance instead of a dead-end "Activada".
-    const props = renderPanel();
-
-    const desactivar = screen.getByRole("button", { name: "Desactivar" });
-    expect(desactivar).toBeEnabled();
+    expect(adaptar).toHaveAttribute(
+      "title",
+      "Deriva una versión editable de esta publicación.",
+    );
     expect(
       screen.queryByRole("button", { name: "Activar" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Activada" }),
-    ).not.toBeInTheDocument();
 
-    fireEvent.click(desactivar);
-    expect(props.onDeactivate).toHaveBeenCalledWith("eneagrama", "1.2.0");
+    fireEvent.click(adaptar);
+    expect(props.onAdaptar).toHaveBeenCalledWith(
+      expect.objectContaining({ skill_id: "eneagrama", version: "1.3.0" }),
+    );
   });
 
-  it("shows Adaptar + Comparar + Exportar and NO Activar in catalogo (SC-SB-4.2)", () => {
+  it("shows Adaptar + Comparar + Exportar and no chat block in catalogo (SC-SB-4.2)", () => {
     const props = renderPanel({ lens: "catalogo-total" as const });
 
     expect(screen.getByRole("button", { name: "Adaptar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Comparar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exportar" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Activar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Chat de nec")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Comparar" }));
     expect(props.onComparar).toHaveBeenCalledWith(
@@ -240,12 +180,8 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
   });
 
   it("switches the selection when a version row is clicked (UL-3)", () => {
-    const props = renderPanel({
-      onSelect: vi.fn(),
-    });
+    const props = renderPanel({ onSelect: vi.fn() });
 
-    // Versiones rows are clickable buttons: clicking v1.3.0 reports the new
-    // selection upward (spec UL-3 S1).
     fireEvent.click(screen.getByText("v1.3.0"));
     expect(props.onSelect).toHaveBeenCalledWith({
       skill_id: "eneagrama",
@@ -278,8 +214,6 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     });
 
     expect(screen.getByText("Comparación")).toBeInTheDocument();
-
-    // The clear control moved with the panel (REQ-LIB-7).
     fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
     expect(props.onCompareClear).toHaveBeenCalled();
   });
@@ -316,61 +250,7 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     );
   });
 
-  it("shows consequence tooltips on the Activar and Adaptar actions (UC-6)", () => {
-    renderPanel({ selected: { skill_id: "eneagrama", version: "1.3.0" } });
-
-    expect(screen.getByRole("button", { name: "Activar" })).toHaveAttribute(
-      "title",
-      "Activa esta versión para nuevas sesiones en el mundo seleccionado.",
-    );
-    expect(screen.getByRole("button", { name: "Adaptar" })).toHaveAttribute(
-      "title",
-      "Deriva una versión editable de esta publicación.",
-    );
-  });
-
-  it("reflects a companion chip ON from status and lists the ON entry (R-UI chips)", () => {
-    const props = renderPanel({ status: companionStatus });
-
-    const chip = screen.getByRole("switch", { name: "Metodología de chat en nec" });
-    expect(chip).toHaveAttribute("aria-checked", "true");
-
-    // Flipping the ON chip OFF reports the toggle with the selected version.
-    fireEvent.click(chip);
-    expect(props.onToggleCompanion).toHaveBeenCalledWith(
-      "eneagrama",
-      "1.2.0",
-      false,
-    );
-
-    // The companion list shows the active entry with an OFF button.
-    expect(screen.getByText("eneagrama@1.2.0")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
-    expect(props.onToggleCompanion).toHaveBeenCalledWith(
-      "eneagrama",
-      "1.2.0",
-      false,
-    );
-  });
-
-  it("keeps the chip OFF for a selected version that is not a companion (R-UI chips)", () => {
-    renderPanel({
-      status: companionStatus,
-      selected: { skill_id: "eneagrama", version: "1.3.0" },
-    });
-
-    expect(screen.getByRole("switch", { name: "Metodología de chat en nec" })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-  });
-
-  it("never renders the word slot in the panel (R-UI slot vocabulary)", () => {
-    renderPanel({ status: companionStatus });
-    expect(screen.queryByText(/slot/i)).not.toBeInTheDocument();
-  });
-
-  it("shows the latency notice for the world just activated (R-UI notice)", () => {
+  it("shows the latency notice for the world just added (R-UI notice)", () => {
     renderPanel({ latencyNoticeWorld: "nec" });
     expect(
       screen.getByText(
@@ -398,95 +278,261 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
   });
 });
 
-describe("axis-binding-ui panel blocks (R3 / REQ-TRE-6)", () => {
-  it("shows the registry scope term in the Alcance de taller block for a transversal skill (R3)", () => {
+describe("chat block (S1/S2/S5)", () => {
+  it("names the world and explains that the chat routes on its own", () => {
+    renderPanel();
+    expect(screen.getByText("Chat de nec")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "El chat elige solo entre estas skills según la conversación.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("adds the selected version to the chat when it is not there", () => {
+    const props = renderPanel({ selected: { skill_id: "eneagrama", version: "1.3.0" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Añadir al chat" }));
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.3.0",
+      true,
+    );
+  });
+
+  it("removes the selected version from the chat when it is already there", () => {
+    const props = renderPanel({ status: companionStatus });
+
+    fireEvent.click(screen.getByRole("button", { name: "Quitar del chat" }));
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      false,
+    );
+  });
+
+  it("offers only the selected skill's chat action, never another skill's", () => {
+    const props = renderPanel({
+      status: {
+        ...status,
+        companions: {
+          nec: [
+            {
+              world: "nec",
+              skill_id: "eneagrama",
+              version: "1.2.0",
+              description: "",
+              activated_at: "2026-01-03",
+            },
+            {
+              world: "nec",
+              skill_id: "otra-skill",
+              version: "1.0.0",
+              description: "",
+              activated_at: "2026-01-04",
+            },
+          ],
+        },
+      },
+    });
+
+    const removers = screen.getAllByRole("button", { name: "Quitar del chat" });
+    expect(removers).toHaveLength(1);
+    expect(screen.queryByText("otra-skill@1.0.0")).not.toBeInTheDocument();
+
+    fireEvent.click(removers[0]);
+    expect(props.onToggleCompanion).toHaveBeenCalledTimes(1);
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      false,
+    );
+  });
+});
+
+describe("chat membership with a pinned older version", () => {
+  const pinned: MethodologyStatus = {
+    ...status,
+    companions: {
+      nec: [
+        {
+          world: "nec",
+          skill_id: "eneagrama",
+          version: "1.1.0",
+          description: "",
+          activated_at: "2026-01-03",
+        },
+      ],
+    },
+  };
+
+  it("never offers to add a skill that is already in the chat", () => {
+    renderPanel({ status: pinned });
+
+    expect(
+      screen.queryByRole("button", { name: "Añadir al chat" }),
+    ).not.toBeInTheDocument();
+    // The pinned version is surfaced so the mismatch is never silent.
+    expect(screen.getByText("En el chat: v1.1.0")).toBeInTheDocument();
+  });
+
+  it("offers using the selected version and removing the pinned one", () => {
+    const props = renderPanel({ status: pinned });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Usar v1.2.0 en el chat" }),
+    );
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      true,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quitar del chat" }));
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.1.0",
+      false,
+    );
+  });
+});
+
+describe("trigger approval badge", () => {
+  const foundational: MethodologyStatus = {
+    published: [
+      {
+        skill_id: "narrative-chronology-creation",
+        version: "1.1",
+        name: "Creación de Cronologías",
+        description: "Co-crea sucesos y eras de la historia de un mundo.",
+        digest: "chron",
+        published_at: "2026-01-01",
+        clasificacion: "Oficiales",
+        trust_attributes: ["fundacional"],
+      },
+    ],
+    activations: {},
+    drafts: [],
+  };
+
+  it("shows a product approval for a foundational skill", () => {
+    renderPanel({
+      status: foundational,
+      selected: { skill_id: "narrative-chronology-creation", version: "1.1" },
+    });
+
+    expect(
+      screen.getByText("Aprobado por Demiurgos"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps pending for a non-foundational skill without approval", () => {
+    renderPanel();
+
+    expect(
+      screen.getByText("Pendiente de aprobación"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows approved for an explicitly approved trigger", () => {
+    renderPanel({
+      status: {
+        ...status,
+        published: [
+          {
+            ...status.published[0],
+            trigger_approval: {
+              text: "Tipos de personalidad",
+              digest: "d",
+              approved_by: "author-1",
+              approved_at: "2026-01-02",
+            },
+          },
+          ...status.published.slice(1),
+        ],
+      },
+    });
+
+    expect(screen.getByText("Aprobado")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("authored trigger vs method description", () => {
+  const withTrigger = (overrides: Record<string, unknown> = {}) => ({
+    ...status,
+    published: [
+      {
+        ...status.published[0],
+        trigger: "Gatillo corto.",
+        description: "Resumen largo del método que no debe ir al índice.",
+        ...overrides,
+      },
+      ...status.published.slice(1),
+    ],
+  });
+
+  it("renders the trigger in the gatillo block", () => {
+    renderPanel({ status: withTrigger() });
+
+    expect(screen.getByText("Gatillo corto.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Resumen largo del método que no debe ir al índice."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("binds the approval to the trigger, not the description", () => {
+    renderPanel({
+      status: withTrigger({
+        trigger_approval: {
+          text: "Gatillo corto.",
+          digest: "d",
+          approved_by: "author-1",
+          approved_at: "2026-01-02",
+        },
+      }),
+    });
+
+    expect(screen.getByText("Aprobado")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("guided assistant info (S1/S6)", () => {
+  it("explains that the method is chosen at session start", () => {
+    renderPanel();
+    expect(screen.getByText("Asistente de personajes")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "El asistente elige su método al iniciar la sesión; si no eliges, usa el de fábrica.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("never pins a guided method from the panel", () => {
+    renderPanel();
+    expect(screen.queryByText(/Activar/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Desactivar/)).not.toBeInTheDocument();
+  });
+});
+
+describe("scope block (R3 / REQ-TRE-6)", () => {
+  it("shows the registry scope term in the Alcance de taller block for a transversal skill", () => {
     renderPanel({
       status: transversalStatus,
       selected: { skill_id: "sk-trans", version: "1.0.0" },
       activeTaller: "Mundo",
     });
 
-    // Registry-sourced (R3): the visible term is the AXIS_TERMS scope value
-    // and the chip carries the scope axis attribution — the panel surface.
     const block = screen.getByText("Alcance de taller").closest("div")!;
     const chip = within(block).getByText(SCOPE_TERM).closest("[data-axis]");
     expect(chip).toHaveAttribute("data-axis", AXIS_SCOPE);
-  });
-
-  it("renders the blocked explanation verbatim in the Conflicto block (S1 — Blocked explanation rendered)", () => {
-    renderPanel({
-      status: blockedStatus,
-      selected: blockedSelected,
-      activeTaller: "Mundo",
-    });
-
-    const block = screen.getByText("Conflicto").closest("div")!;
-    expect(
-      within(block).getByText(BLOCKED_COPY, { selector: "p" }),
-    ).toBeInTheDocument();
-  });
-
-  it("renders the conflict copy only inside the panel tooltip — no Bloqueada badge (Blocked conflict via tooltip)", () => {
-    renderPanel({
-      status: blockedStatus,
-      selected: blockedSelected,
-      activeTaller: "Mundo",
-    });
-
-    const block = screen.getByText("Conflicto").closest("div")!;
-    // Conflict vocabulary lives in the block tooltip — never a badge (R3).
-    expect(within(block).queryByText("Bloqueada")).not.toBeInTheDocument();
-
-    const tooltip = within(block).getByRole("tooltip");
-    expect(within(tooltip).getByText(BLOCKED_COPY)).toBeInTheDocument();
-  });
-
-  it("exposes the conflict copy to keyboard-only authors via the panel tooltip (Keyboard-only conflict access)", () => {
-    renderPanel({
-      status: blockedStatus,
-      selected: blockedSelected,
-      activeTaller: "Mundo",
-    });
-
-    const block = screen.getByText("Conflicto").closest("div")!;
-    const trigger = block.querySelector(
-      '[aria-describedby^="conflicto-panel-"]',
-    ) as HTMLElement | null;
-    expect(trigger).not.toBeNull();
-    expect(trigger).toHaveAttribute("tabindex", "0");
-
-    // The trigger's aria-describedby points at the sr-only accessible copy —
-    // assistive tech reads it regardless of the CSS reveal state (R5).
-    const accessible = document.getElementById(
-      trigger!.getAttribute("aria-describedby")!,
-    );
-    expect(accessible).not.toBeNull();
-    expect(accessible).toHaveAttribute("role", "tooltip");
-    expect(
-      within(accessible as HTMLElement).getByText(BLOCKED_COPY),
-    ).toBeInTheDocument();
-  });
-
-  it("labels the slot display from flow_type at model level — zero per-flow copy (R6)", () => {
-    renderPanel({
-      status: {
-        ...status,
-        activations: {
-          nec: {
-            world: "nec",
-            skill_id: "eneagrama",
-            version: "1.2.0",
-            digest: "abc",
-            activated_at: "2026-01-02",
-            flow_type: "guided-character",
-          },
-        },
-      },
-    });
-
-    const slot = screen.getByText("Activa en nec");
-    expect(slot).toHaveAttribute("data-flow-type", "guided-character");
-    // Model-level attribution only — never committed as display copy (R6).
-    expect(screen.queryByText("guided-character")).not.toBeInTheDocument();
   });
 });

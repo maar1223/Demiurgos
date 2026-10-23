@@ -630,6 +630,38 @@ export interface GuidedCharacterProposal {
   rationale?: string;
 }
 
+export interface GuidedCharacterMethodology {
+  skill_id: string | null;
+  skill_version: string | null;
+  flow_type: string | null;
+  /** True when the builtin guided-character contract drives the session. */
+  factory: boolean;
+}
+
+/** One eligible method for the guided-character assistant (S4/S6). */
+export interface GuidedMethodOption {
+  skill_id: string;
+  version: string;
+  name: string;
+}
+
+export interface GuidedMethodsResponse {
+  methods: GuidedMethodOption[];
+  /** The world's eligible legacy activation, preselected; null means factory. */
+  default: { skill_id: string; version: string } | null;
+  /** The flow the list was resolved for (additive; defaults to the character flow). */
+  flow?: string;
+}
+
+/** Server-resolved flow echo (S1). The client renders copy from `ui_copy_key`
+ *  and never supplies the binding. */
+export interface GuidedFlowEcho {
+  flow_id: string;
+  entity_type: string;
+  target_section: string;
+  ui_copy_key: "character" | "system" | "chronology" | "entity";
+}
+
 export interface GuidedCharacterSession {
   protocol_version: string;
   session_id: string;
@@ -645,6 +677,10 @@ export interface GuidedCharacterSession {
   index_status?: GuidedCharacterIndexStatus;
   retryable?: boolean;
   message?: string;
+  /** Per-session method echo (S1/S6). Additive: absent on pre-method servers. */
+  methodology?: GuidedCharacterMethodology | null;
+  /** Server-resolved flow echo (S1). Additive: absent on legacy sessions. */
+  flow?: GuidedFlowEcho | null;
   reference?: {
     name: string | null;
     verified: boolean;
@@ -849,6 +885,8 @@ export interface DerivedFrom {
 export interface DraftPayload {
   name: string;
   description: string;
+  /** Authored index trigger (separate from the method description). */
+  trigger?: string | null;
   purpose: string;
   scope: string;
   main_flow: string;
@@ -1047,6 +1085,8 @@ export interface SemanticDecisionEnvelope {
    */
   consent?: "required";
   consent_token?: string;
+  /** Server-resolved flow for the pending consent card (S1). */
+  flow?: GuidedFlowEcho;
   /** Bounded explicitness on guided continuations; only `imperative` auto-opens. */
   guided_explicitness?: "imperative" | "musing";
   proposal_id?: string;
@@ -1688,6 +1728,9 @@ export interface PublishedMethodology {
   version: string;
   name: string;
   description: string;
+  /** Authored skills-index trigger (≤57 rendered). Absent on records that
+   *  predate the field; the renderer and UI fall back to the description. */
+  trigger?: string | null;
   digest: string;
   published_at: string;
   /** Taller de Herramientas inventory metadata (Fase 1). */
@@ -1750,6 +1793,8 @@ export interface MethodologyDraft {
   name: string;
   source: string;
   description: string;
+  /** Authored index trigger (separate from the method description). */
+  trigger?: string | null;
   updated_at: string;
   /** Taller de Herramientas inventory metadata (Fase 1). */
   taller?: string | null;

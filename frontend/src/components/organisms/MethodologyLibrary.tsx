@@ -5,7 +5,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { TallerTree } from "@/components/organisms/TallerTree";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
-import { groupSkillsByState } from "@/lib/tallerStates";
+import { groupSkillsByChat } from "@/lib/tallerStates";
 
 /** Page-level methodology selection (REQ-SB-5). Structural type. */
 interface MethodologySelection {
@@ -35,6 +35,8 @@ interface MethodologyLibraryProps {
   /** UL-5: empty-state CTA — navigates the Author to the "Crear skill" tab
    *  (wired by the page through TallerExplorerSidebar). */
   onGoToCoCrear?: () => void;
+  /** One-click chat update when the chat still pins an older version. */
+  onUpdateCompanion?: (skillId: string, version: string) => void;
 }
 
 /**
@@ -57,6 +59,7 @@ export function MethodologyLibrary({
   error,
   onRetry,
   onGoToCoCrear,
+  onUpdateCompanion,
 }: MethodologyLibraryProps) {
   const { t } = useAppLanguage();
   /** Client-side filter over the grouped tree (SC-SB-1.1 "filters"). */
@@ -64,11 +67,10 @@ export function MethodologyLibrary({
 
   const groups = useMemo(() => {
     if (!status) return null;
-    return groupSkillsByState(
+    return groupSkillsByChat(
       status.published,
       activeTaller,
-      world,
-      status.activations ?? {},
+      status.companions?.[world ?? ""] ?? [],
     );
   }, [status, activeTaller, world]);
 
@@ -85,11 +87,8 @@ export function MethodologyLibrary({
           skill.skill_id.toLowerCase().includes(q),
       );
     return {
-      activas: match(groups.activas),
-      transversalesActivas: match(groups.transversalesActivas),
-      inactivas: match(groups.inactivas),
-      transversalesInactivas: match(groups.transversalesInactivas),
-      bloqueadas: match(groups.bloqueadas),
+      enChat: match(groups.enChat),
+      fueraDelChat: match(groups.fueraDelChat),
       sinTaller: match(groups.sinTaller),
     };
   }, [groups, query]);
@@ -135,7 +134,6 @@ export function MethodologyLibrary({
   }
 
   const published = status.published ?? [];
-  const active = world ? status.activations[world] : undefined;
   const isEmpty = published.length === 0;
   const noResults =
     !isEmpty &&
@@ -169,11 +167,10 @@ export function MethodologyLibrary({
       ) : (
         <TallerTree
           groups={filteredGroups ?? groups!}
-          world={world}
           activeTaller={activeTaller}
-          active={active}
           companions={world ? status.companions?.[world] ?? [] : []}
           onSelect={(skillId, version) => onSelect({ skill_id: skillId, version })}
+          onUpdateCompanion={onUpdateCompanion}
           selected={selected}
         />
       )}

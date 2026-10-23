@@ -1,0 +1,83 @@
+skill_id: narrative-entity-creation
+version: "1.0"
+name: Creación de Entidades
+description: >-
+  Metodología fundacional para co-crear una ENTIDAD nueva, agnóstica al mundo.
+  Forma `entidad`: contrato de preguntas mínimas y semánticas, SIN registro
+  fijo; el cuerpo emerge; envelope en OKF. Preguntas: (1) nombre y clase;
+  (2) qué es en una frase; (3) rasgo definitorio; (4) origen o historia;
+  (5) función o papel en el mundo; (6) relaciones; (7) estado de verdad;
+  (8) composición, si es colectiva; (9) encadenado. Clase única: lugar,
+  facción, criatura, artefacto, cultura o especie; la clase elige el
+  vocabulario de (3), (4) y (8), no añade preguntas. Rieles 40%: incompleto sin
+  clase (1) y rasgo definitorio (3). Frontera con Sistema: los poderes y las
+  reglas innatas se declaran como Sistema enlazado, no aquí. Frontera con
+  Cronología: la fundación, la caída o la extinción se narran como suceso
+  enlazado. El color del mundo lo aporta la skill de mundo.
+trigger: "Co-crea lugares, facciones, criaturas y otras entidades."
+phases:
+  - Nombre y clase de entidad
+  - Qué es en una frase
+  - Rasgo definitorio
+  - Origen o historia
+  - Función o papel en el mundo
+  - Relaciones
+  - Estado de verdad
+  - Composición (si es colectiva)
+  - Encadenado
+  - Ramificación por clase de entidad
+  - "Rieles 40%: clase y rasgo definitorio"
+  - Frontera con Sistema, Cronología y Personaje
+language: es
+categoria_funcional: Diseño
+taller: Mundo
+etiquetas: [entidad, worldbuilding, forma-entidad]
+# v1.0 ships no adjuntos: el método vive completo en source.md.
+adjuntos: []
+
+# Declaración de flujo guiado: la skill declara la FORMA, el kernel decide la
+# sección (lore/), el `type` escrito (Entidad) y los mínimos (identidad +
+# clase). El vocabulario acota la intención de chat; nunca declara destino,
+# persistencia ni mínimos.
+guided_flow:
+  flow_id: guided-entity
+  entity_type: entidad
+  ui_copy_key: entity
+  index: true
+  intent:
+    terms:
+      - entidad
+      - entidades
+      - lugar
+      - lugares
+      - facción
+      - facciones
+      - faccion
+      - criatura
+      - criaturas
+      - artefacto
+      - artefactos
+      - cultura
+      - culturas
+      - especie
+      - especies
+    verbs:
+      - crear
+      - crea
+      - inventar
+      - inventa
+      - diseñar
+      - diseña
+      - construir
+      - construye
+      - añadir
+      - agregar
+      - definir
+      - define
+      - quiero
+      - necesito
+      - create
+      - add
+      - design
+      - want
+      - need

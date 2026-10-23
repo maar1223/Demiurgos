@@ -636,6 +636,10 @@ class QuarantineStore:
                 name=compiled.name,
                 source=compiled.source,
                 description=compiled.description,
+                # Round-trip fidelity: the package's index label and flow
+                # declaration are content, so promotion must not drop them.
+                trigger=compiled.trigger,
+                guided_flow=compiled.guided_flow,
                 phases=tuple(compiled.phases),
                 language=compiled.language,
                 taller=compiled.taller,

@@ -44,6 +44,8 @@ interface TallerExplorerSidebarProps {
   /** UL-5: empty-state CTA of the mi-mundo library — switches the page to
    *  the "Crear skill" tab. Forwarded to MethodologyLibrary. */
   onGoToCoCrear?: () => void;
+  /** One-click chat update when the chat still pins an older version. */
+  onUpdateCompanion?: (skillId: string, version: string) => void;
 }
 
 /**
@@ -72,6 +74,7 @@ export function TallerExplorerSidebar({
   onSelect,
   compareSelection,
   onGoToCoCrear,
+  onUpdateCompanion,
 }: TallerExplorerSidebarProps) {
   const { t } = useAppLanguage();
   return (
@@ -127,6 +130,7 @@ export function TallerExplorerSidebar({
               selected={selected}
               onSelect={onSelect}
               onGoToCoCrear={onGoToCoCrear}
+              onUpdateCompanion={onUpdateCompanion}
             />
           </div>
         ) : (

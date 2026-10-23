@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { TallerTree } from "@/components/organisms/TallerTree";
-import type { GroupedSkills } from "@/lib/tallerStates";
-import type { PublishedMethodology } from "@/api/types";
-import { NO_ACTIVATION_PLACEHOLDER } from "@/lib/vocabularyAxes";
+import { groupSkillsByChat } from "@/lib/tallerStates";
+import type { MethodologyCompanion, PublishedMethodology } from "@/api/types";
 
 const skillA: PublishedMethodology = {
   skill_id: "skill-a",
@@ -36,32 +35,24 @@ const skillC: PublishedMethodology = {
   talleres_compatibles: ["Mundo"],
 };
 
-const skillD: PublishedMethodology = {
-  skill_id: "skill-d",
-  version: "4.0.0",
-  name: "Skill D",
-  description: "",
-  digest: "jkl",
-  published_at: "2026-01-01",
-  taller: "Ideas",
-  talleres_compatibles: ["Mundo"],
-};
+const published = [skillA, skillB, skillC];
 
-const groups: GroupedSkills = {
-  activas: [skillA],
-  transversalesActivas: [],
-  inactivas: [skillB],
-  transversalesInactivas: [],
-  bloqueadas: [],
-  sinTaller: [],
-};
+function companion(skill_id: string, version: string): MethodologyCompanion {
+  return {
+    world: "nec",
+    skill_id,
+    version,
+    description: "",
+    activated_at: "2026-01-01",
+  };
+}
 
 function renderTree(
   overrides: Partial<Parameters<typeof TallerTree>[0]> = {},
 ) {
+  const companions = overrides.companions ?? [];
   const props = {
-    groups,
-    world: "nec",
+    groups: groupSkillsByChat(published, "Mundo", companions),
     activeTaller: "Mundo",
     ...overrides,
   };
@@ -81,6 +72,28 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     expect(onSelect).toHaveBeenCalledWith("skill-b", "2.0.0");
   });
 
+  it("selects from the whole row card, not only the name button (REQ-TRE-12)", () => {
+    // Regression: the row card's padding/badge area used to be inert, so a
+    // click there left the previous selection in place and the right-panel
+    // "Activar" acted on the wrong skill.
+    const onSelect = vi.fn();
+    renderTree({ onSelect, selected: null });
+
+    const row = screen.getByText("Skill A").closest("li") as HTMLElement;
+    fireEvent.click(row);
+
+    expect(onSelect).toHaveBeenCalledWith("skill-a", "1.0.0");
+  });
+
+  it("selects exactly once when the row name is clicked", () => {
+    const onSelect = vi.fn();
+    renderTree({ onSelect, selected: null });
+
+    fireEvent.click(screen.getByText("Skill A"));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it("stays non-interactive when onSelect is omitted", () => {
     renderTree();
     expect(() => fireEvent.click(screen.getByText("Skill A"))).not.toThrow();
@@ -93,10 +106,10 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     });
 
     const selectedRow = screen.getByText("Skill A").closest("li");
-    expect(selectedRow).toHaveClass("border-action/50");
+    expect(selectedRow).toHaveClass("border-action");
 
     const otherRow = screen.getByText("Skill B").closest("li");
-    expect(otherRow).not.toHaveClass("border-action/50");
+    expect(otherRow).not.toHaveClass("border-action");
   });
 
   it("highlights the row when the selected version is not the rendered one (REQ-TRE-12)", () => {
@@ -106,205 +119,97 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     });
 
     const selectedRow = screen.getByText("Skill A").closest("li");
-    expect(selectedRow).toHaveClass("border-action/50");
+    expect(selectedRow).toHaveClass("border-action");
 
     const otherRow = screen.getByText("Skill B").closest("li");
-    expect(otherRow).not.toHaveClass("border-action/50");
-  });
-
-  it("omits the active info line when the activation version is stale (REQ-TRE-10 S5)", () => {
-    renderTree({
-      active: {
-        world: "nec",
-        skill_id: "skill-a",
-        version: "9.9.9",
-        digest: "abc",
-        activated_at: "2026-01-01",
-      },
-    });
-
-    // `isActive` stays version-exact: a stale activation never renders
-    // "• Activa en nec" on the representative row.
-    expect(screen.queryByText(/Activa en nec/)).not.toBeInTheDocument();
+    expect(otherRow).not.toHaveClass("border-action");
   });
 });
 
-describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {
-  const activeA = {
-    world: "nec",
-    skill_id: "skill-a",
-    version: "1.0.0",
-    digest: "abc",
-    activated_at: "2026-01-01",
-  };
-
+describe("chat and scope chips (S1)", () => {
   function rowOf(name: string): HTMLElement {
     return screen.getByText(name).closest("li") as HTMLElement;
   }
 
-  it("renders slot and companion as separate attributed chips (Row inspection)", () => {
-    renderTree({
-      active: activeA,
-      companions: [
-        {
-          world: "nec",
-          skill_id: "skill-a",
-          version: "1.0.0",
-          description: "",
-          activated_at: "2026-01-01",
-        },
-      ],
-    });
+  it("marks only the skills added to the world's chat", () => {
+    renderTree({ companions: [companion("skill-a", "1.0.0")] });
 
-    const row = rowOf("Skill A");
-    const slotChip = within(row).getByText("Activa").closest("[data-axis]");
-    expect(slotChip).toHaveAttribute("data-axis", "activation");
+    const chatRow = rowOf("Skill A");
+    expect(within(chatRow).getByText("En el chat")).toBeInTheDocument();
+    expect(
+      within(chatRow).getByText("En el chat").closest("[data-axis]"),
+    ).toHaveAttribute("data-axis", "companion");
 
-    const companionChip = within(row)
-      .getByText("Método en chat")
-      .closest("[data-axis]");
-    expect(companionChip).toHaveAttribute("data-axis", "companion");
+    const otherRow = rowOf("Skill B");
+    expect(within(otherRow).queryByText("En el chat")).not.toBeInTheDocument();
   });
 
-  it("separates slot and companion attribution — bare Inactiva + Método en chat impossible (Companion not active)", () => {
-    renderTree({
-      active: activeA,
-      companions: [
-        {
-          world: "nec",
-          skill_id: "skill-b",
-          version: "2.0.0",
-          description: "",
-          activated_at: "2026-01-01",
-        },
-      ],
-    });
-
-    const row = rowOf("Skill B");
-    const slotChip = within(row).getByText("Inactiva").closest("[data-axis]");
-    expect(slotChip).toHaveAttribute("data-axis", "activation");
-
-    const companionChip = within(row)
-      .getByText("Método en chat")
-      .closest("[data-axis]");
-    expect(companionChip).toHaveAttribute("data-axis", "companion");
-
-    // The two axis terms never merge into a single mixed badge (§5:122).
-    expect(screen.queryByText("Inactiva Método en chat")).not.toBeInTheDocument();
-  });
-
-  it("renders the conflict copy only inside the row tooltip — no Bloqueada badge (Blocked conflict via tooltip)", () => {
-    renderTree({
-      groups: { ...groups, activas: [], inactivas: [], bloqueadas: [skillC] },
-      active: activeA,
-    });
+  it("marks a compatible skill of another taller as Transversal", () => {
+    renderTree();
 
     const row = rowOf("Skill C");
-    expect(within(row).queryByText("Bloqueada")).not.toBeInTheDocument();
-
-    const tooltip = row.querySelector('[role="tooltip"]') as HTMLElement;
-    expect(tooltip).not.toBeNull();
-    expect(
-      within(tooltip).getByText(
-        "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
-      ),
-    ).toBeInTheDocument();
+    const chip = within(row).getByText("Transversal").closest("[data-axis]");
+    expect(chip).toHaveAttribute("data-axis", "scope");
+    expect(within(row).queryByText("En el chat")).not.toBeInTheDocument();
   });
 
-  it("maps each state to an attributed axis-1/2 chip; scope/conflict never a primary badge (S1 — Badge variant mapping)", () => {
-    renderTree({
-      groups: {
-        ...groups,
-        inactivas: [skillB],
-        transversalesInactivas: [skillD],
-      },
-      active: activeA,
-    });
-
-    const activaRow = rowOf("Skill A");
-    expect(within(activaRow).getByText("Activa")).toHaveClass(
-      "text-status-success",
-    );
-    expect(
-      within(activaRow).getByText("Activa").closest("[data-axis]"),
-    ).toHaveAttribute("data-axis", "activation");
-
-    const inactivaRow = rowOf("Skill B");
-    expect(within(inactivaRow).getByText("Inactiva")).toHaveClass(
-      "text-primary",
-    );
-    expect(
-      within(inactivaRow).getByText("Inactiva").closest("[data-axis]"),
-    ).toHaveAttribute("data-axis", "activation");
-
-    const transversalRow = rowOf("Skill D");
-    expect(within(transversalRow).getByText("Inactiva")).toHaveClass(
-      "text-primary",
-    );
-    expect(
-      within(transversalRow).getByText("Inactiva").closest("[data-axis]"),
-    ).toHaveAttribute("data-axis", "activation");
-    expect(within(transversalRow).queryByText("Transversal")).not.toBeInTheDocument();
-  });
-
-  it("reads flow_type at model level without committing per-flow copy (Flow attribution without copy)", () => {
-    renderTree({
-      active: { ...activeA, flow_type: "guided-character" },
-    });
-
-    const row = rowOf("Skill A");
-    expect(within(row).getByText("Activa").closest("[data-axis]")).toHaveAttribute(
-      "data-axis",
-      "activation",
-    );
-
-    // The flow value is model-level only — never rendered as display copy (R6).
-    expect(screen.queryByText("guided-character")).not.toBeInTheDocument();
+  it("never renders activation on/off vocabulary (S2)", () => {
+    renderTree({ companions: [companion("skill-a", "1.0.0")] });
+    expect(screen.queryByText("Activa")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inactiva")).not.toBeInTheDocument();
+    expect(screen.queryByText("Método en chat")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Activa en nec/)).not.toBeInTheDocument();
   });
 });
 
-describe("no-activation slot and row actions removed (axis-binding-ui R4 / actions live in the right panel)", () => {
-  it("renders a neutral placeholder for the no-activation slot — never Inactiva (No-activation slot renders)", () => {
-    renderTree();
+describe("row actions stay in the right panel", () => {
+  it("renders no action buttons on rows", () => {
+    renderTree({ companions: [companion("skill-a", "1.0.0")] });
 
-    const row = screen.getByText("Skill B").closest("li") as HTMLElement;
-    expect(within(row).queryByText("Inactiva")).not.toBeInTheDocument();
-
-    const placeholder = within(row)
-      .getByText(NO_ACTIVATION_PLACEHOLDER)
-      .closest("[data-axis]");
-    expect(placeholder).toHaveAttribute("data-axis", "activation");
+    expect(screen.queryByRole("button", { name: "Activar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desactivar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adaptar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Añadir al chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quitar del chat" })).not.toBeInTheDocument();
   });
+});
 
-  it("renders no action buttons on rows — Activar/Activada/Sin mundo/Adaptar live in the right panel", () => {
+describe("chat version drift", () => {
+  function rowOf(name: string): HTMLElement {
+    return screen.getByText(name).closest("li") as HTMLElement;
+  }
+
+  it("offers a one-click update when the chat uses an older version", () => {
+    const onUpdateCompanion = vi.fn();
     renderTree({
-      groups: { ...groups, activas: [], inactivas: [], bloqueadas: [skillC] },
-      active: {
-        world: "nec",
-        skill_id: "skill-a",
-        version: "1.0.0",
-        digest: "abc",
-        activated_at: "2026-01-01",
-      },
+      companions: [companion("skill-a", "0.9.0")],
+      onUpdateCompanion,
     });
 
-    // Blocked rows keep the conflict tooltip but no Adaptar action...
-    const blockedRow = screen.getByText("Skill C").closest("li") as HTMLElement;
-    expect(blockedRow.querySelector('[role="tooltip"]')).not.toBeNull();
+    const row = rowOf("Skill A");
+    const update = within(row).getByRole("button", {
+      name: /actualizar chat/i,
+    });
+    fireEvent.click(update);
+    expect(onUpdateCompanion).toHaveBeenCalledWith("skill-a", "1.0.0");
+  });
 
-    // ...and no row offers any activation/adapt action (single home: the
-    // right MethodologyStatePanel).
+  it("does not offer the update when the chat already uses the row version", () => {
+    renderTree({
+      companions: [companion("skill-a", "1.0.0")],
+      onUpdateCompanion: vi.fn(),
+    });
+
     expect(
-      screen.queryByRole("button", { name: "Activar" }),
+      screen.queryByRole("button", { name: /actualizar chat/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("never offers the update for a skill that is not in the chat", () => {
+    renderTree({ companions: [], onUpdateCompanion: vi.fn() });
+
     expect(
-      screen.queryByRole("button", { name: "Activada" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Sin mundo" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Adaptar" }),
+      screen.queryByRole("button", { name: /actualizar chat/i }),
     ).not.toBeInTheDocument();
   });
 });

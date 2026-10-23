@@ -173,6 +173,96 @@ describe("semantic intent consent suggestion mapping", () => {
     });
   });
 
+  it("carries the server-resolved flow on a consent suggestion (S1)", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-sys",
+      flow: {
+        flow_id: "guided-system",
+        entity_type: "sistema",
+        target_section: "lore",
+        ui_copy_key: "system",
+      },
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "¿Abrimos el flujo guiado?",
+      consentToken: "ct-sys",
+      flow: {
+        flow_id: "guided-system",
+        entity_type: "sistema",
+        target_section: "lore",
+        ui_copy_key: "system",
+      },
+    });
+  });
+
+  it("carries a chronology flow echo (S1)", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-chron",
+      flow: {
+        flow_id: "guided-chronology",
+        entity_type: "cronologia",
+        target_section: "lore",
+        ui_copy_key: "chronology",
+      },
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "¿Abrimos el flujo guiado?",
+      consentToken: "ct-chron",
+      flow: {
+        flow_id: "guided-chronology",
+        entity_type: "cronologia",
+        target_section: "lore",
+        ui_copy_key: "chronology",
+      },
+    });
+  });
+
+  it("carries an entity flow echo (S1)", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-entity",
+      flow: {
+        flow_id: "guided-entity",
+        entity_type: "entidad",
+        target_section: "lore",
+        ui_copy_key: "entity",
+      },
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "¿Abrimos el flujo guiado?",
+      consentToken: "ct-entity",
+      flow: {
+        flow_id: "guided-entity",
+        entity_type: "entidad",
+        target_section: "lore",
+        ui_copy_key: "entity",
+      },
+    });
+  });
+
+  it("drops a malformed flow echo instead of rendering it", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent: "required",
+      consent_token: "ct-bad",
+      flow: { flow_id: "guided-system", ui_copy_key: "wizard" },
+    }));
+    expect(result.kind).toBe("suggestion");
+    if (result.kind !== "suggestion") return;
+    expect(result.flow).toBeUndefined();
+  });
+
   it("maps a proposal_ready consent suggestion when no proposal is present", () => {
     const result = mapSemanticDecision(envelope("proposal_ready", {
       action: "show_proposal",

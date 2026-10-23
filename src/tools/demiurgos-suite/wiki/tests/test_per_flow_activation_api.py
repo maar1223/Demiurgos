@@ -198,14 +198,15 @@ class TestPerFlowActivationApi:
         started = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
-        assert started.status_code == 200
+        assert started.status_code == 200, started.text
         snapshot = store.methodology_snapshot(started.json()["session_id"], "author-1")
         assert snapshot is not None
         assert snapshot.skill_version == "1.2.0"
         assert snapshot.flow_type == "guided-character"
 
-    def test_drift_only_within_pinned_flow(self, client, monkeypatch, tmp_path):
-        """R1 version drift: a flow-B activation never rejects a flow-A session."""
+    def test_world_default_change_keeps_pinned_session(self, client, monkeypatch, tmp_path):
+        """S6/S7: the method is per-session; moving the world default never
+        invalidates an existing session. New sessions take the new default."""
         store = DurableGuidedSessionStore(tmp_path / "guided.sqlite3")
         self._wire_guided(monkeypatch, store, payloads=2)
         _principal(monkeypatch)
@@ -218,14 +219,19 @@ class TestPerFlowActivationApi:
         })
         assert started.status_code == 200
         sid = started.json()["session_id"]
-        # Flow A moves 1.2.0 -> 1.3.0: the pinned session is rejected.
+        # Flow A moves 1.2.0 -> 1.3.0: the pinned session keeps its own method.
         self._activate(client, "guided-character-v1", "1.3.0")
-        assert client.get(f"/api/test_mundo/guided-character/session/{sid}").status_code == 422
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 200
+        pinned = store.methodology_snapshot(sid, "author-1")
+        assert pinned is not None and pinned.skill_version == "1.2.0"
         fresh = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
         assert fresh.status_code == 200
         fresh_sid = fresh.json()["session_id"]
+        fresh_snapshot = store.methodology_snapshot(fresh_sid, "author-1")
+        assert fresh_snapshot is not None and fresh_snapshot.skill_version == "1.3.0"
         # Flow B activation must NOT reject the flow-A session.
         self._activate(client, "co-creation-skill", "1.0.0", flow_type="co-creation")
         resumed = client.get(f"/api/test_mundo/guided-character/session/{fresh_sid}")
@@ -239,7 +245,7 @@ class TestPerFlowActivationApi:
         started = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
-        assert started.status_code == 200
+        assert started.status_code == 200, started.text
         snapshot = store.methodology_snapshot(started.json()["session_id"], "author-1")
         assert snapshot is not None
         assert snapshot.skill_id == "guided-character-v1"
@@ -284,7 +290,7 @@ class TestPerFlowActivationApi:
         started = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
-        assert started.status_code == 200
+        assert started.status_code == 200, started.text
         snapshot = store.methodology_snapshot(started.json()["session_id"], "author-1")
         assert snapshot is not None
         assert snapshot.skill_id == "narrative-character-creation"
@@ -341,11 +347,11 @@ class TestPerFlowActivationApi:
     def test_rollback_clears_one_slot_idempotent(self, client, monkeypatch):
         """R5: deactivate is per-flow; empty clears stay idempotent; 401/404."""
         _principal(monkeypatch)
-        self._publish(client, "skill-a", "1.0.0", "Skill A")
-        self._publish(client, "skill-a", "1.1.0", "Skill A")
+        self._publish(client, "guided-character-v1", "1.0.0", "Guided character methodology")
+        self._publish(client, "guided-character-v1", "1.1.0", "Guided character methodology")
         self._publish(client, "skill-b", "2.0.0", "Skill B")
-        self._activate(client, "skill-a", "1.0.0")
-        self._activate(client, "skill-a", "1.1.0")
+        self._activate(client, "guided-character-v1", "1.0.0")
+        self._activate(client, "guided-character-v1", "1.1.0")
         self._activate(client, "skill-b", "2.0.0", flow_type="co-creation")
         rolled = client.post("/api/methodologies/rollback", json={
             "world": "test_mundo", "flow_type": "co-creation",
@@ -386,9 +392,9 @@ class TestPerFlowActivationApi:
         """SR1: deactivate clears ONLY the requested flow slot; other flows
         keep their pin and the cleared slot reads back as ``activation: null``."""
         _principal(monkeypatch)
-        self._publish(client, "skill-a", "1.0.0", "Skill A")
+        self._publish(client, "guided-character-v1", "1.0.0", "Guided character methodology")
         self._publish(client, "skill-b", "2.0.0", "Skill B")
-        self._activate(client, "skill-a", "1.0.0")
+        self._activate(client, "guided-character-v1", "1.0.0")
         self._activate(client, "skill-b", "2.0.0", flow_type="co-creation")
         cleared = client.post("/api/methodologies/deactivate", json={
             "world": "test_mundo", "flow_type": "co-creation",
@@ -404,14 +410,14 @@ class TestPerFlowActivationApi:
         # The guided-character slot is untouched.
         assert client.get(
             "/api/methodologies/active/test_mundo"
-        ).json()["activation"]["skill_id"] == "skill-a"
+        ).json()["activation"]["skill_id"] == "guided-character-v1"
 
     def test_deactivate_empty_slot_idempotent(self, client, monkeypatch):
         """SR1: clearing an already-empty slot is a 200 no-op with the same
         cleared echo (never an error)."""
         _principal(monkeypatch)
-        self._publish(client, "skill-a", "1.0.0", "Skill A")
-        self._activate(client, "skill-a", "1.0.0")
+        self._publish(client, "guided-character-v1", "1.0.0", "Guided character methodology")
+        self._activate(client, "guided-character-v1", "1.0.0")
         first = client.post("/api/methodologies/deactivate", json={"world": "test_mundo"})
         assert first.status_code == 200
         assert first.json()["skill_id"] is None
@@ -424,8 +430,8 @@ class TestPerFlowActivationApi:
         """SR1: bogus/empty flow -> 422 on deactivate BEFORE any library call;
         the remaining slot keeps its pin (zero mutation)."""
         _principal(monkeypatch)
-        self._publish(client, "skill-a", "1.0.0", "Skill A")
-        self._activate(client, "skill-a", "1.0.0")
+        self._publish(client, "guided-character-v1", "1.0.0", "Guided character methodology")
+        self._activate(client, "guided-character-v1", "1.0.0")
         for flow in ("bogus-flow", ""):
             resp = client.post("/api/methodologies/deactivate", json={
                 "world": "test_mundo", "flow_type": flow,
@@ -435,7 +441,7 @@ class TestPerFlowActivationApi:
         # Zero mutation: the guided slot still holds skill-a.
         assert client.get(
             "/api/methodologies/active/test_mundo"
-        ).json()["activation"]["skill_id"] == "skill-a"
+        ).json()["activation"]["skill_id"] == "guided-character-v1"
 
     def test_deactivate_prelude_parity_401_404(self, client, monkeypatch):
         """SR1: deactivate shares the slot routes' prelude — 401 unauth,
@@ -448,3 +454,94 @@ class TestPerFlowActivationApi:
         assert client.post(
             "/api/methodologies/deactivate", json={"world": "no_such_world"}
         ).status_code == 404
+    def test_guided_methods_lists_only_character_family(self, client, monkeypatch):
+        """S4/S6: only the character family is offered, latest version per skill."""
+        _principal(monkeypatch)
+        self._publish(client, "narrative-character-creation", "1.0.0", "Creación de Personajes")
+        self._publish(client, "narrative-character-creation", "1.1.0", "Creación de Personajes")
+        self._publish(client, "narrative-system-creation", "1.0.0", "Creación de Sistemas")
+        self._activate(client, "narrative-character-creation", "1.1.0")
+
+        response = client.get("/api/methodologies/guided-methods?world=test_mundo")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [(item["skill_id"], item["version"]) for item in body["methods"]] == [
+            ("narrative-character-creation", "1.1.0"),
+        ]
+        assert body["default"] == {
+            "skill_id": "narrative-character-creation", "version": "1.1.0",
+        }
+
+    def test_guided_methods_requires_authentication(self, client, monkeypatch):
+        monkeypatch.setattr(api_server, "_resolve_principal", lambda request: None)
+        assert client.get("/api/methodologies/guided-methods").status_code == 401
+
+    def test_activate_rejects_ineligible_guided_method_zero_mutation(self, client, monkeypatch):
+        """S4: Cronología/Sistemas can never take the guided slot."""
+        _principal(monkeypatch)
+        self._publish(client, "narrative-system-creation", "1.0.0", "Creación de Sistemas")
+        response = client.post("/api/methodologies/activate", json={
+            "world": "test_mundo",
+            "skill_id": "narrative-system-creation",
+            "version": "1.0.0",
+        })
+        assert response.status_code == 422
+        assert response.json()["code"] == "ineligible_guided_method"
+        active = client.get("/api/methodologies/active/test_mundo")
+        assert active.json()["activation"] is None
+
+    def test_session_start_method_is_per_session(self, client, monkeypatch, tmp_path):
+        """S6: the method is chosen per session and echoed in the public state."""
+        store = DurableGuidedSessionStore(tmp_path / "guided.sqlite3")
+        self._wire_guided(monkeypatch, store, payloads=3)
+        _principal(monkeypatch)
+        self._publish(client, "narrative-character-creation", "1.0.0", "Creación de Personajes")
+        self._activate(client, "narrative-character-creation", "1.0.0")
+
+        factory = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+            "method_skill_id": "factory",
+        })
+        assert factory.status_code == 200, factory.text
+        snapshot = store.methodology_snapshot(factory.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_id == "guided-character-v1"
+        assert snapshot.skill_version == "builtin"
+        assert factory.json()["methodology"]["factory"] is True
+
+        explicit = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Mar",
+            "method_skill_id": "narrative-character-creation",
+            "method_version": "1.0.0",
+        })
+        assert explicit.status_code == 200, explicit.text
+        snapshot = store.methodology_snapshot(explicit.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_id == "narrative-character-creation"
+        assert snapshot.skill_version == "1.0.0"
+        assert explicit.json()["methodology"]["factory"] is False
+
+        ineligible = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Sol",
+            "method_skill_id": "narrative-system-creation",
+            "method_version": "1.0.0",
+        })
+        assert ineligible.status_code == 422
+        assert "does not create characters" in ineligible.json()["message"]
+
+    def test_rollback_rejects_ineligible_legacy_target(self, client, monkeypatch):
+        """S4: rollback cannot restore a pre-existing non-character method."""
+        _principal(monkeypatch)
+        self._publish(client, "narrative-character-creation", "1.0.0", "Personajes")
+        self._publish(client, "narrative-system-creation", "1.0.0", "Sistemas")
+        library = api_server._methodology_library()
+        library.activate("test_mundo", "narrative-system-creation", "1.0.0")
+        library.activate("test_mundo", "narrative-character-creation", "1.0.0")
+
+        response = client.post("/api/methodologies/rollback", json={
+            "world": "test_mundo",
+        })
+        assert response.status_code == 422
+        assert response.json()["code"] == "ineligible_guided_method"
+        active = client.get("/api/methodologies/active/test_mundo").json()["activation"]
+        assert active["skill_id"] == "narrative-character-creation"

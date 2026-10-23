@@ -1,0 +1,65 @@
+skill_id: narrative-chronology-creation
+version: "1.2"
+name: Creación de Cronologías
+# The rendered trigger IS this description: the skills index truncates at 57
+# characters, so it is deliberately one self-contained sentence. The method
+# itself lives in source.md.
+description: "Co-crea sucesos y eras de la historia de un mundo."
+trigger: "Co-crea sucesos y eras: qué ocurrió, cuándo y qué cambió."
+phases:
+  - Nombre y escala del suceso
+  - Ubicación temporal (riel)
+  - Qué ocurrió
+  - Qué cambió (riel)
+  - Causa (impersonal o abierta si aplica)
+  - Agencia (N/A si impersonal)
+  - Alcance y relaciones
+  - Versión y verdad
+  - Encadenado
+  - Ramificación por escala
+  - "Rieles 40%: ubicación temporal y cambio"
+  - Composición y frontera con Sistema
+language: es
+categoria_funcional: Diseño
+taller: Mundo
+etiquetas: [cronologia, worldbuilding, forma-cronologia]
+adjuntos: []
+# Declaración de flujo guiado (S1): la skill declara la FORMA, el kernel decide
+# la sección (lore/) y los mínimos. El vocabulario acota la intención de chat;
+# nunca declara destino, persistencia ni mínimos.
+guided_flow:
+  flow_id: guided-chronology
+  entity_type: cronologia
+  ui_copy_key: chronology
+  index: true
+  intent:
+    terms:
+      - cronología
+      - cronologia
+      - cronologías
+      - cronologias
+      - chronology
+      - chronologies
+      - suceso
+      - era
+    verbs:
+      - crear
+      - crea
+      - inventar
+      - inventa
+      - narrar
+      - narra
+      - registrar
+      - registra
+      - añadir
+      - agregar
+      - quiero
+      - necesito
+      - definir
+      - define
+      - create
+      - add
+      - record
+      - narrate
+      - want
+      - need

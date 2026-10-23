@@ -1,7 +1,7 @@
 """RED/unit tests for the methodology seed catalog loader.
 
 Covers S1 (the real repo seed root loads exactly the MVP entry
-``narrative-character-creation@1.2``, the seed is compiler-clean with zero
+``narrative-character-creation@1.3``, the seed is compiler-clean with zero
 authority-claim issues, and the git state keeps the seeds tracked while the
 runtime store stays ignored) and S3-load fail-closed behavior (corrupt
 checksum, malformed manifest, and compiler-rejected manifest never produce a
@@ -100,12 +100,12 @@ class TestSeedCatalogS1:
 
     def test_real_repo_seed_root_loads_exactly_the_mvp_entry(self) -> None:
         catalog = load_seed_catalog(SEED_ROOT)
-        assert len(catalog) == 1
+        assert len(catalog) == 4
         entry = catalog[0]
         assert entry.skill_id == "narrative-character-creation"
-        assert entry.version == "1.2"
+        assert entry.version == "1.3"
         assert entry.manifest["skill_id"] == "narrative-character-creation"
-        assert entry.manifest["version"] == "1.2"
+        assert entry.manifest["version"] == "1.3"
         # The seed manifest declares its operational home taller (S1): the
         # seeded skill renders in the Mundo tree, never in "Sin taller".
         assert entry.manifest["taller"] == "Mundo"
@@ -206,10 +206,12 @@ class TestSeedAdjuntosVerification:
         return {"path": path, "sha256": sha256, "bytes": 1024, "nivel": "1º"}
 
     def test_carrier_verified_and_manifest_compiler_clean(self, tmp_path: Path) -> None:
-        """S5: a seed with a declared attachment loads and compiles clean."""
+        """S5: in a two-entry root, the seed that declares an attachment loads
+        and compiles clean; the sibling seed without attachments loads too."""
         _write_seed(tmp_path, "demo-skill", adjuntos=[self._adjunto()])
+        _write_seed(tmp_path, "demo-skill-two")
         catalog = load_seed_catalog(tmp_path)
-        assert len(catalog) == 1
+        assert len(catalog) == 2
         assert catalog[0].manifest["adjuntos"][0]["path"] == "ejemplos/Axill.md"
         result = compile_methodology(catalog[0].manifest, catalog[0].source)
         assert result.ok, [issue.message for issue in result.issues]
@@ -243,7 +245,7 @@ class TestSeedAdjuntosVerification:
             load_seed_catalog(tmp_path)
 
     def test_zero_attachment_seed_is_byte_identical(self, tmp_path: Path) -> None:
-        """S10/R6 + S8/R5: the canonical digest ``5a28ca7a…`` is an identity
+        """S10/R6 + S8/R5: the canonical digest ``b484b581…`` is an identity
         lock that holds with or without attachment pins (the canonical excludes
         ``adjuntos``), and install never reports a conflict."""
         entry = load_seed_catalog(SEED_ROOT)[0]
@@ -251,11 +253,11 @@ class TestSeedAdjuntosVerification:
         assert result.ok, [issue.message for issue in result.issues]
         assert result.compiled is not None
         assert result.compiled.digest == (
-            "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
+            "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
         )
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, SEED_ROOT)
-        assert report.installed == 1 and report.conflict == 0
+        assert report.installed == 4 and report.conflict == 0
 
     def test_zero_attachment_corruption_error_text_is_unchanged(self, tmp_path: Path) -> None:
         """S10: a zero-attachment integrity failure keeps the exact pre-PR③
@@ -284,8 +286,8 @@ class TestInstallSeeds:
     def test_fresh_install_publishes_foundational_seed(self, tmp_path: Path) -> None:
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, SEED_ROOT)
-        assert report.installed == 1
-        published = library.get_published("narrative-character-creation", "1.2")
+        assert report.installed == 4
+        published = library.get_published("narrative-character-creation", "1.3")
         assert published is not None
         assert published.clasificacion == "Oficiales"
         assert published.trust_attributes == ("fundacional",)
@@ -295,8 +297,8 @@ class TestInstallSeeds:
         library = MethodologyLibrary(tmp_path / "library.json")
         first = install_seeds(library, SEED_ROOT)
         second = install_seeds(library, SEED_ROOT)
-        assert first.installed == 1
-        assert second.existing == 1 and second.installed == 0
+        assert first.installed == 4
+        assert second.existing == 4 and second.installed == 0
         assert len(library.published_versions_for("narrative-character-creation")) == 1
 
     def test_compiler_invalid_seed_aborts_with_zero_records(self, tmp_path: Path) -> None:
@@ -332,7 +334,7 @@ class TestInstallSeeds:
         report = install_seeds(library, older_root)
         assert report.stale == 1 and report.installed == 0
         assert [v["version"] for v in
-                library.published_versions_for("narrative-character-creation")] == ["1.2"]
+                library.published_versions_for("narrative-character-creation")] == ["1.3"]
 
     def test_upgrade_inserts_v2_beside_active_v1_and_never_repoints(self, tmp_path: Path) -> None:
         """S5: seed v1 active in a world; boot with a v2 seed dir inserts v2
@@ -343,8 +345,8 @@ class TestInstallSeeds:
         library.install_published_version(
             compiled_v1, clasificacion="Oficiales", trust_attributes=("fundacional",),
         )
-        library.activate("mundo-a", "narrative-character-creation", "1.2")
-        library.add_companion("mundo-a", "narrative-character-creation", "1.2")
+        library.activate("mundo-a", "narrative-character-creation", "1.3")
+        library.add_companion("mundo-a", "narrative-character-creation", "1.3")
 
         v2_root = tmp_path / "seeds-v2"
         v2_root.mkdir()
@@ -355,10 +357,10 @@ class TestInstallSeeds:
         report = install_seeds(library, v2_root)
         assert report.installed == 1
         versions = library.published_versions_for("narrative-character-creation")
-        assert [v["version"] for v in versions] == ["1.2", "2.0"]
+        assert [v["version"] for v in versions] == ["1.3", "2.0"]
         # Never re-point: activation and companion stay pinned to v1.
-        assert library.active_for("mundo-a").version == "1.2"
-        assert [c.version for c in library.list_companions("mundo-a")] == ["1.2"]
+        assert library.active_for("mundo-a").version == "1.3"
+        assert [c.version for c in library.list_companions("mundo-a")] == ["1.3"]
 
     def test_absent_seed_root_installs_nothing(self, tmp_path: Path) -> None:
         library = MethodologyLibrary(tmp_path / "library.json")
@@ -439,12 +441,12 @@ class TestInstallUpsertR8:
         assert b'"adjuntos"' in first_bytes  # PR③ record shape (empty list)
         rerun = MethodologyLibrary(path)
         report = install_seeds(rerun, SEED_ROOT)
-        assert report.existing == 1 and report.conflict == 0
+        assert report.existing == 4 and report.conflict == 0
         assert path.read_bytes() == first_bytes
 
-    def test_digest_lock_5a28ca7a_unmoved_after_upsert(self, tmp_path: Path) -> None:
+    def test_digest_lock_b484b581_unmoved_after_upsert(self, tmp_path: Path) -> None:
         """Scenario "digest lock": wiring adjuntos onto the real seed keeps the
-        canonical digest ``5a28ca7a…`` and never reports a conflict."""
+        canonical digest ``b484b581…`` and never reports a conflict."""
         library = MethodologyLibrary(tmp_path / "library.json")
         install_seeds(library, SEED_ROOT)
         entry = load_seed_catalog(SEED_ROOT)[0]
@@ -458,10 +460,10 @@ class TestInstallUpsertR8:
         )
         report = install_seeds(library, adj_root)
         assert report.existing == 1 and report.conflict == 0 and report.installed == 0
-        published = library.get_published("narrative-character-creation", "1.2")
+        published = library.get_published("narrative-character-creation", "1.3")
         assert published is not None
         assert published.digest == (
-            "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
+            "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
         )
         assert len(published.adjuntos) == 1
         assert published.adjuntos[0].nivel == "1º"
@@ -476,7 +478,7 @@ class TestSeedCarriersB2:
         """Scenario "carriers green": the wired seed loads with 3 carriers +
         manifest entries + regenerated checksums; zero seed-code change."""
         catalog = load_seed_catalog(SEED_ROOT)
-        assert len(catalog) == 1
+        assert len(catalog) == 4
         entry = catalog[0]
         adjuntos = entry.manifest.get("adjuntos") or []
         assert len(adjuntos) == 3
@@ -526,14 +528,14 @@ class TestSeedCarriersB2:
 
     def test_digest_lock_with_three_pins_installed(self, tmp_path: Path) -> None:
         """Scenario "digest lock": installing the wired seed keeps the
-        canonical digest ``5a28ca7a…`` and publishes all 3 pins."""
+        canonical digest ``b484b581…`` and publishes all 3 pins."""
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, SEED_ROOT)
-        assert report.installed == 1 and report.conflict == 0
-        published = library.get_published("narrative-character-creation", "1.2")
+        assert report.installed == 4 and report.conflict == 0
+        published = library.get_published("narrative-character-creation", "1.3")
         assert published is not None
         assert published.digest == (
-            "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
+            "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
         )
         assert len(published.adjuntos) == 3
         assert {entry.nivel for entry in published.adjuntos} == {"1º", "2º", "3º"}
@@ -544,7 +546,7 @@ class TestSeedCarriersB2:
         }
 
     def test_install_upsert_moves_at12_pins_to_rewritten_carriers(self, tmp_path: Path) -> None:
-        """R-CARRIER-2 pin-move coherence: an existing ``@1.2`` record still
+        """R-CARRIER-2 pin-move coherence: an existing ``@1.3`` record still
         carrying pre-⑥ pins is upserted to the rewritten carriers on re-install
         (desired ≠ existing), keeping the canonical digest and never conflicting;
         the moved pins match the new on-disk bytes."""
@@ -564,11 +566,11 @@ class TestSeedCarriersB2:
         )
         library = MethodologyLibrary(path)
         report = install_seeds(library, SEED_ROOT)
-        assert report.existing == 1 and report.conflict == 0 and report.installed == 0
-        published = library.get_published("narrative-character-creation", "1.2")
+        assert report.existing == 4 and report.conflict == 0 and report.installed == 0
+        published = library.get_published("narrative-character-creation", "1.3")
         assert published is not None
         assert published.digest == (
-            "5a28ca7af37221b01db1b436e944ece752cbcea5af5669cef14577702b739bb4"
+            "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
         )
         for entry in published.adjuntos:
             disk = (seed_dir / entry.path).read_bytes()
@@ -674,3 +676,188 @@ class TestDensityOnlyTaxonomy:
             (seed_dir / "checksums.json").read_text(encoding="utf-8")
         )
         assert "adjunto-nivel-1-principal-v1.0.md" not in checksums
+
+
+class TestSistemaSeedPublishesClean:
+    """WU-1 (sistema-foundational-skill): the published ``Sistema`` seed joins
+    the catalog and installs beside the character seed with zero conflicts —
+    both ``Oficiales`` ``fundacional`` records."""
+
+    def test_catalog_lists_both_foundational_seeds(self) -> None:
+        catalog = load_seed_catalog(SEED_ROOT)
+        assert len(catalog) == 4
+        assert [entry.skill_id for entry in catalog] == [
+            "narrative-character-creation",
+            "narrative-chronology-creation",
+            "narrative-entity-creation",
+            "narrative-system-creation",
+        ]
+
+    def test_sistema_seed_declares_the_guided_flow(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+        published = library.get_published("narrative-system-creation", "1.2")
+        assert published is not None
+        assert published.guided_flow is not None
+        assert published.guided_flow.flow_id == "guided-system"
+        assert published.guided_flow.entity_type == "sistema"
+        assert library.is_method_for_flow(
+            "guided-system", "narrative-system-creation",
+        )
+        assert not library.is_method_for_flow(
+            "guided-character", "narrative-system-creation",
+        )
+
+    def test_both_seeds_install_clean_as_foundational(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.entries == 4
+        assert report.installed == 4 and report.conflict == 0
+        for skill_id, version in (
+            ("narrative-character-creation", "1.3"),
+            ("narrative-chronology-creation", "1.2"),
+            ("narrative-entity-creation", "1.0"),
+            ("narrative-system-creation", "1.2"),
+        ):
+            published = library.get_published(skill_id, version)
+            assert published is not None
+            assert published.clasificacion == "Oficiales"
+            assert published.trust_attributes == ("fundacional",)
+
+class TestChronologySeedDeclaresTheFlow:
+    """The Cronología seed joins the catalog and declares its guided flow.
+
+    The kernel owns the destination (``lore/``), the ``Cronologia`` type label,
+    the identity + ``evento`` minimums and the envelope field; the seed only
+    names the shape and its chat vocabulary.
+    """
+
+    def test_chronology_seed_declares_the_guided_flow(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+
+        published = library.get_published("narrative-chronology-creation", "1.2")
+        assert published is not None
+        assert published.clasificacion == "Oficiales"
+        assert published.trust_attributes == ("fundacional",)
+        assert published.guided_flow is not None
+        assert published.guided_flow.flow_id == "guided-chronology"
+        assert published.guided_flow.entity_type == "cronologia"
+        assert published.guided_flow.ui_copy_key == "chronology"
+        assert library.is_method_for_flow(
+            "guided-chronology", "narrative-chronology-creation",
+        )
+        assert not library.is_method_for_flow(
+            "guided-character", "narrative-chronology-creation",
+        )
+        assert not library.is_method_for_flow(
+            "guided-system", "narrative-chronology-creation",
+        )
+
+    def test_chronology_seed_compiles_clean(self) -> None:
+        entry = next(
+            item for item in load_seed_catalog(SEED_ROOT)
+            if item.skill_id == "narrative-chronology-creation"
+        )
+        assert entry.version == "1.2"
+        result = compile_methodology(entry.manifest, entry.source)
+        assert result.ok, [issue.message for issue in result.issues]
+        assert result.compiled is not None
+        assert result.compiled.guided_flow is not None
+        assert result.compiled.guided_flow.entity_type == "cronologia"
+
+
+class TestEntitySeedDeclaresTheFlow:
+    """The Entity seed joins the catalog and declares its guided flow.
+
+    The kernel owns the destination (``lore/``), the ``Entidad`` type label,
+    the identity + ``clase`` minimums and the envelope field; the seed only
+    names the shape and its chat vocabulary.
+    """
+
+    def test_entity_seed_declares_the_guided_flow(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+
+        published = library.get_published("narrative-entity-creation", "1.0")
+        assert published is not None
+        assert published.clasificacion == "Oficiales"
+        assert published.trust_attributes == ("fundacional",)
+        assert published.guided_flow is not None
+        assert published.guided_flow.flow_id == "guided-entity"
+        assert published.guided_flow.entity_type == "entidad"
+        assert published.guided_flow.ui_copy_key == "entity"
+        assert library.is_method_for_flow(
+            "guided-entity", "narrative-entity-creation",
+        )
+        for other in ("guided-character", "guided-system", "guided-chronology"):
+            assert not library.is_method_for_flow(
+                other, "narrative-entity-creation",
+            )
+
+    def test_entity_seed_compiles_clean(self) -> None:
+        entry = next(
+            item for item in load_seed_catalog(SEED_ROOT)
+            if item.skill_id == "narrative-entity-creation"
+        )
+        assert entry.version == "1.0"
+        result = compile_methodology(entry.manifest, entry.source)
+        assert result.ok, [issue.message for issue in result.issues]
+        assert result.compiled is not None
+        assert result.compiled.guided_flow is not None
+        assert result.compiled.guided_flow.entity_type == "entidad"
+
+    def test_entity_seed_description_carries_the_method(self) -> None:
+        """The injected contract keeps the questions and the class branching;
+        the trigger stays a separate, index-sized surface."""
+        entry = next(
+            item for item in load_seed_catalog(SEED_ROOT)
+            if item.skill_id == "narrative-entity-creation"
+        )
+        description = entry.manifest["description"]
+        for marker in ("(1)", "(3)", "(8)"):
+            assert marker in description, marker
+        for clase in ("lugar", "facción", "criatura", "artefacto", "cultura", "especie"):
+            assert clase in description, clase
+        assert "Rieles 40%" in description
+        assert "Sistema" in description and "Cronología" in description
+        trigger = entry.manifest["trigger"]
+        assert trigger != description
+        assert len(trigger) <= 57
+
+
+class TestFoundationalTriggers:
+    """The index trigger is authored separately from the method description."""
+
+    def test_every_seed_ships_a_bounded_trigger(self) -> None:
+        from skill_renderer import _bound_description
+
+        for entry in load_seed_catalog(SEED_ROOT):
+            trigger = entry.manifest.get("trigger")
+            assert trigger, entry.skill_id
+            assert len(trigger) <= 57, entry.skill_id
+            rendered, issues = _bound_description(trigger)
+            assert not issues, entry.skill_id
+            assert rendered == trigger
+
+    def test_every_seed_keeps_the_method_description(self) -> None:
+        for entry in load_seed_catalog(SEED_ROOT):
+            description = entry.manifest.get("description") or ""
+            trigger = entry.manifest.get("trigger") or ""
+            # The method summary stays a separate surface: it is what the
+            # transversal contract projects into chat, never the index label.
+            assert description.strip(), entry.skill_id
+            assert description != trigger, entry.skill_id
+            assert entry.manifest["version"]
+
+    def test_trigger_is_not_the_carrier_of_the_method_rails(self) -> None:
+        entry = next(
+            item for item in load_seed_catalog(SEED_ROOT)
+            if item.skill_id == "narrative-system-creation"
+        )
+        assert entry.manifest["trigger"] == (
+            "Co-crea sistemas: origen, qué exige y límite."
+        )
+        description = entry.manifest["description"]
+        assert "(1)" in description and "(9)" in description
+        assert "material/construido" in description

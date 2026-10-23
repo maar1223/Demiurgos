@@ -28,6 +28,7 @@ import {
 import { DraftHistoryPanel } from "@/components/organisms/CoCreation/DraftHistoryPanel";
 import { AdaptationComparePanel } from "@/components/organisms/CoCreation/AdaptationComparePanel";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
+import { activateCompanion } from "@/api/methodologies";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { cn } from "@/lib/utils";
 import { isTriggerApproved } from "@/lib/triggerBound";
@@ -264,7 +265,10 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   const { t } = useAppLanguage();
   const [input, setInput] = useState("");
   const [scopeWorld, setScopeWorld] = useState("");
-  const [activateWorld, setActivateWorld] = useState("");
+  const [chatWorld, setChatWorld] = useState("");
+  /** Post-publish chat action feedback (S5): names the world that received it. */
+  const [chatFeedback, setChatFeedback] = useState<{ world: string } | null>(null);
+  const [chatError, setChatError] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [taller, setTaller] = useState<string>(DEFAULT_TALLER);
@@ -302,7 +306,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
    *  value; the Author may edit it locally, and the recorded approval drives
    *  the pending/approved state. `null` means untouched. */
   const serverTrigger =
-    typeof reviewPayload.description === "string" ? reviewPayload.description : "";
+    typeof reviewPayload.trigger === "string"
+      ? reviewPayload.trigger
+      : typeof reviewPayload.description === "string"
+        ? reviewPayload.description
+        : "";
   const triggerValue = triggerDraft ?? serverTrigger;
   /** The publish gate (D2/D4): publish stays disabled until the recorded
    *  approval matches the value that will be published. */
@@ -793,12 +801,19 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       </Button>
                     </div>
                   )}
-                  {state.activation && (
+                  {chatFeedback && (
                     <p className="mt-2 rounded-md border border-status-success/30 bg-status-success/10 px-3 py-2 text-xs text-status-success">
-                      {t("cocreation.review.activated", {
-                        world: state.activation.activation.world,
-                        version: state.activation.activation.version,
+                      {t("cocreation.review.addedToChat", {
+                        world: chatFeedback.world,
                       })}
+                    </p>
+                  )}
+                  {chatError && (
+                    <p
+                      role="alert"
+                      className="mt-2 rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+                    >
+                      {t("cocreation.review.addToChatError")}
                     </p>
                   )}
                 </div>
@@ -836,11 +851,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                         t("cocreation.review.publish")
                       )}
                     </Button>
-                    <label className="flex items-center gap-2 text-xs text-muted">
-                      {t("cocreation.review.activateIn")}
+                    <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                      {t("cocreation.review.addToChatIn")}
                       <select
-                        value={activateWorld || activeWorld}
-                        onChange={(event) => setActivateWorld(event.target.value)}
+                        value={chatWorld || activeWorld}
+                        onChange={(event) => setChatWorld(event.target.value)}
                         disabled={isLoading || !state.published}
                         className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
                       >
@@ -857,14 +872,26 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() =>
-                          void state.activate(activateWorld || activeWorld)
-                        }
+                        title={t("cocreation.review.addToChatTitle")}
+                        onClick={() => {
+                          const published = state.published?.published;
+                          const targetWorld = chatWorld || activeWorld;
+                          if (!published || !targetWorld) return;
+                          setChatError(false);
+                          setChatFeedback(null);
+                          void activateCompanion(
+                            targetWorld,
+                            published.skill_id,
+                            published.version,
+                          )
+                            .then(() => setChatFeedback({ world: targetWorld }))
+                            .catch(() => setChatError(true));
+                        }}
                         disabled={
-                          isLoading || !state.published || !(activateWorld || activeWorld)
+                          isLoading || !state.published || !(chatWorld || activeWorld)
                         }
                       >
-                        {t("cocreation.review.activate")}
+                        {t("cocreation.review.addToChat")}
                       </Button>
                     </label>
                   </div>

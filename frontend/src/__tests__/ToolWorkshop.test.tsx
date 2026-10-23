@@ -42,8 +42,7 @@ vi.mock("@/api/coCreation", async (importOriginal) => {
 import { useWorlds } from "@/hooks/useWorlds";
 import {
   activateCompanion,
-  activateMethodology,
-  deactivateMethodology,
+  deactivateCompanion,
   getMethodologyInventory,
   getMethodologyStatus,
 } from "@/api/methodologies";
@@ -113,13 +112,6 @@ describe("ToolWorkshop", () => {
     });
     (getMethodologyStatus as Mock).mockResolvedValue(status);
     (getMethodologyInventory as Mock).mockResolvedValue({ items: [] });
-    (activateMethodology as Mock).mockResolvedValue({
-      world: "Vibrantes",
-      skill_id: "guided-character-v1",
-      version: "1.2.0",
-      digest: "abc",
-      activated_at: "2026-01-01",
-    });
     (activateCompanion as Mock).mockResolvedValue({
       world: "Vibrantes",
       companion: {
@@ -165,12 +157,12 @@ describe("ToolWorkshop", () => {
     });
   });
 
-  it("gates activation on the world chosen in the selector", async () => {
+  it("gates chat actions on the world chosen in the selector", async () => {
     const user = userEvent.setup();
     renderToolWorkshop();
 
     // No world selected → selecting a row shows the right panel with a
-    // disabled Activar (the old inline "Sin mundo" tree button is gone).
+    // disabled "Añadir al chat" action.
     await waitFor(() => {
       expect(
         screen.getByText("Guided character methodology"),
@@ -178,7 +170,9 @@ describe("ToolWorkshop", () => {
     });
     await user.click(screen.getByText("Guided character methodology"));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Añadir al chat" }),
+      ).toBeDisabled();
     });
 
     // The selectors now live in the EditorLayout sidebar header (SC-SB-1.1) —
@@ -189,12 +183,14 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Añadir al chat" }),
+      ).toBeEnabled();
     });
-    await user.click(screen.getByRole("button", { name: "Activar" }));
+    await user.click(screen.getByRole("button", { name: "Añadir al chat" }));
 
     await waitFor(() => {
-      expect(activateMethodology).toHaveBeenCalledWith(
+      expect(activateCompanion).toHaveBeenCalledWith(
         "Vibrantes",
         "guided-character-v1",
         "1.2.0",
@@ -202,12 +198,9 @@ describe("ToolWorkshop", () => {
     });
   });
 
-  it("adopts the Navbar-persisted world on first render and follows live switches (regression: dead 'Sin mundo')", async () => {
-    // The sidebar WorldSelector falls back to the persisted global world for
-    // DISPLAY while the page-local activation target stayed undefined — the
-    // tree showed "Vibrantes" yet every activation button remained disabled
-    // ("Sin mundo") until a manual switch+confirm. The right panel's Activar
-    // must now reflect the persisted world immediately, without a selection.
+  it("adopts the Navbar-persisted world on first render and follows live switches", async () => {
+    // The right panel's chat target must reflect the persisted world
+    // immediately, without a manual switch.
     window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
     const user = userEvent.setup();
     renderToolWorkshop();
@@ -219,11 +212,13 @@ describe("ToolWorkshop", () => {
     });
     await user.click(screen.getByText("Guided character methodology"));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Añadir al chat" }),
+      ).toBeEnabled();
     });
-    await user.click(screen.getByRole("button", { name: "Activar" }));
+    await user.click(screen.getByRole("button", { name: "Añadir al chat" }));
     await waitFor(() => {
-      expect(activateMethodology).toHaveBeenCalledWith(
+      expect(activateCompanion).toHaveBeenCalledWith(
         "Vibrantes",
         "guided-character-v1",
         "1.2.0",
@@ -232,14 +227,16 @@ describe("ToolWorkshop", () => {
 
     // Live sync: a Navbar switch (storage write + custom event) follows the
     // workshop without another manual selection.
-    vi.mocked(activateMethodology).mockClear();
+    vi.mocked(activateCompanion).mockClear();
     setCurrentWorld("OtroMundo");
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Añadir al chat" }),
+      ).toBeEnabled();
     });
-    await user.click(screen.getByRole("button", { name: "Activar" }));
+    await user.click(screen.getByRole("button", { name: "Añadir al chat" }));
     await waitFor(() => {
-      expect(activateMethodology).toHaveBeenCalledWith(
+      expect(activateCompanion).toHaveBeenCalledWith(
         "OtroMundo",
         "guided-character-v1",
         "1.2.0",
@@ -247,24 +244,23 @@ describe("ToolWorkshop", () => {
     });
   });
 
-  it("deactivates the active version via Desactivar and refetches status", async () => {
+  it("removes a skill from the chat and refetches status", async () => {
     window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
     (getMethodologyStatus as Mock).mockResolvedValue({
       ...status,
-      activations: {
-        Vibrantes: {
-          world: "Vibrantes",
-          skill_id: "guided-character-v1",
-          version: "1.2.0",
-          digest: "abc",
-          activated_at: "2026-01-01",
-        },
+      companions: {
+        Vibrantes: [
+          {
+            world: "Vibrantes",
+            skill_id: "guided-character-v1",
+            version: "1.2.0",
+            description: "",
+            activated_at: "2026-01-01",
+          },
+        ],
       },
     });
-    (deactivateMethodology as Mock).mockResolvedValue({
-      world: "Vibrantes",
-      flow_type: "guided-character",
-    });
+    (deactivateCompanion as Mock).mockResolvedValue({ world: "Vibrantes" });
     const user = userEvent.setup();
     renderToolWorkshop();
 
@@ -276,16 +272,58 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByText("Guided character methodology"));
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Desactivar" }),
+        screen.getAllByRole("button", { name: "Quitar del chat" })[0],
       ).toBeEnabled();
     });
     (getMethodologyStatus as Mock).mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Desactivar" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "Quitar del chat" })[0],
+    );
     await waitFor(() => {
-      expect(deactivateMethodology).toHaveBeenCalledWith("Vibrantes");
+      expect(deactivateCompanion).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+      );
     });
     // The shared status refetch keeps the tree and the right panel in sync.
+    await waitFor(() => {
+      expect(getMethodologyStatus).toHaveBeenCalled();
+    });
+  });
+
+  it("updates a drifted chat companion to the published version", async () => {
+    window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    (getMethodologyStatus as Mock).mockResolvedValue({
+      ...status,
+      companions: {
+        Vibrantes: [
+          {
+            world: "Vibrantes",
+            skill_id: "guided-character-v1",
+            version: "1.0.0",
+            description: "",
+            activated_at: "2026-01-01",
+          },
+        ],
+      },
+    });
+    (activateCompanion as Mock).mockResolvedValue({ world: "Vibrantes" });
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    const update = await screen.findByRole("button", {
+      name: "Actualizar chat",
+    });
+    await user.click(update);
+
+    await waitFor(() => {
+      expect(activateCompanion).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
     await waitFor(() => {
       expect(getMethodologyStatus).toHaveBeenCalled();
     });
@@ -321,7 +359,7 @@ describe("ToolWorkshop", () => {
     ).toBeInTheDocument();
   });
 
-  it("still shows publications but forbids activation when no worlds exist", async () => {
+  it("still shows publications but forbids chat actions when no worlds exist", async () => {
     (useWorlds as Mock).mockReturnValue({
       worlds: [],
       isLoading: false,
@@ -339,7 +377,9 @@ describe("ToolWorkshop", () => {
     });
     await user.click(screen.getByText("Guided character methodology"));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Añadir al chat" }),
+      ).toBeDisabled();
     });
     expect(
       screen.getByText(/No hay mundos disponibles/),
@@ -578,7 +618,7 @@ describe("ToolWorkshop", () => {
     // Baseline: the page-level status fetch happened on mount.
     expect(getMethodologyStatus).toHaveBeenCalled();
     (getMethodologyStatus as Mock).mockClear();
-    (activateMethodology as Mock).mockClear();
+    (activateCompanion as Mock).mockClear();
 
     await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
     await waitFor(() => {
@@ -589,7 +629,7 @@ describe("ToolWorkshop", () => {
     // Lens toggling is pure client-side state presentation: no status
     // refetch, no activation, no derivation — NO mutation of any kind.
     expect(getMethodologyStatus).not.toHaveBeenCalled();
-    expect(activateMethodology).not.toHaveBeenCalled();
+    expect(activateCompanion).not.toHaveBeenCalled();
   });
 
   it("shows the Biblioteca subtitle in the taller view (UC-2 S1 / TAB-2 S1)", () => {
@@ -716,7 +756,7 @@ describe("ToolWorkshop", () => {
     ).toBeInTheDocument();
   });
 
-  it("toggles a companion chip ON, refetches status and shows the latency notice (R-UI)", async () => {
+  it("adds a skill to the chat, refetches status and shows the latency notice (S5)", async () => {
     const user = userEvent.setup();
     renderToolWorkshop();
 
@@ -730,12 +770,10 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("option", { name: "Vibrantes" }));
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
     await user.click(screen.getByText("Guided character methodology"));
-    const chip = await screen.findByRole("switch", {
-      name: "Metodología de chat en Vibrantes",
-    });
+    const add = await screen.findByRole("button", { name: "Añadir al chat" });
 
     const statusCallsBefore = (getMethodologyStatus as Mock).mock.calls.length;
-    await user.click(chip);
+    await user.click(add);
 
     await waitFor(() => {
       expect(activateCompanion).toHaveBeenCalledWith(
@@ -757,7 +795,7 @@ describe("ToolWorkshop", () => {
     ).toBeInTheDocument();
   });
 
-  it("surfaces the Spanish error banner when the companion toggle fails (R-UI)", async () => {
+  it("surfaces the Spanish error banner when adding to the chat fails (S5)", async () => {
     const user = userEvent.setup();
     (activateCompanion as Mock).mockRejectedValue(new Error("boom"));
     renderToolWorkshop();
@@ -771,10 +809,7 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("option", { name: "Vibrantes" }));
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
     await user.click(screen.getByText("Guided character methodology"));
-    const chip = await screen.findByRole("switch", {
-      name: "Metodología de chat en Vibrantes",
-    });
-    await user.click(chip);
+    await user.click(screen.getByRole("button", { name: "Añadir al chat" }));
 
     await waitFor(() => {
       expect(

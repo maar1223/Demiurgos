@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "23ef113c",
+  "source_commit": "6bd8939d",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -19,6 +19,15 @@
     "data/methodology/seeds/narrative-character-creation/checksums.json",
     "data/methodology/seeds/narrative-character-creation/manifest.yaml",
     "data/methodology/seeds/narrative-character-creation/source.md",
+    "data/methodology/seeds/narrative-chronology-creation/checksums.json",
+    "data/methodology/seeds/narrative-chronology-creation/manifest.yaml",
+    "data/methodology/seeds/narrative-chronology-creation/source.md",
+    "data/methodology/seeds/narrative-entity-creation/checksums.json",
+    "data/methodology/seeds/narrative-entity-creation/manifest.yaml",
+    "data/methodology/seeds/narrative-entity-creation/source.md",
+    "data/methodology/seeds/narrative-system-creation/checksums.json",
+    "data/methodology/seeds/narrative-system-creation/manifest.yaml",
+    "data/methodology/seeds/narrative-system-creation/source.md",
     "scripts/install-demiurgos.ps1",
     "scripts/install-demiurgos.sh",
     "scripts/start-demiurgos.sh",
@@ -72,6 +81,7 @@
     "src/tools/demiurgos-suite/wiki/guided_character_persistence.py",
     "src/tools/demiurgos-suite/wiki/guided_character_protocol.py",
     "src/tools/demiurgos-suite/wiki/guided_character_provider.py",
+    "src/tools/demiurgos-suite/wiki/guided_flow.py",
     "src/tools/demiurgos-suite/wiki/guided_session_store.py",
     "src/tools/demiurgos-suite/wiki/hermes_co_creation_provider.py",
     "src/tools/demiurgos-suite/wiki/hermes_gateway_hooks.py",
@@ -295,7 +305,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1317
+        "line": 1329
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

@@ -44,7 +44,7 @@ from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
 from methodology_compiler import compile_methodology  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
-from methodology_seed import load_seed_catalog  # noqa: E402
+from methodology_seed import install_seeds, load_seed_catalog  # noqa: E402
 from methodology_trust import build_package, inspect_package  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
@@ -1923,7 +1923,9 @@ class TestGuidedSessionDurability:
         assert fresh.status_code == 200
         assert fresh.json()["proposal_id"].startswith("guided-proposal-")
 
-    def test_methodology_change_requires_a_new_session(self, client: TestClient, monkeypatch, tmp_path):
+    def test_factory_version_change_keeps_existing_session(self, client: TestClient, monkeypatch, tmp_path):
+        """S6/S7: the method is per-session. A new factory version never
+        invalidates an existing session; only new sessions pin it."""
         db = tmp_path / "guided.sqlite3"
         store = DurableGuidedSessionStore(db)
         provider = self._delta_provider()
@@ -1939,17 +1941,15 @@ class TestGuidedSessionDurability:
 
         monkeypatch.setattr(api_server, "_ACTIVE_METHODOLOGY_VERSION", "custom-v2")
         resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
-        assert resumed.status_code == 422
-        assert "methodology version has changed" in resumed.json()["message"]
+        assert resumed.status_code == 200
 
         turned = client.post("/api/test_mundo/guided-character/turn", json={
             "session_id": sid, "base_revision": revision,
             "author_input": "Su deseo es la libertad",
         })
-        assert turned.status_code == 422
-        assert "methodology version has changed" in turned.json()["message"]
+        assert turned.status_code == 200
 
-        # A brand-new session under the new version works and pins it.
+        # A brand-new session under the new factory version pins it.
         fresh = client.post("/api/test_mundo/guided-character/session", json={
             "author_input": "Crear un personaje nuevo llamado Mar",
         })
@@ -2500,9 +2500,9 @@ class TestMethodologyApi:
         assert snapshot.compiled_contract_digest is not None
         assert snapshot.flow_type == "guided-character"
 
-    def test_existing_session_fails_closed_after_activation(self, client: TestClient, monkeypatch, tmp_path):
-        """A session created BEFORE activation keeps its pinned version and is
-        refused on resume/turn once the world's active version changed."""
+    def test_existing_session_keeps_method_after_activation(self, client: TestClient, monkeypatch, tmp_path):
+        """S6/S7: activating a world default later never invalidates a session
+        that already pinned the factory method; new sessions pin the default."""
         db = tmp_path / "guided.sqlite3"
         store = DurableGuidedSessionStore(db)
         provider = _delta_guided_provider()
@@ -2528,13 +2528,20 @@ class TestMethodologyApi:
 
         self._publish_and_activate(client)
         resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
-        assert resumed.status_code == 422
-        assert "methodology version has changed" in resumed.json()["message"]
+        assert resumed.status_code == 200
         turned = client.post("/api/test_mundo/guided-character/turn", json={
             "session_id": sid, "base_revision": revision,
             "author_input": "Su deseo es la libertad",
         })
-        assert turned.status_code == 422
+        assert turned.status_code == 200
+
+        fresh = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Mar",
+        })
+        assert fresh.status_code == 200
+        snapshot = store.methodology_snapshot(fresh.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_version == "1.2.0"
 
     def test_authority_claiming_draft_fails_compile_on_publish(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
@@ -2651,9 +2658,12 @@ class TestMethodologyApi:
         published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
         assert published.status_code == 200, published.text
         assert "adjuntos" not in published.json()
+        # The approved trigger rides along; nothing else is added.
         assert set(published.json()) == {
-            "skill_id", "version", "name", "description", "digest", "published_at",
+            "skill_id", "version", "name", "description", "trigger", "digest",
+            "published_at",
         }
+        assert published.json()["trigger"] == "Approved test trigger"
 
     def test_activate_requires_published_version(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
@@ -3359,6 +3369,26 @@ class TestMethodologyApi:
         assert trusted.json()["code"] == "reserved_skill_id"
         assert client.get("/api/methodologies/status").json()["drafts"] == []
 
+    def test_system_skill_id_rejected_at_trust(self, client: TestClient, monkeypatch):
+        """WU-3 quarantine-trust coverage: the reserved foundational Sistema id
+        is rejected with 409 reserved_skill_id and no draft is created — the
+        system skill is reserved exactly like the character skill."""
+        _principal(monkeypatch, "author-1")
+        foundational = build_package({
+            "skill_id": "narrative-system-creation",
+            "version": "1.0",
+            "name": "Creación de Sistemas",
+            "description": "La skill fundacional de sistemas.",
+            "phases": ["conversation", "review", "complete"],
+            "language": "es",
+        }, "## Sistema\n\nTexto.\n")
+        imported = self._upload(client, foundational, filename="sistema.zip").json()
+        assert imported["verdict"]["ok"] is True
+        trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
+        assert trusted.status_code == 409
+        assert trusted.json()["code"] == "reserved_skill_id"
+        assert client.get("/api/methodologies/status").json()["drafts"] == []
+
     def test_reserved_skill_id_rejected_at_publish(self, client: TestClient, monkeypatch):
         """REQ-IMP-6 scenario: an import-derived foundational character-skill
         draft can never be published (409 reserved_skill_id)."""
@@ -3563,9 +3593,12 @@ class TestSeedFirstBoot:
         response = client.get("/api/methodologies/inventory")
         assert response.status_code == 200
         items = response.json()["items"]
-        assert [item["skill_id"] for item in items] == ["narrative-character-creation"]
+        assert [item["skill_id"] for item in items] == [
+            "narrative-character-creation", "narrative-chronology-creation",
+            "narrative-entity-creation", "narrative-system-creation",
+        ]
         item = items[0]
-        assert item["version"] == "1.2"
+        assert item["version"] == "1.3"
         assert item["clasificacion"] == "Oficiales"
         assert item["trust_attributes"] == ["fundacional"]
         entry = load_seed_catalog(SEED_ROOT)[0]
@@ -3575,7 +3608,10 @@ class TestSeedFirstBoot:
         _principal(monkeypatch, "author-1")
         status = client.get("/api/methodologies/status").json()
         published = status["published"]
-        assert [p["skill_id"] for p in published] == ["narrative-character-creation"]
+        assert [p["skill_id"] for p in published] == [
+            "narrative-character-creation", "narrative-chronology-creation",
+            "narrative-entity-creation", "narrative-system-creation",
+        ]
         assert published[0]["clasificacion"] == "Oficiales"
         assert published[0]["trust_attributes"] == ["fundacional"]
 
@@ -3624,7 +3660,7 @@ class TestSeedFirstBoot:
         assert len(versions) == 1
         reloaded = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
         assert [v["version"] for v in
-                reloaded.published_versions_for("narrative-character-creation")] == ["1.2"]
+                reloaded.published_versions_for("narrative-character-creation")] == ["1.3"]
         # Leave the module global clean for later tests.
         api_server._METHODOLOGY_LIBRARY = None
 
@@ -3752,8 +3788,13 @@ class TestCompanionActivityBridge:
         assert turns[0].skill_id == "companion-skill"
 
     def test_activity_nonmatching_prompt_identical_baseline(self, client, monkeypatch, tmp_path):
-        """Zero-companion baseline == companion-no-winner prompt; one routing
-        decision per turn (no double routing)."""
+        """Zero-companion no-winner == companion-no-winner prompt; one routing
+        decision per turn (no double routing).
+
+        WU-3: companion-free worlds with a real session now AWAIT routing, so a
+        zero-companion no-winner turn still yields today's byte-identical
+        no-skill prompt (no marker injected) with exactly one routing decision.
+        """
         router = _BridgeRouter()
         library, runs, adapter = self._wire(
             monkeypatch, tmp_path, router, payloads=2, companions=False,
@@ -3763,8 +3804,11 @@ class TestCompanionActivityBridge:
         })
         assert baseline.status_code == 200
         baseline_prompt = adapter.prompts[0]
+        # The companion-free no-winner turn injects nothing (byte-identical).
+        assert "[Companion methodology:" not in baseline_prompt
+        assert "[Foundational methodology:" not in baseline_prompt
         # The same world now gains a companion but classification yields no
-        # winner: the prompt must be byte-identical to today's no-skill prompt.
+        # winner: the prompt must be byte-identical to the no-skill prompt.
         library.add_companion("test_mundo", "companion-skill", "1.0.0")
         no_winner = client.post("/api/test_mundo/ai/ask/activity", json={
             "prompt": "Hola", "session_id": "bridge-nowinner",
@@ -3807,6 +3851,128 @@ class TestCompanionActivityBridge:
             "/mnt/", "tmp/", "CompiledMethodology",
         ):
             assert forbidden not in prompt
+
+
+class TestTransversalActivityConsumption:
+    """WU-3 consume bridge: a routed transversal winner injects the bounded
+    method on the legacy channel for a companion-FREE world.
+
+    Mirrors ``TestCompanionActivityBridge`` for the generic transversal seam:
+    the world has NO companion and the router returns a foundational winner
+    (``narrative-system-creation``), yet the method content is injected; a
+    routing timeout falls back to today's prompt with persistence intact; and a
+    companion-free no-winner turn stays byte-identical to the baseline.
+    """
+
+    def _wire(self, monkeypatch, tmp_path, router, payloads=1):
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        draft_id = library.create_draft(
+            skill_id="narrative-system-creation", version="1.0",
+            name="Creación de Sistemas",
+            source="## Sistema\n\nMetodología fundacional de sistemas.\n",
+            description="Metodología fundacional para co-crear un sistema.",
+        )
+        _approve_library_trigger(
+            library, draft_id, "Metodología fundacional para co-crear un sistema."
+        )
+        library.publish(draft_id)
+        # No companion is registered: the world is companion-free (WU-3 change).
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        monkeypatch.setattr(
+            api_server, "_CONVERSATION_MEMORY", api_server.ConversationMemoryStore(":memory:")
+        )
+        monkeypatch.setattr(api_server, "_SKILL_ROUTER", router)
+        runs = _SemanticRuns(*([_semantic_payload("allow")] * payloads))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = _RecordingActivityAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        return library, runs, adapter
+
+    def test_companion_free_transversal_winner_injects_contract(self, client, monkeypatch, tmp_path):
+        """A routed transversal winner's projected method is injected as CONTENT."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("narrative-system-creation")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-1",
+        })
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        published = library.get_published("narrative-system-creation", "1.0")
+        assert f"[Foundational methodology: {published.name}]\n" in adapter.prompts[0]
+        # Projected markdown content rides in the marker (not name-only).
+        assert "Metodología fundacional para co-crear un sistema." in adapter.prompts[0]
+        assert adapter.prompts[0].endswith("\n\nHola")
+        # Exactly one semantic provider run — the gate; routing adds none.
+        assert runs.starts == 1
+
+    def test_real_seed_injects_full_system_method_contract(self, client, monkeypatch, tmp_path):
+        """WARNING-1 regression: the REAL repo seed's method — not the synthetic
+        stand-in the E2E tests publish — is what the transversal seam injects.
+        Installing the real seed catalog and routing its skill yields a
+        projection carrying all nine question markers, the five origin classes,
+        the ``Rieles 40%`` completeness rail, and the Cronología boundary, within
+        the default token bound. This locks the seed's ``description`` contract
+        against future byte-edits."""
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.installed == 4 and report.conflict == 0
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+        contract = api_server._transversal_contract_for(
+            "narrative-system-creation", "test_mundo"
+        )
+
+        assert contract is not None
+        assert contract.startswith("[Foundational methodology: Creación de Sistemas]\n")
+        for marker in (f"({n})" for n in range(1, 10)):
+            assert marker in contract, f"missing question marker {marker}"
+        for clase in (
+            "material/construido", "innato/biológico", "otorgado/divino",
+            "natural/cósmico", "social/convencional",
+        ):
+            assert clase in contract, f"missing origin class {clase}"
+        assert "Rieles 40%" in contract
+        assert "Cronología" in contract
+        # Default projection bound (≤1000 tokens, ~4 chars/token).
+        projected = contract.split("\n", 1)[1]
+        assert len(projected) <= 1000 * 4
+
+    def test_transversal_marker_no_digest_no_path(self, client, monkeypatch, tmp_path):
+        """The transversal marker is bounded: name + projected markdown only."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("narrative-system-creation")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-leak",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Foundational methodology:" in prompt
+        for forbidden in (
+            "sha256:", "digest", "library.json", "data/methodology",
+            "/mnt/", "tmp/", "CompiledMethodology",
+        ):
+            assert forbidden not in prompt
+
+    def test_transversal_routing_timeout_falls_back_and_persists(
+        self, client, monkeypatch, tmp_path
+    ):
+        """A routing timeout keeps today's prompt AND persistence intact."""
+        library, runs, adapter = self._wire(monkeypatch, tmp_path, _SlowRouter())
+        monkeypatch.setattr(api_server, "ROUTING_AWAIT_TIMEOUT_SECONDS", 0.01)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "transversal-timeout",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Foundational methodology:" not in prompt
+        assert prompt.endswith("\n\nHola")
+        # The shielded task resolved at close: the user turn persisted with the
+        # routed winner recorded while the prompt stayed clean.
+        turns = api_server._CONVERSATION_MEMORY.get_recent_turns("transversal-timeout")
+        assert [turn.role for turn in turns] == ["user", "assistant"]
+        assert turns[0].skill_id == "companion-skill"
 
 
 def _delta_guided_provider():
@@ -9212,7 +9378,9 @@ class TestTriggerApprovalApi:
         assert approval["approved_at"]
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
-        assert published.json()["description"] == "Ayuda a crear personajes"
+        # The approval binds the trigger; the method description is untouched.
+        assert published.json()["trigger"] == "Ayuda a crear personajes"
+        assert published.json()["description"] == ""
 
     def test_approve_requires_authentication(self, client: TestClient):
         denied = client.post(
@@ -9266,7 +9434,7 @@ class TestTriggerApprovalApi:
         )
         assert entry["trigger_approval"]["text"] == "Trigger visible en estado"
 
-    def test_description_drift_after_approval_fails_closed(
+    def test_trigger_drift_after_approval_fails_closed(
         self, client: TestClient, monkeypatch,
     ):
         _principal(monkeypatch, "author-1")
@@ -9275,8 +9443,91 @@ class TestTriggerApprovalApi:
             f"/api/methodologies/drafts/{draft_id}/trigger/approve",
             json={"description": "Trigger A"},
         )
-        # A later description edit invalidates the prior approval (fail closed).
-        api_server._methodology_library().update_draft(draft_id, description="Trigger B")
+        # A later trigger edit invalidates the prior approval (fail closed).
+        api_server._methodology_library().update_draft(draft_id, trigger="Trigger B")
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 409
         assert published.json()["code"] == "trigger_not_approved"
+
+    def test_description_drift_after_approval_keeps_the_gate_open(
+        self, client: TestClient, monkeypatch,
+    ):
+        """The method summary is a separate surface: editing it never revokes
+        the trigger approval."""
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "Trigger A"},
+        )
+        api_server._methodology_library().update_draft(
+            draft_id, description="Resumen del método",
+        )
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        assert published.json()["trigger"] == "Trigger A"
+        assert published.json()["description"] == "Resumen del método"
+
+
+# ---------------------------------------------------------------------------
+# Export leak: the package must carry the index trigger and the guided-flow
+# declaration the published record holds (round-trip fidelity).
+# ---------------------------------------------------------------------------
+
+
+def test_export_carries_the_seed_trigger_and_guided_flow(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """A published skill's label and flow declaration ship in the package and
+    re-inspect clean instead of being silently dropped."""
+    _principal(monkeypatch, "author-1")
+    library = MethodologyLibrary(tmp_path / "library.json")
+    install_seeds(library, SEED_ROOT)
+    monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+    exported = client.post(
+        "/api/methodologies/published/narrative-entity-creation/1.0/export",
+    )
+    assert exported.status_code == 200, exported.text
+    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    manifest = yaml.safe_load(archive.read("manifest.yaml"))
+    assert manifest["trigger"] == (
+        "Co-crea lugares, facciones, criaturas y otras entidades."
+    )
+    assert manifest["guided_flow"]["flow_id"] == "guided-entity"
+    assert manifest["guided_flow"]["entity_type"] == "entidad"
+
+    verdict = inspect_package(exported.content)
+    assert verdict.ok, verdict.issues
+    assert verdict.compiled is not None
+    assert verdict.compiled.trigger == manifest["trigger"]
+    assert verdict.compiled.guided_flow is not None
+    assert verdict.compiled.guided_flow.flow_id == "guided-entity"
+
+
+def test_export_without_trigger_or_flow_keeps_the_old_manifest_shape(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """Backward compatibility: a record with neither field exports exactly as
+    before — no invented keys."""
+    _principal(monkeypatch, "author-1")
+    compiled = compile_methodology({
+        "skill_id": "plain-method",
+        "version": "1.0",
+        "name": "Plain method",
+        "description": "A safe method.",
+    }, "## Método\n\nPreguntas de a una.\n").compiled
+    assert compiled is not None
+    library = MethodologyLibrary(tmp_path / "library.json")
+    library.install_published_version(
+        compiled, clasificacion="Oficiales", trust_attributes=(),
+    )
+    monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+    exported = client.post("/api/methodologies/published/plain-method/1.0/export")
+    assert exported.status_code == 200, exported.text
+    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    manifest = yaml.safe_load(archive.read("manifest.yaml"))
+    assert "trigger" not in manifest
+    assert "guided_flow" not in manifest
+    assert inspect_package(exported.content).ok

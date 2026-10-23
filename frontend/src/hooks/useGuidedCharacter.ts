@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import {
   acceptGuidedCharacterProposal,
   continueGuidedCharacter,
@@ -66,12 +67,12 @@ export function useGuidedCharacter(world: string) {
       .finally(() => setIsLoading(false));
   }, [world]);
 
-  const send = useCallback((input: string) => {
+  const send = useCallback((input: string, method?: GuidedMethodChoice) => {
     const trimmed = input.trim();
     if (!trimmed) return Promise.resolve(null);
     return apply(() => session
       ? continueGuidedCharacter(world, session.session_id, session.revision, trimmed)
-      : startGuidedCharacter(world, trimmed));
+      : startGuidedCharacter(world, trimmed, method));
   }, [apply, session, world]);
 
   const accept = useCallback(() => {

@@ -128,6 +128,7 @@ def test_public_state_envelope_excludes_backend_provenance() -> None:
     assert set(payload) == {
         "protocol_version", "session_id", "world", "phase", "revision",
         "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth",
+        "methodology",
     }
     assert "provenance" not in payload["candidate"]
     assert payload["messages"] == [{"role": "assistant", "content": "What drives them?"}]
@@ -869,7 +870,13 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow"}
+    assert session["flow"] == {
+        "flow_id": "guided-character",
+        "entity_type": "personaje",
+        "target_section": "personajes",
+        "ui_copy_key": "character",
+    }
     assert "provenance" not in session["candidate"]
 
     recovered = client.get(f"/api/vibrantes/guided-character/session/{session['session_id']}")
@@ -1355,20 +1362,20 @@ def test_guided_start_semantic_decides_before_lexical_policy(monkeypatch, tmp_pa
         return await original_decide(*args, **kwargs)
 
     provider_semantic.decide = recorded_decide
-    real_route = api_server.route_new_character_intent
+    real_route = api_server.route_guided_intent
 
     def recorded_route(*args, **kwargs):
-        order.append("route_new_character_intent")
+        order.append("route_guided_intent")
         return real_route(*args, **kwargs)
 
-    monkeypatch.setattr(api_server, "route_new_character_intent", recorded_route)
+    monkeypatch.setattr(api_server, "route_guided_intent", recorded_route)
 
     response = client.post("/api/vibrantes/guided-character/session", json={
         "author_input": "Create a character",
     })
 
     assert response.status_code == 200
-    assert order == ["semantic.decide", "route_new_character_intent", "guided_provider"]
+    assert order == ["semantic.decide", "route_guided_intent", "guided_provider"]
     assert runs.starts == 1
 
 
@@ -1422,7 +1429,7 @@ def test_seeded_library_leaves_builtin_guided_runtime_untouched(monkeypatch, tmp
     shutil.copytree(SEED_ROOT, seed_root)
     library = MethodologyLibrary(tmp_path / "library.json")
     report = install_seeds(library, seed_root)
-    assert report.installed == 1
+    assert report.installed == 4
     monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
 
     assert api_server._BUILTIN_METHODOLOGY_VERSION == "builtin"
@@ -1471,8 +1478,8 @@ class TestConvergenceSpecimenB5:
         shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
-        assert report.installed == 1
-        library.activate("vibrantes", "narrative-character-creation", "1.2")
+        assert report.installed == 4
+        library.activate("vibrantes", "narrative-character-creation", "1.3")
         return library
 
     def _harness(self, monkeypatch, tmp_path: Path, *, mode: str = "full",
@@ -1563,7 +1570,7 @@ class TestConvergenceSpecimenB5:
             encoding="utf-8",
         )
         stripped = MethodologyLibrary(tmp_path / "library.json")
-        stripped.activate("vibrantes", "narrative-character-creation", "1.2")
+        stripped.activate("vibrantes", "narrative-character-creation", "1.3")
         provider, store = self._harness(monkeypatch, tmp_path, library=stripped)
         self._finish_exchange(store)
         asyncio.run(api_server._guided_continue(
@@ -1611,8 +1618,8 @@ def _wired_guided_library(tmp_path: Path) -> MethodologyLibrary:
     shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
     library = MethodologyLibrary(tmp_path / "library.json")
     report = install_seeds(library, seed_root)
-    assert report.installed == 1
-    library.activate("vibrantes", "narrative-character-creation", "1.2")
+    assert report.installed == 4
+    library.activate("vibrantes", "narrative-character-creation", "1.3")
     return library
 
 
@@ -1870,3 +1877,65 @@ def test_decline_records_durable_server_flag_with_flag_on(monkeypatch, tmp_path)
     assert "guided_session_id" not in third and "guided_state" not in third
     assert sessions._sessions == {}
     assert runs.starts == 3
+
+
+def _publish_guided_method(skill_id: str = "narrative-character-creation", version: str = "1.0.0") -> None:
+    """Publish an eligible/ineligible method in the isolated library."""
+    library = api_server._methodology_library()
+    description = "Co-crea personajes narrativos nuevos."
+    draft = library.create_draft(
+        skill_id=skill_id,
+        version=version,
+        name=skill_id,
+        source="## Construcción segura\n\nHaz preguntas de a una.\n",
+        description=description,
+    )
+    library.approve_trigger(draft, description, "author-1")
+    library.publish(draft)
+
+
+def test_consent_accept_chooses_method_per_session(monkeypatch, tmp_path) -> None:
+    """S6: the consent card method applies to THIS session, over the legacy default."""
+    _consent_harness(
+        monkeypatch, tmp_path,
+        _musing_continuation_payload("require_confirmation"),
+        _musing_continuation_payload("require_confirmation"),
+    )
+    _publish_guided_method()
+    api_server._methodology_library().activate(
+        "vibrantes", "narrative-character-creation", "1.0.0",
+    )
+
+    token = _issue_consent_suggestion(client)
+    factory = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token, "method_skill_id": "factory",
+    })
+    assert factory.status_code == 200, factory.text
+    assert factory.json()["guided_state"]["methodology"]["factory"] is True
+
+    token = _issue_consent_suggestion(client, session_id="consent-2")
+    explicit = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token,
+        "method_skill_id": "narrative-character-creation",
+        "method_version": "1.0.0",
+    })
+    assert explicit.status_code == 200, explicit.text
+    methodology = explicit.json()["guided_state"]["methodology"]
+    assert methodology["skill_id"] == "narrative-character-creation"
+    assert methodology["skill_version"] == "1.0.0"
+    assert methodology["factory"] is False
+
+
+def test_consent_accept_rejects_ineligible_method(monkeypatch, tmp_path) -> None:
+    """S4: Cronología/Sistemas never become the guided method, even by API."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload("require_confirmation"))
+    _publish_guided_method("narrative-system-creation")
+    token = _issue_consent_suggestion(client)
+    rejected = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token,
+        "method_skill_id": "narrative-system-creation",
+        "method_version": "1.0.0",
+    })
+    assert rejected.status_code == 422
+    assert "does not create characters" in rejected.json()["message"]
+    assert api_server._GUIDED_SESSIONS._sessions == {}
