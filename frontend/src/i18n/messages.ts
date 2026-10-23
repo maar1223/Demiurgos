@@ -1706,6 +1706,7 @@ export const messages = {
     "triggerApproval.approve": "Aprobar gatillo",
     "triggerApproval.reapprove": "Aprobar de nuevo",
     "triggerApproval.badgeApproved": "Aprobado",
+    "triggerApproval.badgeFoundational": "Aprobado por Demiurgos",
     "triggerApproval.badgePending": "Pendiente de aprobación",
     "triggerApproval.error":
       "No se pudo aprobar el gatillo. Inténtalo de nuevo.",
@@ -3720,6 +3721,7 @@ export const messages = {
     "triggerApproval.approve": "Approve trigger",
     "triggerApproval.reapprove": "Approve again",
     "triggerApproval.badgeApproved": "Approved",
+    "triggerApproval.badgeFoundational": "Approved by Demiurgos",
     "triggerApproval.badgePending": "Pending approval",
     "triggerApproval.error":
       "The trigger could not be approved. Please try again.",

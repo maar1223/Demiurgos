@@ -142,6 +142,12 @@ export function MethodologyStatePanel({
     entry?.trigger_approval,
     entry?.description ?? "",
   );
+  /** Foundational skills ship with the product: their trigger is approved by
+   *  Demiurgos itself, never by an Author draft. Showing them as "pending"
+   *  would misreport distrust of the product's own methodology, so they get a
+   *  distinguishable product-approval state instead of a fabricated audit
+   *  row (the server deliberately installs them with no author approval). */
+  const isFoundational = (entry?.trust_attributes ?? []).includes("fundacional");
   /** Stable id for the collapsible trigger body (`aria-controls` target). */
   const triggerBodyId = `methodology-trigger-body-${selected.skill_id}-${selected.version}`;
   const isMiMundo = lens === "mi-mundo";
@@ -234,10 +240,16 @@ export function MethodologyStatePanel({
           </h3>
           <span className="flex items-center gap-2">
             <span data-testid="methodology-trigger-badge">
-              <Badge variant={triggerApproved ? "success" : "warning"}>
+              <Badge
+                variant={
+                  triggerApproved || isFoundational ? "success" : "warning"
+                }
+              >
                 {triggerApproved
                   ? t("triggerApproval.badgeApproved")
-                  : t("triggerApproval.badgePending")}
+                  : isFoundational
+                    ? t("triggerApproval.badgeFoundational")
+                    : t("triggerApproval.badgePending")}
               </Badge>
             </span>
             <button

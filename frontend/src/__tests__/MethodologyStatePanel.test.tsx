@@ -350,6 +350,72 @@ describe("chat block (S1/S2/S5)", () => {
   });
 });
 
+describe("trigger approval badge", () => {
+  const foundational: MethodologyStatus = {
+    published: [
+      {
+        skill_id: "narrative-chronology-creation",
+        version: "1.1",
+        name: "Creación de Cronologías",
+        description: "Co-crea sucesos y eras de la historia de un mundo.",
+        digest: "chron",
+        published_at: "2026-01-01",
+        clasificacion: "Oficiales",
+        trust_attributes: ["fundacional"],
+      },
+    ],
+    activations: {},
+    drafts: [],
+  };
+
+  it("shows a product approval for a foundational skill", () => {
+    renderPanel({
+      status: foundational,
+      selected: { skill_id: "narrative-chronology-creation", version: "1.1" },
+    });
+
+    expect(
+      screen.getByText("Aprobado por Demiurgos"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps pending for a non-foundational skill without approval", () => {
+    renderPanel();
+
+    expect(
+      screen.getByText("Pendiente de aprobación"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows approved for an explicitly approved trigger", () => {
+    renderPanel({
+      status: {
+        ...status,
+        published: [
+          {
+            ...status.published[0],
+            trigger_approval: {
+              text: "Tipos de personalidad",
+              digest: "d",
+              approved_by: "author-1",
+              approved_at: "2026-01-02",
+            },
+          },
+          ...status.published.slice(1),
+        ],
+      },
+    });
+
+    expect(screen.getByText("Aprobado")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Pendiente de aprobación"),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("guided assistant info (S1/S6)", () => {
   it("explains that the method is chosen at session start", () => {
     renderPanel();
