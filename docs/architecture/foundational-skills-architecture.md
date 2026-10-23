@@ -47,7 +47,7 @@
 | `shape` | **NUEVO**, derivado de `type` si falta | `entidad` \| `sistema` \| `cronologia` (`relacion` reservada) |
 | `canon_state` | **NUEVO**, derivado de `status` | 7 estados propios del mundo (ver §3) |
 | `type` | normalizado | lowercase + mapa de alias (`Criatura`→`criatura`) |
-| mínimos | por **forma** + extras por tipo | `entidad`=identidad; `sistema`=identidad + origen/fuente + límite; `cronologia`=evento/fecha; `personaje` además=deseo |
+| mínimos | por **forma** + extras por tipo | `entidad`=identidad (+ `clase`, exigida al tipo genérico que escribe el flujo de entidad); `sistema`=identidad + origen/fuente + límite; `cronologia`=evento/fecha; `personaje` además=deseo |
 | `taller` | **NO va en la ficha** | registro aparte de qué formas/tipos muestra cada taller |
 
 **Lectura tolerante:** datos viejos siguen válidos (normalización + defaults, sin migración masiva).
