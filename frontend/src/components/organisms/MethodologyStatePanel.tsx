@@ -408,43 +408,6 @@ export function MethodologyStatePanel({
                 ? t("methodology.chat.remove")
                 : t("methodology.chat.add")}
             </Button>
-            <div>
-              <p className="text-small font-medium text-primary">
-                {t("methodology.chat.listTitle")}
-              </p>
-              {companions.length === 0 ? (
-                <p className="mt-1 text-small text-muted">
-                  {t("methodology.chat.empty")}
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-1.5">
-                  {companions.map((companion) => (
-                    <li
-                      key={`${companion.skill_id}@${companion.version}`}
-                      className="flex items-center justify-between gap-2 text-small"
-                    >
-                      <span className="text-primary">
-                        {companion.skill_id}@{companion.version}
-                      </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() =>
-                          onToggleCompanion?.(
-                            companion.skill_id,
-                            companion.version,
-                            false,
-                          )
-                        }
-                      >
-                        {t("methodology.chat.remove")}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
             {latencyNoticeWorld === world && (
               <p className="text-small text-muted">
                 {t("methodology.state.latencyNotice")}

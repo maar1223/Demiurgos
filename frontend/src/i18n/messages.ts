@@ -864,8 +864,6 @@ export const messages = {
       "El chat elige solo entre estas skills según la conversación.",
     "methodology.chat.add": "Añadir al chat",
     "methodology.chat.remove": "Quitar del chat",
-    "methodology.chat.listTitle": "Skills en el chat",
-    "methodology.chat.empty": "Ninguna skill añadida al chat.",
     "methodology.guided.title": "Asistente de personajes",
     "methodology.guided.info":
       "El asistente elige su método al iniciar la sesión; si no eliges, usa el de fábrica.",
@@ -2882,8 +2880,6 @@ export const messages = {
       "The chat chooses only among these skills for each conversation.",
     "methodology.chat.add": "Add to chat",
     "methodology.chat.remove": "Remove from chat",
-    "methodology.chat.listTitle": "Skills in the chat",
-    "methodology.chat.empty": "No skills added to the chat.",
     "methodology.guided.title": "Character assistant",
     "methodology.guided.info":
       "The assistant chooses its method when a session starts; if you do not choose, it uses the factory method.",

@@ -287,7 +287,6 @@ describe("chat block (S1/S2/S5)", () => {
         "El chat elige solo entre estas skills según la conversación.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Ninguna skill añadida al chat.")).toBeInTheDocument();
   });
 
   it("adds the selected version to the chat when it is not there", () => {
@@ -304,10 +303,7 @@ describe("chat block (S1/S2/S5)", () => {
   it("removes the selected version from the chat when it is already there", () => {
     const props = renderPanel({ status: companionStatus });
 
-    expect(screen.getByText("eneagrama@1.2.0")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Quitar del chat" })[0],
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Quitar del chat" }));
     expect(props.onToggleCompanion).toHaveBeenCalledWith(
       "eneagrama",
       "1.2.0",
@@ -315,14 +311,42 @@ describe("chat block (S1/S2/S5)", () => {
     );
   });
 
-  it("lists every chat skill with a Quitar del chat action", () => {
-    renderPanel({ status: companionStatus });
+  it("offers only the selected skill's chat action, never another skill's", () => {
+    const props = renderPanel({
+      status: {
+        ...status,
+        companions: {
+          nec: [
+            {
+              world: "nec",
+              skill_id: "eneagrama",
+              version: "1.2.0",
+              description: "",
+              activated_at: "2026-01-03",
+            },
+            {
+              world: "nec",
+              skill_id: "otra-skill",
+              version: "1.0.0",
+              description: "",
+              activated_at: "2026-01-04",
+            },
+          ],
+        },
+      },
+    });
 
-    const list = screen.getByText("Skills en el chat").closest("div")!;
-    fireEvent.click(
-      within(list).getByRole("button", { name: "Quitar del chat" }),
+    const removers = screen.getAllByRole("button", { name: "Quitar del chat" });
+    expect(removers).toHaveLength(1);
+    expect(screen.queryByText("otra-skill@1.0.0")).not.toBeInTheDocument();
+
+    fireEvent.click(removers[0]);
+    expect(props.onToggleCompanion).toHaveBeenCalledTimes(1);
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      false,
     );
-    expect(screen.getByText("eneagrama@1.2.0")).toBeInTheDocument();
   });
 });
 
