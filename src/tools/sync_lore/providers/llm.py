@@ -218,7 +218,10 @@ class LlmProvider(ProviderAdapter):
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": f"data:{mime};base64,{b64}",
+                            # OpenAI-spec object form. Strict gateways reject
+                            # the legacy bare-data-URI string with a 422
+                            # ("invalid type: string ... expected ImageUrl").
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
                         },
                         {"type": "text", "text": ctx},
                     ],
@@ -263,7 +266,10 @@ class LlmProvider(ProviderAdapter):
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": f"data:{mime};base64,{b64}",
+                            # OpenAI-spec object form. Strict gateways reject
+                            # the legacy bare-data-URI string with a 422
+                            # ("invalid type: string ... expected ImageUrl").
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
                         },
                         {
                             "type": "text",

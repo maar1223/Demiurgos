@@ -154,7 +154,8 @@ class TestProviderDescribeImage:
         assert messages[0]["role"] == "system"
         assert "transcribe" in messages[0]["content"].lower()
         assert messages[1]["content"][0]["type"] == "image_url"
-        assert messages[1]["content"][0]["image_url"].startswith("data:image/")
+        # OpenAI-spec object form: strict gateways reject the bare string.
+        assert messages[1]["content"][0]["image_url"]["url"].startswith("data:image/")
 
     def test_missing_vision_config_returns_none(self):
         from sync_lore.providers.llm import LlmProvider
