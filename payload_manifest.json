@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "51698ee6",
+  "source_commit": "c089fada",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -61,6 +61,7 @@
     "src/tools/demiurgos-suite/wiki/backup/transport/folder.py",
     "src/tools/demiurgos-suite/wiki/bug_report.py",
     "src/tools/demiurgos-suite/wiki/chat_attachments.py",
+    "src/tools/demiurgos-suite/wiki/chat_vision.py",
     "src/tools/demiurgos-suite/wiki/co_creation_attachments.py",
     "src/tools/demiurgos-suite/wiki/co_creation_materializer.py",
     "src/tools/demiurgos-suite/wiki/co_creation_protocol.py",
@@ -308,7 +309,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1338
+        "line": 1341
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -334,7 +335,15 @@
     "sync_lore": [
       {
         "file": "src/tools/demiurgos-suite/wiki/chat_attachments.py",
-        "line": 148
+        "line": 162
+      },
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_vision.py",
+        "line": 59
+      },
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_vision.py",
+        "line": 60
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_analysis.py",
@@ -362,11 +371,11 @@
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",
-        "line": 226
+        "line": 245
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",
-        "line": 227
+        "line": 246
       },
       {
         "file": "src/tools/idea_capture/hermes_handler.py",
