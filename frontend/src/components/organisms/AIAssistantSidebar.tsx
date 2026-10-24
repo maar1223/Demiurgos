@@ -765,6 +765,7 @@ function ChatScreen({
                 >
                   {attachment.name}
                 </span>
+                <span className="text-muted">{attachment.chars}</span>
                 <button
                   type="button"
                   onClick={() => removeAttachment(attachment.id)}

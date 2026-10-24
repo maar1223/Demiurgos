@@ -469,3 +469,41 @@ def test_extraction_never_leaves_a_temporary_file_behind():
         path for path in after - before if path.name.startswith("demiurgos-chat-attachment")
     }
     assert leftovers == set()
+
+
+def test_spec_machine_codes_are_exact(client, monkeypatch):
+    r = _upload(client, "notes.txt", b"x")
+    assert (r.status_code, r.json()["code"]) == (422, "attachment.unsupported_type")
+    monkeypatch.setattr(chat_attachments, "MAX_ATTACHMENT_FILE_BYTES", 8)
+    r = _upload(client, "big.pdf", b"x" * 32)
+    assert (r.status_code, r.json()["code"]) == (413, "attachment.too_large")
+    monkeypatch.setattr(chat_attachments, "_convert_bytes", lambda *_: "   ")
+    r = _upload(client, "empty.docx", b"x")
+    assert (r.status_code, r.json()["code"]) == (422, "attachment.empty")
+    r = client.post(
+        "/api/test_mundo/ai/ask",
+        json={"prompt": "x", "attachment_ids": ["gone"]},
+    )
+    assert (r.status_code, r.json()["code"]) == (409, "attachment.expired")
+
+
+def test_long_valid_docx_filename_is_accepted(client):
+    pytest.importorskip("docx")
+    response = _upload(client, "a" * 250 + ".docx", _docx_bytes("Kael"))
+    assert response.status_code == 201, response.text
+    assert response.json()["kind"] == "docx"
+    assert response.json()["name"].endswith(".docx")
+    assert len(response.json()["name"]) < 200
+
+
+def test_missing_pdf_extra_is_conversion_unavailable(monkeypatch):
+    exceptions = pytest.importorskip("markitdown._exceptions")
+
+    def fake_convert(_path):
+        raise exceptions.MissingDependencyException("pdf extra missing")
+
+    monkeypatch.setattr("sync_lore.utils.converter.convert_to_markdown", fake_convert)
+    with pytest.raises(ChatAttachmentError) as info:
+        extract_attachment("doc.pdf", b"%PDF-1.4")
+    assert info.value.code == "attachment.conversion_unavailable"
+    assert info.value.status == 422

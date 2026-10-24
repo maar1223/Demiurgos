@@ -56,11 +56,11 @@ from assistant_activity import (
 from chat_attachments import (
     ATTACHMENTS,
     MAX_ATTACHMENTS_PER_TURN,
-    SUPPORTED_ATTACHMENT_SUFFIXES,
     ChatAttachmentError,
     attachment_context_block,
     attachment_metadata_note,
     extract_attachment,
+    normalize_attachment_name,
 )
 from guided_character_protocol import (
     Capabilities,
@@ -7450,16 +7450,16 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
     context_kind, _ = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
         raise problem("world.not_found")
-    filename = Path(file.filename or "document").name[:200] or "document"
     try:
+        display_name, kind = normalize_attachment_name(file.filename or "document")
         text, chars, truncated = extract_attachment(
-            file.filename or filename, await file.read()
+            file.filename or display_name, await file.read()
         )
     except ChatAttachmentError as exc:
         raise problem(exc.code, detail=exc.message) from exc
     record = ATTACHMENTS.put(
-        name=filename,
-        kind=SUPPORTED_ATTACHMENT_SUFFIXES[Path(filename).suffix.lower()],
+        name=display_name,
+        kind=kind,
         text=text,
         chars=chars,
         truncated=truncated,

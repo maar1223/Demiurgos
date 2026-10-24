@@ -1232,3 +1232,35 @@ describe("AIAssistantSidebar document attachments", () => {
     ).toBeDisabled();
   });
 });
+
+describe("AIAssistantSidebar attachment chip", () => {
+  it("shows the extracted character count next to the name", () => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            {
+              id: "att-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const list = screen.getByRole("list", {
+      name: tEs("assistant.attach.list.aria"),
+    });
+    expect(list).toHaveTextContent("Personaje.docx");
+    expect(list).toHaveTextContent("1200");
+  });
+});

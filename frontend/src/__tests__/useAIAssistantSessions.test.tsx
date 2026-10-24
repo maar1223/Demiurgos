@@ -788,3 +788,38 @@ describe("useAIAssistantSessions document attachments", () => {
     );
   });
 });
+
+describe("useAIAssistantSessions attachment cap", () => {
+  it("stops at five attachments without calling the upload endpoint", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    const existing = Array.from({ length: 5 }, (_, index) => ({
+      id: `att-${index}`,
+      name: `doc${index}.pdf`,
+      kind: "pdf" as const,
+      chars: 10,
+      truncated: false,
+    }));
+    seedSessions([
+      {
+        id: "capped",
+        title: "Capped",
+        messages: [],
+        createdAt: Date.now(),
+        attachments: existing,
+      },
+    ]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("capped"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "extra.pdf"));
+    });
+
+    expect(uploadMock).not.toHaveBeenCalled();
+    expect(result.current.error).toBe(
+      "Puedes adjuntar como máximo 5 documentos por mensaje.",
+    );
+    expect(result.current.activeSession?.attachments).toHaveLength(5);
+  });
+});

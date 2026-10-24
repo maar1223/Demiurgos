@@ -89,6 +89,47 @@ def _suffix_kind(filename: str) -> str:
     return kind
 
 
+def normalize_attachment_name(filename: str) -> tuple[str, str]:
+    """Return ``(display_name, kind)`` for an uploaded filename.
+
+    The display name keeps its extension: truncating a long name with a plain
+    slice would drop the suffix and turn a valid ``.docx`` into an unsupported
+    type. The stem is bounded and the suffix survives.
+    """
+    kind = _suffix_kind(filename)
+    raw = Path(filename or "document").name or "document"
+    stem = Path(raw).stem[:180] or "document"
+    return f"{stem}{Path(raw).suffix.lower()}", kind
+
+
+def _missing_dependency() -> ChatAttachmentError:
+    return ChatAttachmentError(
+        "attachment.conversion_unavailable",
+        422,
+        "Document conversion is unavailable on this platform.",
+    )
+
+
+def _require_converter(suffix: str) -> None:
+    """Fail as ``conversion_unavailable`` BEFORE the seam swallows the cause.
+
+    ``sync_lore``'s converter catches every exception and returns ``None``, so
+    an absent optional extra is indistinguishable from a broken document once
+    it reaches the caller. Checking the imports first keeps the documented
+    degradation honest for the real packaging path.
+    """
+    try:
+        import markitdown  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - packaging dependent
+        raise _missing_dependency() from exc
+    if suffix == ".pdf":
+        try:
+            import pdfminer  # noqa: F401
+            import pdfplumber  # noqa: F401
+        except ImportError as exc:  # pragma: no cover - packaging dependent
+            raise _missing_dependency() from exc
+
+
 def _convert_bytes(filename: str, data: bytes) -> str:
     """Convert one document to text, translating every failure to the contract.
 
@@ -98,6 +139,7 @@ def _convert_bytes(filename: str, data: bytes) -> str:
     an actual conversion error is ``attachment.conversion_failed``.
     """
     suffix = Path(filename).suffix.lower()
+    _require_converter(suffix)
     directory = tempfile.mkdtemp(prefix="demiurgos-chat-attachment-")
     temp_path = Path(directory) / f"document{suffix}"
     try:
@@ -113,12 +155,13 @@ def _convert_bytes(filename: str, data: bytes) -> str:
         try:
             converted = convert_to_markdown(temp_path)
         except SystemExit as exc:
-            raise ChatAttachmentError(
-                "attachment.conversion_unavailable",
-                422,
-                "Document conversion is unavailable on this platform.",
-            ) from exc
+            raise _missing_dependency() from exc
         except Exception as exc:
+            # ``markitdown`` raises ``MissingDependencyException`` when an extra
+            # is absent; the protocol name is stable and avoids depending on a
+            # private module path.
+            if type(exc).__name__ == "MissingDependencyException":
+                raise _missing_dependency() from exc
             raise ChatAttachmentError(
                 "attachment.conversion_failed",
                 422,

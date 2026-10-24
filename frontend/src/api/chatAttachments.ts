@@ -1,6 +1,9 @@
 import { ApiError } from "@/api/types";
 import type { ChatAttachment } from "@/api/types";
 
+/** Mirrors the server's per-turn cap so the composer can stop early. */
+export const MAX_ATTACHMENTS_PER_TURN = 5;
+
 /**
  * POST /api/{mundo}/ai/attachments — extract a `.docx`/`.pdf` for the chat.
  *

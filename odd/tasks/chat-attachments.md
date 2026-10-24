@@ -7,7 +7,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S1 — Attach control.** The Assistant composer exposes one attach action that accepts only `.docx` and `.pdf`. A chosen file uploads to the server; a chip shows the file name and its extracted character count; a remove action discards it. The attach action is disabled while a turn is in flight.
 
-**S2 — Upload endpoint.** `POST /api/{mundo}/ai/attachments` accepts multipart `file`, validates the extension and a 15 MB size cap, extracts the text server-side, stores it for 4 hours (at most 32 stored attachments; oldest evicted first), and returns `{id, name, kind, chars, truncated}`. Rejections are structured with a stable machine code and HTTP status: `attachment_unsupported_type` (422), `attachment_too_large` (413), `attachment_empty` (422), `attachment_conversion_unavailable` (422), `attachment_conversion_failed` (422).
+**S2 — Upload endpoint.** `POST /api/{mundo}/ai/attachments` accepts multipart `file`, validates the extension and a 15 MB size cap, extracts the text server-side, stores it for 4 hours (at most 32 stored attachments; oldest evicted first), and returns `{id, name, kind, chars, truncated}`. Rejections are structured with a stable machine code and HTTP status: `attachment.unsupported_type` (422), `attachment.too_large` (413), `attachment.too_many` (422), `attachment.empty` (422), `attachment.conversion_unavailable` (422), `attachment.conversion_failed` (422). Codes follow the repository's dotted registry convention (`world.not_found`, `import.job_not_found`).
 
 **S3 — Failure is safe.** Extraction and dependency failures never crash the server and never kill a request. A rejected upload stores nothing and leaves the chat state unchanged.
 
@@ -17,13 +17,13 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S6 — Default prompt.** Sending with an attachment and no typed text uses the localized default prompt: `Resume el documento adjunto.` / `Summarize the attached document.`
 
-**S7 — Attachment lifetime.** Attachments belong to the conversation and are re-sent on every turn until removed. An unknown or expired id returns `attachment_expired` (409); the frontend drops the stale chips and shows a localized notice without sending.
+**S7 — Attachment lifetime.** Attachments belong to the conversation and are re-sent on every turn until removed. An unknown or expired id returns `attachment.expired` (409); the frontend drops the stale chips and shows a localized notice without sending.
 
 **S8 — Memory hygiene.** Document text is never written to conversation memory or distilled summaries; only attachment names are recorded.
 
 **S9 — Scope.** Works for the world-scoped Assistant and the global (Taller de Ideas) Assistant.
 
-**S10 — PDF dependency.** The optional dependency set ships markitdown's PDF extra so `.pdf` conversion works where the optional install succeeds; where it does not, the `attachment_conversion_unavailable` degradation applies.
+**S10 — PDF dependency.** The optional dependency set ships markitdown's PDF extra so `.pdf` conversion works where the optional install succeeds; where it does not, the `attachment.conversion_unavailable` degradation applies.
 
 ### Assumptions (not requested verbatim; Owner may overturn)
 

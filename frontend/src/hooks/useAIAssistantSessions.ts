@@ -26,6 +26,7 @@ import {
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
 import { uploadChatAttachment } from "@/api/chatAttachments";
+import { MAX_ATTACHMENTS_PER_TURN } from "@/api/chatAttachments";
 import { localizeApiError } from "@/i18n/errors";
 import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -388,6 +389,10 @@ export function useAIAssistantSessions(
   const attachDocument = useCallback(
     async (file: File) => {
       setError(null);
+      if ((activeSession?.attachments?.length ?? 0) >= MAX_ATTACHMENTS_PER_TURN) {
+        setError(t("error.attachment.too_many"));
+        return;
+      }
       let attachment: ChatAttachment;
       try {
         attachment = await uploadChatAttachment(contextMundo, file);
@@ -423,7 +428,7 @@ export function useAIAssistantSessions(
         ),
       );
     },
-    [activeSessionId, contextMundo, defaultTitle, t],
+    [activeSession, activeSessionId, contextMundo, defaultTitle, t],
   );
 
   const removeAttachment = useCallback(
@@ -638,7 +643,7 @@ export function useAIAssistantSessions(
         }
       } catch (err) {
         if (controller.signal.aborted) return;
-        if (err instanceof ApiError && err.code?.startsWith("attachment.")) {
+        const dropStaleAttachments = (error: ApiError): void => {
           // The turn never ran: drop the stale references and tell the author
           // to re-attach, instead of leaving every later send broken.
           setSessions((prev) =>
@@ -646,7 +651,10 @@ export function useAIAssistantSessions(
               s.id === sessionId ? { ...s, attachments: [] } : s,
             ),
           );
-          setError(localizeApiError(err, t));
+          setError(localizeApiError(error, t));
+        };
+        if (err instanceof ApiError && err.code?.startsWith("attachment.")) {
+          dropStaleAttachments(err);
           return;
         }
         if (err instanceof AssistantActivityUnavailable && !activityAccepted) {
@@ -659,6 +667,15 @@ export function useAIAssistantSessions(
             const result = await legacyRequest();
             applySemanticOutcome(mapSemanticDecision(result, language));
           } catch (legacyError) {
+            // The legacy fallback can also reject the turn for a stale id;
+            // handle it the same way instead of faking a blocked answer.
+            if (
+              legacyError instanceof ApiError &&
+              legacyError.code?.startsWith("attachment.")
+            ) {
+              dropStaleAttachments(legacyError);
+              return;
+            }
             applyBlocked(semanticBlockedText(language), true);
           }
         } else if (
