@@ -28,7 +28,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 ### Assumptions (not requested verbatim; Owner may overturn)
 
 - A1: T1 covers text extraction only (`.docx`, `.pdf`). Images are T2, out of scope here.
-- A2: Limits — 15 MB per file, 30,000 injected characters per attachment, 4 h TTL, 32 stored attachments.
+- A2: Limits — 15 MB per file, 30,000 injected characters per attachment, 4 h TTL, 32 stored attachments, at most 5 attachments per turn.
 - A3: Multiple attachments per conversation are allowed.
 
 ### Out of scope
@@ -39,12 +39,12 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 ## Tasks
 
-- T1 — Backend attachment module: bounded store + extraction seam (`S2`, `S3`, `S10`).
-- T2 — Upload endpoint and structured rejection contract (`S2`, `S3`).
-- T3 — Ask wiring: `AskRequest.attachment_ids`, gate metadata, activity prompt block, memory hygiene, expired-id handling (`S4`, `S5`, `S7`, `S8`, `S9`).
-- T4 — Frontend API client and types (`S1`, `S2`).
-- T5 — Composer UI: attach action, chips, default prompt, localized errors (`S1`, `S6`, `S7`).
-- T6 — Backend + frontend tests and dependency/docs update (`S10`).
+- [x] T1 — Backend attachment module: bounded store + extraction seam (`S2`, `S3`, `S10`). Commit `95fde16d`.
+- [x] T2 — Upload endpoint and structured rejection contract (`S2`, `S3`). Commit `dc5622cf`.
+- [x] T3 — Ask wiring: `AskRequest.attachment_ids`, gate metadata, activity prompt block, memory hygiene, expired-id handling (`S4`, `S5`, `S7`, `S8`, `S9`). Commit `e3db887a`.
+- [x] T4 — Frontend API client and types (`S1`, `S2`). Commit `3c835aa9`.
+- [x] T5 — Composer UI: attach action, chips, default prompt, localized errors (`S1`, `S6`, `S7`). Commit `3c835aa9`.
+- [x] T6 — Backend + frontend tests and dependency/docs update (`S10`). Commit `3c835aa9`.
 
 ## Log
 
@@ -59,3 +59,14 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - `requirements-optional.txt` installs `markitdown[docx]`; the PDF extra (`pdfminer-six`, `pdfplumber`) was absent from the dev venv. Installed locally and verified: a handcrafted PDF converts to text; the repo docx (`mundos/Vibrantes-Legacy/Enciclopedia de los Vibrantes.docx`) converts to 250,703 chars (hence truncation is mandatory).
 - Global assistant context key: `ideas-global` (backend `GLOBAL_ASSISTANT_CONTEXT`, frontend `GLOBAL_ASSISTANT_CONTEXT`).
 - Tests run from `src/tools/demiurgos-suite`; `TestClient(api_server.app, client=("127.0.0.1", 50000))` is the established API-test pattern.
+
+**L4 — Implementation evidence (2026-10-23):**
+- Backend: `src/tools/demiurgos-suite/wiki/chat_attachments.py` (extraction + store + prompt renderers), `error_codes.py` (`attachment.*` codes), `api_server.py` (upload endpoint, `AskRequest.attachment_ids`, gate metadata, run-prompt block, memory hygiene).
+- Frontend: `src/api/chatAttachments.ts`, `Session.attachments` in `useAIAssistantSessions`, composer attach action/chips in `AIAssistantSidebar`, `error.attachment.*` + `assistant.attach.*` copy in both catalogues.
+- Delivery: `requirements-optional.txt` now installs `markitdown[docx,pdf]`; `payload_manifest.json` regenerated (163 files) so the packaged app boots with the new module.
+- Backend checks: `pytest wiki/tests/test_chat_attachments.py` → 28 passed; `test_api_server.py` → 523 passed; full suite (CI's ignore list, `-k "not live"`) → 3940 passed, 2 failed (`test_gateway_hooks`, known order-dependent, 39/39 in isolation), 30 deselected.
+- Frontend checks: `npm test -- --run` → 124 files / 1503 tests passed; `npm run typecheck` clean.
+- Deliberate limitation: the legacy `POST /ai/ask` fallback (used only when the activity surface is unavailable) returns the classifier's one-sentence answer, so document *content* answers come from `/ai/ask/activity`. The gate receives attachment metadata only by design.
+- Native RDD: `review mode status` and the lifecycle are unavailable on this filesystem (RAR rejects the NTFS/FUSE Git common dir). `review assess --base-ref 7d85766c --committed-only` reported `risk: medium`, `review_due: false`, `under_budget`. No native review ran.
+
+**Risk:** item 5 — delivery/environment (`requirements-optional.txt` adds the PDF extra; `payload_manifest.json` changes the shipped allow-list). Item 3 does not apply: the new endpoint and the `AskRequest.attachment_ids` field are additive.
