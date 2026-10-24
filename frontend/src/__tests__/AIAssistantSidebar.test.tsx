@@ -78,6 +78,7 @@ const createSessionsState = (
   sendMessage: vi.fn(),
   attachDocument: vi.fn(async () => {}),
   removeAttachment: vi.fn(),
+  attaching: null,
   cancelSend: vi.fn(),
   resolveGuidedProposal: vi.fn(),
   resolveGuidedConsent: vi.fn(),
@@ -1432,5 +1433,76 @@ describe("AIAssistantSidebar attachment previews", () => {
     expect(image.getAttribute("src")).toBe(
       "/api/ideas-global/ai/attachments/img-2/thumbnail",
     );
+  });
+});
+
+
+describe("AIAssistantSidebar attachment progress", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("names the accepted file types on the attach button", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const button = screen.getByRole("button", { name: tEs("assistant.attach.aria") });
+    const hint = button.getAttribute("title") ?? "";
+    for (const extension of [".docx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"]) {
+      expect(hint).toContain(extension);
+    }
+  });
+
+  it("shows an indeterminate progress chip while an image is analyzed", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({ attaching: { name: "faro.png", kind: "image" } }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("faro.png");
+    expect(status).toHaveTextContent(tEs("assistant.attach.analyzingImage"));
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeDisabled();
+  });
+
+  it("shows the extraction copy for a document", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({ attaching: { name: "Personaje.docx", kind: "document" } }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      tEs("assistant.attach.extracting"),
+    );
+  });
+
+  it("blocks sending while a file is still processing", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        attaching: { name: "faro.png", kind: "image" },
+        activeSession: {
+          id: "session-42",
+          title: "Busy",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            {
+              id: "att-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 10,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    ).toBeDisabled();
   });
 });

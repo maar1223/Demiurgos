@@ -125,6 +125,7 @@ interface ChatScreenProps {
   sendMessage: (prompt: string) => void;
   attachDocument: (file: File) => Promise<void>;
   removeAttachment: (attachmentId: string) => void;
+  attaching: ReturnType<typeof useAIAssistantSessions>["attaching"];
   whisperStatus: ReturnType<typeof useWhisper>["status"];
   whisperIsRecording: boolean;
   whisperIsTranscribing: boolean;
@@ -254,6 +255,7 @@ function ChatScreen({
   sendMessage,
   attachDocument,
   removeAttachment,
+  attaching,
   whisperStatus,
   whisperIsRecording,
   whisperIsTranscribing,
@@ -752,6 +754,23 @@ function ChatScreen({
 
       {/* Input area */}
       <div className="border-t border-edge px-4 py-3 shrink-0">
+        {attaching && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-2 flex max-w-full items-center gap-2 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
+          >
+            <span aria-hidden="true">
+              <Spinner size="sm" />
+            </span>
+            <span className="max-w-[12rem] truncate">{attaching.name}</span>
+            <span className="text-muted">
+              {attaching.kind === "image"
+                ? t("assistant.attach.analyzingImage")
+                : t("assistant.attach.extracting")}
+            </span>
+          </div>
+        )}
         {attachments.length > 0 && (
           <ul
             aria-label={t("assistant.attach.list.aria")}
@@ -827,7 +846,8 @@ function ChatScreen({
             <button
               type="button"
               onClick={handleAttachClick}
-              disabled={confirmationPending || isSending}
+              disabled={confirmationPending || isSending || Boolean(attaching)}
+              title={t("assistant.attach.hint")}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
               aria-label={t("assistant.attach.aria")}
             >
@@ -869,6 +889,7 @@ function ChatScreen({
               disabled={
                 confirmationPending ||
                 isSending ||
+                Boolean(attaching) ||
                 (!input.trim() && attachments.length === 0)
               }
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-action-text hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
@@ -1112,6 +1133,7 @@ export function AIAssistantSidebar({
           sendMessage={sessions.sendMessage}
           attachDocument={sessions.attachDocument}
           removeAttachment={sessions.removeAttachment}
+          attaching={sessions.attaching}
           whisperStatus={whisper.status}
           whisperIsRecording={whisper.isRecording}
           whisperIsTranscribing={whisper.isTranscribing}

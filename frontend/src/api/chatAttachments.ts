@@ -68,3 +68,8 @@ export function chatAttachmentThumbnailUrl(
 ): string {
   return `/api/${encodeURIComponent(mundo)}/ai/attachments/${encodeURIComponent(attachmentId)}/thumbnail`;
 }
+
+/** Client-side guess used only for the pending chip copy (the server owns kind). */
+export function attachmentKindFromName(name: string): "image" | "document" {
+  return /\.(png|jpe?g|webp|gif)$/i.test(name) ? "image" : "document";
+}

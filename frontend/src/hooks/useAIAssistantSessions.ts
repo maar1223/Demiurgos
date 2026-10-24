@@ -25,7 +25,7 @@ import {
 } from "@/api/guidedCharacter";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
-import { uploadChatAttachment } from "@/api/chatAttachments";
+import { attachmentKindFromName, uploadChatAttachment } from "@/api/chatAttachments";
 import { MAX_ATTACHMENTS_PER_TURN } from "@/api/chatAttachments";
 import { localizeApiError } from "@/i18n/errors";
 import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
@@ -34,6 +34,11 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
 export interface Message {
   role: "user" | "assistant";
   content: string;
+}
+
+export interface PendingAttachment {
+  name: string;
+  kind: "image" | "document";
 }
 
 export interface Session {
@@ -99,6 +104,8 @@ export interface AIAssistantSessionsResult {
   sendMessage: (prompt: string) => Promise<void>;
   attachDocument: (file: File) => Promise<void>;
   removeAttachment: (attachmentId: string) => void;
+  /** The file currently uploading/analyzing, or null (S18). */
+  attaching: PendingAttachment | null;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
   resolveGuidedConsent: (
     accept: boolean,
@@ -324,6 +331,7 @@ export function useAIAssistantSessions(
       : null;
   });
   const [isSending, setIsSending] = useState(false);
+  const [attaching, setAttaching] = useState<PendingAttachment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
@@ -394,6 +402,11 @@ export function useAIAssistantSessions(
         return;
       }
       let attachment: ChatAttachment;
+      // The upload can take seconds (vision analysis); surface it immediately.
+      setAttaching({
+        name: file.name || t("assistant.attach.unnamed"),
+        kind: attachmentKindFromName(file.name || ""),
+      });
       try {
         attachment = await uploadChatAttachment(contextMundo, file);
       } catch (err) {
@@ -403,6 +416,8 @@ export function useAIAssistantSessions(
             : t("error.attachment.conversion_failed"),
         );
         return;
+      } finally {
+        setAttaching(null);
       }
       // Attaching before the first message opens the conversation: the
       // attachment belongs to it, so the session must exist first.
@@ -788,6 +803,7 @@ export function useAIAssistantSessions(
     sendMessage,
     attachDocument,
     removeAttachment,
+    attaching,
     resolveGuidedProposal,
     resolveGuidedConsent,
     requestGuidedReview,

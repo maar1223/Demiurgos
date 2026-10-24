@@ -43,6 +43,10 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S17 — Preview before sending.** Each composer chip previews what was attached: an image chip shows the generated thumbnail (fetched from the attachment route), and a document chip shows its type badge (`docx`/`pdf`). If the thumbnail cannot load, the chip falls back to the type icon without breaking the chip or the send. The thumbnail route is scoped to the same world/global context as the upload and returns no-store bytes; an unknown or expired id answers 404.
 
+**S18 — Attach hint.** Hovering the attach control shows the accepted file types in a tooltip: `.docx`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`. The accessible label stays short; the tooltip adds the detail, so the user never has to guess an extension.
+
+**S19 — Upload feedback.** While a file is uploading and being analyzed, the composer shows a live status chip with the file name and the phase copy: "Analizando la imagen…" for images and "Extrayendo el texto…" for documents. The attach control is disabled during processing and sending waits until it finishes, so a message can never leave without the file the author just picked. On failure the status chip disappears and the localized error is shown; no attachment is added.
+
 ### Assumptions (not requested verbatim; Owner may overturn)
 
 - A1: T1 covers text extraction only (`.docx`, `.pdf`).
@@ -78,6 +82,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - [x] T10 — Frontend accept list, default image prompt, localized codes (`S11`, `S13`). Commit `f9065914`.
 - [x] T11 — Docs, manifest, full checks (`S12`, `S14`). Commit pending (docs).
 - [x] T12 — Chip preview: bounded thumbnail route + image thumbnail/document badge (`S16`, `S17`). Commit `2b06aff4`.
+- [ ] T13 — Attach-type tooltip and live upload/analysis feedback (`S18`, `S19`).
 
 ## Log
 

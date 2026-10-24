@@ -559,6 +559,10 @@ export const messages = {
     "assistant.attach.defaultPrompt": "Resume el documento adjunto.",
     "assistant.attach.defaultPromptImage": "¿Qué hay en la imagen adjunta?",
     "assistant.attach.truncated": "Adjunto recortado: {chars} caracteres extraídos",
+    "assistant.attach.hint": "Adjunta .docx, .pdf, .png, .jpg, .jpeg, .webp o .gif",
+    "assistant.attach.analyzingImage": "Analizando la imagen…",
+    "assistant.attach.extracting": "Extrayendo el texto…",
+    "assistant.attach.unnamed": "Archivo",
     "assistant.propose.aria": "Proponer edición",
     "assistant.propose.label": "Proponer edición",
     "assistant.propose.disabled.noWorld":
@@ -2611,6 +2615,10 @@ export const messages = {
     "assistant.attach.defaultPrompt": "Summarize the attached document.",
     "assistant.attach.defaultPromptImage": "What is in the attached image?",
     "assistant.attach.truncated": "Attachment truncated: {chars} characters extracted",
+    "assistant.attach.hint": "Attach .docx, .pdf, .png, .jpg, .jpeg, .webp or .gif",
+    "assistant.attach.analyzingImage": "Analyzing the image…",
+    "assistant.attach.extracting": "Extracting the text…",
+    "assistant.attach.unnamed": "File",
     "assistant.propose.aria": "Propose edit",
     "assistant.propose.label": "Propose edit",
     "assistant.propose.disabled.noWorld":

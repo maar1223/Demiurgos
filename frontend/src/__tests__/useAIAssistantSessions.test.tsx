@@ -848,3 +848,85 @@ describe("useAIAssistantSessions image attachment errors", () => {
     expect(result.current.activeSession?.attachments ?? []).toEqual([]);
   });
 });
+
+describe("useAIAssistantSessions attachment progress", () => {
+  const attachment = {
+    id: "att-progress",
+    name: "faro.png",
+    kind: "image" as const,
+    chars: 240,
+    truncated: false,
+  };
+
+  it("reports the pending attachment until the upload finishes", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    let release!: (value: typeof attachment) => void;
+    uploadMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    let done!: Promise<void>;
+    act(() => {
+      done = result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.attaching).toEqual({ name: "faro.png", kind: "image" });
+
+    await act(async () => {
+      release(attachment);
+      await done;
+    });
+
+    expect(result.current.attaching).toBeNull();
+    expect(result.current.activeSession?.attachments).toEqual([attachment]);
+  });
+
+  it("clears the pending state and attaches nothing when the upload fails", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    uploadMock.mockRejectedValue(
+      new ApiError(422, "bad", "bad", "attachment.vision_unavailable"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.attaching).toBeNull();
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+    expect(result.current.error).toBe(
+      "La visión no está disponible para el modelo del asistente.",
+    );
+  });
+
+  it("classifies the pending kind from the file name", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    let release!: (value: typeof attachment) => void;
+    uploadMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    let done!: Promise<void>;
+    act(() => {
+      done = result.current.attachDocument(new File(["x"], "Personaje.DOCX"));
+    });
+    expect(result.current.attaching).toEqual({
+      name: "Personaje.DOCX",
+      kind: "document",
+    });
+
+    await act(async () => {
+      release(attachment);
+      await done;
+    });
+  });
+});
