@@ -115,6 +115,8 @@ def _run_vision(coro: Any, timeout: int) -> Any:
 
 def _read_assistant_vision_config(
     settings_path: Path | None,
+    *,
+    accepted_capability: str | None = None,
 ) -> VisionConfig | None:
     """Read the active assistant settings; ``None`` unless multimodal.
 
@@ -156,6 +158,11 @@ def _read_assistant_vision_config(
             None,
         )
         capability = str((catalog or {}).get("capability") or "unknown")
+    # A product-recorded causal vision acceptance for this config revision is
+    # proof the model is multimodal even when the stored metadata predates the
+    # catalog entry (S14). Callers pass it explicitly; the importer does not.
+    if capability != "multimodal" and accepted_capability == "multimodal":
+        capability = "multimodal"
     if capability != "multimodal":
         logger.info("Model %s is %s; vision skipped", model_id, capability)
         return None
@@ -166,6 +173,10 @@ def _read_assistant_vision_config(
         model=model_id,
         api_key_env=_provider_key_env(provider),
     )
+
+
+#: Public alias for callers outside this module (the chat image seam).
+read_vision_config = _read_assistant_vision_config
 
 
 def _safe_cache_lookup(
@@ -201,6 +212,7 @@ def build_vision_callable(
     generate_thumbnail: Callable[[bytes, int], bytes] | None = None,
     vision_cache_lookup: Callable[[str], VisionResult | None] | None = None,
     vision_cache_store: Callable[[str, VisionResult], None] | None = None,
+    accepted_capability: str | None = None,
 ) -> Callable[[list[ImageEntry], str], list[VisionResult]] | None:
     """Build the vision callable from assistant settings; ``None`` when disabled.
 
@@ -210,7 +222,8 @@ def build_vision_callable(
     SHA-256 of the original bytes), thumbnails to 300px before the provider
     call, and fails open at every boundary.
     """
-    config = _read_assistant_vision_config(settings_path)
+    config = _read_assistant_vision_config(
+        settings_path, accepted_capability=accepted_capability)
     if config is None:
         return None
 

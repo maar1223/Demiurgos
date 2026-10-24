@@ -804,3 +804,43 @@ class TestRuntimeStateResolver:
         monkeypatch.setenv("HERMES_HOME", str(hermes))
         assert isinstance(assistant_settings.current_config_revision(), int)
 
+
+
+class TestCapabilityTruth:
+    """S14 — the catalog and the probes are the capability truth."""
+
+    def test_catalog_lists_the_live_flash_model_as_multimodal(self):
+        models = {item["id"]: item for item in assistant_settings.ASSISTANT_MODEL_CATALOG}
+        assert models["deepseek-flash"]["capability"] == "multimodal"
+        assert models["deepseek-flash"]["label"] == "DeepSeek-V4.1-Flash"
+
+    def test_unknown_stored_capability_falls_back_to_the_catalog(self):
+        model = assistant_settings._model_metadata(
+            "deepseek-flash", {"capability": "unknown"})
+        assert model.capability == "multimodal"
+
+    def test_explicit_stored_capability_still_wins_over_the_catalog(self):
+        model = assistant_settings._model_metadata(
+            "gpt-5.6-luna", {"capability": "text-only"})
+        assert model.capability == "text-only"
+
+    def test_save_persists_the_probe_verified_multimodal_capability(
+        self, client: TestClient, monkeypatch,
+    ):
+        def transport(method, url, headers):
+            return 200, {"data": [{"id": "manual-model", "name": "Manual Model"}]}
+
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", transport)
+        _install_fake_probes(monkeypatch)
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-secret-value",
+                "manual_model_id": "manual-model",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["model_metadata"]["capability"] == "multimodal"
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        assert "capability: multimodal" in config

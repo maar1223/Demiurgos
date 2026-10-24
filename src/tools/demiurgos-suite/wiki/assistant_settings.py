@@ -57,6 +57,9 @@ _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # strings. Keep this list explicit so arbitrary model input cannot reach Hermes.
 ASSISTANT_MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "capability": "multimodal", "pricing": None},
+    # The product's causal vision probe accepted this model; the catalog reports
+    # the capability the probe proved (S14).
+    {"id": "deepseek-flash", "label": "DeepSeek-V4.1-Flash", "capability": "multimodal", "pricing": None},
     {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "capability": "text-only", "pricing": None},
     {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "capability": "text-only", "pricing": None},
     {"id": "deepseek-v4-lite", "label": "DeepSeek V4 Lite", "capability": "text-only", "pricing": None},
@@ -215,7 +218,14 @@ def _read_config(path: Path) -> tuple[str, dict[str, Any], str]:
 def _model_metadata(model_id: str, stored: dict[str, Any] | None = None) -> AssistantModel:
     stored = stored or {}
     catalog = next((item for item in ASSISTANT_MODEL_CATALOG if item["id"] == model_id), None)
-    capability = stored.get("capability") or (catalog or {}).get("capability") or "unknown"
+    # ``unknown`` is not a claim: an explicit stored capability wins, but an
+    # unknown stored value defers to the catalog (S14).
+    stored_capability = stored.get("capability")
+    capability = (
+        stored_capability
+        if stored_capability in {"multimodal", "text-only"}
+        else (catalog or {}).get("capability") or "unknown"
+    )
     if capability not in {"multimodal", "text-only", "unknown"}:
         capability = "unknown"
     return AssistantModel(
@@ -754,7 +764,9 @@ def create_assistant_settings_router(
                 payload,
                 AssistantModel(
                     id=model["id"], label=model["label"],
-                    capability=model["capability"], pricing=model["pricing"],
+                    # Both probes passed above, and the causal vision probe is
+                    # the proof of multimodal capability (S14).
+                    capability="multimodal", pricing=model["pricing"],
                 ),
             )
             if runtime_state_resolver is not None:
