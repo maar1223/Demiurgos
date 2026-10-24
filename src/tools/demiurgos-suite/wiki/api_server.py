@@ -53,6 +53,12 @@ from assistant_activity import (
     SemanticDecisionEvent,
     TerminalEvent,
 )
+from chat_attachments import (
+    ATTACHMENTS,
+    SUPPORTED_ATTACHMENT_SUFFIXES,
+    ChatAttachmentError,
+    extract_attachment,
+)
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -7399,6 +7405,41 @@ def _skill_creation_redirect(prompt: str) -> dict | None:
             "message": "Para crear una skill, te recomiendo ir al Taller de Herramientas.",
         }
     return None
+
+
+@app.post("/api/{mundo}/ai/attachments", status_code=201)
+async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
+    """Extract a ``.docx``/``.pdf`` attachment for the Assistant chat (S2).
+
+    The document never reaches the model as bytes: it is converted to cleaned
+    text here and referenced later by an opaque id, so the ask payload stays
+    small. Extraction failures are structured ``attachment.*`` rejections and
+    store nothing (S3). Same world/global context rules as the ask endpoints.
+    """
+    context_kind, _ = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
+        raise problem("world.not_found")
+    filename = Path(file.filename or "document").name[:200] or "document"
+    try:
+        text, chars, truncated = extract_attachment(
+            file.filename or filename, await file.read()
+        )
+    except ChatAttachmentError as exc:
+        raise problem(exc.code, detail=exc.message) from exc
+    record = ATTACHMENTS.put(
+        name=filename,
+        kind=SUPPORTED_ATTACHMENT_SUFFIXES[Path(filename).suffix.lower()],
+        text=text,
+        chars=chars,
+        truncated=truncated,
+    )
+    return {
+        "id": record.id,
+        "name": record.name,
+        "kind": record.kind,
+        "chars": record.chars,
+        "truncated": record.truncated,
+    }
 
 
 @app.post("/api/{mundo}/ai/ask")

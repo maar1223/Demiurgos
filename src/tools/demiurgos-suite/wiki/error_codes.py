@@ -81,6 +81,26 @@ REGISTRY: dict[str, ErrorSpec] = {
         "bugreport.relay_unavailable", 502, "Bug-report relay is unavailable"),
     "bugreport.delivery_failed": ErrorSpec(
         "bugreport.delivery_failed", 502, "Bug-report delivery failed"),
+    # Chat document attachments (chat-attachments T2). The UI localizes these
+    # through ``error.attachment.*``; ``detail`` stays a stable English fallback.
+    "attachment.unsupported_type": ErrorSpec(
+        "attachment.unsupported_type", 422,
+        "Unsupported attachment type; only .docx and .pdf are accepted."),
+    "attachment.too_large": ErrorSpec(
+        "attachment.too_large", 413,
+        "The attachment exceeds the size limit."),
+    "attachment.empty": ErrorSpec(
+        "attachment.empty", 422,
+        "The document has no extractable text."),
+    "attachment.conversion_unavailable": ErrorSpec(
+        "attachment.conversion_unavailable", 422,
+        "Document conversion is unavailable on this platform."),
+    "attachment.conversion_failed": ErrorSpec(
+        "attachment.conversion_failed", 422,
+        "The document could not be converted."),
+    "attachment.expired": ErrorSpec(
+        "attachment.expired", 409,
+        "The attachment is no longer available."),
 }
 
 

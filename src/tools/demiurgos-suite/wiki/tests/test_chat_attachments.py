@@ -189,6 +189,96 @@ def test_store_evicts_the_oldest_entry_beyond_capacity():
     assert store.get(ids[-1]) is not None
 
 
+# ---------------------------------------------------------------------------
+# Endpoint: POST /api/{mundo}/ai/attachments
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from fastapi.testclient import TestClient
+
+    import api_server
+
+    mundos = tmp_path / "mundos"
+    world = mundos / "test_mundo"
+    (world / "lore").mkdir(parents=True)
+    (world / "lore" / "00_inicio.md").write_text(
+        "---\ntype: criatura\ntitle: Inicio\n---\n# Inicio\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
+    chat_attachments.ATTACHMENTS.clear()
+    yield TestClient(api_server.app, client=("127.0.0.1", 50000))
+    chat_attachments.ATTACHMENTS.clear()
+
+
+def _upload(client, filename: str, data: bytes, mundo: str = "test_mundo"):
+    return client.post(
+        f"/api/{mundo}/ai/attachments",
+        files={"file": (filename, data, "application/octet-stream")},
+    )
+
+
+def test_upload_returns_the_attachment_contract(client):
+    pytest.importorskip("mammoth")
+    response = _upload(client, "Personaje.docx", _docx_bytes("Kael el Errante"))
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert set(body) == {"id", "name", "kind", "chars", "truncated"}
+    assert body["name"] == "Personaje.docx"
+    assert body["kind"] == "docx"
+    assert body["truncated"] is False
+    assert body["chars"] > 0
+    assert chat_attachments.ATTACHMENTS.get(body["id"]) is not None
+
+
+def test_upload_accepts_the_global_assistant_context(client):
+    pytest.importorskip("mammoth")
+    response = _upload(client, "Idea.docx", _docx_bytes("Una idea"), mundo="ideas-global")
+    assert response.status_code == 201, response.text
+
+
+def test_upload_rejects_an_unknown_world(client):
+    response = _upload(client, "doc.docx", b"x", mundo="no_such_world")
+    assert response.status_code == 404
+    assert response.json()["code"] == "world.not_found"
+
+
+def test_upload_rejects_an_unsupported_type(client):
+    response = _upload(client, "notes.txt", b"plain text")
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "attachment.unsupported_type"
+
+
+def test_upload_rejects_an_oversized_file(client, monkeypatch):
+    monkeypatch.setattr(chat_attachments, "MAX_ATTACHMENT_FILE_BYTES", 8)
+    response = _upload(client, "big.pdf", b"x" * 32)
+    assert response.status_code == 413
+    assert response.json()["code"] == "attachment.too_large"
+
+
+def test_upload_reports_conversion_unavailable(client, monkeypatch):
+    def _unavailable(*_args, **_kwargs):
+        raise chat_attachments.ChatAttachmentError(
+            "attachment.conversion_unavailable", 422, "unavailable"
+        )
+
+    monkeypatch.setattr(chat_attachments, "_convert_bytes", _unavailable)
+    response = _upload(client, "doc.pdf", b"%PDF-1.4")
+    assert response.status_code == 422
+    assert response.json()["code"] == "attachment.conversion_unavailable"
+
+
+def test_rejected_upload_stores_nothing(client):
+    response = _upload(client, "notes.txt", b"plain text")
+    assert response.status_code == 422
+    assert len(chat_attachments.ATTACHMENTS) == 0
+
+
 def test_extraction_never_leaves_a_temporary_file_behind():
     pytest.importorskip("mammoth")
     import tempfile
