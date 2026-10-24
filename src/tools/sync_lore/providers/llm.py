@@ -79,6 +79,18 @@ _IMAGE_SYSTEM_PROMPT = (
     '}'
 )
 
+#: Chat attachments: a standalone, question-agnostic description that an
+#: assistant can later answer from. Unlike ``_IMAGE_SYSTEM_PROMPT`` it never
+#: compares against surrounding lore text and always transcribes visible text.
+_CHAT_IMAGE_SYSTEM_PROMPT = (
+    "Describe esta imagen en detalle para que un asistente de worldbuilding "
+    "pueda responder preguntas sobre ella mas tarde. Incluye que se ve, "
+    "personas, objetos, lugares, colores, composicion, estilo, atmosfera y "
+    "transcribe TODO el texto visible. No evalues si coincide con un texto: "
+    "describe la imagen. Responde en espanol, estrictamente en este formato "
+    'JSON: {"descripcion": "..."}'
+)
+
 
 # ---------------------------------------------------------------------------
 # LlmProvider
@@ -113,6 +125,11 @@ class LlmProvider(ProviderAdapter):
             )
         else:
             self._vision_api_key = ""
+
+    @property
+    def config(self) -> "ProviderConfig":
+        """The provider adapter contract (``ProviderAdapter.config``)."""
+        return self._text_config
 
     def _cfg(self, text_or_vision: str = "text") -> tuple[Any, str, str]:
         """Return (config, api_key, label) for the given mode."""
@@ -207,6 +224,50 @@ class LlmProvider(ProviderAdapter):
             analisis=result.get("analisis", ""),
             tags=result.get("tags", []),
         )
+
+    async def describe_image(
+        self, image: bytes, context: str = ""
+    ) -> str | None:
+        """Describe one standalone image for the Assistant chat (S12).
+
+        Returns the ``descripcion`` string, or ``None`` when vision is not
+        configured, the key is missing, or the provider answers without a
+        usable description. Failures never raise: the caller decides how to
+        degrade.
+        """
+        cfg, key, label = self._cfg("vision")
+        if self._vision_config is None or not key:
+            return None
+
+        b64 = base64.b64encode(image).decode("utf-8")
+        mime = _detect_mime(image)
+        payload: dict = {
+            "model": cfg.model,
+            "messages": [
+                {"role": "system", "content": _CHAT_IMAGE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": f"data:{mime};base64,{b64}",
+                        },
+                        {
+                            "type": "text",
+                            "text": context or "[Imagen adjunta a la conversación]",
+                        },
+                    ],
+                },
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        result = await self._post(payload, cfg, key)
+        if not isinstance(result, dict):
+            return None
+        description = result.get("descripcion")
+        if not isinstance(description, str) or not description.strip():
+            return None
+        return description.strip()
 
     # ------------------------------------------------------------------
     # Core HTTP + retry logic
