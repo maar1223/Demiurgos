@@ -77,7 +77,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - [x] T9 — Endpoint image support, codes, prompt label (`S11`-`S13`, `S16`). Commit `ae280cd2`.
 - [x] T10 — Frontend accept list, default image prompt, localized codes (`S11`, `S13`). Commit `f9065914`.
 - [x] T11 — Docs, manifest, full checks (`S12`, `S14`). Commit pending (docs).
-- [ ] T12 — Chip preview: bounded thumbnail route + image thumbnail/document badge (`S16`, `S17`).
+- [x] T12 — Chip preview: bounded thumbnail route + image thumbnail/document badge (`S16`, `S17`). Commit `2b06aff4`.
 
 ## Log
 
@@ -128,3 +128,5 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - Final backend suite: 3967 passed, 2 known order-dependent `test_gateway_hooks` failures. Frontend: 124 files / 1510 tests, typecheck clean; `frontend/dist` rebuilt so the running app serves the image-aware composer.
 
 **L9 — T2 verification and advisories (commit `bae3dfcd`):** the independent verifier found no blockers for S11-S16 and confirmed the key never reaches responses, error details, logs, or serialized records. Three advisories were closed: the chat thumbnail now fits inside a 300px square (a 100x1000 portrait becomes 30x300, not 300x3000), `VisionConfig.api_key` is excluded from `repr`, and the truncation tooltip is attachment-neutral. Final backend suite: 3968 passed, only the 2 known order-dependent `test_gateway_hooks` failures.
+
+**L10 — Chip preview evidence (2026-10-24):** image chips request `GET /api/{mundo}/ai/attachments/{id}/thumbnail`; the live route returned `200`, `content-type: image/jpeg`, `cache-control: no-store`, and a 300x175 JPEG for a 720x420 upload. Document chips render their `docx`/`pdf` badge. The thumbnail is generated once per image and reused by the vision call; the original bytes are still never stored or served. An unloadable preview falls back to the type icon. Final suites: backend 3973 passed (2 known order-dependent `test_gateway_hooks` failures); frontend 1514 passed; typecheck clean.

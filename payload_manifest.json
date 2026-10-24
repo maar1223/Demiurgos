@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "bae3dfcd",
+  "source_commit": "2b06aff4",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -335,7 +335,7 @@
     "sync_lore": [
       {
         "file": "src/tools/demiurgos-suite/wiki/chat_attachments.py",
-        "line": 162
+        "line": 164
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/chat_vision.py",
