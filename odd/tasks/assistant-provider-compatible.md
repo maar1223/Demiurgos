@@ -54,10 +54,10 @@ The mapping, the reference lifecycle and the run probe are covered by determinis
 
 ## Tasks
 
-- [ ] T1 — Provider mapping + managed `api_key` reference in `assistant_settings` (`S1`-`S4`).
-- [ ] T2 — `HermesRunProbe` module + unit tests (`S5`).
-- [ ] T3 — Wire the run probe as save-time acceptance + router tests (`S5`).
-- [ ] T4 — Docs, full suite, verification (`S6`).
+- [x] T1 — Provider mapping + managed `api_key` reference in `assistant_settings` (`S1`-`S4`). Commit `520a1f72`.
+- [x] T2 — `HermesRunProbe` module + unit tests (`S5`). Commit `89c2f762`.
+- [x] T3 — Wire the run probe as save-time acceptance + router tests (`S5`). Commit `c585b43d`.
+- [x] T4 — Docs, full suite, verification (`S6`). Commit (docs).
 
 ## Log
 
@@ -78,3 +78,21 @@ The mapping, the reference lifecycle and the run probe are covered by determinis
 - `_status_from_config` prefers the normalized `assistant_settings.provider`, so the product id survives on the read path.
 
 **L5 — Decision:** map `openai`/`compatible` to Hermes `custom` (chat completions, the transport both probes validate) rather than `openai-api` (Responses); keep the normalized block as the product vocabulary; reference the existing `.env` secret from `model.api_key` instead of inlining it.
+
+**L6 — T1 implementation evidence (2026-10-24):**
+- `assistant_settings._HERMES_PROVIDERS` maps the six product ids; `_set_model_config_content` now writes the mapped id, accepts an owned `model.api_key` reference and drops only that owned reference (`${ASSISTANT_PROVIDER_API_KEY}`) when the provider no longer needs it. Any foreign `api_key` is preserved.
+- `DELETE /configuration/key` also releases the owned reference.
+- Tests: `TestHermesProviderMapping` (6 parametrized mappings + switch-away + key-clear + foreign-key preservation) plus the updated `test_model_update_preserves_non_legacy_provider_fields`. `test_assistant_settings.py` 64 passed at that point.
+- Verified against the installed Hermes 0.21.1 in a temp `HERMES_HOME`: `provider: custom` + `base_url` + `api_key: ${ASSISTANT_PROVIDER_API_KEY}` resolves to `provider=custom`, `api_mode=chat_completions` with the real secret; without the reference it resolves to `no-key-required`.
+
+**L7 — T2/T3 implementation evidence (2026-10-24):**
+- `hermes_run_probe.HermesRunProbe`: POST `/v1/runs` + poll `GET /v1/runs/{id}`, bounded by a deadline (25 s default, 0.5 s poll), accept only `completed` with non-empty `output`; 13 unit tests with an injected transport/clock.
+- Router: new `runtime_probe` injection; when present it is the only acceptance observation (one call), a raised error fails closed. `api_server` wires `_assistant_runtime_run_probe()` (gateway base from `HERMES_GATEWAY_URL`, bearer from `HERMES_GATEWAY_KEY`).
+- Tests: `test_save_uses_the_real_run_probe_for_acceptance` (liveness tripwire, True/False) and `test_run_probe_exception_fails_closed`; wiring tests assert the api_server seam uses the configured gateway and fails closed.
+- Targeted suites: `test_assistant_settings.py` + `test_hermes_run_probe.py` 79 passed; `test_api_server.py`, `test_readiness.py`, `test_hermes_runtime_probe.py`, `test_import_vision.py`, `test_assistant_provider_adapters.py`, `test_hermes_profile_config.py`, `test_assistant_activity.py` 639 passed.
+
+**Risk (feature):** item 3 — the persisted Hermes `model:` contract changes (provider identity plus an owned `api_key` reference). Delivering the fix requires the Owner to re-save the assistant configuration once so the already-written `provider: compatible` is replaced; startup auto-healing of a broken profile was deliberately left out of scope.
+
+**L8 — Live-resolution proof (2026-10-24):** taking the LIVE `~/.hermes/config.yaml` (provider `compatible`, model `deepseek-flash`, base_url `https://api.deepseek.com`, key in the profile `.env`) and applying only this fix's `_set_model_config_content` in a throwaway `/tmp` `HERMES_HOME` (config + a copy of the profile `.env`, 600, removed afterwards), the installed Hermes 0.21.1 resolved `provider=custom`, `api_mode=chat_completions`, `base_url=https://api.deepseek.com`, and the real 35-character key from the `.env` (not the `${ASSISTANT_PROVIDER_API_KEY}` literal). The already-running gateway still serves the old config, so the Owner's live re-save after restarting the app is the remaining step.
+
+**L9 — Full-suite evidence (2026-10-24):** CI's backend command (ignore list + `-k "not live"`) → 3939 passed, 2 failed (`test_gateway_hooks::test_cache_safe_returns_false_when_modules_absent`, `...fallback_to_plain_prompt_builder`) — the known order-dependent pair, 51/51 green when run in isolation. `test_payload_boot` initially failed because the new module was missing from the payload allow-list; `scripts/derive_payload_manifest.py` regenerated it (163 payload files) and the four boot tests pass.

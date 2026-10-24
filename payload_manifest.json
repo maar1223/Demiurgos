@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "6bd8939d",
+  "source_commit": "c585b43d",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -86,6 +86,7 @@
     "src/tools/demiurgos-suite/wiki/hermes_co_creation_provider.py",
     "src/tools/demiurgos-suite/wiki/hermes_gateway_hooks.py",
     "src/tools/demiurgos-suite/wiki/hermes_profile_config.py",
+    "src/tools/demiurgos-suite/wiki/hermes_run_probe.py",
     "src/tools/demiurgos-suite/wiki/hermes_runtime.py",
     "src/tools/demiurgos-suite/wiki/hermes_runtime_probe.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -305,7 +306,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1329
+        "line": 1345
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
