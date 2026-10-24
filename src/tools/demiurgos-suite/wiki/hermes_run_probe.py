@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping
 
 import httpx
 
-DEFAULT_TIMEOUT_SECONDS = 25.0
+DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_POLL_SECONDS = 0.5
 #: Tiny prompt: the point is a completed provider turn, not its content.
 ACCEPTANCE_PROMPT = "Reply with the single word: ok"
@@ -40,7 +40,7 @@ def _http_transport(
     headers: "dict[str, str]",
 ) -> "tuple[int, Any]":
     """Default synchronous transport: one isolated client per call."""
-    with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(8.0, connect=4.0)) as client:
         response = client.request(method, url, json=payload, headers=headers)
         try:
             body = response.json()

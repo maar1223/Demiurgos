@@ -426,6 +426,8 @@ def _set_model_config_content(
     provider: str,
     base_url: str,
     api_key: str | None = None,
+    *,
+    replace_foreign_api_key: bool = False,
 ) -> str:
     """Update only the top-level model block and preserve other config text.
 
@@ -433,7 +435,9 @@ def _set_model_config_content(
     Hermes-resolvable counterpart (S1). ``api_key`` is the reference Demiurgos
     owns for that provider (S2). When it is ``None`` a previously owned
     reference is removed while any other ``model.api_key`` value is preserved
-    untouched (S4).
+    untouched. A foreign ``model.api_key`` is only replaced when the caller
+    supplies a NEW secret (``replace_foreign_api_key``); a keyless save must
+    never swap the user's own inline key for Demiurgos' reference (S4).
     """
     hermes_provider = _hermes_provider(provider)
     lines = content.splitlines(keepends=True)
@@ -475,14 +479,24 @@ def _set_model_config_content(
             match = re.fullmatch(r"(\s{2})(default|provider|base_url|api_key):(.*?)(\r?\n)?", line)
             if match:
                 key = match.group(2)
-                if key == "api_key" and "api_key" not in desired:
-                    if match.group(3).strip() in managed_references:
-                        # Demiurgos' own stale reference: drop it so a later
-                        # provider never expands a secret it does not use.
-                        dropped += 1
-                        continue
-                    # A value Demiurgos does not own is preserved verbatim.
-                    found.add(key)
+                if key == "api_key":
+                    value = match.group(3).strip()
+                    if "api_key" not in desired:
+                        if value in managed_references:
+                            # Demiurgos' own stale reference: drop it so a
+                            # later provider never expands a secret it does
+                            # not use.
+                            dropped += 1
+                            continue
+                        # A value Demiurgos does not own is preserved verbatim.
+                        found.add(key)
+                    elif value in managed_references or replace_foreign_api_key or not value:
+                        found.add(key)
+                        line = f"  {key}: {desired[key]}{newline}"
+                    else:
+                        # Keyless save: the user's own inline key wins over the
+                        # reference Demiurgos would have written.
+                        found.add(key)
                 else:
                     found.add(key)
                     line = f"  {key}: {desired[key]}{newline}"
@@ -569,15 +583,16 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
         key_configured=bool(candidate.api_key),
         revision=current_status.revision + 1,
     )
+    payload_had_key = isinstance(payload.get("api_key"), str) and bool(payload.get("api_key").strip())
     next_config = _set_model_config_content(
         config_content,
         model.id,
         candidate.provider,
         candidate.base_url,
         _managed_api_key_reference(candidate.provider),
+        replace_foreign_api_key=payload_had_key,
     )
     next_config = _set_normalized_content(next_config, next_status)
-    payload_had_key = isinstance(payload.get("api_key"), str) and bool(payload.get("api_key").strip())
     if payload_had_key and candidate.api_key:
         next_env, env_changed = _set_env_content(
             env_content, candidate.api_key, _provider_key_env(candidate.provider)
@@ -740,6 +755,7 @@ def create_assistant_settings_router(
                     provider,
                     current_status.base_url or _BASE_URL,
                     reference,
+                    replace_foreign_api_key=has_key,
                 )
                 if next_model_id and (selected_model is not None or has_key)
                 else config_content
