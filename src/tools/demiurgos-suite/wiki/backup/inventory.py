@@ -232,6 +232,13 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
     ),
     ExclusionRule(".git", "excluded:vcs-metadata"),
     ExclusionRule(".codegraph", "excluded:code-index-regenerable"),
+    # Runtime logs are the app's own writes: the API appends one line per
+    # request INSIDE the data root, so including them made every request a
+    # durable change and kept the engine in a self-sustaining snapshot loop
+    # (each run's own log lines fed the next run). They are regenerable,
+    # gitignored material, never author data. Top-level anchored: a world's own
+    # ``logs`` folder deeper in the tree is still staged.
+    ExclusionRule("logs", "excluded:runtime-log", "subtree"),
     ExclusionRule(".venv", "excluded:virtualenv-code"),
     # Tooling / dependency / cache directories, refused by basename ANYWHERE in
     # the tree (scope ``name``). Their names are unambiguous: a folder called
