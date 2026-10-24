@@ -22,6 +22,7 @@ for _p in (str(_WIKI), str(_SUITE), str(_TOOLS)):
         sys.path.insert(0, _p)
 
 import chat_attachments  # noqa: E402
+import api_server  # noqa: E402
 from chat_attachments import (  # noqa: E402
     ATTACHMENT_TTL_SECONDS,
     MAX_ATTACHMENT_FILE_BYTES,
@@ -277,6 +278,184 @@ def test_rejected_upload_stores_nothing(client):
     response = _upload(client, "notes.txt", b"plain text")
     assert response.status_code == 422
     assert len(chat_attachments.ATTACHMENTS) == 0
+
+
+# ---------------------------------------------------------------------------
+# Ask wiring: S4 (prompt context), S5 (grounded answer), S7 (expiry), S8 (memory)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingSemanticProvider:
+    """Minimal semantic provider that records the gate prompt it receives."""
+
+    def __init__(self, state: str = "allow") -> None:
+        self.state = state
+        self.prompts: list[str] = []
+
+    async def decide(self, prompt, *, request_id, session_id=None, context=None,
+                     distilled_state=None, recent_turns=None):
+        from semantic_intent import SemanticDecision, SemanticResult
+
+        self.prompts.append(prompt)
+        return SemanticResult(
+            decision=SemanticDecision(
+                state=self.state,  # type: ignore[arg-type]
+                response="Answer about the attached document.",
+                request_id=request_id,
+            ),
+            attempts=1,
+            request_id=request_id,
+            session_id=session_id,
+        )
+
+
+class _CapturingActivityAdapter:
+    """Activity adapter that records the run request and exposes no events."""
+
+    def __init__(self) -> None:
+        from assistant_activity import CapabilityAssessment
+
+        self.available = True
+        self.capability = CapabilityAssessment(True, "", None)
+        self.requests = []
+
+    async def probe(self):
+        return self.capability
+
+    def start(self, request):
+        self.requests.append(request)
+        return "run-1"
+
+    def events(self, run_id):
+        async def _empty():
+            if False:  # pragma: no cover - keeps this an async generator
+                yield {}
+
+        return _empty()
+
+    def status(self, run_id):
+        return {"status": "running"}
+
+
+def _store_attachment(text: str = "El dragon vive en el norte.", name: str = "doc.pdf"):
+    return chat_attachments.ATTACHMENTS.put(
+        name=name, kind="pdf", text=text, chars=len(text), truncated=False
+    )
+
+
+def test_prompt_includes_the_attachment_body_and_header():
+    import api_server
+
+    record = chat_attachments.ChatAttachment(
+        id="a1", name="doc.pdf", kind="pdf",
+        text="El dragon vive en el norte.", chars=29, truncated=False,
+        created_at=0.0,
+    )
+    prompt = api_server._build_ai_ask_prompt(
+        "test_mundo",
+        api_server.AskRequest(prompt="¿Donde vive el dragon?"),
+        attachments=[record],
+    )
+    assert "El dragon vive en el norte." in prompt
+    assert "doc.pdf" in prompt
+    assert "¿Donde vive el dragon?" in prompt
+    assert prompt.index("El dragon vive en el norte.") < prompt.index("¿Donde vive el dragon?")
+
+
+def test_prompt_marks_a_truncated_attachment():
+    import api_server
+
+    record = chat_attachments.ChatAttachment(
+        id="a1", name="doc.pdf", kind="pdf",
+        text="Texto recortado.[…truncado: se muestran 30 de 50000 caracteres]",
+        chars=50000, truncated=True, created_at=0.0,
+    )
+    prompt = api_server._build_ai_ask_prompt(
+        "test_mundo",
+        api_server.AskRequest(prompt="Resume"),
+        attachments=[record],
+    )
+    assert "truncado" in prompt
+    assert "50000" in prompt
+
+
+def test_gate_receives_only_attachment_metadata(client, monkeypatch):
+    provider = _CapturingSemanticProvider()
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", provider)
+    record = _store_attachment(text="Contenido secreto del documento.")
+    response = client.post(
+        "/api/test_mundo/ai/ask",
+        json={"prompt": "¿Que dice?", "attachment_ids": [record.id]},
+    )
+    assert response.status_code == 200, response.text
+    assert provider.prompts, "the gate never ran"
+    gate_prompt = provider.prompts[0]
+    assert "doc.pdf" in gate_prompt
+    assert "Contenido secreto del documento." not in gate_prompt
+
+
+def test_activity_run_receives_the_attachment_text(client, monkeypatch):
+    provider = _CapturingSemanticProvider()
+    adapter = _CapturingActivityAdapter()
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+    record = _store_attachment(text="Contenido que el modelo debe leer.")
+    response = client.post(
+        "/api/test_mundo/ai/ask/activity",
+        json={"prompt": "¿Que dice?", "attachment_ids": [record.id]},
+    )
+    assert response.status_code == 200, response.text
+    assert adapter.requests, "the activity run never started"
+    assert "Contenido que el modelo debe leer." in adapter.requests[0].prompt
+
+
+def test_unknown_attachment_id_is_rejected_before_any_provider_call(client, monkeypatch):
+    provider = _CapturingSemanticProvider()
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", provider)
+    response = client.post(
+        "/api/test_mundo/ai/ask",
+        json={"prompt": "¿Que dice?", "attachment_ids": ["expired-id"]},
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "attachment.expired"
+    assert provider.prompts == []
+
+
+def test_activity_rejects_an_unknown_attachment_id(client, monkeypatch):
+    adapter = _CapturingActivityAdapter()
+    monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+    response = client.post(
+        "/api/test_mundo/ai/ask/activity",
+        json={"prompt": "¿Que dice?", "attachment_ids": ["expired-id"]},
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "attachment.expired"
+    assert adapter.requests == []
+
+
+def test_too_many_attachments_are_rejected(client, monkeypatch):
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", _CapturingSemanticProvider())
+    ids = [_store_attachment(name=f"doc{index}.pdf").id for index in range(6)]
+    response = client.post(
+        "/api/test_mundo/ai/ask",
+        json={"prompt": "Resume", "attachment_ids": ids},
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "attachment.too_many"
+
+
+def test_memory_user_prompt_keeps_names_only():
+    import api_server
+
+    record = chat_attachments.ChatAttachment(
+        id="a1", name="doc.pdf", kind="pdf",
+        text="Contenido privado del documento.", chars=31, truncated=False,
+        created_at=0.0,
+    )
+    persisted = api_server._memory_user_prompt("Resume esto", [record])
+    assert persisted.startswith("Resume esto")
+    assert "doc.pdf" in persisted
+    assert "Contenido privado del documento." not in persisted
 
 
 def test_extraction_never_leaves_a_temporary_file_behind():

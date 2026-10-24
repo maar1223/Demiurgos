@@ -89,6 +89,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "attachment.too_large": ErrorSpec(
         "attachment.too_large", 413,
         "The attachment exceeds the size limit."),
+    "attachment.too_many": ErrorSpec(
+        "attachment.too_many", 422,
+        "Too many attachments in one message."),
     "attachment.empty": ErrorSpec(
         "attachment.empty", 422,
         "The document has no extractable text."),

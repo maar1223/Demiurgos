@@ -55,8 +55,11 @@ from assistant_activity import (
 )
 from chat_attachments import (
     ATTACHMENTS,
+    MAX_ATTACHMENTS_PER_TURN,
     SUPPORTED_ATTACHMENT_SUFFIXES,
     ChatAttachmentError,
+    attachment_context_block,
+    attachment_metadata_note,
     extract_attachment,
 )
 from guided_character_protocol import (
@@ -7200,6 +7203,7 @@ class AskRequest(BaseModel):
     file_path: str = ""
     guided_session_id: str = ""
     guided_revision: int | None = None
+    attachment_ids: list[str] = []
 
 @app.post("/api/chat")
 async def chat_endpoint(body: ChatRequest):
@@ -7385,6 +7389,33 @@ _SKILL_CREATION_MARKERS = (
 )
 
 
+def _resolve_chat_attachments(attachment_ids: list[str] | None) -> list:
+    """Resolve the turn's attachment ids, failing closed on an expired id (S7).
+
+    Duplicates collapse to the first occurrence, the per-turn cap is enforced
+    before any provider call, and an unknown id is a ``409 attachment.expired``
+    so the frontend can drop the stale chips instead of silently losing them.
+    """
+    unique = list(dict.fromkeys(attachment_ids or []))
+    if len(unique) > MAX_ATTACHMENTS_PER_TURN:
+        raise problem("attachment.too_many")
+    resolved = []
+    for attachment_id in unique:
+        record = ATTACHMENTS.get(attachment_id)
+        if record is None:
+            raise problem("attachment.expired")
+        resolved.append(record)
+    return resolved
+
+
+def _memory_user_prompt(prompt: str, attachments: list) -> str:
+    """The user turn persisted to conversation memory: names, never text (S8)."""
+    if not attachments:
+        return prompt
+    names = ", ".join(record.name for record in attachments)
+    return f"{prompt}\n[Adjuntos: {names}]"
+
+
 def _skill_creation_redirect(prompt: str) -> dict | None:
     """Chat-level redirection recommendation (REQ-CC-2 / TW9 refined).
 
@@ -7496,6 +7527,7 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             session_id=body.session_id or None,
             unavailable=True,
         ).as_dict()
+    attachments = _resolve_chat_attachments(body.attachment_ids)
     ficha = _active_ficha_context(mundo, body)
     if context_kind == "global":
         context = SemanticContext()
@@ -7506,7 +7538,7 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         )
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
-        mundo, body.prompt,
+        mundo, body.prompt + attachment_metadata_note(attachments),
         context=context,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
@@ -7542,7 +7574,10 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             # it neither persists nor triggers a routing/LLM call.
             if body.session_id:
                 skill_id = await _route_skill(body.prompt, mundo, distilled_state)
-                _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
+                _persist_memory_turn(
+                    body.session_id, mundo, "user",
+                    _memory_user_prompt(body.prompt, attachments), skill_id,
+                )
                 _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
                 await _maybe_refresh_distilled(body.session_id, mundo)
         payload = result.as_dict()
@@ -8357,6 +8392,7 @@ def _build_ai_ask_prompt(
     memory_turns: list[Turn] | None = None,
     distilled_state: str | None = None,
     skill_contract: str | None = None,
+    attachments: list | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -8466,6 +8502,9 @@ def _build_ai_ask_prompt(
         )
     if skill_contract:
         parts.append(skill_contract)
+    attachment_block = attachment_context_block(attachments or [])
+    if attachment_block:
+        parts.append(attachment_block)
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
@@ -8598,6 +8637,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     context_kind, world_root = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
         return _activity_unavailable()
+    attachments = _resolve_chat_attachments(body.attachment_ids)
 
     # Mandatory Hermes semantic interpretation FIRST with bounded authorized
     # context. No classifier, action, session, proposal, or write precedes the
@@ -8610,7 +8650,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         context, _, _, _ = _semantic_context(mundo, body.prompt)
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
-        mundo, body.prompt,
+        mundo, body.prompt + attachment_metadata_note(attachments),
         context=context,
         request_id=request_id,
         distilled_state=distilled_state,
@@ -8697,6 +8737,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             mundo, body,
             distilled_state=distilled_state,
             skill_contract=skill_contract,
+            attachments=attachments,
         ),
         session_id=_channel_session_id(body.session_id),
     )
@@ -8813,7 +8854,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     skill_id = await route_task
                 except Exception:
                     skill_id = None
-            _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
+            _persist_memory_turn(
+                body.session_id, mundo, "user",
+                _memory_user_prompt(body.prompt, attachments), skill_id,
+            )
             if not disconnected and assistant_parts:
                 _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
                 await _maybe_refresh_distilled(body.session_id, mundo)

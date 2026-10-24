@@ -43,6 +43,9 @@ ATTACHMENT_TTL_SECONDS = 4 * 60 * 60
 #: Hard cap on concurrently stored attachments (oldest evicted first).
 MAX_STORED_ATTACHMENTS = 32
 
+#: Hard cap on attachments attached to a single turn.
+MAX_ATTACHMENTS_PER_TURN = 5
+
 _TRUNCATION_MARKER = "\n\n[…truncado: se muestran {kept} de {total} caracteres]"
 
 # Complete base64 payloads as well as markitdown's truncated ``base64...``
@@ -254,3 +257,40 @@ class ChatAttachmentStore:
 
 #: Process-wide store behind the chat attachment endpoints.
 ATTACHMENTS = ChatAttachmentStore()
+
+
+def attachment_metadata_note(attachments: tuple[ChatAttachment, ...] | list[ChatAttachment]) -> str:
+    """The classifier-facing note: names and kinds, never document text (S4).
+
+    The semantic gate only needs to know that the author is talking about an
+    attachment; the run prompt is the surface that receives the content.
+    """
+    if not attachments:
+        return ""
+    labels = ", ".join(f"{record.name} ({record.kind})" for record in attachments)
+    return f"\n[Adjuntos en este turno: {labels}]"
+
+
+def attachment_context_block(
+    attachments: tuple[ChatAttachment, ...] | list[ChatAttachment],
+) -> str | None:
+    """The run-prompt block carrying the extracted text (S4/S5).
+
+    Each attachment is delimited and labelled with its name, kind, extracted
+    length and truncation state, so the model can distinguish documents and
+    never silently treat a truncated document as complete.
+    """
+    if not attachments:
+        return None
+    header = (
+        "[Documentos adjuntos del autor: usa su contenido para responder. "
+        "Si la respuesta no está en ellos, dilo; no inventes contenido.]"
+    )
+    blocks = []
+    for record in attachments:
+        state = ", truncado" if record.truncated else ""
+        blocks.append(
+            f'[Adjunto "{record.name}" ({record.kind}, {record.chars} caracteres'
+            f"{state}):\n{record.text}\n]"
+        )
+    return header + "\n" + "\n".join(blocks)
