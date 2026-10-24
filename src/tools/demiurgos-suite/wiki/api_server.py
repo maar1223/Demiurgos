@@ -899,6 +899,22 @@ def _assistant_gateway_probe() -> "HermesGatewayProbe":
     return _GATEWAY_PROBE
 
 
+def _assistant_runtime_run_probe() -> bool:
+    """One bounded real Hermes run: the only truthful save-time acceptance.
+
+    Gateway liveness accepts a run asynchronously even when the provider cannot
+    be resolved, so it can report "Activo" while every answer fails closed. This
+    probe submits a tiny run through the documented runs API and only accepts a
+    completed, non-empty output. Every failure path fails closed.
+    """
+    try:
+        return HermesRunProbe(
+            _hermes_api_base(_GATEWAY_URL), api_key=_GATEWAY_KEY
+        ).probe()
+    except Exception:
+        return False
+
+
 def _resolve_assistant_runtime_state(revision: int) -> str:
     """Honest runtime state for a config revision.
 
@@ -9122,6 +9138,7 @@ from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from hermes_runtime_probe import HermesGatewayProbe  # noqa: E402
+from hermes_run_probe import HermesRunProbe  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
@@ -9764,6 +9781,9 @@ app.include_router(
         # revision, so a server restart no longer degrades "Activo" to a lie.
         runtime_state_resolver=_resolve_assistant_runtime_state,
         runtime_liveness=lambda: _assistant_gateway_probe().is_running(),
+        # Acceptance is one real run, not gateway liveness: a live gateway with
+        # an unresolvable provider still fails every run (bug #3816).
+        runtime_probe=lambda: _assistant_runtime_run_probe(),
     ),
 )
 

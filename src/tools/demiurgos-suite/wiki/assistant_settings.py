@@ -617,6 +617,7 @@ def create_assistant_settings_router(
     on_acceptance: Callable[[str], None] | None = None,
     runtime_state_resolver: Callable[[int], str] | None = None,
     runtime_liveness: Callable[[], bool] | None = None,
+    runtime_probe: Callable[[], bool] | None = None,
 ) -> APIRouter:
     """Build authenticated assistant settings routes.
 
@@ -628,8 +629,11 @@ def create_assistant_settings_router(
     ``runtime_state_resolver`` (optional) derives the runtime state for a config
     revision from persisted evidence plus live liveness; when provided it owns
     every read/save state (``runtime_seam`` then stays as the legacy fallback for
-    callers that inject only the seam). ``runtime_liveness`` reports whether the
-    runtime is up right now and feeds the save-time acceptance state.
+    callers that inject only the seam). ``runtime_probe`` performs the save-time
+    acceptance: one bounded real runtime turn whose success alone may report
+    ``active`` (gateway liveness is not acceptance — a live gateway can still
+    fail every run). When it is not injected, ``runtime_liveness`` keeps the
+    legacy liveness-only behavior for callers/tests that only own liveness.
     """
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
     if provider_registry is None:
@@ -840,15 +844,24 @@ def create_assistant_settings_router(
                 ),
             )
             if runtime_state_resolver is not None:
-                # Real runtime truth: exactly ONE liveness observation drives
-                # both the recorded acceptance and the response. Probing a
-                # second time (through the resolver) could disagree with itself
-                # — a TOCTOU race — and the recorded acceptance is the arbiter,
-                # so the response must be the value that was just recorded. A
-                # save with the gateway down therefore stays non-active until a
-                # later save observes it up (fail closed, by design).
-                live = runtime_liveness is not None and runtime_liveness()
-                runtime_state = "active" if live else "saved-not-active"
+                # Real runtime truth: exactly ONE acceptance observation drives
+                # both the recorded evidence and the response. When the host
+                # injects the real-run probe, only a completed run accepts;
+                # gateway liveness alone cannot (a live gateway still fails
+                # every run when the provider is misconfigured). Probing a
+                # second time could disagree with itself — a TOCTOU race — and
+                # the recorded acceptance is the arbiter, so the response is
+                # the value that was just recorded. Any probe failure stays
+                # non-active until a later save observes a completed run (fail
+                # closed, by design).
+                if runtime_probe is not None:
+                    try:
+                        accepted = bool(runtime_probe())
+                    except Exception:
+                        accepted = False
+                else:
+                    accepted = runtime_liveness is not None and runtime_liveness()
+                runtime_state = "active" if accepted else "saved-not-active"
             else:
                 runtime_state = seam.apply(saved["revision"]).state
             saved["runtime_state"] = runtime_state
