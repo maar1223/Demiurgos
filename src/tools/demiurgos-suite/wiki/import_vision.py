@@ -82,6 +82,8 @@ class VisionConfig:
     model: str
     api_key_env: str
     timeout: int = _VISION_TIMEOUT
+    #: Resolved from the stored Hermes env file; never serialized.
+    api_key: str = ""
 
 
 def _normalize_verdict(value: Any) -> str:
@@ -133,6 +135,7 @@ def _read_assistant_vision_config(
             _provider_key_env,
             _read_config,
             _resolve_profile_paths,
+            _stored_api_key,
         )
         if settings_path is None:
             settings_path = _resolve_profile_paths().config
@@ -172,6 +175,9 @@ def _read_assistant_vision_config(
         base_url=base_url,
         model=model_id,
         api_key_env=_provider_key_env(provider),
+        # The server process may not export the Hermes env file into its own
+        # environment, so resolve the stored key explicitly.
+        api_key=_stored_api_key(provider),
     )
 
 
@@ -258,7 +264,7 @@ def build_vision_callable(
                     api_key_env=config.api_key_env,
                     timeout=config.timeout,
                 ),
-            ))
+            ), api_key=config.api_key or None, vision_api_key=config.api_key or None)
         except Exception as exc:  # noqa: BLE001 — fail-open: never block import
             logger.warning("Vision provider construction failed: %s", exc)
             return results

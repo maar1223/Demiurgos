@@ -45,7 +45,7 @@ class _FakeVisionProvider:
 
     instances: list["_FakeVisionProvider"] = []
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
         self.instances.append(self)
@@ -63,7 +63,7 @@ class _FakeVisionProvider:
 class _FlakyVisionProvider:
     """Fails on the first call, succeeds afterwards."""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
 
@@ -79,7 +79,7 @@ class _FlakyVisionProvider:
 class _NoneVisionProvider:
     """Mimics LlmProvider returning None (unconfigured/failed analysis)."""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
 

@@ -104,25 +104,38 @@ class LlmProvider(ProviderAdapter):
     backoff on connection/timeout errors.
     """
 
-    def __init__(self, config: "ProviderConfig") -> None:
+    def __init__(
+        self,
+        config: "ProviderConfig",
+        *,
+        api_key: str | None = None,
+        vision_api_key: str | None = None,
+    ) -> None:
         self._text_config = config
         self._vision_config = config.vision
 
-        # Text API key — from text config, with fallback chain
+        # Text API key — explicit key first, then the environment fallback chain.
         self._text_api_key = (
-            os.environ.get(config.api_key_env)
-            or os.environ.get("OPENCODE_API_KEY")
-            or os.environ.get("OPENCODE_GO_API_KEY")
-            or ""
-        )
-
-        # Vision API key — from vision config if set, else shared with text
-        if self._vision_config is not None:
-            self._vision_api_key = (
-                os.environ.get(self._vision_config.api_key_env)
-                or self._text_api_key  # fallback to text key
+            api_key
+            if api_key is not None
+            else (
+                os.environ.get(config.api_key_env)
+                or os.environ.get("OPENCODE_API_KEY")
+                or os.environ.get("OPENCODE_GO_API_KEY")
                 or ""
             )
+        )
+
+        # Vision API key — explicit key, then the vision env var, else the text key.
+        if self._vision_config is not None:
+            if vision_api_key is not None:
+                self._vision_api_key = vision_api_key
+            else:
+                self._vision_api_key = (
+                    os.environ.get(self._vision_config.api_key_env)
+                    or self._text_api_key  # fallback to text key
+                    or ""
+                )
         else:
             self._vision_api_key = ""
 

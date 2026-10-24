@@ -66,14 +66,20 @@ def _build_provider(config: Any):
         api_key_env=config.api_key_env,
         timeout=config.timeout,
     )
-    return LlmProvider(ProviderConfig(
-        provider=config.provider,
-        endpoint=config.base_url,
-        model=config.model,
-        api_key_env=config.api_key_env,
-        timeout=config.timeout,
-        vision=vision,
-    ))
+    return LlmProvider(
+        ProviderConfig(
+            provider=config.provider,
+            endpoint=config.base_url,
+            model=config.model,
+            api_key_env=config.api_key_env,
+            timeout=config.timeout,
+            vision=vision,
+        ),
+        # The server process does not export the Hermes env file; the config
+        # already carries the stored key.
+        api_key=config.api_key or None,
+        vision_api_key=config.api_key or None,
+    )
 
 
 async def describe_chat_image(

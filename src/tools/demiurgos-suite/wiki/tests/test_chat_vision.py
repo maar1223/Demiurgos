@@ -45,12 +45,13 @@ class _FakeProvider:
         return self.description
 
 
-def _config() -> VisionConfig:
+def _config(api_key: str = "") -> VisionConfig:
     return VisionConfig(
         provider="compatible",
         base_url="https://api.deepseek.com",
         model="deepseek-flash",
-        api_key_env="OPENCODE_API_KEY",
+        api_key_env="ASSISTANT_PROVIDER_API_KEY",
+        api_key=api_key,
     )
 
 
@@ -190,3 +191,34 @@ class TestProviderDescribeImage:
 
         monkeypatch.setattr(provider, "_post", fake_post)
         assert asyncio.run(provider.describe_image(b"THUMB", "")) is None
+
+
+class TestStoredKey:
+    def test_build_provider_passes_the_resolved_key_to_both_configs(self):
+        provider = chat_vision._build_provider(_config(api_key="stored-key"))
+        assert provider._text_api_key == "stored-key"
+        assert provider._vision_api_key == "stored-key"
+
+    def test_read_vision_config_carries_the_stored_env_key(self, tmp_path, monkeypatch):
+        from import_vision import read_vision_config
+
+        hermes = tmp_path / "hermes"
+        hermes.mkdir()
+        (hermes / "config.yaml").write_text(
+            "assistant_settings:\n"
+            "  revision: 3\n"
+            "  provider: compatible\n"
+            "  base_url: https://api.deepseek.com\n"
+            "  model_id: deepseek-flash\n"
+            "  capability: unknown\n",
+            encoding="utf-8",
+        )
+        (hermes / ".env").write_text(
+            "ASSISTANT_PROVIDER_API_KEY=stored-key\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes))
+
+        config = read_vision_config(
+            hermes / "config.yaml", accepted_capability="multimodal")
+
+        assert config is not None
+        assert config.api_key == "stored-key"
