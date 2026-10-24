@@ -2061,12 +2061,13 @@ export interface BackupRestoreStatus {
   last_write: BackupLastWrite | null;
 }
 
-/** One document attached to the Assistant conversation.
+/** One document or image attached to the Assistant conversation.
  *
  *  `chars` is the full extracted length (before truncation); `truncated` says
- *  whether the server injected only the first bounded slice. `id` is the
- *  opaque reference the ask endpoints accept in `attachment_ids`. */
-export type ChatAttachmentKind = "docx" | "pdf";
+ *  whether the server injected only the first bounded slice. For images,
+ *  `text` on the server is a vision-generated description. `id` is the opaque
+ *  reference the ask endpoints accept in `attachment_ids`. */
+export type ChatAttachmentKind = "docx" | "pdf" | "image";
 
 export interface ChatAttachment {
   id: string;

@@ -55,7 +55,7 @@ function isChatAttachment(value: unknown): value is ChatAttachment {
     typeof record.id === "string" &&
     record.id.length > 0 &&
     typeof record.name === "string" &&
-    (record.kind === "docx" || record.kind === "pdf") &&
+    (record.kind === "docx" || record.kind === "pdf" || record.kind === "image") &&
     typeof record.chars === "number" &&
     typeof record.truncated === "boolean"
   );

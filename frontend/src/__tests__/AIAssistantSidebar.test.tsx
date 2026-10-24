@@ -1156,7 +1156,7 @@ describe("AIAssistantSidebar document attachments", () => {
     const input = container.querySelector(
       'input[type="file"]',
     ) as HTMLInputElement;
-    expect(input.accept).toBe(".docx,.pdf");
+    expect(input.accept).toBe(".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif");
     const file = new File(["contenido"], "Personaje.docx");
     await user.upload(input, file);
 
@@ -1262,5 +1262,87 @@ describe("AIAssistantSidebar attachment chip", () => {
     });
     expect(list).toHaveTextContent("Personaje.docx");
     expect(list).toHaveTextContent("1200");
+  });
+});
+
+describe("AIAssistantSidebar image attachments", () => {
+  const image = {
+    id: "img-1",
+    name: "faro.png",
+    kind: "image" as const,
+    chars: 240,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("accepts images in the attach action", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input.accept).toBe(".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif");
+  });
+
+  it("sends the image question when only an image is attached", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Look",
+          messages: [],
+          createdAt: 1,
+          attachments: [image],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      tEs("assistant.attach.defaultPromptImage"),
+    );
+  });
+
+  it("keeps the document summary prompt when a document is also attached", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Mixed",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            image,
+            {
+              id: "doc-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(tEs("assistant.attach.defaultPrompt"));
   });
 });

@@ -823,3 +823,28 @@ describe("useAIAssistantSessions attachment cap", () => {
     expect(result.current.activeSession?.attachments).toHaveLength(5);
   });
 });
+
+describe("useAIAssistantSessions image attachment errors", () => {
+  it("localizes a vision-unavailable rejection", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    uploadMock.mockRejectedValue(
+      new ApiError(
+        422,
+        "vision unavailable",
+        "vision unavailable",
+        "attachment.vision_unavailable",
+      ),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.error).toBe(
+      "La visión no está disponible para el modelo del asistente.",
+    );
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+  });
+});

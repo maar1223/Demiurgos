@@ -83,3 +83,27 @@ describe("uploadChatAttachment", () => {
     ).rejects.toMatchObject({ status: 0 });
   });
 });
+
+
+describe("uploadChatAttachment image payloads", () => {
+  it("accepts a vision-described image attachment", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "img-1",
+          name: "faro.png",
+          kind: "image",
+          chars: 240,
+          truncated: false,
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const attachment = await uploadChatAttachment(
+      "Vibrantes",
+      new File(["x"], "faro.png"),
+    );
+    expect(attachment.kind).toBe("image");
+  });
+});

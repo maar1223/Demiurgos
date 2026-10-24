@@ -553,10 +553,11 @@ export const messages = {
     "assistant.mic.transcribing": "Transcribiendo...",
     "assistant.mic.record": "Grabar nota de voz",
     "assistant.send.aria": "Enviar",
-    "assistant.attach.aria": "Adjuntar documento",
-    "assistant.attach.list.aria": "Documentos adjuntos",
+    "assistant.attach.aria": "Adjuntar archivo",
+    "assistant.attach.list.aria": "Archivos adjuntos",
     "assistant.attach.remove.aria": "Quitar {name}",
     "assistant.attach.defaultPrompt": "Resume el documento adjunto.",
+    "assistant.attach.defaultPromptImage": "¿Qué hay en la imagen adjunta?",
     "assistant.attach.truncated": "Documento recortado: {chars} caracteres extraídos",
     "assistant.propose.aria": "Proponer edición",
     "assistant.propose.label": "Proponer edición",
@@ -1125,6 +1126,10 @@ export const messages = {
     "error.attachment.conversion_unavailable":
       "La conversión de documentos no está disponible en esta plataforma.",
     "error.attachment.conversion_failed": "No se pudo procesar el documento.",
+    "error.attachment.vision_unavailable":
+      "La visión no está disponible para el modelo del asistente.",
+    "error.attachment.vision_failed":
+      "No se pudo analizar la imagen. Inténtalo de nuevo.",
     "error.attachment.expired":
       "El documento adjunto ya no está disponible. Vuelve a adjuntarlo.",
     "error.locale.invalid": "La configuración de idioma no es válida.",
@@ -2600,10 +2605,11 @@ export const messages = {
     "assistant.mic.transcribing": "Transcribing...",
     "assistant.mic.record": "Record voice note",
     "assistant.send.aria": "Send",
-    "assistant.attach.aria": "Attach document",
-    "assistant.attach.list.aria": "Attached documents",
+    "assistant.attach.aria": "Attach file",
+    "assistant.attach.list.aria": "Attached files",
     "assistant.attach.remove.aria": "Remove {name}",
     "assistant.attach.defaultPrompt": "Summarize the attached document.",
+    "assistant.attach.defaultPromptImage": "What is in the attached image?",
     "assistant.attach.truncated": "Truncated document: {chars} characters extracted",
     "assistant.propose.aria": "Propose edit",
     "assistant.propose.label": "Propose edit",
@@ -3161,6 +3167,10 @@ export const messages = {
     "error.attachment.conversion_unavailable":
       "Document conversion is unavailable on this platform.",
     "error.attachment.conversion_failed": "The document could not be processed.",
+    "error.attachment.vision_unavailable":
+      "Vision is unavailable for the assistant model.",
+    "error.attachment.vision_failed":
+      "The image could not be analyzed. Please try again.",
     "error.attachment.expired":
       "The attached document is no longer available. Please attach it again.",
     "error.locale.invalid": "The locale configuration is invalid.",

@@ -291,13 +291,18 @@ function ChatScreen({
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
     if (isSending) return;
-    // An attached document is a complete turn on its own: ask for a summary
-    // with the localized default when the author typed nothing (S6).
-    const prompt = trimmed || (attachments.length > 0 ? t("assistant.attach.defaultPrompt") : "");
+    // An attachment is a complete turn on its own: ask for a summary (or the
+    // image question) with the localized default when nothing was typed (S6).
+    const onlyImages =
+      attachments.length > 0 && attachments.every((item) => item.kind === "image");
+    const fallback = onlyImages
+      ? t("assistant.attach.defaultPromptImage")
+      : t("assistant.attach.defaultPrompt");
+    const prompt = trimmed || (attachments.length > 0 ? fallback : "");
     if (!prompt) return;
     sendMessage(prompt);
     setInput("");
-  }, [attachments.length, input, isSending, sendMessage, t]);
+  }, [attachments, input, isSending, sendMessage, t]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -754,7 +759,7 @@ function ChatScreen({
                 key={attachment.id}
                 className="flex max-w-full items-center gap-1 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
               >
-                <Icon name="file" size={12} />
+                <Icon name={attachment.kind === "image" ? "image" : "file"} size={12} />
                 <span
                   className="max-w-[12rem] truncate"
                   title={
@@ -793,7 +798,7 @@ function ChatScreen({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".docx,.pdf"
+              accept=".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif"
               onChange={handleFileChange}
               className="hidden"
               tabIndex={-1}
