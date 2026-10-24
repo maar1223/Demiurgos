@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -318,8 +319,12 @@ class TestAssistantSettings:
 
         assert response.status_code == 200
         config_text = paths.config.read_text(encoding="utf-8")
-        assert "provider: compatible" in config_text
         assert "base_url: https://provider.example/v1" in config_text
+        # The endpoint survives; the persisted id becomes Hermes-resolvable and
+        # the normalized block keeps the product provider for the UI.
+        model_block = config_text.split("assistant_settings:", 1)[0]
+        assert "provider: custom" in model_block
+        assert "provider: compatible" in config_text.split("assistant_settings:", 1)[1]
 
     def test_config_and_key_persistence_use_same_directory_atomic_replacements(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -804,3 +809,115 @@ class TestRuntimeStateResolver:
         monkeypatch.setenv("HERMES_HOME", str(hermes))
         assert isinstance(assistant_settings.current_config_revision(), int)
 
+
+
+class TestHermesProviderMapping:
+    """S1-S4 — the persisted model block must use an id the installed Hermes
+    runtime resolves, while the product vocabulary stays in the normalized
+    block. ``compatible`` needs the stored secret reachable from the config
+    without inlining it."""
+
+    def _save(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: str,
+        *,
+        api_key: str | None = None,
+        model_id: str = "manual-model",
+    ) -> "object":
+        def transport(method, url, headers):
+            return 200, {"data": [{"id": model_id, "name": "Manual Model"}]}
+
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", transport)
+        _install_fake_probes(monkeypatch)
+        payload = {"provider": provider, "manual_model_id": model_id}
+        if provider == "compatible":
+            payload["base_url"] = "https://api.deepseek.com"
+        payload["api_key"] = (
+            api_key
+            if api_key is not None
+            else ("" if provider in {"ollama", "lm-studio"} else "fixture-mapping-key")
+        )
+        return client.put("/api/profile/assistant/configuration", json=payload)
+
+    @pytest.mark.parametrize(
+        ("provider", "hermes_id", "expects_reference"),
+        [
+            ("opencode-go", "opencode-go", False),
+            ("openrouter", "openrouter", False),
+            ("openai", "custom", False),
+            ("compatible", "custom", True),
+            ("ollama", "ollama", False),
+            ("lm-studio", "lmstudio", False),
+        ],
+    )
+    def test_save_writes_the_hermes_provider_id_and_keeps_the_product_one(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+        provider: str, hermes_id: str, expects_reference: bool,
+    ):
+        response = self._save(client, monkeypatch, provider)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["provider"] == provider
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        model_block = config.split("assistant_settings:", 1)[0]
+        assert f"provider: {hermes_id}" in model_block
+        assert "provider: ${}".format(hermes_id) not in model_block
+        # The normalized block keeps the Demiurgos id (UI, vision gate, key env).
+        assert f"provider: {provider}" in config.split("assistant_settings:", 1)[1]
+        reference = "api_key: ${ASSISTANT_PROVIDER_API_KEY}"
+        assert (reference in model_block) is expects_reference
+        parsed = yaml.safe_load(config)["model"]
+        assert parsed["provider"] == hermes_id
+        assert ("api_key" in parsed) is expects_reference
+
+    def test_switching_away_from_compatible_drops_only_the_managed_reference(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        first = self._save(client, monkeypatch, "compatible")
+        assert first.status_code == 200, first.text
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" in (
+            assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        )
+
+        second = self._save(client, monkeypatch, "openai")
+
+        assert second.status_code == 200, second.text
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" not in config
+        assert "provider: custom" in config
+
+    def test_key_clear_drops_the_managed_reference(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        saved = self._save(client, monkeypatch, "compatible")
+        assert saved.status_code == 200, saved.text
+
+        cleared = client.request(
+            "DELETE",
+            "/api/profile/assistant/configuration/key",
+            json={"revision": saved.json()["revision"]},
+        )
+
+        assert cleared.status_code == 200, cleared.text
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" not in config
+        assert "provider: custom" in config
+
+    def test_a_foreign_model_api_key_is_preserved(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        paths = assistant_settings._resolve_profile_paths()
+        paths.config.write_text(
+            "model:\n  default: old-model\n  provider: opencode-go\n"
+            "  base_url: https://opencode.ai/zen/go/v1\n"
+            "  api_key: ${SOME_OTHER_VARIABLE}\n",
+            encoding="utf-8",
+        )
+
+        response = client.put("/api/profile/assistant", json={"model": "deepseek-v4-flash"})
+
+        assert response.status_code == 200, response.text
+        config = paths.config.read_text(encoding="utf-8")
+        assert "api_key: ${SOME_OTHER_VARIABLE}" in config
