@@ -9,11 +9,13 @@ import type {
   AssistantActivityEvent,
   AssistantActivityEvidence,
   AssistantActivityItem,
+  ChatAttachment,
   EditProposal,
   GuidedFlowEcho,
   GuidedCharacterSession,
   SemanticDecisionEvent,
 } from "@/api/types";
+import { ApiError } from "@/api/types";
 import {
   acceptGuidedCharacterProposal,
   acceptGuidedConsent,
@@ -23,6 +25,8 @@ import {
 } from "@/api/guidedCharacter";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
+import { uploadChatAttachment } from "@/api/chatAttachments";
+import { localizeApiError } from "@/i18n/errors";
 import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
@@ -53,6 +57,8 @@ export interface Session {
   consentToken?: string;
   /** Server-resolved flow for the pending consent card (S1). */
   consentFlow?: GuidedFlowEcho;
+  /** Documents attached to this conversation; re-sent until removed (S1/S7). */
+  attachments?: ChatAttachment[];
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
@@ -90,6 +96,8 @@ export interface AIAssistantSessionsResult {
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   sendMessage: (prompt: string) => Promise<void>;
+  attachDocument: (file: File) => Promise<void>;
+  removeAttachment: (attachmentId: string) => void;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
   resolveGuidedConsent: (
     accept: boolean,
@@ -377,6 +385,66 @@ export function useAIAssistantSessions(
     setActiveSessionId((prev) => (prev === id ? null : prev));
   }, []);
 
+  const attachDocument = useCallback(
+    async (file: File) => {
+      setError(null);
+      let attachment: ChatAttachment;
+      try {
+        attachment = await uploadChatAttachment(contextMundo, file);
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? localizeApiError(err, t)
+            : t("error.attachment.conversion_failed"),
+        );
+        return;
+      }
+      // Attaching before the first message opens the conversation: the
+      // attachment belongs to it, so the session must exist first.
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const id = generateId();
+        const session: Session = {
+          id,
+          title: defaultTitle,
+          titleIsDefault: true,
+          messages: [],
+          createdAt: Date.now(),
+        };
+        setSessions((prev) => [session, ...prev]);
+        setActiveSessionId(id);
+        sessionId = id;
+      }
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? { ...s, attachments: [...(s.attachments ?? []), attachment] }
+            : s,
+        ),
+      );
+    },
+    [activeSessionId, contextMundo, defaultTitle, t],
+  );
+
+  const removeAttachment = useCallback(
+    (attachmentId: string) => {
+      if (!activeSessionId) return;
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeSessionId
+            ? {
+                ...s,
+                attachments: (s.attachments ?? []).filter(
+                  (attachment) => attachment.id !== attachmentId,
+                ),
+              }
+            : s,
+        ),
+      );
+    },
+    [activeSessionId],
+  );
+
   const sendMessage = useCallback(
     async (prompt: string) => {
       const trimmed = prompt.trim();
@@ -442,6 +510,7 @@ export function useAIAssistantSessions(
       };
 
       const guided = activeSession?.guided;
+      const attachments = activeSession?.attachments ?? [];
       const requestBody = {
         prompt: trimmed,
         session_id: sessionId ?? "",
@@ -454,6 +523,9 @@ export function useAIAssistantSessions(
           guided_session_id: guided.session_id,
           guided_revision: guided.revision,
         } : {}),
+        ...(attachments.length > 0
+          ? { attachment_ids: attachments.map((attachment) => attachment.id) }
+          : {}),
       };
 
       const legacyRequest = async () => {
@@ -566,6 +638,17 @@ export function useAIAssistantSessions(
         }
       } catch (err) {
         if (controller.signal.aborted) return;
+        if (err instanceof ApiError && err.code?.startsWith("attachment.")) {
+          // The turn never ran: drop the stale references and tell the author
+          // to re-attach, instead of leaving every later send broken.
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId ? { ...s, attachments: [] } : s,
+            ),
+          );
+          setError(localizeApiError(err, t));
+          return;
+        }
         if (err instanceof AssistantActivityUnavailable && !activityAccepted) {
           setActivity({
             ...INITIAL_ACTIVITY,
@@ -596,7 +679,7 @@ export function useAIAssistantSessions(
         setIsSending(false);
       }
     },
-    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language, defaultTitle],
+    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language, defaultTitle, t],
   );
 
   const resolveGuidedProposal = useCallback(async (accept: boolean) => {
@@ -686,6 +769,8 @@ export function useAIAssistantSessions(
     switchSession,
     deleteSession,
     sendMessage,
+    attachDocument,
+    removeAttachment,
     resolveGuidedProposal,
     resolveGuidedConsent,
     requestGuidedReview,

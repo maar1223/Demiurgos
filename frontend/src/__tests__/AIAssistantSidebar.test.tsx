@@ -75,6 +75,8 @@ const createSessionsState = (
   switchSession: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
+  attachDocument: vi.fn(async () => {}),
+  removeAttachment: vi.fn(),
   cancelSend: vi.fn(),
   resolveGuidedProposal: vi.fn(),
   resolveGuidedConsent: vi.fn(),
@@ -1125,5 +1127,108 @@ describe("AIAssistantSidebar malformed guided session", () => {
     expect(
       screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AIAssistantSidebar document attachments", () => {
+  const attachment = {
+    id: "att-1",
+    name: "Personaje.docx",
+    kind: "docx" as const,
+    chars: 1200,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("renders the attach action and uploads the chosen file", async () => {
+    const attachDocument = vi.fn(async () => {});
+    useSessionsMock.mockReturnValue(createSessionsState({ attachDocument }));
+    const user = userEvent.setup();
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeInTheDocument();
+
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input.accept).toBe(".docx,.pdf");
+    const file = new File(["contenido"], "Personaje.docx");
+    await user.upload(input, file);
+
+    expect(attachDocument).toHaveBeenCalledWith(file);
+  });
+
+  it("shows one chip per attachment and removes it", async () => {
+    const removeAttachment = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        removeAttachment,
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [attachment],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).toHaveTextContent("Personaje.docx");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: tEs("assistant.attach.remove.aria", { name: "Personaje.docx" }),
+      }),
+    );
+    expect(removeAttachment).toHaveBeenCalledWith("att-1");
+  });
+
+  it("sends the default summary prompt when only an attachment is present", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [attachment],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const send = screen.getByRole("button", { name: tEs("assistant.send.aria") });
+    expect(send).toBeEnabled();
+    await user.click(send);
+
+    expect(sendMessage).toHaveBeenCalledWith(tEs("assistant.attach.defaultPrompt"));
+  });
+
+  it("keeps the send action disabled with neither text nor attachments", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    ).toBeDisabled();
+  });
+
+  it("disables the attach action while a turn is in flight", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({ isSending: true }));
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeDisabled();
   });
 });

@@ -121,6 +121,8 @@ interface ChatScreenProps {
   activity: ReturnType<typeof useAIAssistantSessions>["activity"];
   evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
   sendMessage: (prompt: string) => void;
+  attachDocument: (file: File) => Promise<void>;
+  removeAttachment: (attachmentId: string) => void;
   whisperStatus: ReturnType<typeof useWhisper>["status"];
   whisperIsRecording: boolean;
   whisperIsTranscribing: boolean;
@@ -248,6 +250,8 @@ function ChatScreen({
   activity,
   evidence,
   sendMessage,
+  attachDocument,
+  removeAttachment,
   whisperStatus,
   whisperIsRecording,
   whisperIsTranscribing,
@@ -268,6 +272,7 @@ function ChatScreen({
   const [input, setInput] = useState("");
   const [consentMethodId, setConsentMethodId] = useState("factory");
   const [consentMethodTouched, setConsentMethodTouched] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -276,12 +281,37 @@ function ChatScreen({
     } catch { /* jsdom */ }
   }, [activeSession?.messages, isSending]);
 
+  const { language: appLanguage, t } = useAppLanguage();
+  const attachments = activeSession?.attachments ?? [];
+  const messages = activeSession?.messages ?? [];
+  const confirmationPending = activeSession?.guided?.phase === "confirmation";
+  const consentToken = activeSession?.consentToken;
+  const guidedMethodology = activeSession?.guided?.methodology ?? null;
+
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
-    if (!trimmed || isSending) return;
-    sendMessage(trimmed);
+    if (isSending) return;
+    // An attached document is a complete turn on its own: ask for a summary
+    // with the localized default when the author typed nothing (S6).
+    const prompt = trimmed || (attachments.length > 0 ? t("assistant.attach.defaultPrompt") : "");
+    if (!prompt) return;
+    sendMessage(prompt);
     setInput("");
-  }, [input, isSending, sendMessage]);
+  }, [attachments.length, input, isSending, sendMessage, t]);
+
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset first: picking the same file twice must still fire a change.
+      event.target.value = "";
+      if (file) void attachDocument(file);
+    },
+    [attachDocument],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -313,11 +343,6 @@ function ChatScreen({
     }
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
-  const { language: appLanguage, t } = useAppLanguage();
-  const messages = activeSession?.messages ?? [];
-  const confirmationPending = activeSession?.guided?.phase === "confirmation";
-  const consentToken = activeSession?.consentToken;
-  const guidedMethodology = activeSession?.guided?.methodology ?? null;
   const guidedMethodName = guidedMethodology
     ? guidedMethodology.factory
       ? t("guided.methodFactory")
@@ -719,6 +744,40 @@ function ChatScreen({
 
       {/* Input area */}
       <div className="border-t border-edge px-4 py-3 shrink-0">
+        {attachments.length > 0 && (
+          <ul
+            aria-label={t("assistant.attach.list.aria")}
+            className="mb-2 flex flex-wrap gap-1.5"
+          >
+            {attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                className="flex max-w-full items-center gap-1 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
+              >
+                <Icon name="file" size={12} />
+                <span
+                  className="max-w-[12rem] truncate"
+                  title={
+                    attachment.truncated
+                      ? t("assistant.attach.truncated", { chars: attachment.chars })
+                      : attachment.name
+                  }
+                >
+                  {attachment.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.id)}
+                  disabled={isSending}
+                  aria-label={t("assistant.attach.remove.aria", { name: attachment.name })}
+                  className="flex h-5 w-5 items-center justify-center rounded text-muted hover:text-primary disabled:opacity-50"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -730,6 +789,25 @@ function ChatScreen({
             disabled={confirmationPending || isSending}
           />
           <div className="flex shrink-0 items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".docx,.pdf"
+              onChange={handleFileChange}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+              data-testid="assistant-attachment-input"
+            />
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={confirmationPending || isSending}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              aria-label={t("assistant.attach.aria")}
+            >
+              <Icon name="upload" size={16} />
+            </button>
             <button
               type="button"
               onClick={handleMicClick}
@@ -763,7 +841,11 @@ function ChatScreen({
             <button
               type="button"
               onClick={handleSend}
-              disabled={confirmationPending || isSending || !input.trim()}
+              disabled={
+                confirmationPending ||
+                isSending ||
+                (!input.trim() && attachments.length === 0)
+              }
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-action-text hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
               aria-label={t("assistant.send.aria")}
             >
@@ -1003,6 +1085,8 @@ export function AIAssistantSidebar({
           activity={sessions.activity}
           evidence={sessions.evidence}
           sendMessage={sessions.sendMessage}
+          attachDocument={sessions.attachDocument}
+          removeAttachment={sessions.removeAttachment}
           whisperStatus={whisper.status}
           whisperIsRecording={whisper.isRecording}
           whisperIsTranscribing={whisper.isTranscribing}

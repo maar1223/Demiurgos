@@ -332,6 +332,7 @@ export async function askAssistant(
     file_path?: string;
     guided_session_id?: string;
     guided_revision?: number;
+    attachment_ids?: string[];
   },
   signal?: AbortSignal,
 ): Promise<AiAskResponse> {

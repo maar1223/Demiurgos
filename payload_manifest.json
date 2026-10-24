@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "6bd8939d",
+  "source_commit": "e3db887a",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -60,6 +60,7 @@
     "src/tools/demiurgos-suite/wiki/backup/transport/base.py",
     "src/tools/demiurgos-suite/wiki/backup/transport/folder.py",
     "src/tools/demiurgos-suite/wiki/bug_report.py",
+    "src/tools/demiurgos-suite/wiki/chat_attachments.py",
     "src/tools/demiurgos-suite/wiki/co_creation_attachments.py",
     "src/tools/demiurgos-suite/wiki/co_creation_materializer.py",
     "src/tools/demiurgos-suite/wiki/co_creation_protocol.py",
@@ -305,7 +306,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1329
+        "line": 1338
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -329,6 +330,10 @@
       }
     ],
     "sync_lore": [
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_attachments.py",
+        "line": 106
+      },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_analysis.py",
         "line": 430

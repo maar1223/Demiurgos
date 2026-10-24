@@ -2061,6 +2061,21 @@ export interface BackupRestoreStatus {
   last_write: BackupLastWrite | null;
 }
 
+/** One document attached to the Assistant conversation.
+ *
+ *  `chars` is the full extracted length (before truncation); `truncated` says
+ *  whether the server injected only the first bounded slice. `id` is the
+ *  opaque reference the ask endpoints accept in `attachment_ids`. */
+export type ChatAttachmentKind = "docx" | "pdf";
+
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  kind: ChatAttachmentKind;
+  chars: number;
+  truncated: boolean;
+}
+
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
  *  Telegram webhook/getUpdates conflict, or `import.job_not_found` for the

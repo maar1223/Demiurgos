@@ -1,3 +1,4 @@
+import { ApiError } from "@/api/types";
 import type {
   AssistantActivityEvent,
   AssistantActivityTerminalStatus,
@@ -67,6 +68,8 @@ export interface AssistantActivityRequest {
   file_path?: string;
   guided_session_id?: string;
   guided_revision?: number;
+  /** Opaque references to the conversation's uploaded documents. */
+  attachment_ids?: string[];
 }
 
 export class AssistantActivityUnavailable extends Error {
@@ -263,6 +266,13 @@ export async function streamAssistantActivity(
           ? (body.reason_code as AssistantActivityUnavailableReason)
           : "provider_activity_unavailable";
       throw new AssistantActivityUnavailable(response.status, reasonCode);
+    }
+    // A conversation-scoped rejection (an expired attachment, for example) is
+    // actionable by the caller: surface the structured code, never a raw body.
+    const body: unknown = await response.json().catch(() => ({}));
+    if (isRecord(body) && typeof body.code === "string" && body.code.startsWith("attachment.")) {
+      const detail = typeof body.detail === "string" ? body.detail : undefined;
+      throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail, body.code);
     }
     throw new Error("Assistant activity request failed");
   }
