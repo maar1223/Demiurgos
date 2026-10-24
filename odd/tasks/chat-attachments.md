@@ -39,7 +39,9 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S15 — Fixed description.** The description is generated once at upload; follow-up turns reuse it. There is no per-question re-analysis and no OCR beyond what the vision model transcribes into the description.
 
-**S16 — No new bytes surface.** The original image bytes are not stored or served back; only the description is kept.
+**S16 — Bounded bytes surface.** The original image bytes are never stored or served back. A generated JPEG thumbnail (max 300px on the longest side) is kept in memory alongside the description and served only through the attachment's thumbnail route (S17).
+
+**S17 — Preview before sending.** Each composer chip previews what was attached: an image chip shows the generated thumbnail (fetched from the attachment route), and a document chip shows its type badge (`docx`/`pdf`). If the thumbnail cannot load, the chip falls back to the type icon without breaking the chip or the send. The thumbnail route is scoped to the same world/global context as the upload and returns no-store bytes; an unknown or expired id answers 404.
 
 ### Assumptions (not requested verbatim; Owner may overturn)
 
@@ -54,7 +56,6 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 - Drag-and-drop upload.
 - Persisting attachment bytes or text across a server restart.
-- Serving thumbnails back to the chat UI.
 - OCR for scanned PDFs.
 - Per-question vision re-analysis.
 
@@ -76,6 +77,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - [x] T9 — Endpoint image support, codes, prompt label (`S11`-`S13`, `S16`). Commit `ae280cd2`.
 - [x] T10 — Frontend accept list, default image prompt, localized codes (`S11`, `S13`). Commit `f9065914`.
 - [x] T11 — Docs, manifest, full checks (`S12`, `S14`). Commit pending (docs).
+- [ ] T12 — Chip preview: bounded thumbnail route + image thumbnail/document badge (`S16`, `S17`).
 
 ## Log
 

@@ -88,6 +88,7 @@ async def describe_chat_image(
     settings_path: Path | None = None,
     accepted_capability: str | None = None,
     generate_thumbnail: Callable[[bytes, int], bytes] | None = None,
+    thumbnail: bytes | None = None,
 ) -> str:
     """Return a detailed description of one attached image.
 
@@ -101,17 +102,18 @@ async def describe_chat_image(
         settings_path=settings_path,
         accepted_capability=accepted_capability,
     )
-    if config is None or generate_thumbnail is None:
+    if config is None or (thumbnail is None and generate_thumbnail is None):
         raise _vision_unavailable()
 
-    try:
-        thumbnail = generate_thumbnail(image_bytes, THUMBNAIL_WIDTH)
-    except Exception as exc:  # noqa: BLE001 — undecodable input is a rejection
-        raise ChatAttachmentError(
-            "attachment.unsupported_type",
-            422,
-            "The image could not be read.",
-        ) from exc
+    if thumbnail is None:
+        try:
+            thumbnail = generate_thumbnail(image_bytes, THUMBNAIL_WIDTH)
+        except Exception as exc:  # noqa: BLE001 — undecodable input is a rejection
+            raise ChatAttachmentError(
+                "attachment.unsupported_type",
+                422,
+                "The image could not be read.",
+            ) from exc
 
     try:
         provider = _build_provider(config)

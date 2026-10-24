@@ -13,6 +13,8 @@ import {
   NEUTRAL_EVIDENCE_WARNING,
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
+import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
+import { chatAttachmentThumbnailUrl } from "@/api/chatAttachments";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
@@ -283,6 +285,7 @@ function ChatScreen({
 
   const { language: appLanguage, t } = useAppLanguage();
   const attachments = activeSession?.attachments ?? [];
+  const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const messages = activeSession?.messages ?? [];
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
@@ -757,9 +760,25 @@ function ChatScreen({
             {attachments.map((attachment) => (
               <li
                 key={attachment.id}
-                className="flex max-w-full items-center gap-1 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
+                className="flex max-w-full items-center gap-2 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
               >
-                <Icon name={attachment.kind === "image" ? "image" : "file"} size={12} />
+                {attachment.kind === "image" ? (
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded border border-edge bg-surface">
+                    <Icon name="image" size={14} className="text-muted" />
+                    <img
+                      src={chatAttachmentThumbnailUrl(attachmentMundo, attachment.id)}
+                      alt=""
+                      className="absolute inset-0 h-full w-full object-cover"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </span>
+                ) : (
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-edge bg-surface text-[9px] font-semibold uppercase tracking-wide text-muted">
+                    {attachment.kind}
+                  </span>
+                )}
                 <span
                   className="max-w-[12rem] truncate"
                   title={

@@ -11,6 +11,7 @@ import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
   useAIAssistantSessions: vi.fn(),
+  GLOBAL_ASSISTANT_CONTEXT: "ideas-global",
 }));
 
 vi.mock("@/hooks/useAppLanguage", () => ({
@@ -1344,5 +1345,92 @@ describe("AIAssistantSidebar image attachments", () => {
     );
 
     expect(sendMessage).toHaveBeenCalledWith(tEs("assistant.attach.defaultPrompt"));
+  });
+});
+
+describe("AIAssistantSidebar attachment previews", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  const baseSession = {
+    id: "session-42",
+    title: "Preview",
+    messages: [],
+    createdAt: 1,
+  };
+
+  it("renders the thumbnail image for an image attachment", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "img-1",
+              name: "faro.png",
+              kind: "image",
+              chars: 240,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const image = container.querySelector('img[src*="/thumbnail"]') as HTMLImageElement;
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("src")).toBe(
+      "/api/Vibrantes/ai/attachments/img-1/thumbnail",
+    );
+  });
+
+  it("renders the type badge for a document attachment", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "doc-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const list = screen.getByRole("list", {
+      name: tEs("assistant.attach.list.aria"),
+    });
+    expect(list).toHaveTextContent("docx");
+    expect(list.querySelector("img")).toBeNull();
+  });
+
+  it("uses the global context for thumbnails without a world", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "img-2",
+              name: "idea.png",
+              kind: "image",
+              chars: 90,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const { container } = render(<AIAssistantSidebar />);
+    const image = container.querySelector('img[src*="/thumbnail"]') as HTMLImageElement;
+    expect(image.getAttribute("src")).toBe(
+      "/api/ideas-global/ai/attachments/img-2/thumbnail",
+    );
   });
 });

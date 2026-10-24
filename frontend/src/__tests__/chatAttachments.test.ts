@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { uploadChatAttachment } from "@/api/chatAttachments";
+import { chatAttachmentThumbnailUrl, uploadChatAttachment } from "@/api/chatAttachments";
 import { ApiError } from "@/api/types";
 
 const fetchMock = vi.fn();
@@ -105,5 +105,16 @@ describe("uploadChatAttachment image payloads", () => {
       new File(["x"], "faro.png"),
     );
     expect(attachment.kind).toBe("image");
+  });
+});
+
+describe("chatAttachmentThumbnailUrl", () => {
+  it("builds the world-scoped thumbnail route with encoded segments", () => {
+    expect(chatAttachmentThumbnailUrl("Vibrantes", "abc123")).toBe(
+      "/api/Vibrantes/ai/attachments/abc123/thumbnail",
+    );
+    expect(chatAttachmentThumbnailUrl("con espacio", "id/1")).toBe(
+      "/api/con%20espacio/ai/attachments/id%2F1/thumbnail",
+    );
   });
 });

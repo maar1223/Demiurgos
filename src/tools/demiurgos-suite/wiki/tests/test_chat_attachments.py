@@ -530,7 +530,7 @@ def test_image_suffixes_are_supported():
 def test_image_upload_returns_the_generated_description(client, monkeypatch):
     async def _describe(image_bytes, **kwargs):
         assert image_bytes == _PNG_1X1
-        assert kwargs["generate_thumbnail"] is not None
+        assert isinstance(kwargs["thumbnail"], bytes)
         return "Un faro rojo sobre un acantilado, con texto visible: VIBRANTES."
 
     monkeypatch.setattr(api_server, "describe_chat_image", _describe)
@@ -628,3 +628,65 @@ def test_chat_thumbnail_bounds_the_longest_side_for_portraits():
 
     assert max(out.size) <= 300
     assert out.size == (30, 300)
+
+
+# ---------------------------------------------------------------------------
+# T12 — Chip preview: bounded thumbnail route (S16/S17)
+# ---------------------------------------------------------------------------
+
+
+def test_image_upload_stores_a_bounded_jpeg_thumbnail(client, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    async def _describe(image_bytes, **kwargs):
+        assert isinstance(kwargs["thumbnail"], bytes)  # precomputed path
+        return "Un faro."
+
+    monkeypatch.setattr(api_server, "describe_chat_image", _describe)
+    # A portrait forces the longest-side bound (100 wide, 1000 tall).
+    portrait = Image.new("RGB", (100, 1000), (20, 120, 80))
+    buf = io.BytesIO()
+    portrait.save(buf, format="PNG")
+
+    response = _upload(client, "vertical.png", buf.getvalue())
+    assert response.status_code == 201, response.text
+    stored = chat_attachments.ATTACHMENTS.get(response.json()["id"])
+    assert stored is not None and stored.thumbnail
+    thumb = Image.open(io.BytesIO(stored.thumbnail))
+    assert thumb.size == (30, 300)
+    assert thumb.format == "JPEG"
+
+
+def test_thumbnail_route_serves_the_generated_jpeg(client, monkeypatch):
+    async def _describe(*args, **kwargs):
+        return "Un faro."
+
+    monkeypatch.setattr(api_server, "describe_chat_image", _describe)
+    created = _upload(client, "faro.png", _PNG_1X1).json()
+
+    response = client.get(f"/api/test_mundo/ai/attachments/{created['id']}/thumbnail")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.content.startswith(b"\xff\xd8\xff")
+
+
+def test_thumbnail_route_for_a_document_is_404(client):
+    pytest.importorskip("mammoth")
+    created = _upload(client, "Personaje.docx", _docx_bytes("Kael")).json()
+    response = client.get(f"/api/test_mundo/ai/attachments/{created['id']}/thumbnail")
+    assert response.status_code == 404
+
+
+def test_thumbnail_route_unknown_id_is_404(client):
+    response = client.get("/api/test_mundo/ai/attachments/missing/thumbnail")
+    assert response.status_code == 404
+
+
+def test_thumbnail_route_rejects_an_unknown_world(client):
+    response = client.get("/api/no_such_world/ai/attachments/x/thumbnail")
+    assert response.status_code == 404
+    assert response.json()["code"] == "world.not_found"

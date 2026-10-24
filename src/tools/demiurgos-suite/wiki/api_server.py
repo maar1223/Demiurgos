@@ -7498,14 +7498,24 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
     if context_kind == "unknown":
         raise problem("world.not_found")
     data = await file.read()
+    thumbnail_bytes = None
     try:
         display_name, kind = normalize_attachment_name(file.filename or "document")
         validate_attachment_size(data)
         if kind == "image":
+            # One thumbnail serves both the vision call and the chip preview.
+            try:
+                thumbnail_bytes = generate_chat_thumbnail(data, 300)
+            except Exception as exc:  # noqa: BLE001 — undecodable input
+                raise ChatAttachmentError(
+                    "attachment.unsupported_type",
+                    422,
+                    "The image could not be read.",
+                ) from exc
             description = await describe_chat_image(
                 data,
                 accepted_capability=_accepted_vision_capability(),
-                generate_thumbnail=generate_chat_thumbnail,
+                thumbnail=thumbnail_bytes,
             )
             text, chars, truncated = cap_attachment_text(description)
         else:
@@ -7520,6 +7530,7 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
         text=text,
         chars=chars,
         truncated=truncated,
+        thumbnail=thumbnail_bytes,
     )
     return {
         "id": record.id,
@@ -7528,6 +7539,27 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
         "chars": record.chars,
         "truncated": record.truncated,
     }
+
+
+@app.get("/api/{mundo}/ai/attachments/{attachment_id}/thumbnail")
+def get_chat_attachment_thumbnail(mundo: str, attachment_id: str):
+    """Serve the bounded preview JPEG for one image attachment (S16/S17).
+
+    Only the thumbnail generated at upload is served — never the original
+    bytes. Same world/global scoping as the upload; an unknown or expired id
+    is a plain 404 so the chip can fall back to its type icon.
+    """
+    context_kind, _ = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
+        raise problem("world.not_found")
+    record = ATTACHMENTS.get(attachment_id)
+    if record is None or not record.thumbnail:
+        raise HTTPException(status_code=404, detail="Attachment thumbnail not found")
+    return Response(
+        content=record.thumbnail,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/{mundo}/ai/ask")

@@ -89,6 +89,8 @@ class ChatAttachment:
     chars: int
     truncated: bool
     created_at: float
+    #: Bounded JPEG preview (images only); never serialized in the JSON contract.
+    thumbnail: bytes | None = None
 
 
 def _suffix_kind(filename: str) -> str:
@@ -277,6 +279,7 @@ class ChatAttachmentStore:
         text: str,
         chars: int,
         truncated: bool,
+        thumbnail: bytes | None = None,
     ) -> ChatAttachment:
         now = self._clock()
         record = ChatAttachment(
@@ -287,6 +290,7 @@ class ChatAttachmentStore:
             chars=chars,
             truncated=truncated,
             created_at=now,
+            thumbnail=thumbnail,
         )
         with self._lock:
             self._entries[record.id] = record

@@ -60,3 +60,11 @@ function isChatAttachment(value: unknown): value is ChatAttachment {
     typeof record.truncated === "boolean"
   );
 }
+
+/** Relative URL of the bounded preview JPEG for one image attachment (S17). */
+export function chatAttachmentThumbnailUrl(
+  mundo: string,
+  attachmentId: string,
+): string {
+  return `/api/${encodeURIComponent(mundo)}/ai/attachments/${encodeURIComponent(attachmentId)}/thumbnail`;
+}
