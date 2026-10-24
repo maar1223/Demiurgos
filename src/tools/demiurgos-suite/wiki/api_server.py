@@ -59,9 +59,12 @@ from chat_attachments import (
     ChatAttachmentError,
     attachment_context_block,
     attachment_metadata_note,
+    cap_attachment_text,
     extract_attachment,
     normalize_attachment_name,
+    validate_attachment_size,
 )
+from chat_vision import describe_chat_image
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -7408,6 +7411,34 @@ def _resolve_chat_attachments(attachment_ids: list[str] | None) -> list:
     return resolved
 
 
+def _accepted_vision_capability() -> str | None:
+    """The product-recorded causal vision proof for the live config (S14).
+
+    A stored ``capability: unknown`` is not evidence; the acceptance written
+    after a save whose text and vision probes passed is. It only counts for the
+    revision it was recorded for, so a later config change invalidates it.
+    """
+    try:
+        evidence = _local_state().snapshot().get("assistant_acceptance")
+    except Exception:  # noqa: BLE001 — evidence is advisory, fail closed
+        return None
+    if not isinstance(evidence, dict):
+        return None
+    if evidence.get("text") != "passed" or evidence.get("vision") != "passed":
+        return None
+    try:
+        revision = int(evidence.get("revision"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        current = assistant_settings.current_config_revision()
+    except Exception:  # noqa: BLE001 — unknown revision never proves anything
+        return None
+    if revision != current:
+        return None
+    return "multimodal"
+
+
 def _memory_user_prompt(prompt: str, attachments: list) -> str:
     """The user turn persisted to conversation memory: names, never text (S8)."""
     if not attachments:
@@ -7450,11 +7481,21 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
     context_kind, _ = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
         raise problem("world.not_found")
+    data = await file.read()
     try:
         display_name, kind = normalize_attachment_name(file.filename or "document")
-        text, chars, truncated = extract_attachment(
-            file.filename or display_name, await file.read()
-        )
+        validate_attachment_size(data)
+        if kind == "image":
+            description = await describe_chat_image(
+                data,
+                accepted_capability=_accepted_vision_capability(),
+                generate_thumbnail=generate_thumbnail,
+            )
+            text, chars, truncated = cap_attachment_text(description)
+        else:
+            text, chars, truncated = extract_attachment(
+                file.filename or display_name, data
+            )
     except ChatAttachmentError as exc:
         raise problem(exc.code, detail=exc.message) from exc
     record = ATTACHMENTS.put(

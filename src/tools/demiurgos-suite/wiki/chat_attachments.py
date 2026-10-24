@@ -31,6 +31,20 @@ from typing import Callable
 
 SUPPORTED_ATTACHMENT_SUFFIXES: dict[str, str] = {".docx": "docx", ".pdf": "pdf"}
 
+#: Images are described by the vision seam; the stored text is that description.
+SUPPORTED_IMAGE_SUFFIXES: dict[str, str] = {
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+}
+
+_ALL_SUFFIXES: dict[str, str] = {
+    **SUPPORTED_ATTACHMENT_SUFFIXES,
+    **SUPPORTED_IMAGE_SUFFIXES,
+}
+
 #: Largest accepted upload. Bigger files are rejected before any conversion work.
 MAX_ATTACHMENT_FILE_BYTES = 15 * 1024 * 1024
 
@@ -79,12 +93,12 @@ class ChatAttachment:
 
 def _suffix_kind(filename: str) -> str:
     suffix = Path(filename or "").suffix.lower()
-    kind = SUPPORTED_ATTACHMENT_SUFFIXES.get(suffix)
+    kind = _ALL_SUFFIXES.get(suffix)
     if kind is None:
         raise ChatAttachmentError(
             "attachment.unsupported_type",
             422,
-            "Unsupported attachment type; only .docx and .pdf are accepted.",
+            "Unsupported attachment type; only .docx, .pdf, and common images are accepted.",
         )
     return kind
 
@@ -184,6 +198,25 @@ def _clean_text(text: str) -> str:
     return cleaned.strip()
 
 
+def validate_attachment_size(data: bytes) -> None:
+    """Reject an oversized upload before any extraction or vision work."""
+    if len(data) > MAX_ATTACHMENT_FILE_BYTES:
+        raise ChatAttachmentError(
+            "attachment.too_large",
+            413,
+            "The attachment exceeds the size limit.",
+        )
+
+
+def cap_attachment_text(text: str) -> tuple[str, int, bool]:
+    """Apply the shared character cap and truncation marker (S4/S12)."""
+    total = len(text)
+    if total <= MAX_ATTACHMENT_TEXT_CHARS:
+        return text, total, False
+    marker = _TRUNCATION_MARKER.format(kept=MAX_ATTACHMENT_TEXT_CHARS, total=total)
+    return text[:MAX_ATTACHMENT_TEXT_CHARS] + marker, total, True
+
+
 def extract_attachment(filename: str, data: bytes) -> tuple[str, int, bool]:
     """Validate, convert, clean, and truncate one uploaded document.
 
@@ -192,12 +225,7 @@ def extract_attachment(filename: str, data: bytes) -> tuple[str, int, bool]:
     mutated.
     """
     _suffix_kind(filename)
-    if len(data) > MAX_ATTACHMENT_FILE_BYTES:
-        raise ChatAttachmentError(
-            "attachment.too_large",
-            413,
-            "The attachment exceeds the size limit.",
-        )
+    validate_attachment_size(data)
     try:
         converted = _convert_bytes(filename, data)
     except ChatAttachmentError:
@@ -215,11 +243,7 @@ def extract_attachment(filename: str, data: bytes) -> tuple[str, int, bool]:
             422,
             "The document has no extractable text.",
         )
-    total = len(cleaned)
-    if total <= MAX_ATTACHMENT_TEXT_CHARS:
-        return cleaned, total, False
-    marker = _TRUNCATION_MARKER.format(kept=MAX_ATTACHMENT_TEXT_CHARS, total=total)
-    return cleaned[:MAX_ATTACHMENT_TEXT_CHARS] + marker, total, True
+    return cap_attachment_text(cleaned)
 
 
 class ChatAttachmentStore:
@@ -326,14 +350,22 @@ def attachment_context_block(
     if not attachments:
         return None
     header = (
-        "[Documentos adjuntos del autor: usa su contenido para responder. "
-        "Si la respuesta no está en ellos, dilo; no inventes contenido.]"
+        "[Adjuntos del autor: usa su contenido para responder. Los adjuntos de "
+        "tipo imagen llegan como una descripción generada por visión y pueden "
+        "incluir texto transcrito. Si la respuesta no está en ellos, dilo; no "
+        "inventes contenido.]"
     )
     blocks = []
     for record in attachments:
         state = ", truncado" if record.truncated else ""
-        blocks.append(
-            f'[Adjunto "{record.name}" ({record.kind}, {record.chars} caracteres'
-            f"{state}):\n{record.text}\n]"
-        )
+        if record.kind == "image":
+            blocks.append(
+                f'[Imagen adjunta "{record.name}" (descripción generada por '
+                f"visión, {record.chars} caracteres{state}):\n{record.text}\n]"
+            )
+        else:
+            blocks.append(
+                f'[Adjunto "{record.name}" ({record.kind}, {record.chars} '
+                f"caracteres{state}):\n{record.text}\n]"
+            )
     return header + "\n" + "\n".join(blocks)

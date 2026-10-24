@@ -8,6 +8,7 @@ paths are simulated so the degradation contract is pinned without them.
 
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
@@ -507,3 +508,107 @@ def test_missing_pdf_extra_is_conversion_unavailable(monkeypatch):
         extract_attachment("doc.pdf", b"%PDF-1.4")
     assert info.value.code == "attachment.conversion_unavailable"
     assert info.value.status == 422
+
+
+# ---------------------------------------------------------------------------
+# T2 — Image attachments (S11-S16)
+# ---------------------------------------------------------------------------
+
+_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+def test_image_suffixes_are_supported():
+    for name in ("foto.png", "foto.JPG", "foto.jpeg", "foto.webp", "foto.gif"):
+        display, kind = chat_attachments.normalize_attachment_name(name)
+        assert kind == "image"
+        assert display.lower().endswith(Path(display).suffix.lower())
+
+
+def test_image_upload_returns_the_generated_description(client, monkeypatch):
+    async def _describe(image_bytes, **kwargs):
+        assert image_bytes == _PNG_1X1
+        assert kwargs["generate_thumbnail"] is not None
+        return "Un faro rojo sobre un acantilado, con texto visible: VIBRANTES."
+
+    monkeypatch.setattr(api_server, "describe_chat_image", _describe)
+    response = _upload(client, "faro.png", _PNG_1X1)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "image"
+    assert body["chars"] == len("Un faro rojo sobre un acantilado, con texto visible: VIBRANTES.")
+    stored = chat_attachments.ATTACHMENTS.get(body["id"])
+    assert stored is not None
+    assert "VIBRANTES" in stored.text
+
+
+def test_image_upload_without_vision_is_rejected_and_stores_nothing(client, monkeypatch):
+    async def _unavailable(*args, **kwargs):
+        raise ChatAttachmentError("attachment.vision_unavailable", 422, "no vision")
+
+    monkeypatch.setattr(api_server, "describe_chat_image", _unavailable)
+    response = _upload(client, "faro.png", _PNG_1X1)
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "attachment.vision_unavailable"
+    assert len(chat_attachments.ATTACHMENTS) == 0
+
+
+def test_image_upload_provider_failure_is_vision_failed(client, monkeypatch):
+    async def _failed(*args, **kwargs):
+        raise ChatAttachmentError("attachment.vision_failed", 502, "down")
+
+    monkeypatch.setattr(api_server, "describe_chat_image", _failed)
+    response = _upload(client, "faro.png", _PNG_1X1)
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "attachment.vision_failed"
+
+
+def test_prompt_labels_an_image_description_as_vision_generated():
+    record = chat_attachments.ChatAttachment(
+        id="i1", name="faro.png", kind="image",
+        text="Un faro rojo.", chars=14, truncated=False, created_at=0.0,
+    )
+    block = chat_attachments.attachment_context_block([record])
+    assert "Imagen adjunta" in block
+    assert "descripción generada por visión" in block
+    assert "Un faro rojo." in block
+
+
+def test_cap_attachment_text_marks_truncation(monkeypatch):
+    monkeypatch.setattr(chat_attachments, "MAX_ATTACHMENT_TEXT_CHARS", 10)
+    text, chars, truncated = chat_attachments.cap_attachment_text("a" * 30)
+    assert truncated is True
+    assert chars == 30
+    assert text.startswith("a" * 10)
+    assert "truncado" in text
+
+
+def test_accepted_vision_capability_requires_matching_revision(client, monkeypatch):
+    state = {
+        "assistant_acceptance": {
+            "text": "passed",
+            "vision": "passed",
+            "runtime": "accepted",
+            "revision": 7,
+        }
+    }
+    monkeypatch.setattr(api_server, "_local_state", lambda: type("S", (), {"snapshot": lambda self: state})())
+    monkeypatch.setattr(api_server.assistant_settings, "current_config_revision", lambda: 7)
+    assert api_server._accepted_vision_capability() == "multimodal"
+
+    state["assistant_acceptance"]["revision"] = 6
+    assert api_server._accepted_vision_capability() is None
+
+    state["assistant_acceptance"]["revision"] = 7
+    state["assistant_acceptance"]["vision"] = "failed"
+    assert api_server._accepted_vision_capability() is None
+
+
+def test_accepted_vision_capability_without_evidence_is_none(client, monkeypatch):
+    monkeypatch.setattr(api_server, "_local_state", lambda: type("S", (), {"snapshot": lambda self: {}})())
+    assert api_server._accepted_vision_capability() is None

@@ -101,6 +101,12 @@ REGISTRY: dict[str, ErrorSpec] = {
     "attachment.conversion_failed": ErrorSpec(
         "attachment.conversion_failed", 422,
         "The document could not be converted."),
+    "attachment.vision_unavailable": ErrorSpec(
+        "attachment.vision_unavailable", 422,
+        "Vision is unavailable for the active assistant model."),
+    "attachment.vision_failed": ErrorSpec(
+        "attachment.vision_failed", 502,
+        "The image could not be described."),
     "attachment.expired": ErrorSpec(
         "attachment.expired", 409,
         "The attachment is no longer available."),
