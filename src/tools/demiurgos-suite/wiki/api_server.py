@@ -6857,6 +6857,22 @@ def generate_thumbnail(image_bytes: bytes, width: int = 300) -> bytes:
     return buf.getvalue()
 
 
+def generate_chat_thumbnail(image_bytes: bytes, max_side: int = 300) -> bytes:
+    """Fit an image inside a ``max_side`` square (portrait-safe) as JPEG.
+
+    ``generate_thumbnail`` scales by width, so a tall portrait (100x1000)
+    becomes 300x3000. Chat vision bounds the LONGEST side instead: the
+    thumbnail never exceeds the 300px box and the aspect ratio is preserved.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue()
+
+
 @app.get("/api/{mundo}/media")
 def get_media(mundo: str, path: str = Query(..., description="Ruta relativa del archivo")):
     """Serve an image file from wiki/media/ or referencias/visuales/imagenes/."""
@@ -7489,7 +7505,7 @@ async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
             description = await describe_chat_image(
                 data,
                 accepted_capability=_accepted_vision_capability(),
-                generate_thumbnail=generate_thumbnail,
+                generate_thumbnail=generate_chat_thumbnail,
             )
             text, chars, truncated = cap_attachment_text(description)
         else:

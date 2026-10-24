@@ -612,3 +612,19 @@ def test_accepted_vision_capability_requires_matching_revision(client, monkeypat
 def test_accepted_vision_capability_without_evidence_is_none(client, monkeypatch):
     monkeypatch.setattr(api_server, "_local_state", lambda: type("S", (), {"snapshot": lambda self: {}})())
     assert api_server._accepted_vision_capability() is None
+
+
+def test_chat_thumbnail_bounds_the_longest_side_for_portraits():
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (100, 1000), (10, 20, 30))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    thumbnail = api_server.generate_chat_thumbnail(buf.getvalue(), 300)
+    out = Image.open(io.BytesIO(thumbnail))
+
+    assert max(out.size) <= 300
+    assert out.size == (30, 300)

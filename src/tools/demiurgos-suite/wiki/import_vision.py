@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -82,8 +82,8 @@ class VisionConfig:
     model: str
     api_key_env: str
     timeout: int = _VISION_TIMEOUT
-    #: Resolved from the stored Hermes env file; never serialized.
-    api_key: str = ""
+    #: Resolved from the stored Hermes env file; never serialized or repr'd.
+    api_key: str = field(default="", repr=False)
 
 
 def _normalize_verdict(value: Any) -> str:

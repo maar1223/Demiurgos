@@ -558,7 +558,7 @@ export const messages = {
     "assistant.attach.remove.aria": "Quitar {name}",
     "assistant.attach.defaultPrompt": "Resume el documento adjunto.",
     "assistant.attach.defaultPromptImage": "¿Qué hay en la imagen adjunta?",
-    "assistant.attach.truncated": "Documento recortado: {chars} caracteres extraídos",
+    "assistant.attach.truncated": "Adjunto recortado: {chars} caracteres extraídos",
     "assistant.propose.aria": "Proponer edición",
     "assistant.propose.label": "Proponer edición",
     "assistant.propose.disabled.noWorld":
@@ -2610,7 +2610,7 @@ export const messages = {
     "assistant.attach.remove.aria": "Remove {name}",
     "assistant.attach.defaultPrompt": "Summarize the attached document.",
     "assistant.attach.defaultPromptImage": "What is in the attached image?",
-    "assistant.attach.truncated": "Truncated document: {chars} characters extracted",
+    "assistant.attach.truncated": "Attachment truncated: {chars} characters extracted",
     "assistant.propose.aria": "Propose edit",
     "assistant.propose.label": "Propose edit",
     "assistant.propose.disabled.noWorld":
