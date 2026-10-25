@@ -656,3 +656,36 @@ def test_runtime_logs_are_excluded_and_nested_same_named_content_survives(
     assert recorded.get("logs", "").strip()
     assert not any(path.startswith("logs/") for path in staged)
     assert "mundos/MyWorld/logs/ficha.md" in staged
+
+
+def test_git_tracked_tooling_never_triggers_a_dev_snapshot(tmp_path: Path) -> None:
+    """The checkout is the data root in dev, so git itself must not schedule runs.
+
+    A branch switch or a commit rewrites git-tracked tooling paths; while those
+    paths were included, every checkout produced a ~250 MB snapshot (observed at
+    23:46 right after a branch switch). They are versioned in git, so the
+    snapshot only needs what git does NOT track.
+    """
+    tooling = (
+        "odd/tasks/example.md",
+        "tests/test_example.py",
+        "relay/README.md",
+        "payload_manifest.json",
+        "requirements.lock",
+        "requirements-optional.txt",
+        "LICENSE",
+        ".gitleaks.toml",
+        ".pre-commit-config.yaml",
+        ".env.example",
+    )
+    for relative in tooling:
+        _make(tmp_path / relative)
+
+    inventory = build_inventory(tmp_path)
+    staged = set(stage_inventory(inventory).paths())
+
+    for relative in tooling:
+        assert relative not in staged, f"{relative} was staged into the backup"
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    for top_level in ("odd", "tests", "relay", "payload_manifest.json"):
+        assert recorded.get(top_level, "").strip(), f"{top_level} has no exclusion reason"
