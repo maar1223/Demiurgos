@@ -1,16 +1,16 @@
 # Demiurgos — Constitución de Arquitectura de la Plataforma
 
-> **Fuente de verdad global de producto y arquitectura.** Este documento es el contrato canónico de la plataforma Demiurgos. Todo trabajo de implementación (SDD, herramientas, UI, servicios) se valida contra este documento y contra el contrato de la iniciativa que le aplique. **No es un artefacto SDD**: describe qué es y qué debe cumplir la plataforma, no prescribe implementación hasta que una decisión esté cerrada. Lo que no está etiquetado como `[ACTUAL]` no debe presentarse como existente.
+> **Fuente de verdad global de producto y arquitectura.** Este documento es el contrato canónico de la plataforma Demiurgos. Todo trabajo de implementación (ODD, herramientas, UI, servicios) se valida contra este documento y contra el contrato de la iniciativa que le aplique. **No es un documento de tarea ODD**: describe qué es y qué debe cumplir la plataforma, no prescribe implementación hasta que una decisión esté cerrada. Lo que no está etiquetado como `[ACTUAL]` no debe presentarse como existente.
 
 | Campo | Valor |
 |---|---|
 | Estado | Constitución de arquitectura (fuente de verdad global) |
-| Versión del documento | 1.7 |
-| Fecha | 2026-08-17 |
+| Versión del documento | 1.8 |
+| Fecha | 2026-10-21 |
 | Autor | Demiurgos (orquestación) |
 | Idioma | Español neutro (prosa técnica) |
 | Alcance | Plataforma completa: frontend, backend, Hermes, almacenamiento, grafo, indexado, workflows, memoria y UI |
-| Relación con SDD | Requisito previo global. Ningún SDD/tool debe comenzar sin leer este documento y el de la iniciativa afectada |
+| Relación con ODD | Requisito previo global. Ningún trabajo ODD/tool debe comenzar sin leer este documento y el de la iniciativa afectada |
 | Documentos relacionados | `docs/architecture/skill-library-and-guided-character-creation.md` (iniciativa de skills + creación guiada — subsistema), `docs/architecture/tool-workshop.md` (contrato de superficie del Taller de Herramientas), `docs/architecture/world-workshop.md` (contrato del Taller de Mundo), `docs/architecture/foundational-research-skill.md` (contrato de la Skill Fundacional de Investigación — skill transversal), `AGENTS.md` (orquestador narrativo), `README.md`, `Agente_Maestro.md` |
 
 ## Leyenda de etiquetas
@@ -30,9 +30,9 @@
 Antes de implementar CUALQUIER herramienta web de Demiurgos, en orden:
 
 1. **Lee esta constitución** (`demiurgos-platform.md`): definición del producto, principios, mapa del sistema, conceptos canónicos, superficies con su etiqueta de estado, y reglas de arquitectura.
-2. **Lee la iniciativa relevante** (p. ej. `skill-library-and-guided-character-creation.md` para el subsistema técnico y `tool-workshop.md` para la superficie del Taller de Herramientas) si el trabajo toca esa área. Si no existe iniciativa para tu área, este documento es tu contrato de partida y el trabajo debe pasar por un SDD/propuesta antes de implementar.
+2. **Lee la iniciativa relevante** (p. ej. `skill-library-and-guided-character-creation.md` para el subsistema técnico y `tool-workshop.md` para la superficie del Taller de Herramientas) si el trabajo toca esa área. Si no existe iniciativa para tu área, este documento es tu contrato de partida y el trabajo debe registrarse como ODD (`odd/tasks/<feature-name>.md`) antes de implementar.
 3. **Consulta el runtime real** (CodeGraph/`codegraph_explore` primero, luego lectura puntual): nunca asumas comportamiento; verifica `[ACTUAL]` contra el código y los tests.
-4. **Si el cambio es de arquitectura sensible**, propón un SDD (propuesta → spec → diseño → tareas → implementación → verificación). **No empieces un SDD ahora mismo por este documento**; primero se resuelven las decisiones abiertas que toquen tu cambio.
+4. **Si el cambio es de arquitectura sensible**, clasifícalo con ODD: si no se reanuda desde la petición original y `git diff`, abre `odd/tasks/<feature-name>.md` con `## Specs`, `## Tasks` y `## Log` antes de implementar. **No abras ese documento solo por leer esto**; primero se resuelven las decisiones abiertas que toquen tu cambio.
 5. **Regla de etiquetas**: toda afirmación nueva lleva `[ACTUAL]` (verificado), `[OBJETIVO]`, `[PROPUESTO]` o `[DECISIÓN ABIERTA]`. Nunca presentes comportamiento objetivo como implementado.
 
 ---
@@ -258,7 +258,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 - Los **estados de ficha OKF** observados son `draft`/`stable`. `[ACTUAL]`
 - **[DECISIÓN CERRADA]** Demiurgos definirá un **contrato OKF mínimo v1**, versionado y extensible, suficiente para que importación, almacenamiento, grafo, editor, API y skills compartan una interpretación estable sin bloquear la evolución completa del estándar.
 - **[DECISIÓN CERRADA]** El contrato mínimo v1 prioriza dos ejes: (1) la **identidad** de la entidad y (2) las **convenciones de relación** (wikilinks `[[Nombre]]` y/o campos de relación en frontmatter) para que el grafo interconecte entidades de forma estable. También define **mínimos por tipo de entidad** (`required_minimums`), con **personaje primero** (ver G1).
-- **[OBJETIVO]** El contrato mínimo v1 cubrirá, como mínimo, mundo, entidades, lore, personajes, relaciones, metadatos, referencias y estado de validación. La especificación campo por campo y sus reglas de compatibilidad se definirán antes del SDD que implemente el validador OKF.
+- **[OBJETIVO]** El contrato mínimo v1 cubrirá, como mínimo, mundo, entidades, lore, personajes, relaciones, metadatos, referencias y estado de validación. La especificación campo por campo y sus reglas de compatibilidad se definirán antes del trabajo ODD que implemente el validador OKF.
 - Hasta que ese contrato mínimo esté implementado, los **adaptadores validan y normalizan** cualquier entrada contra las reglas que el pipeline actual conoce, sin inventar campos ni romper mundos existentes. Esta conducta es transitoria respecto del contrato OKF objetivo. `[ACTUAL]`
 - **Regla anti-acoplamiento**: ningún mundo concreto (p. ej. Vibrantes) puede entrar en el código de plataforma como requisito; los mundos son datos, no arquitectura. `[DECISIÓN CERRADA]`
 
@@ -352,7 +352,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no al Taller de Herram
 
 | ID | Decisión | Opciones/Propuesta |
 |---|---|---|
-| **G1** | Estrategia del contrato OKF | **[DECISIÓN CERRADA]** Definir un contrato OKF mínimo v1, versionado y extensible, priorizando **identidad** de la entidad y **convenciones de relación** (wikilinks/campos de relación) para que el grafo interconecte, además de **mínimos por tipo de entidad** con **personaje primero**. El detalle campo por campo y las reglas de compatibilidad se especificarán antes del SDD del validador; mientras tanto, los adaptadores validan/normalizan de forma tolerante |
+| **G1** | Estrategia del contrato OKF | **[DECISIÓN CERRADA]** Definir un contrato OKF mínimo v1, versionado y extensible, priorizando **identidad** de la entidad y **convenciones de relación** (wikilinks/campos de relación) para que el grafo interconecte, además de **mínimos por tipo de entidad** con **personaje primero**. El detalle campo por campo y las reglas de compatibilidad se especificarán antes del trabajo ODD del validador; mientras tanto, los adaptadores validan/normalizan de forma tolerante |
 | **G2** | Durabilidad de sesiones y confirmaciones | **[DECISIÓN CERRADA]** Persistencia híbrida: se reanudan conversaciones tras reinicio y las propuestas pendientes se **re-piden** (revalidan o regeneran); los tokens y autorizaciones de escritura siguen siendo efímeros, revalidables y no heredables. Las sesiones abandonadas/reanudables se conservan durante **30 días**; después se descartan |
 | **G3** | Modelo de autorización | **[DECISIÓN CERRADA]** Arquitectura preparada para multiusuario (ownership/workspace/world/roles/permisos), con implementación inicial monousuario/local. El Core es gratuito y los módulos usan entitlements de compra única; Skool queda separado como comunidad y canal de descuentos, no como autoridad de acceso o escritura |
 | **G4** | Indexado de fondo | `ReindexCoordinator` por operación vs servicio/indexador de fondo global con watch |
@@ -429,16 +429,16 @@ La autenticación no debe depender de que el Autor recuerde abrir manualmente el
 
 ---
 
-## 11. Definition of ready para SDD/tools futuros
+## 11. Definition of ready para ODD/tools futuros
 
-Un SDD o herramienta de esta plataforma **solo** puede comenzar cuando se cumplan todos:
+Un trabajo ODD o herramienta de esta plataforma **solo** puede comenzar cuando se cumplan todos:
 
 - [ ] Se leyeron esta constitución y el contrato de la iniciativa relevante (ver sección 0).
 - [ ] Se verificó el runtime real (CodeGraph/tests) antes de asumir cualquier `[ACTUAL]`.
 - [ ] Las decisiones abiertas que tocan el cambio (sección 10 y/o de la iniciativa) están resueltas y anotadas.
 - [ ] El cambio respeta las invariantes `[ACTUAL]` (secciones 5, 7) y las fronteras de dominio.
 - [ ] Todo comportamiento nuevo se etiqueta `[ACTUAL]`/`[OBJETIVO]`/`[PROPUESTO]` y no se presenta como implementado.
-- [ ] El SDD declara explícitamente qué NO toca (AGENTS.md, skills, lore/personajes fuera de escritura gated) si aplica.
+- [ ] El trabajo ODD declara explícitamente qué NO toca (AGENTS.md, skills, lore/personajes fuera de escritura gated) si aplica.
 - [ ] Las pruebas cubren las invariantes afectadas y las ramas de fallo relevantes.
 
 ---
