@@ -289,23 +289,6 @@ function ChatScreen({
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const messages = activeSession?.messages ?? [];
-  // Attachments recorded on a sent user message are shown IN that message; the
-  // composer keeps only a compact active-context indicator for them (they are
-  // still re-sent on follow-up turns, S7). Attachments not sent yet keep the
-  // full chip.
-  const sentAttachmentIds = new Set(
-    messages.flatMap((message) =>
-      message.role === "user"
-        ? (message.attachments ?? []).map((attachment) => attachment.id)
-        : [],
-    ),
-  );
-  const pendingAttachments = attachments.filter(
-    (attachment) => !sentAttachmentIds.has(attachment.id),
-  );
-  const activeSentAttachments = attachments.filter((attachment) =>
-    sentAttachmentIds.has(attachment.id),
-  );
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
   const guidedMethodology = activeSession?.guided?.methodology ?? null;
@@ -824,12 +807,12 @@ function ChatScreen({
             </span>
           </div>
         )}
-        {pendingAttachments.length > 0 && (
+        {attachments.length > 0 && (
           <ul
             aria-label={t("assistant.attach.list.aria")}
             className="mb-2 flex flex-wrap gap-1.5"
           >
-            {pendingAttachments.map((attachment) => (
+            {attachments.map((attachment) => (
               <li
                 key={attachment.id}
                 className="flex max-w-full items-center gap-2 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
@@ -874,34 +857,6 @@ function ChatScreen({
               </li>
             ))}
           </ul>
-        )}
-        {activeSentAttachments.length > 0 && (
-          <div
-            role="group"
-            aria-label={t("assistant.attach.active.aria")}
-            className="mb-2 flex flex-wrap items-center gap-1.5 rounded-md border border-edge/60 bg-surface/40 px-2 py-1 text-[11px] text-muted"
-          >
-            <span>{t("assistant.attach.active.label")}</span>
-            {activeSentAttachments.map((attachment) => (
-              <span
-                key={attachment.id}
-                className="inline-flex max-w-full items-center gap-1 rounded border border-edge bg-surface px-1.5 py-0.5 text-primary"
-              >
-                <span className="max-w-[10rem] truncate" title={attachment.name}>
-                  {attachment.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(attachment.id)}
-                  disabled={isSending}
-                  aria-label={t("assistant.attach.remove.aria", { name: attachment.name })}
-                  className="flex h-4 w-4 items-center justify-center rounded text-muted hover:text-primary disabled:opacity-50"
-                >
-                  <Icon name="close" size={10} />
-                </button>
-              </span>
-            ))}
-          </div>
         )}
         <div className="flex items-end gap-2">
           <textarea

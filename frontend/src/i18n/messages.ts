@@ -564,8 +564,6 @@ export const messages = {
     "assistant.attach.extracting": "Extrayendo el texto…",
     "assistant.attach.unnamed": "Archivo",
     "assistant.attach.sent.aria": "Archivos enviados con el mensaje",
-    "assistant.attach.active.aria": "Adjuntos activos en esta conversación",
-    "assistant.attach.active.label": "Activo en esta conversación",
     "assistant.propose.aria": "Proponer edición",
     "assistant.propose.label": "Proponer edición",
     "assistant.propose.disabled.noWorld":
@@ -2623,8 +2621,6 @@ export const messages = {
     "assistant.attach.extracting": "Extracting the text…",
     "assistant.attach.unnamed": "File",
     "assistant.attach.sent.aria": "Files sent with this message",
-    "assistant.attach.active.aria": "Attachments active in this conversation",
-    "assistant.attach.active.label": "Active in this conversation",
     "assistant.propose.aria": "Propose edit",
     "assistant.propose.label": "Propose edit",
     "assistant.propose.disabled.noWorld":

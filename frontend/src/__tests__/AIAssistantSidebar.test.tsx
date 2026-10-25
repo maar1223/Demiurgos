@@ -1255,7 +1255,6 @@ describe("AIAssistantSidebar sent attachments", () => {
           id: "session-42",
           title: "Revise the opening",
           createdAt: 1,
-          attachments: [attachment],
           messages: [
             { role: "user", content: "me puedes describir esta imagen?", attachments: [attachment] },
             { role: "assistant", content: "Es un meme con Bob Esponja." },
@@ -1269,11 +1268,7 @@ describe("AIAssistantSidebar sent attachments", () => {
       name: tEs("assistant.attach.sent.aria"),
     });
     expect(sent).toHaveTextContent("meme.png");
-    // The conversation context is still visible, in its compact form only.
-    const active = screen.getByRole("group", {
-      name: tEs("assistant.attach.active.aria"),
-    });
-    expect(active).toHaveTextContent("meme.png");
+    // The attachment was sent once: nothing stays queued in the composer.
     expect(
       screen.queryByRole("list", { name: tEs("assistant.attach.list.aria") }),
     ).not.toBeInTheDocument();
@@ -1297,7 +1292,7 @@ describe("AIAssistantSidebar sent attachments", () => {
       screen.getByRole("list", { name: tEs("assistant.attach.list.aria") }),
     ).toHaveTextContent("meme.png");
     expect(
-      screen.queryByRole("group", { name: tEs("assistant.attach.active.aria") }),
+      screen.queryByRole("list", { name: tEs("assistant.attach.sent.aria") }),
     ).not.toBeInTheDocument();
   });
 });

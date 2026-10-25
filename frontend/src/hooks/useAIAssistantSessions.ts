@@ -506,6 +506,11 @@ export function useAIAssistantSessions(
             ? {
                 ...s,
                 messages: [...s.messages, userMessage],
+                // Sent once: the message keeps the record for display, and the
+                // attachment leaves the composer queue. Follow-up turns rely on
+                // the runtime's conversation history instead of re-injecting
+                // the attachment content on every message (S7/S20).
+                attachments: [],
                 // Structural default-title check: fires for every language
                 // and for legacy mojibake drafts (AD-12, SES-REQ-2).
                 title: isDefaultTitle(s.title, s.titleIsDefault)

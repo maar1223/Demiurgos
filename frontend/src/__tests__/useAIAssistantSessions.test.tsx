@@ -766,7 +766,7 @@ describe("useAIAssistantSessions document attachments", () => {
     expect(request.attachment_ids).toEqual(["att-1"]);
   });
 
-  it("records the attachments on the sent message and keeps them active", async () => {
+  it("records the attachment on the sent message and stops re-sending it", async () => {
     const streamMock = vi.mocked(streamAssistantActivity);
     const uploadMock = vi.mocked(uploadChatAttachment);
     uploadMock.mockResolvedValue(attachment);
@@ -797,8 +797,17 @@ describe("useAIAssistantSessions document attachments", () => {
     const userMessage = messages.find((message) => message.role === "user");
     // The message carries the sent record for display...
     expect(userMessage?.attachments).toEqual([attachment]);
-    // ...while the conversation still re-sends it on follow-up turns (S7).
-    expect(result.current.activeSession?.attachments).toEqual([attachment]);
+    // ...and the attachment leaves the composer queue: it is sent once.
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+
+    // A follow-up turn carries no attachment ids; continuity comes from the
+    // runtime's conversation history, not from re-injecting the attachment.
+    await act(async () => {
+      await result.current.sendMessage("¿y de qué color es el fondo?");
+    });
+    const requests = streamMock.mock.calls;
+    const followUp = requests[requests.length - 1]?.[1] as { attachment_ids?: string[] };
+    expect(followUp.attachment_ids).toBeUndefined();
   });
 
   it("drops stale attachments when the server reports them expired", async () => {

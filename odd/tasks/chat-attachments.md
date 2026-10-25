@@ -19,7 +19,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S6 — Default prompt.** Sending with an attachment and no typed text uses the localized default prompt: `Resume el documento adjunto.` / `Summarize the attached document.`
 
-**S7 — Attachment lifetime.** Attachments belong to the conversation and are re-sent on every turn until removed. An unknown or expired id returns `attachment.expired` (409); the frontend drops the stale chips and shows a localized notice without sending.
+**S7 — Attachment lifetime.** An attachment is sent with the turn it was attached to and then leaves the composer queue: later turns in the same conversation do NOT re-inject its content. Continuity comes from the runtime's conversation history (the same mechanism that carries every prior turn) plus the assistant's earlier answers, so the model can still answer follow-ups about it. An unknown or expired queued id returns `attachment.expired` (409); the frontend drops the stale chips and shows a localized notice without sending.
 
 **S8 — Memory hygiene.** Document text is never written to conversation memory or distilled summaries; only attachment names are recorded.
 
@@ -47,7 +47,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 
 **S19 — Upload feedback.** While a file is uploading and being analyzed, the composer shows a live status chip with the file name and the phase copy: "Analizando la imagen…" for images and "Extrayendo el texto…" for documents. The attach control is disabled during processing and sending waits until it finishes, so a message can never leave without the file the author just picked. On failure the status chip disappears and the localized error is shown; no attachment is added.
 
-**S20 — Sent attachments are visible in the message.** After a turn is sent, the attachments that went with it are shown inside that user message (image thumbnail or document badge plus the file name), so the author sees that the information reached the Assistant. The attachment stays active for the conversation (S7), so follow-up turns keep receiving it; the composer shows it only as a compact "active in this conversation" row with its remove action, never as a second full chip. An attachment added but not yet sent keeps the full composer chip.
+**S20 — Sent attachments are visible in the message.** After a turn is sent, the attachments that went with it are shown inside that user message (image thumbnail or document badge plus the file name), so the author sees that the information reached the Assistant. The sent attachment leaves the composer queue (S7); only an attachment added but not yet sent keeps the full composer chip.
 
 ### Assumptions (not requested verbatim; Owner may overturn)
 
@@ -85,7 +85,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 - [x] T11 — Docs, manifest, full checks (`S12`, `S14`). Commit pending (docs).
 - [x] T12 — Chip preview: bounded thumbnail route + image thumbnail/document badge (`S16`, `S17`). Commit `2b06aff4`.
 - [x] T13 — Attach-type tooltip and live upload/analysis feedback (`S18`, `S19`). Commit `309b3f39`.
-- [x] T14 — Sent attachments rendered in the message + compact active-context row in the composer (`S20`). Commit pending.
+- [x] T14 — Sent attachments rendered in the message; sent attachment leaves the composer queue (`S7`, `S20`). Commits `d16261b5` (initial), `L15` correction.
 
 ## Log
 
@@ -144,3 +144,7 @@ Test runners: `pytest` from `src/tools/demiurgos-suite`; `cd frontend && npm tes
 **L12 (Owner, verbatim):** `funciona bien pero cuando envio el mensaje no pareciera que la imagen se hubiese enviado sino que queda abajo en la bandeja, cuando deberia subir sobre el mensaje que envié para mostrar que esa informacion se subió al Asistente de Demiurgos`
 
 **L13 — S20 implementation (2026-10-24):** the Owner chose (asked explicitly) that the sent attachment moves into the message AND stays active for follow-ups. `Message` gained an `attachments` snapshot; `sendMessage` records the active set on the user message while `Session.attachments` keeps re-sending them (S7). The message bubble renders the thumbnail/badge plus name; the composer splits the active set into not-yet-sent (full chip) and already-sent (compact "Activo en esta conversación" group with per-item remove). Tests: hook records the message snapshot and keeps the active set; component proves the message list, the compact group and that an unsent attachment keeps the full chip. Frontend 1524 tests + typecheck clean; `frontend/dist` rebuilt.
+
+**L14 (Owner, verbatim):** `ok, lo que pasa es que me gustaria que el LLM mantenga el contexto de la conversacion, no que mande los archivos adjuntos nuevamente cada vez que le envie un mensaje dentro de la misma conversacion. No se si me doy a entender correctamente`
+
+**L15 — S7/S20 correction (2026-10-24):** the Owner overrode the conversation-level re-send. `sendMessage` now records the attachment snapshot on the user message and clears the composer queue in the SAME state update; the request for that turn still carries `attachment_ids`, and every later turn carries none. Continuity is verified to come from the runtime: each run is keyed by `_channel_session_id(body.session_id)`, Hermes loads that session's conversation history, and Demiurgos also persists the assistant's answers in its own memory window (names only, S8). The compact "active in this conversation" row and its copy were removed. Tests: the hook proves the queue is empty after send and that the follow-up request has no `attachment_ids`; the component proves the message record renders with no composer chip. Frontend 1524 tests + typecheck clean; `frontend/dist` rebuilt.
