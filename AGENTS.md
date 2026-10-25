@@ -1,6 +1,6 @@
 # Demiurgos — Web Platform Development
 
-You are the Demiurgos Development Assistant. Your domain is **software engineering** — you help build and maintain the Demiurgos web platform using Spec-Driven Development (SDD) with Gentle-AI.
+You are the Demiurgos Development Assistant. Your domain is **software engineering** — you help build and maintain the Demiurgos web platform using Organic Driven Development (ODD) with Gentle-AI.
 
 **Product frame.** Demiurgos is a world-agnostic lore/worldbuilding web platform — frontend, backend, Hermes, storage, graph indexing, workflows, and UI. It manages any fictional world loaded in OKF format.
 
@@ -26,7 +26,7 @@ On the first message of any session, BEFORE interpreting intent:
 **On session end** (MANDATORY before closing):
 - `mem_save` with title "Session checkpoint", type "manual", topic_key "nec/checkpoint"
 - Content must include:
-  - **Tarea actual**: What SDD/feature is in progress, current phase, completion percentage
+  - **Tarea actual**: Which ODD feature is in progress, current task, completion percentage
   - **Cambios realizados**: Exact file paths modified and what was done
   - **Próximo paso**: The immediate next atomic action to execute
   - **Contexto mínimo**: Critical interfaces/types defined, dependencies needed
@@ -34,8 +34,8 @@ On the first message of any session, BEFORE interpreting intent:
 **Example checkpoint content**:
 ```markdown
 ## Tarea Actual
-- SDD: world-importer-preimport-backup
-- Fase: apply
+- ODD: world-importer-preimport-backup
+- Tarea: T2 (spec S3-S4)
 - Progreso: 60%
 
 ## Cambios Realizados
@@ -131,51 +131,72 @@ cd frontend && npm test -- --run     # run once (no watch)
 
 ## Engram (MANDATORY)
 
-Engram persistent memory is required for SDD workflows.
+Engram persistent memory is mandatory for ODD workflows.
 
-**After every SDD phase**: `mem_save` the result with topic key `sdd/{change-name}/{phase}`.
+**Large work**: mirror the feature document to topic `odd/<feature-name>/tasks` after each task.
 
 **On session start**: Load checkpoint from `nec/checkpoint` for lightweight recovery.
 
-If Engram is unavailable, report the error. Do not continue SDD work without persistence.
+If Engram is unavailable, report the error, preserve local progress, and mark the mirror pending. Never claim persistence you did not get.
 
 ---
 
-## SDD (Spec-Driven Development)
+## ODD (Organic Driven Development)
 
-### Artifact Store — SIEMPRE Engram (regla dura)
+Demiurgos uses **Organic Driven Development (ODD)** with Gentle-AI. ODD is
+size-proportional: the process adapts to the real size of the change instead of
+applying a fixed phase ritual to every request.
 
-El artifact store de SDD de este proyecto es **siempre `engram`**. No preguntar,
-no ofrecer OpenSpec ni hybrid, y no volver a plantear esta decisión.
+> **SDD is retired.** gentle-ai 4.x removed the SDD dispatcher (`sdd-status` /
+> `sdd-continue` no longer exist). Do not reintroduce SDD phases or `sdd/...`
+> topic keys.
 
-El dispatcher nativo de SDD (`gentle-ai sdd-status` / `gentle-ai sdd-continue`)
-es **solo-OpenSpec por diseño**: lee únicamente `openspec/changes/` y siempre
-emite `artifactStore: openspec`; no puede observar cambios respaldados por
-Engram. Con store `engram` **no invocarlo**: resolver estado y artefactos directo
-desde Engram (`mem_search` + `mem_get_observation` sobre `sdd/{change-name}/...`)
-usando el manual status schema. Los artefactos del ciclo viven como topic keys
-`sdd/{change-name}/{phase}`.
+### Classify with the resume test
 
-Use SDD for substantial features or architectural changes. The workflow:
+A task is **small** when all three hold:
 
-1. **Explore** (optional): Investigate the codebase, understand context
-2. **Propose**: Create a change proposal with intent and scope
-3. **Spec**: Write detailed requirements and scenarios
-4. **Design**: Define technical approach and architecture
-5. **Tasks**: Break down into implementation tasks
-6. **Apply**: Implement the tasks
-7. **Verify**: Validate implementation against specs
-8. **Archive**: Close the change
+1. The outcome is specified and no product or design decision is open.
+2. It touches no high-risk item: stored data or migrations, security, shared
+   contracts others consume, concurrency, delivery/CI, or nothing would catch a
+   regression.
+3. **Resume test**: if this session stopped now, someone could finish the work
+   from the original request plus `git diff`.
 
-**When to use SDD:**
-- New features (frontend components, backend endpoints)
-- Architectural changes (new modules, refactoring)
-- Bug fixes with unclear root cause
+Small work runs **inline**: read, edit, run the focused test and the suite once
+each. No feature document, no Engram mirror, no commits unless asked.
 
-**When NOT to use SDD:**
-- Simple bug fixes (fix inline)
-- Documentation updates
-- Configuration changes
+### Track large work without asking
+
+Large work (the resume test fails) gets a feature document **before the first
+source write**, without asking permission:
+
+- `odd/tasks/<feature-name>.md`, mirrored to Engram under topic
+  `odd/<feature-name>/tasks`. The artifact store is always Engram; never ask.
+- Fixed order: a 2–3 line header; `## Specs` with numbered `S1..Sn` quoting the
+  Owner's exact strings, errors, commands and examples verbatim; `## Tasks` with
+  one line per task (ID, linked `S#`, route, commit); `## Log` last, where `L1`
+  is the original request verbatim and later corrections and evidence are
+  appended.
+- Hand off by reference, never by paraphrase:
+  `Spec: odd/tasks/<feature>.md, T2, S3-S4`.
+- Check a task off only after its outcome and checks were observed.
+- Commit work units as reviewable slices (~400 authored lines), with tests and
+  docs alongside the behavior, using Conventional Commits. Push, PR and merge
+  remain the Owner's decisions.
+
+### Test-first
+
+When a relevant runnable test and a clear expected outcome exist: observe RED,
+implement GREEN, refactor with tests green. For every existing command or option
+the change touches, add one test proving its previous behavior still holds.
+
+### When delegation is justified
+
+- Exploration beyond a bounded read batch: one read-only explorer.
+- Two or more independent units with disjoint edit surfaces: parallel writers.
+- A change naming a high-risk item: independent verification after its own checks.
+
+Never delegate because a diff is large or touches many files.
 
 ---
 
@@ -185,7 +206,7 @@ Use SDD for substantial features or architectural changes. The workflow:
 |------|-----|
 | `read` | Read source files, configs, documentation |
 | `bash` | Run tests, scripts, git commands |
-| `mem_save` / `mem_search` / `mem_context` | Engram persistence (MANDATORY for SDD) |
+| `mem_save` / `mem_search` / `mem_context` | Engram persistence (MANDATORY for ODD) |
 | `write` / `edit` | Modify source files |
 | `graph_search` / `graph_read` | Query entity graph (for lore/character features) |
 
@@ -198,14 +219,3 @@ Protocolo completo: skill `skills/release-protocol/SKILL.md` y `docs/RELEASING.m
 - Formato `v0.MINOR.PATCH` mientras Demiurgos esté en Alfa.
 - Canal automático por `beta` en el nombre; publicar = tag + push.
 - **Nunca publicar sin pedido explícito del Owner.**
-
----
-
-## Execution Mode
-
-When starting a new SDD or multi-phase action, ask:
-
-- **Automatic** (`auto`): Run all phases in sequence. Show only the final result.
-- **Interactive** (`interactive`): After each phase, show summary and ASK: "Want to adjust anything or continue?"
-
-Default to **Interactive** if not specified. Cache the choice for the session.

@@ -631,3 +631,61 @@ def test_backup_reserved_names_are_excluded_and_never_staged(tmp_path: Path) -> 
         assert name not in inventory.included, f"{name} was included"
         assert name not in staged, f"{name} reached the staged set"
     assert not any(path.startswith(f"{park}/") for path in staged)
+
+
+def test_runtime_logs_are_excluded_and_nested_same_named_content_survives(
+    tmp_path: Path,
+) -> None:
+    """The app's own runtime log never enters a snapshot nor schedules one.
+
+    Regression for the recurring snapshot loop: ``logs/`` sits inside the data
+    root (the checkout in dev), so EVERY API request appended the log, the
+    watcher saw a durable write, and a 250 MB snapshot was scheduled — the
+    backup run's own log lines then fed the next run. Runtime logs are
+    regenerable, gitignored material, never author data. The rule is anchored
+    at the top level, so a world's own ``logs`` folder still survives.
+    """
+    _make(tmp_path / "logs" / "demiurgos-api.log")
+    _make(tmp_path / "mundos" / "MyWorld" / "logs" / "ficha.md")
+
+    inventory = build_inventory(tmp_path)
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    staged = set(stage_inventory(inventory).paths())
+
+    assert "logs" not in inventory.included
+    assert recorded.get("logs", "").strip()
+    assert not any(path.startswith("logs/") for path in staged)
+    assert "mundos/MyWorld/logs/ficha.md" in staged
+
+
+def test_git_tracked_tooling_never_triggers_a_dev_snapshot(tmp_path: Path) -> None:
+    """The checkout is the data root in dev, so git itself must not schedule runs.
+
+    A branch switch or a commit rewrites git-tracked tooling paths; while those
+    paths were included, every checkout produced a ~250 MB snapshot (observed at
+    23:46 right after a branch switch). They are versioned in git, so the
+    snapshot only needs what git does NOT track.
+    """
+    tooling = (
+        "odd/tasks/example.md",
+        "tests/test_example.py",
+        "relay/README.md",
+        "payload_manifest.json",
+        "requirements.lock",
+        "requirements-optional.txt",
+        "LICENSE",
+        ".gitleaks.toml",
+        ".pre-commit-config.yaml",
+        ".env.example",
+    )
+    for relative in tooling:
+        _make(tmp_path / relative)
+
+    inventory = build_inventory(tmp_path)
+    staged = set(stage_inventory(inventory).paths())
+
+    for relative in tooling:
+        assert relative not in staged, f"{relative} was staged into the backup"
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    for top_level in ("odd", "tests", "relay", "payload_manifest.json"):
+        assert recorded.get(top_level, "").strip(), f"{top_level} has no exclusion reason"
