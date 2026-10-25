@@ -10,11 +10,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  identityKeyForPrincipal,
+  identityKeyForAccount,
   identityKeyForTelegram,
   markBotStarted,
   readIdentity,
-  readIdentityByPrincipal,
+  readIdentityByAccount,
   revokeIdentity,
   writeIdentity,
   type IdentityRecord,
@@ -42,7 +42,7 @@ function record(overrides: Partial<IdentityRecord> = {}): IdentityRecord {
     telegram_user_id: "1234567890",
     username: "brook",
     display_name: "Brook",
-    principal_id: "prin_abc123",
+    account_key: "prin_abc123",
     linked_at: "2026-10-25T12:00:00.000Z",
     started_bots: { ideas: false, reports: true },
     permissions: { report_identity: true, notify_releases: true },
@@ -52,15 +52,15 @@ function record(overrides: Partial<IdentityRecord> = {}): IdentityRecord {
 
 test("keys are namespaced per lookup direction", () => {
   assert.equal(identityKeyForTelegram("42"), "identity:tg:42");
-  assert.equal(identityKeyForPrincipal("prin_abc123"), "identity:principal:prin_abc123");
+  assert.equal(identityKeyForAccount("prin_abc123"), "identity:acct:prin_abc123");
 });
 
-test("write then read round-trips by telegram id and by principal", async () => {
+test("write then read round-trips by telegram id and by account key", async () => {
   const kv = new MemoryKv();
   await writeIdentity(kv, record());
 
   const byTelegram = await readIdentity(kv, "1234567890");
-  const byPrincipal = await readIdentityByPrincipal(kv, "prin_abc123");
+  const byPrincipal = await readIdentityByAccount(kv, "prin_abc123");
 
   assert.deepEqual(byTelegram, record());
   assert.deepEqual(byPrincipal, record());
@@ -73,31 +73,31 @@ test("a malformed stored value reads as absent, never throws", async () => {
   assert.equal(await readIdentity(kv, "777"), null);
 });
 
-test("a dangling principal pointer reads as absent", async () => {
+test("a dangling account pointer reads as absent", async () => {
   const kv = new MemoryKv();
-  kv.map.set(identityKeyForPrincipal("prin_ghost"), "999");
+  kv.map.set(identityKeyForAccount("prin_ghost"), "999");
 
-  assert.equal(await readIdentityByPrincipal(kv, "prin_ghost"), null);
+  assert.equal(await readIdentityByAccount(kv, "prin_ghost"), null);
 });
 
-test("revoke removes both directions so the principal is unlinked", async () => {
+test("revoke removes both directions so the account is unlinked", async () => {
   const kv = new MemoryKv();
   await writeIdentity(kv, record());
 
   await revokeIdentity(kv, "1234567890");
 
   assert.equal(await readIdentity(kv, "1234567890"), null);
-  assert.equal(await readIdentityByPrincipal(kv, "prin_abc123"), null);
+  assert.equal(await readIdentityByAccount(kv, "prin_abc123"), null);
   assert.equal(kv.map.has(identityKeyForTelegram("1234567890")), false);
-  assert.equal(kv.map.has(identityKeyForPrincipal("prin_abc123")), false);
+  assert.equal(kv.map.has(identityKeyForAccount("prin_abc123")), false);
 });
 
-test("relinking the same principal keeps the newest telegram identity", async () => {
+test("relinking the same account key keeps the newest telegram identity", async () => {
   const kv = new MemoryKv();
   await writeIdentity(kv, record());
   await writeIdentity(kv, record({ telegram_user_id: "555000111" }));
 
-  const byPrincipal = await readIdentityByPrincipal(kv, "prin_abc123");
+  const byPrincipal = await readIdentityByAccount(kv, "prin_abc123");
   assert.equal(byPrincipal?.telegram_user_id, "555000111");
 });
 
@@ -119,11 +119,11 @@ test("markBotStarted on an unknown identity returns null and writes nothing", as
   assert.equal(kv.map.size, 0);
 });
 
-test("writeIdentity refuses a non-numeric telegram id and an empty principal", async () => {
+test("writeIdentity refuses a non-numeric telegram id and an empty account key", async () => {
   const kv = new MemoryKv();
 
   await assert.rejects(() => writeIdentity(kv, record({ telegram_user_id: "abc" })));
   await assert.rejects(() => writeIdentity(kv, record({ telegram_user_id: "-5" })));
-  await assert.rejects(() => writeIdentity(kv, record({ principal_id: "  " })));
+  await assert.rejects(() => writeIdentity(kv, record({ account_key: "  " })));
   assert.equal(kv.map.size, 0);
 });

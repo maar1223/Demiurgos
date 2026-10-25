@@ -27,13 +27,13 @@ A configuration value is never presented as Telegram verification.
 
 ### T2 — Identity and linking
 
-**S7 — Single-use ticket.** Linking uses a one-time ticket: TTL 10 minutes, single use, regenerable with one tap by reusing the pending ticket, and idempotent — a repeat `/start` from the same `telegram_user_id` for the same ticket is success, not an error.
+**S7 — Single-use ticket.** Linking uses a one-time ticket: TTL 10 minutes, single use, regenerable with one tap by reusing the pending ticket, and idempotent — a repeat `/start` from the same `telegram_user_id` for the same ticket is success, not an error. The ticket is minted, polled and revoked **by the backend**, never by the app directly: the relay accepts identity calls only with a shared `x-relay-key`, because an unauthenticated caller could otherwise mint a ticket for somebody else's account key. Redemption is not an HTTP route at all — it is an internal function the webhook calls after authenticating the Telegram update, so the app can never bind a Telegram account it does not control.
 
 **S8 — QR plus link.** The linking modal renders an SVG QR client-side (`qrcode`) of the same deep link, alongside `https://t.me/<bot>?start=<ticket>` and a copy-the-code action. The QR uses a white card, a 4-module quiet zone, and is never inverted — light-on-dark QR codes fail on older scanners. Only `https://t.me/...` links are used, never `tg://`, because native cameras do not open custom schemes.
 
-**S9 — Phone-first detection.** While the modal is open the app polls `GET /link/status?ticket=...` every 2 s and closes itself with `Conectado como @user` the moment the phone completes the link. Polling stops at ticket expiry.
+**S9 — Phone-first detection.** While the modal is open the app polls its own backend every 2 s (the backend proxies relay `POST /link/status`), and closes itself with `Conectado como @user` the moment the phone completes the link. Polling stops at ticket expiry. Identity calls are `POST` on purpose: a ticket must never travel in a URL or a Worker log.
 
-**S10 — One identity store, in the relay.** The relay stores `telegram_user_id` (global, stable per Telegram account), `username`, `display_name`, the bound `principal_id`, and `started_bots: {ideas, reports}`. The bound `principal_id` reuses the app's existing local principal (auth vault or `local-dev`). The idea bank is **not** migrated to this store (out of scope, see S17).
+**S10 — One identity store, in the relay.** The relay stores `telegram_user_id` (global, stable per Telegram account), `username`, `display_name`, the bound `account_key`, and `started_bots: {ideas, reports}`. The `account_key` is the app's **stable** identity: the credentials-vault account username when the vault is on, otherwise a persisted `install_id` written once into the local state. It must never be the session-scoped `principal_id` (`local-dev-session-<hex>` / `credentials-session-<hex>`), or the link would die on every logout. The backend resolves the `account_key` server-side and never accepts it from the browser. The idea bank is **not** migrated to this store (out of scope, see S17).
 
 **S11 — Two independent permissions.** `report_identity` and `notify_releases` are stored and granted separately, so announcing features later never requires a data migration.
 
@@ -69,8 +69,8 @@ A configuration value is never presented as Telegram verification.
 
 ### T1 — Relay identity
 
-- [x] T1 — KV `LINKS` store: identity record shape, `started_bots`, permission flags (`S10`, `S11`). Same KV surface injected as `KvLike`, tested with `node --experimental-strip-types --test`. Commit recorded in L12.
-- [ ] T2 — `POST /link/start`, `GET /link/status`, `POST /link/confirm`, `POST /link/revoke` with ticket TTL, reuse, idempotency, and the 3/hour ceiling. (`S7`, `S13`)
+- [x] T1 — KV `LINKS` store: identity record shape, `started_bots`, permission flags (`S10`, `S11`). Same KV surface injected as `KvLike`, tested with `node --experimental-strip-types --test`. Commit `8bfb410d`; the anchor was renamed `principal_id` -> `account_key` in T2 after L12.
+- [x] T2 — `POST /link/start`, `POST /link/status`, `POST /link/revoke` behind the shared `x-relay-key`, with ticket TTL, pending-ticket reuse, idempotent redemption and the 3/hour ceiling; redemption is an internal function for the webhook, not a route (`S7`, `S9`, `S13`). Commit recorded in L13.
 - [ ] T3 — Telegram webhook: `/start <ticket>` redemption, `/link/revoke` command, webhook secret validation. (`S2`, `S7`)
 
 ### T2 — Relay delivery
@@ -141,3 +141,16 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - `relay/package.json`: `test` script using Node's built-in runner and type stripping, so the relay gains tests without a new dependency.
 - `npm run typecheck` → clean.
 - Deliberate scope note: the principal-blocklist behind `/link/revoke` ("blocks that principal's later reports", S13) belongs to T6; T1 revokes and erases the binding.
+
+**L12 — Two spec corrections found while opening T2 (2026-10-25).**
+- **The anchor was wrong.** `principal_id` is minted per session in `api_server.py:2015` (`local-dev-session-<hex>`) and `:2145` (`credentials-session-<hex>`). Binding the link to it would break on every logout or restart. The record field is now `account_key`: the credentials-vault account username when the vault is on, otherwise a persisted `install_id` in the local state, always resolved server-side. `S10` rewritten; the rename landed in T2.
+- **The relay is unauthenticated.** `bug_report.py::_deliver` posts with no credential, so the relay trusts anyone who reaches the URL. An identity route accepting a caller-supplied `account_key` would let anyone mint a ticket for it and bind a Telegram account they control. Identity calls now require `x-relay-key` (new Worker secret, shared with the backend) and **redemption is not an HTTP route**: it is an internal function the webhook calls, so the app can never assert a Telegram identity. `S7` and `S9` corrected.
+- Deliberately **not** changed: the existing `POST /` report path stays unauthenticated as it ships today; hardening it is a separate decision and would need the backend to start sending the key. Recorded as a follow-up, not silently altered.
+
+**L13 — T2 evidence (2026-10-25).**
+- `relay/src/counters.ts` (new): the existing `bumpCounter` moved out of `index.ts` so the report path and the linking path share one implementation instead of two.
+- `relay/src/linking.ts` (new): `startLink` (mint-or-reuse, 3 per hour), `redeemTicket` (internal, idempotent per Telegram account), `linkStatus` (pending/expired/linked with a one-time `install_token` handover), `revokeLink` (erases both directions). Tickets are 8 Crockford-base32 characters (Crockford excludes I/L/O/U so a hand-typed ticket cannot be misread), TTL 600 s.
+- `relay/src/index.ts`: `LINK_PATHS` routing before the report path, `handleLink` guarded by `x-relay-key`, unknown paths answer `404 relay.not_found` instead of `405`.
+- `relay/tsconfig.json`: `allowImportingTsExtensions` so the Node runner and `tsc` agree on explicit `.ts` specifiers.
+- Tests: `relay/test/linking.test.ts` (11) and `relay/test/routes.test.ts` (6) over in-memory KV through the exported `fetch`. `npm test` -> **26 passed, 0 failed**; `npm run typecheck` -> clean; `npx wrangler deploy --dry-run` -> bundles 17.79 KiB with both KV bindings resolved.
+- Docs: `relay/README.md` gains the identity-store rules, the endpoint table, the `RELAY_KEY` secret, the new codes and a Tests section.

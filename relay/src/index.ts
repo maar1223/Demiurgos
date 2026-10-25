@@ -36,13 +36,22 @@
  * the backend's own per-principal limit and the provider's free-tier cap.
  */
 
+import { bumpCounter } from "./counters.ts";
+import {
+  LinkError,
+  linkStatus,
+  revokeLink,
+  startLink,
+  type StartLinkRequest,
+} from "./linking.ts";
+
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
   /** KV namespace backing the per-IP + global-daily rate-limit counters. */
   RATE_LIMIT: KVNamespace;
   /**
    * KV namespace holding linked Telegram identities (`identity:tg:*` records and
-   * `identity:principal:*` pointers). Kept apart from `RATE_LIMIT` because these
+   * `identity:acct:*` pointers). Kept apart from `RATE_LIMIT` because these
    * entries are personal data with no TTL, not disposable counters.
    */
   LINKS: KVNamespace;
@@ -52,6 +61,13 @@ export interface Env {
   OWNER_INBOX: string;
   /** Verified sender address, e.g. `reports@your-verified-domain` (secret). */
   SENDER_FROM: string;
+  /**
+   * Shared secret the backend presents on every identity call (`x-relay-key`).
+   * The relay never accepts an account key from an unauthenticated caller: that
+   * would let anyone bind a Telegram account to somebody else's app. Missing
+   * value fails closed (`relay.not_configured`).
+   */
+  RELAY_KEY: string;
 }
 
 /** Wire contract version, must match `_RELAY_SCHEMA` in `bug_report.py`. */
@@ -213,21 +229,6 @@ function clientIp(request: Request): string {
   );
 }
 
-/** Read-increment-write one counter in the `RATE_LIMIT` KV namespace. */
-async function bumpCounter(
-  kv: KVNamespace,
-  key: string,
-  ttlSeconds: number,
-): Promise<number> {
-  const raw = await kv.get(key);
-  const current = raw === null ? 0 : Number.parseInt(raw, 10);
-  const next = (Number.isFinite(current) ? current : 0) + 1;
-  await kv.put(key, String(next), {
-    expirationTtl: Math.max(60, Math.ceil(ttlSeconds)),
-  });
-  return next;
-}
-
 function utcDayKey(now: Date): string {
   return `global:${now.toISOString().slice(0, 10)}`;
 }
@@ -316,12 +317,98 @@ async function sendViaProvider(env: Env, report: Report): Promise<string> {
   return messageId || crypto.randomUUID();
 }
 
+/** Identity routes. All POST: a ticket must never travel in a URL or a log. */
+const LINK_PATHS = new Set(["/link/start", "/link/status", "/link/revoke"]);
+
+/**
+ * Identity endpoints. The caller must present the shared `x-relay-key`: an
+ * unauthenticated caller could otherwise mint a ticket for somebody else's
+ * account key and bind an attacker-controlled Telegram account to it.
+ */
+async function handleLink(
+  request: Request,
+  env: Env,
+  path: string,
+): Promise<Response> {
+  if (!env.LINKS || !env.RELAY_KEY) {
+    return fail(500, "relay.not_configured");
+  }
+  if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
+    return fail(401, "relay.unauthorized");
+  }
+  if (request.method !== "POST") {
+    return fail(405, "relay.method_not_allowed");
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return fail(400, "relay.invalid_payload");
+  }
+  if (!isPlainObject(body)) {
+    return fail(400, "relay.invalid_payload");
+  }
+
+  try {
+    if (path === "/link/start") {
+      if (typeof body.account_key !== "string") {
+        return fail(400, "link.invalid_account");
+      }
+      const started = await startLink(
+        env.LINKS,
+        {
+          account_key: body.account_key,
+          report_identity: body.report_identity !== false,
+          notify_releases: body.notify_releases !== false,
+        },
+        new Date(),
+      );
+      return jsonResponse(
+        {
+          ok: true,
+          ticket: started.ticket,
+          expires_at: started.expires_at,
+          reused: started.reused,
+        },
+        200,
+      );
+    }
+
+    if (path === "/link/status") {
+      if (typeof body.ticket !== "string") {
+        return fail(400, "link.ticket_invalid");
+      }
+      const status = await linkStatus(env.LINKS, body.ticket, new Date());
+      return jsonResponse({ ok: true, ...status }, 200);
+    }
+
+    if (typeof body.account_key !== "string") {
+      return fail(400, "link.invalid_account");
+    }
+    const revoked = await revokeLink(env.LINKS, body.account_key);
+    return jsonResponse({ ok: true, revoked }, 200);
+  } catch (error) {
+    if (error instanceof LinkError) {
+      return fail(error.status, error.code);
+    }
+    return fail(500, "link.failed");
+  }
+}
+
 export default {
   async fetch(
     request: Request,
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<Response> {
+    const url = new URL(request.url);
+    if (LINK_PATHS.has(url.pathname)) {
+      return handleLink(request, env, url.pathname);
+    }
+    if (url.pathname !== "/") {
+      return fail(404, "relay.not_found");
+    }
     if (request.method !== "POST") {
       return fail(405, "relay.method_not_allowed");
     }

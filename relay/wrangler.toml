@@ -36,3 +36,4 @@ preview_id = "REPLACE_WITH_LINKS_KV_PREVIEW_NAMESPACE_ID"
 #   npx wrangler secret put BREVO_API_KEY
 #   npx wrangler secret put OWNER_INBOX
 #   npx wrangler secret put SENDER_FROM
+#   npx wrangler secret put RELAY_KEY        # shared with the backend; guards /link/*
