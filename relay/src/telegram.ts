@@ -68,6 +68,22 @@ export function parseRevokeCommand(text: string): boolean {
   return /^\/link\/revoke(?:@[A-Za-z0-9_]+)?\s*$/.test(text);
 }
 
+/** Chat ids may be negative; user ids are always positive. */
+const CHAT_ID = /^-?[1-9][0-9]{0,19}$/;
+const USER_ID = /^[1-9][0-9]{0,19}$/;
+
+/**
+ * Read an id that Telegram sends as a number. Anything else — `null`, a
+ * boolean, an object, a float — is not an id, and stringifying it would send a
+ * message to a chat that does not exist.
+ */
+function idText(value: unknown): string | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? String(value) : null;
+  }
+  return typeof value === "string" ? value : null;
+}
+
 function displayName(from: NonNullable<TelegramMessage["from"]>): string | null {
   const parts = [from.first_name, from.last_name].filter(
     (part): part is string => typeof part === "string" && part.trim().length > 0,
@@ -125,11 +141,15 @@ export async function handleTelegramUpdate(
   }
 
   const text = typeof message.text === "string" ? message.text.trim() : "";
-  const chatId =
-    message.chat?.id === undefined ? "" : String(message.chat.id);
-  const telegramUserId =
-    message.from?.id === undefined ? "" : String(message.from.id);
-  if (text.length === 0 || chatId.length === 0 || telegramUserId.length === 0) {
+  const chatId = idText(message.chat?.id);
+  const telegramUserId = idText(message.from?.id);
+  if (
+    text.length === 0 ||
+    chatId === null ||
+    !CHAT_ID.test(chatId) ||
+    telegramUserId === null ||
+    !USER_ID.test(telegramUserId)
+  ) {
     return;
   }
 

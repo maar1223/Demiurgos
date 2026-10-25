@@ -182,3 +182,11 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Sink selection in `index.ts`: `TELEGRAM_CHAT_ID` + `TELEGRAM_BOT_TOKEN` selects Telegram; otherwise the existing Brevo path runs. Neither configured fails closed with `relay.not_configured` instead of answering success.
 - Tests: `relay/test/publication.test.ts` (9) — naming bounds, summary bounds, full logs preserved, the three-call sequence, degradation without topics, a failed summary rejecting, no token in message or document, and both sink-selection paths through `POST /`.
 - `npm test` -> **56 passed, 0 failed**; `npm run typecheck` -> clean; `wrangler deploy --dry-run` -> 30.51 KiB.
+
+**L18 — Correction after verification of T3+T4 (2026-10-25).** `gentle-ai-verify` returned **FAIL** on one requirement (11 of 12 met).
+- **Blocker:** the webhook guard rejected only `undefined` ids, so `chat.id` / `from.id` as `null`, `true`, `{}` or a float were stringified (`"null"`, `"true"`, `"[object Object]"`) and still produced an outbound `sendMessage` to a chat that does not exist. `redeemTicket` then failed on a non-numeric id and the failure was announced to that bogus chat.
+- Fix: ids are read as numbers only (`Number.isSafeInteger`) or strings, then validated — chat ids `^-?[1-9][0-9]{0,19}$`, user ids positive — before any work. A malformed id now returns silence with no outbound call.
+- Privacy bonus: no `identity:tg:<garbage>` can be created from a malformed update; the store already refused it, and now the request never reaches it.
+- Regression test added covering `null`, `true`, `{}`, negative, fractional and non-numeric ids for both fields, plus a `text` that is not a string.
+- `npm test` -> **57 passed, 0 failed**; `npm run typecheck` -> clean.
+- Everything else in the round met its requirement: publication order, the 65536-character log preserved, the topic/summary/caption bounds, degradation without topics, `delivery_failed` on a failed summary, both sink-selection paths, and no token in any output. Advisory noted, unchanged from baseline: a 65536-character **multibyte** log exceeds the pre-existing 98304-byte payload cap.

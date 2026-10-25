@@ -257,3 +257,40 @@ test("the bot token never appears in a webhook response", async () => {
   assert.equal(body.includes(TOKEN), false);
   assert.equal(body.includes(SECRET), false);
 });
+
+test("malformed updates never throw and never call out, including wrong-typed ids", async () => {
+  const kv = new MemoryKv();
+  const bodies: unknown[] = [
+    { update_id: 1 },
+    { update_id: 1, message: null },
+    { update_id: 1, message: "hi" },
+    { update_id: 1, message: [] },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: 5 } } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: 5 }, text: 123 } },
+    update("/start ABCDEFGH", 0),
+    { update_id: 1, message: { chat: { id: null }, from: { id: 5 }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: true }, from: { id: 5 }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: {} }, from: { id: 5 }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: null }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: true }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: {} }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: -7 }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: 1.5 }, text: "/start ABCDEFGH" } },
+    { update_id: 1, message: { chat: { id: 5 }, from: { id: "abc" }, text: "/start ABCDEFGH" } },
+  ];
+
+  for (const body of bodies) {
+    const { sent, calls } = await withTelegram(async () => {
+      const response = await worker.fetch(
+        webhook(body),
+        makeEnv(kv),
+        {} as never,
+      );
+      assert.equal(response.status, 200, `status for ${JSON.stringify(body)}`);
+    });
+    assert.equal(calls.length, 0, `no outbound for ${JSON.stringify(body)}`);
+    assert.equal(sent.length, 0);
+  }
+
+  assert.equal(kv.map.size, 0, "no identity written for a malformed update");
+});
