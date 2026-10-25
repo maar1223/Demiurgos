@@ -69,9 +69,16 @@ Rules the store enforces:
   account has actually started; a bot cannot transfer that permission to
   another bot.
 - **Permissions are separate.** `report_identity` and `notify_releases` are
-  granted and read independently.
-- **Revoke erases both directions.** `revokeIdentity` deletes the record and the
-  pointer, so unlinked personal data does not linger.
+  granted and read independently. A caller that states one explicitly on a
+  reused ticket has it applied, never silently dropped.
+- **`account_key` validation matches the vault, not a stricter rule.** The vault
+  stores any non-empty trimmed username (`account.py::create_account` imposes no
+  charset), so the relay only rejects what a KV key cannot hold: empty, untrimmed,
+  containing control characters, or over 400 UTF-8 bytes.
+- **Revoke erases both directions.** `revokeLink` deletes the record, the
+  pointer, the pending ticket **and** the ticket record, so a ticket
+  photographed before the revoke cannot re-link the account for the rest of its
+  TTL.
 
 `LINKS` is a separate namespace from `RATE_LIMIT` on purpose: identities are
 personal data with no TTL, while the counters are disposable and expires.

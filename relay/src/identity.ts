@@ -150,6 +150,14 @@ export async function readIdentityByAccount(
 export async function writeIdentity(kv: KvLike, record: IdentityRecord): Promise<void> {
   assertWritable(record);
 
+  // The same Telegram account moving to a different account key must not leave
+  // an old pointer behind. It reads as absent already (fail-closed), but a stale
+  // key nobody can revoke is still a leak waiting for a bug.
+  const previousRecord = await readIdentity(kv, record.telegram_user_id);
+  if (previousRecord !== null && previousRecord.account_key !== record.account_key) {
+    await kv.delete(identityKeyForAccount(previousRecord.account_key));
+  }
+
   const previousTelegramId = await kv.get(identityKeyForAccount(record.account_key));
   if (
     previousTelegramId !== null &&

@@ -38,7 +38,27 @@ const TICKET_LENGTH = 8;
 // Crockford base32: no I, L, O or U, so a ticket read aloud or typed by hand
 // cannot be confused. 256 % 32 === 0, so random bytes map without bias.
 const TICKET_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const ACCOUNT_KEY = /^[A-Za-z0-9_-]{6,128}$/;
+
+/**
+ * Account keys are whatever the vault stored, which is any non-empty trimmed
+ * username (`account.py::create_account` imposes no charset). The relay must not
+ * be stricter than the upstream or a valid account cannot link, so it only
+ * enforces what a KV key needs: trimmed, no control characters, and bounded
+ * well under the 512-byte key limit including the longest prefix.
+ */
+const MAX_ACCOUNT_KEY_BYTES = 400;
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function isValidAccountKey(value: string): boolean {
+  if (value.length === 0 || value !== value.trim()) {
+    return false;
+  }
+  if (CONTROL_CHARACTERS.test(value)) {
+    return false;
+  }
+  return new TextEncoder().encode(value).length <= MAX_ACCOUNT_KEY_BYTES;
+}
 
 /** Internal error carrying the HTTP status and non-secret relay code. */
 export class LinkError extends Error {
@@ -196,7 +216,7 @@ export async function startLink(
   request: StartLinkRequest,
   now: Date,
 ): Promise<StartedLink> {
-  if (!ACCOUNT_KEY.test(request.account_key)) {
+  if (!isValidAccountKey(request.account_key)) {
     throw new LinkError(400, "link.invalid_account");
   }
 
@@ -208,6 +228,25 @@ export async function startLink(
     pending.account_key === request.account_key &&
     isLive(pending, now)
   ) {
+    // A caller that states a permission explicitly must not have it silently
+    // dropped: the panel may have changed it before the ticket was redeemed.
+    if (request.report_identity !== undefined || request.notify_releases !== undefined) {
+      const permissions = {
+        report_identity:
+          request.report_identity ?? pending.permissions.report_identity,
+        notify_releases:
+          request.notify_releases ?? pending.permissions.notify_releases,
+      };
+      if (
+        permissions.report_identity !== pending.permissions.report_identity ||
+        permissions.notify_releases !== pending.permissions.notify_releases
+      ) {
+        const remaining = Math.ceil(
+          (Date.parse(pending.expires_at) - now.getTime()) / 1000,
+        );
+        await writeTicket(kv, { ...pending, permissions }, remaining);
+      }
+    }
     return { ticket: pending.ticket, expires_at: pending.expires_at, reused: true };
   }
 
@@ -333,14 +372,22 @@ export async function linkStatus(
   return { state: "pending", expires_at: record.expires_at };
 }
 
-/** Unlink by account key and erase both stored directions. */
+/**
+ * Unlink by account key and erase every stored direction, including any
+ * outstanding ticket: otherwise a ticket photographed before the revoke would
+ * still re-link the account for the rest of its TTL.
+ */
 export async function revokeLink(kv: KvLike, accountKey: string): Promise<boolean> {
+  const pendingTicket = await kv.get(pendingKey(accountKey));
+  if (pendingTicket !== null) {
+    await kv.delete(ticketKey(pendingTicket));
+  }
+  await kv.delete(pendingKey(accountKey));
+
   const identity = await readIdentityByAccount(kv, accountKey);
   if (identity === null) {
-    await kv.delete(pendingKey(accountKey));
     return false;
   }
   await revokeIdentity(kv, identity.telegram_user_id);
-  await kv.delete(pendingKey(accountKey));
   return true;
 }

@@ -154,3 +154,9 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - `relay/tsconfig.json`: `allowImportingTsExtensions` so the Node runner and `tsc` agree on explicit `.ts` specifiers.
 - Tests: `relay/test/linking.test.ts` (11) and `relay/test/routes.test.ts` (6) over in-memory KV through the exported `fetch`. `npm test` -> **26 passed, 0 failed**; `npm run typecheck` -> clean; `npx wrangler deploy --dry-run` -> bundles 17.79 KiB with both KV bindings resolved.
 - Docs: `relay/README.md` gains the identity-store rules, the endpoint table, the `RELAY_KEY` secret, the new codes and a Tests section.
+
+**L14 — Correction after independent verification (2026-10-25).** `gentle-ai-verify` returned **FAIL** with two change-caused blockers; both were real defects in T2, not verifier noise.
+- **B1 (S10): the account-key rule was stricter than the vault.** `^[A-Za-z0-9_-]{6,128}$` rejected `ana`, `Mr. Smith` and `jose@example.com`, all valid vault usernames, so a large class of accounts could not link. Replaced with the minimum a KV key needs: non-empty, trimmed, no control characters, at most 400 UTF-8 bytes. Regression tests cover both the accepted and the refused shapes.
+- **B2 (S11): explicit permissions were silently dropped on ticket reuse.** Reopening the panel with `notify_releases: false` returned `200 {reused: true}` and redeemed with the first mint's flags. Reuse now applies any explicitly stated flag and keeps the unspecified ones.
+- **Advisories fixed in the same batch:** `revokeLink` now also deletes the pending ticket record, so a ticket photographed before a revoke cannot re-link; and `writeIdentity` retires a stale `identity:acct:*` pointer when the same Telegram account moves to another account key.
+- Rechecked: `npm test` -> **30 passed, 0 failed**; `npm run typecheck` -> clean; `npx wrangler deploy --dry-run` -> bundles with both KV bindings.

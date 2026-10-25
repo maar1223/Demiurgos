@@ -83,13 +83,57 @@ test("minting a fourth ticket in the hour is rate limited", async () => {
   );
 });
 
-test("startLink refuses an unusable account key", async () => {
+test("startLink refuses only what a KV key cannot hold", async () => {
   const kv = new MemoryKv();
 
-  await assert.rejects(
-    () => startLink(kv, { account_key: "no" }, T0),
-    (error: unknown) => error instanceof LinkError && error.code === "link.invalid_account",
+  for (const bad of ["", " ana", "ana\u0000x", "x".repeat(401)]) {
+    await assert.rejects(
+      () => startLink(kv, { account_key: bad }, T0),
+      (error: unknown) => error instanceof LinkError && error.code === "link.invalid_account",
+      `expected ${JSON.stringify(bad)} to be refused`,
+    );
+  }
+});
+
+test("a vault username is a valid account key, including spaces and @", async () => {
+  const kv = new MemoryKv();
+
+  for (const key of ["ana", "Mr. Smith", "jose@example.com"]) {
+    const started = await startLink(kv, { account_key: key }, T0);
+    assert.equal(typeof started.ticket, "string", `${key} was refused`);
+  }
+});
+
+test("explicit permissions on a reused ticket are honored, not dropped", async () => {
+  const kv = new MemoryKv();
+  await startLink(kv, { account_key: "acct_abc123" }, T0);
+
+  const reused = await startLink(
+    kv,
+    { account_key: "acct_abc123", report_identity: false, notify_releases: false },
+    later(1),
   );
+  assert.equal(reused.reused, true);
+
+  const identity = await redeemTicket(kv, reused.ticket, telegram(), later(2));
+  assert.deepEqual(identity.permissions, {
+    report_identity: false,
+    notify_releases: false,
+  });
+});
+
+test("revoke invalidates an outstanding ticket instead of leaving it redeemable", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, T0);
+
+  await revokeLink(kv, "acct_abc123");
+
+  await assert.rejects(
+    () => redeemTicket(kv, ticket, telegram(), later(1)),
+    (error: unknown) => error instanceof LinkError && error.code === "link.ticket_invalid",
+  );
+  assert.equal(kv.map.has(`ticket:${ticket}`), false);
+  assert.equal(kv.map.has("ticket:pending:acct_abc123"), false);
 });
 
 test("redeem binds the identity and the poll hands over the token exactly once", async () => {
@@ -181,4 +225,20 @@ test("revokeLink erases the binding and the pending ticket", async () => {
   assert.equal(await readIdentity(kv, "1234567890"), null);
   assert.equal(kv.map.has("ticket:pending:acct_abc123"), false);
   assert.equal(await revokeLink(kv, "acct_abc123"), false);
+});
+
+test("a telegram account moving to another account key leaves no stale pointer", async () => {
+  const kv = new MemoryKv();
+  const first = await startLink(kv, { account_key: "acct_first01" }, T0);
+  await redeemTicket(kv, first.ticket, telegram(), later(1));
+
+  const second = await startLink(kv, { account_key: "acct_second1" }, later(2));
+  await redeemTicket(kv, second.ticket, telegram(), later(3));
+
+  assert.equal(kv.map.has("identity:acct:acct_first01"), false);
+  assert.equal((await readIdentityByAccount(kv, "acct_first01")), null);
+  assert.equal(
+    (await readIdentityByAccount(kv, "acct_second1"))?.account_key,
+    "acct_second1",
+  );
 });
