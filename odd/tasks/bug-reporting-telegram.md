@@ -71,7 +71,7 @@ A configuration value is never presented as Telegram verification.
 
 - [x] T1 — KV `LINKS` store: identity record shape, `started_bots`, permission flags (`S10`, `S11`). Same KV surface injected as `KvLike`, tested with `node --experimental-strip-types --test`. Commit `8bfb410d`; the anchor was renamed `principal_id` -> `account_key` in T2 after L12.
 - [x] T2 — `POST /link/start`, `POST /link/status`, `POST /link/revoke` behind the shared `x-relay-key`, with ticket TTL, pending-ticket reuse, idempotent redemption and the 3/hour ceiling; redemption is an internal function for the webhook, not a route (`S7`, `S9`, `S13`). Commit recorded in L13.
-- [ ] T3 — Telegram webhook: `/start <ticket>` redemption, `/link/revoke` command, webhook secret validation. (`S2`, `S7`)
+- [x] T3 — Telegram webhook: `/start <ticket>` redemption, `/link/revoke` command, webhook secret validation, free text ignored. (`S2`, `S7`, `S16`). Commit recorded in L17.
 
 ### T2 — Relay delivery
 
@@ -165,3 +165,12 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Fix: the route now forwards a flag only when it is a boolean and leaves it `undefined` otherwise, and rejects a non-boolean flag with `400 relay.invalid_payload` instead of coercing it.
 - Regression tests added from the verifier's probes: vault usernames accepted / unusable keys refused at the HTTP entry path, omitted-flag reuse keeping the stored value, non-boolean flag rejected, HTTP revoke invalidating the ticket, omitted-flag merge at the function level, and the stored record carrying `account_key` with no `principal_id`.
 - `npm test` -> **36 passed, 0 failed**; `npm run typecheck` -> clean.
+
+**L16 — T3 evidence (2026-10-25).**
+- `relay/src/telegram.ts` (new): `parseStartCommand` / `parseRevokeCommand`, `handleTelegramUpdate`, and a `sendMessage` that never throws and never echoes the token. Copy is Spanish, short sentences, matching the product's primary catalogue.
+- `relay/src/index.ts`: `POST /telegram/webhook`, authenticated by `x-telegram-bot-api-secret-token` (the `setWebhook` `secret_token`), **not** by `x-relay-key` — the caller is Telegram, not the backend. Missing `TELEGRAM_BOT_TOKEN` or `TELEGRAM_WEBHOOK_SECRET` fails closed with `relay.not_configured`.
+- **A handled failure answers 200, not an error.** Telegram redelivers any non-2xx, so an expired or already-claimed ticket is answered with a short message instead of an error status; otherwise the same update would replay forever.
+- One-way enforced (D2): free text and non-message updates return 200 and make **no outbound call**, which also removes the cheapest spam lever.
+- Reliability: a redemption that throws `LinkError` still writes a user-facing message, and an unexpected throw is swallowed into a 200 so Telegram does not retry.
+- Tests: `relay/test/webhook.test.ts` (10) with the global `fetch` stubbed — auth (missing/wrong secret), fail-closed config, live ticket, repeated `/start`, expired ticket, ticket claimed by another account, `/link/revoke` with and without a link, free text ignored, and the token/secret never appearing in a response. One test initially failed because the test passed a user id where the webhook secret belonged; the source was correct.
+- `npm test` -> **47 passed, 0 failed**; `npm run typecheck` -> clean.
