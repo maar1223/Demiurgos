@@ -109,6 +109,28 @@ Behaviour worth knowing:
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
 
+## Publication into the triage group
+
+When `TELEGRAM_CHAT_ID` is set, a report is published into the Telegram group
+instead of being emailed. The email path stays available for a deployment
+without a chat id, and it is also the fallback channel for reporters who never
+link Telegram.
+
+One report becomes one **forum topic**, so the group stays readable and each bug
+keeps its thread:
+
+1. `createForumTopic` named `BUG · v<version> · <contact>`.
+2. `sendMessage` with a bounded summary (Telegram caps a message at 4096
+   characters; the summary is cut at 3800).
+3. `sendDocument` with `report-<id>.txt` holding the **complete** report —
+   description and up to 65536 characters of logs — because the message alone
+   could never carry them.
+
+Degradation is deliberate: a plain group, or a bot without the topic
+permission, still receives the report — without a thread. A failure to send the
+summary is a real delivery failure (`relay.delivery_failed`) and is reported as
+such, never swallowed.
+
 ## Telegram webhook
 
 Telegram calls this route, so it authenticates with the secret **Telegram**

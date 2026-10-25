@@ -75,7 +75,7 @@ A configuration value is never presented as Telegram verification.
 
 ### T2 — Relay delivery
 
-- [ ] T4 — Group publication: `createForumTopic` per report, `sendDocument` for attachments, caption ≤ 1024 chars with the full text in the bundle document. (`S1`, `S5`)
+- [x] T4 — Group publication: `createForumTopic` per report, bounded summary message, `sendDocument` with the complete bundle as `report-<id>.txt`; degrades to a plain group message when topics are unavailable (`S1`, `S5`). Attachments ride the same document path in T7. Commit recorded in L18.
 - [ ] T5 — Attribution rendering for the three levels. (`S6`)
 - [ ] T6 — Dedup hash plus per-principal, per-IP and global ceilings, failing closed. (`S13`)
 
@@ -174,3 +174,11 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Reliability: a redemption that throws `LinkError` still writes a user-facing message, and an unexpected throw is swallowed into a 200 so Telegram does not retry.
 - Tests: `relay/test/webhook.test.ts` (10) with the global `fetch` stubbed — auth (missing/wrong secret), fail-closed config, live ticket, repeated `/start`, expired ticket, ticket claimed by another account, `/link/revoke` with and without a link, free text ignored, and the token/secret never appearing in a response. One test initially failed because the test passed a user id where the webhook secret belonged; the source was correct.
 - `npm test` -> **47 passed, 0 failed**; `npm run typecheck` -> clean.
+
+**L17 — T4 evidence (2026-10-25).**
+- `relay/src/publication.ts` (new): `topicName`, `summaryText`, `bundleText`, and `publishReport` (topic → summary message → `.txt` document).
+- Why a document: a Telegram message caps at 4096 characters and the logs alone reach 65536, so the summary is truncated at 3800 and the complete report travels as `report-<id>.txt`. That also gives S5's "document, never `sendPhoto`" a home before user attachments arrive.
+- Degradation: a plain group or a missing topic permission still receives the report, without a thread. A failed **summary** is a real delivery failure (`relay.delivery_failed`), never swallowed.
+- Sink selection in `index.ts`: `TELEGRAM_CHAT_ID` + `TELEGRAM_BOT_TOKEN` selects Telegram; otherwise the existing Brevo path runs. Neither configured fails closed with `relay.not_configured` instead of answering success.
+- Tests: `relay/test/publication.test.ts` (9) — naming bounds, summary bounds, full logs preserved, the three-call sequence, degradation without topics, a failed summary rejecting, no token in message or document, and both sink-selection paths through `POST /`.
+- `npm test` -> **56 passed, 0 failed**; `npm run typecheck` -> clean; `wrangler deploy --dry-run` -> 30.51 KiB.

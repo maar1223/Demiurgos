@@ -45,6 +45,7 @@ import {
   type StartLinkRequest,
 } from "./linking.ts";
 import { handleTelegramUpdate } from "./telegram.ts";
+import { publishReport } from "./publication.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
@@ -64,6 +65,12 @@ export interface Env {
   SENDER_FROM: string;
   /** Reports-bot token (Worker secret). Never logged or returned. */
   TELEGRAM_BOT_TOKEN: string;
+  /**
+   * Triage group id (for example `-1001234567890`). When set, reports are
+   * published there instead of being emailed. Optional so the email-only
+   * deployment keeps working.
+   */
+  TELEGRAM_CHAT_ID?: string;
   /**
    * Value Telegram must echo in `x-telegram-bot-api-secret-token`, set with the
    * webhook's `secret_token`. Without it anyone could post a forged update.
@@ -471,8 +478,11 @@ export default {
       return fail(405, "relay.method_not_allowed");
     }
 
-    // Config fail-closed: a missing secret never reaches the provider.
-    if (!env.BREVO_API_KEY || !env.OWNER_INBOX || !env.SENDER_FROM) {
+    // Config fail-closed: neither sink is configured, so nothing could be
+    // delivered and the caller would see a success that never happened.
+    const telegramSink = Boolean(env.TELEGRAM_CHAT_ID && env.TELEGRAM_BOT_TOKEN);
+    const emailSink = Boolean(env.BREVO_API_KEY && env.OWNER_INBOX && env.SENDER_FROM);
+    if (!telegramSink && !emailSink) {
       return fail(500, "relay.not_configured");
     }
 
@@ -517,6 +527,18 @@ export default {
     }
 
     try {
+      if (telegramSink && env.TELEGRAM_CHAT_ID) {
+        const deliveryId = crypto.randomUUID();
+        await publishReport(
+          {
+            TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+            TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
+          },
+          report,
+          deliveryId,
+        );
+        return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
+      }
       const deliveryId = await sendViaProvider(env, report);
       return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
     } catch (error) {
