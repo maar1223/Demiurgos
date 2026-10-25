@@ -261,3 +261,35 @@ test("a ticket minted before an HTTP revoke cannot be redeemed", async () => {
     (error: unknown) => error instanceof LinkError && error.code === "link.ticket_invalid",
   );
 });
+
+test("an explicit single flag on reuse applies without touching the other", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+
+  await worker.fetch(
+    call("/link/start", {
+      account_key: "acct_http04",
+      report_identity: false,
+      notify_releases: false,
+    }),
+    env,
+    {} as never,
+  );
+  const reuse = await worker.fetch(
+    call("/link/start", { account_key: "acct_http04", notify_releases: true }),
+    env,
+    {} as never,
+  );
+  const { ticket } = (await reuse.json()) as Record<string, string>;
+
+  const identity = await redeemTicket(
+    kv,
+    ticket,
+    { id: "1234567891" },
+    new Date(),
+  );
+  assert.deepEqual(identity.permissions, {
+    report_identity: false,
+    notify_releases: true,
+  });
+});
