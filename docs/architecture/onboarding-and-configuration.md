@@ -176,6 +176,8 @@
 - El bloque normalizado `assistant_settings` conserva el id de producto y sigue siendo la fuente del panel y del gate de visión.
 - La **aceptación del runtime es una corrida real pequeña** en cada guardado (subida de un run por la API documentada y espera de su estado terminal): la mera liveness del gateway no acredita el Asistente, porque un gateway vivo acepta el run con `202` y puede fallar de forma asíncrona cuando el proveedor no se resuelve. Una corrida fallida, cancelada, vacía, inalcanzable o agotada deja el estado en `saved-not-active`.
 
+  Una aceptación `saved-not-active` para la revisión vigente **se re-evalúa una vez al arrancar**: si el gateway está vivo y una corrida real completada lo demuestra, la evidencia pasa a `accepted` y el panel deja de mostrar como inactivo un Asistente que funciona. La convergencia es **solo ascendente**: nunca degrada una revisión aceptada ni vuelve a probar una sana, para que un fallo transitorio del proveedor no marque como inactivo un Asistente operativo.
+
 **Credenciales `[OBJETIVO — OC18]`:**
 
 - La configuración **local no requiere API key**; la configuración **remota usa un secreto protegido** (el panel actual ya solo envía la clave al backend autenticado, `[ACTUAL]`). `[OBJETIVO — OC18]`

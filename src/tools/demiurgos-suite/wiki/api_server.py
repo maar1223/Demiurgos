@@ -316,6 +316,16 @@ async def _lifespan(app: FastAPI):
     # next start's reconciliation pass catches whatever changed (SC-BE-6.3).
     engine = _backup_engine()
     engine.start()
+    # Startup convergence (best-effort, off the boot path): a revision saved
+    # while the runtime was not ready converges to accepted once it is.
+    try:
+        threading.Thread(
+            target=_converge_assistant_acceptance,
+            name="assistant-acceptance-convergence",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001 — never block startup
+        logger.warning("assistant acceptance convergence could not start")
     try:
         yield
     finally:
@@ -886,6 +896,56 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
         "revision": assistant_settings.current_config_revision(),
     }
     registry.atomic_commit(state)
+
+
+_ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK = threading.Lock()
+
+
+def _converge_assistant_acceptance() -> bool:
+    """Upgrade a stale non-accepted acceptance once the runtime proves itself.
+
+    The save-time acceptance is recorded ONCE. A revision saved while the
+    runtime could not complete a run (gateway down, provider warming, restart
+    in flight) stayed ``saved-not-active`` forever, so every later read — and
+    every restart — reported a working assistant as inactive. This convergence
+    runs once at startup and is UP ONLY: it requires the current revision's
+    recorded text+vision proofs, a live gateway and one completed real run; it
+    never downgrades an accepted revision and never re-probes a healthy one, so
+    a transient provider failure cannot flip a working assistant to inactive.
+
+    Returns True only when the registry was upgraded.
+    """
+    try:
+        with _ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK:
+            if not _assistant_gateway_probe().is_running():
+                return False
+            revision = assistant_settings.current_config_revision()
+            if revision is None:
+                return False
+            registry = _local_state()
+            state = registry.snapshot()
+            evidence = state.get("assistant_acceptance")
+            if not isinstance(evidence, dict):
+                return False
+            if (
+                evidence.get("revision") != revision
+                or evidence.get("text") != "passed"
+                or evidence.get("vision") != "passed"
+                or evidence.get("runtime") == "accepted"
+            ):
+                return False
+            if not _assistant_runtime_run_probe():
+                return False
+            state["assistant_acceptance"] = {
+                **evidence,
+                "runtime": "accepted",
+                "revision": revision,
+            }
+            registry.atomic_commit(state)
+            return True
+    except Exception:  # noqa: BLE001 — convergence is best-effort, never fatal
+        logger.warning("assistant acceptance convergence failed", exc_info=True)
+        return False
 
 
 _GATEWAY_PROBE = None
