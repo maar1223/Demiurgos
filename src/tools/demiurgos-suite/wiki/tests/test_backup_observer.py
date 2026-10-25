@@ -83,3 +83,42 @@ def test_a_read_signals_nothing_and_a_write_signals(tmp_path: Path) -> None:
         assert _wait_for(lambda: bool(calls), timeout=5.0), "a write did not signal"
     finally:
         observer.stop()
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="inotify events are Linux-only",
+)
+def test_a_runtime_log_write_never_signals_while_author_data_does(
+    tmp_path: Path,
+) -> None:
+    """``logs/`` writes must not schedule a backup (regression).
+
+    The app writes its runtime log on every request, and the log lives inside
+    the data root. Without an exclusion, serving the UI kept the engine in a
+    self-sustaining snapshot loop; author data must still signal.
+    """
+    pytest.importorskip("watchdog")
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "ideas").mkdir()
+    log = tmp_path / "logs" / "demiurgos-api.log"
+    note = tmp_path / "ideas" / "nota.md"
+
+    calls: list[str] = []
+    observer = default_observer_factory(tmp_path, calls.append)
+    observer.start()
+    try:
+        time.sleep(0.3)  # let the watcher settle
+        for _ in range(5):
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write("INFO GET /api/backup/status 200 OK\n")
+        time.sleep(0.5)
+        assert calls == [], f"a runtime log write signalled {calls!r}"
+
+        note.write_text("x", encoding="utf-8")
+        assert _wait_for(
+            lambda: any(path.startswith("ideas") for path in calls), 3.0
+        ), "author data did not signal"
+        assert not any(path.startswith("logs") for path in calls), calls
+    finally:
+        observer.stop()

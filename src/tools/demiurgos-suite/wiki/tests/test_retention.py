@@ -29,6 +29,7 @@ if str(_WIKI) not in sys.path:
 
 from backup.manifest import RetentionRecord  # noqa: E402
 from backup.retention import (  # noqa: E402
+    MAX_CURRENT_DAY_SNAPSHOTS,
     RETENTION_META_NAME,
     STATUS_OK,
     STATUS_OK_WITH_WARNINGS,
@@ -157,15 +158,34 @@ def test_protected_ids_survive_regardless_of_age() -> None:
     assert "2024-01-01T000000Z" not in pinned.prune
 
 
-def test_every_snapshot_of_the_current_utc_day_is_kept() -> None:
-    """A same-day burst is never pruned mid-day (``today_keep`` = ALL of today)."""
-    today = [f"2026-09-16T{hour:02d}0000Z" for hour in range(0, 24)]
+def test_only_the_latest_same_day_snapshots_are_kept() -> None:
+    """A same-day burst keeps the newest cap, never ALL of today.
+
+    Regression for the disk-saturating loop: keeping every same-day snapshot
+    meant a single busy session (one ~250 MB full snapshot per edit burst) could
+    fill the destination with no prune until the UTC day rolled over.
+    """
+    today = [f"2026-09-16T{hour:02d}0000Z" for hour in range(0, 10)]
     # Enough distinct months that 2025-01 falls outside the 6-month window.
     anchors = [f"2026-{month:02d}-15T000000Z" for month in range(1, 9)]
     old = "2025-01-01T000000Z"
+
     selection = select_prunable(anchors + [old] + today, now=_fixed_clock)
-    assert set(today) <= set(selection.keep)
+
+    kept_today = sorted(set(today) & set(selection.keep))
+    assert kept_today == today[-MAX_CURRENT_DAY_SNAPSHOTS:]
+    assert set(today[:-MAX_CURRENT_DAY_SNAPSHOTS]) <= set(selection.prune)
     assert old in selection.prune
+
+
+def test_a_protected_same_day_snapshot_survives_the_cap() -> None:
+    today = [f"2026-09-16T{hour:02d}0000Z" for hour in range(0, 10)]
+    pinned = today[0]
+
+    selection = select_prunable(today, now=_fixed_clock, protected=[pinned])
+
+    assert pinned in selection.keep
+    assert len(set(today) & set(selection.keep)) == MAX_CURRENT_DAY_SNAPSHOTS + 1
 
 
 def test_a_naive_clock_is_read_as_utc() -> None:

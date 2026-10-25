@@ -6,7 +6,8 @@ manifest:
 
 * :func:`select_prunable` is pure. It parses snapshot ids as UTC, groups them by
   UTC calendar day / ISO week / calendar month, and returns the keep set — daily
-  7 / weekly 4 / monthly 6 representatives, plus ALL of the current UTC day and
+  7 / weekly 4 / monthly 6 representatives, plus the newest
+  ``MAX_CURRENT_DAY_SNAPSHOTS`` of the current UTC day and
   every protected id — together with the ids a prune may delete. An id that does
   not parse is NEVER pruned: it cannot be classified, so it is reported in
   ``unrecognized`` and surfaced instead of deleted.
@@ -48,6 +49,14 @@ from backup.transport.base import BackupTransport
 RETENTION_META_NAME = "retention.json"
 #: The exact id shape ``list_snapshots()`` recognises (SC-BE-1.2).
 SNAPSHOT_ID_TIME_FORMAT = "%Y-%m-%dT%H%M%SZ"
+#: How many snapshots the CURRENT UTC day may retain. An earlier contract kept
+#: ALL of today's snapshots ("never pruned mid-day"), which let one busy session
+#: fill the destination: every edit burst produces a full ~250 MB snapshot and
+#: nothing was pruned until the UTC day rolled over. The newest snapshot already
+#: contains every earlier same-day state, so only the most recent intra-day
+#: restore points are worth keeping; the day keeps its GFS representative once
+#: it becomes an elapsed day.
+MAX_CURRENT_DAY_SNAPSHOTS = 4
 #: Run status: completed cleanly, or completed with a non-fatal prune warning.
 STATUS_OK = "ok"
 STATUS_OK_WITH_WARNINGS = "ok_with_warnings"
@@ -150,8 +159,9 @@ def select_prunable(
        ISO weeks (``isocalendar()`` year + week);
     3. ``monthly`` — representatives of the ``policy.monthly`` most recent
        distinct calendar months;
-    4. ``today`` — EVERY id in the current UTC day, so a same-day burst is never
-       pruned mid-day.
+    4. ``today`` — the newest ``MAX_CURRENT_DAY_SNAPSHOTS`` ids of the current
+       UTC day, so a same-day burst keeps recent restore points without
+       retaining an unbounded same-day history.
 
     A representative is always the LATEST id of its period. Every ``protected``
     id that is present is added unconditionally (a manual pin, no age test), and
@@ -173,15 +183,20 @@ def select_prunable(
     present = {snapshot_id for snapshot_id, _ in parsed}
     today = moment.date()
 
+    same_day = sorted(
+        (
+            (value, snapshot_id)
+            for snapshot_id, value in parsed
+            if value.date() == today
+        ),
+        reverse=True,
+    )[:MAX_CURRENT_DAY_SNAPSHOTS]
+
     keep = (
         _representatives(daily, policy.daily)
         | _representatives(weekly, policy.weekly)
         | _representatives(monthly, policy.monthly)
-        | {
-            snapshot_id
-            for snapshot_id, value in parsed
-            if value.date() == today
-        }
+        | {snapshot_id for _, snapshot_id in same_day}
         | {snapshot_id for snapshot_id in protected if snapshot_id in present}
     )
     prune = tuple(

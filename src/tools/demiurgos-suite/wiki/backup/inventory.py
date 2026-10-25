@@ -232,6 +232,41 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
     ),
     ExclusionRule(".git", "excluded:vcs-metadata"),
     ExclusionRule(".codegraph", "excluded:code-index-regenerable"),
+    # Git-tracked tooling that the table above missed. In dev the data root IS
+    # the checkout, so a branch switch or a commit rewrites these paths and
+    # scheduled a ~250 MB snapshot each time (observed right after a checkout).
+    # They are versioned in git, so the snapshot only needs what git does NOT
+    # track; user data (``mundos/``, ``ideas/``, ``data/``, ``config/``,
+    # ``plantillas/``) stays included.
+    ExclusionRule("odd", "excluded:odd-workflow-artifacts", "subtree"),
+    ExclusionRule("tests", "excluded:project-tests", "subtree"),
+    ExclusionRule("relay", "excluded:deployable-relay-worker", "subtree"),
+    ExclusionRule(
+        "payload_manifest.json", "excluded:generated-payload-manifest", "top_level_name"
+    ),
+    ExclusionRule(
+        "requirements.lock", "excluded:project-dependencies", "top_level_name"
+    ),
+    ExclusionRule(
+        "requirements-optional.txt", "excluded:project-dependencies", "top_level_name"
+    ),
+    ExclusionRule("LICENSE", "excluded:project-license", "top_level_name"),
+    ExclusionRule(
+        ".gitleaks.toml", "excluded:secret-scan-configuration", "top_level_name"
+    ),
+    ExclusionRule(
+        ".pre-commit-config.yaml", "excluded:project-setup-scripts", "top_level_name"
+    ),
+    ExclusionRule(
+        ".env.example", "excluded:project-setup-scripts", "top_level_name"
+    ),
+    # Runtime logs are the app's own writes: the API appends one line per
+    # request INSIDE the data root, so including them made every request a
+    # durable change and kept the engine in a self-sustaining snapshot loop
+    # (each run's own log lines fed the next run). They are regenerable,
+    # gitignored material, never author data. Top-level anchored: a world's own
+    # ``logs`` folder deeper in the tree is still staged.
+    ExclusionRule("logs", "excluded:runtime-log", "subtree"),
     ExclusionRule(".venv", "excluded:virtualenv-code"),
     # Tooling / dependency / cache directories, refused by basename ANYWHERE in
     # the tree (scope ``name``). Their names are unambiguous: a folder called
