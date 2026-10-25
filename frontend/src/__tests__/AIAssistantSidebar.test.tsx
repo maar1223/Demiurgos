@@ -11,6 +11,7 @@ import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
   useAIAssistantSessions: vi.fn(),
+  GLOBAL_ASSISTANT_CONTEXT: "ideas-global",
 }));
 
 vi.mock("@/hooks/useAppLanguage", () => ({
@@ -75,6 +76,9 @@ const createSessionsState = (
   switchSession: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
+  attachDocument: vi.fn(async () => {}),
+  removeAttachment: vi.fn(),
+  attaching: null,
   cancelSend: vi.fn(),
   resolveGuidedProposal: vi.fn(),
   resolveGuidedConsent: vi.fn(),
@@ -1125,5 +1129,442 @@ describe("AIAssistantSidebar malformed guided session", () => {
     expect(
       screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AIAssistantSidebar document attachments", () => {
+  const attachment = {
+    id: "att-1",
+    name: "Personaje.docx",
+    kind: "docx" as const,
+    chars: 1200,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("renders the attach action and uploads the chosen file", async () => {
+    const attachDocument = vi.fn(async () => {});
+    useSessionsMock.mockReturnValue(createSessionsState({ attachDocument }));
+    const user = userEvent.setup();
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeInTheDocument();
+
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input.accept).toBe(".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif");
+    const file = new File(["contenido"], "Personaje.docx");
+    await user.upload(input, file);
+
+    expect(attachDocument).toHaveBeenCalledWith(file);
+  });
+
+  it("shows one chip per attachment and removes it", async () => {
+    const removeAttachment = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        removeAttachment,
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [attachment],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).toHaveTextContent("Personaje.docx");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: tEs("assistant.attach.remove.aria", { name: "Personaje.docx" }),
+      }),
+    );
+    expect(removeAttachment).toHaveBeenCalledWith("att-1");
+  });
+
+  it("sends the default summary prompt when only an attachment is present", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [attachment],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const send = screen.getByRole("button", { name: tEs("assistant.send.aria") });
+    expect(send).toBeEnabled();
+    await user.click(send);
+
+    expect(sendMessage).toHaveBeenCalledWith(tEs("assistant.attach.defaultPrompt"));
+  });
+
+  it("keeps the send action disabled with neither text nor attachments", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    ).toBeDisabled();
+  });
+
+  it("disables the attach action while a turn is in flight", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({ isSending: true }));
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeDisabled();
+  });
+});
+
+describe("AIAssistantSidebar sent attachments", () => {
+  const attachment = {
+    id: "att-1",
+    name: "meme.png",
+    kind: "image" as const,
+    chars: 1242,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("shows the sent attachment inside the message, not only in the tray", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          createdAt: 1,
+          messages: [
+            { role: "user", content: "me puedes describir esta imagen?", attachments: [attachment] },
+            { role: "assistant", content: "Es un meme con Bob Esponja." },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const sent = screen.getByRole("list", {
+      name: tEs("assistant.attach.sent.aria"),
+    });
+    expect(sent).toHaveTextContent("meme.png");
+    // The attachment was sent once: nothing stays queued in the composer.
+    expect(
+      screen.queryByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the full chip in the composer for an attachment not sent yet", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          createdAt: 1,
+          attachments: [attachment],
+          messages: [{ role: "user", content: "hola" }],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).toHaveTextContent("meme.png");
+    expect(
+      screen.queryByRole("list", { name: tEs("assistant.attach.sent.aria") }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AIAssistantSidebar attachment chip", () => {
+  it("shows the extracted character count next to the name", () => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            {
+              id: "att-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const list = screen.getByRole("list", {
+      name: tEs("assistant.attach.list.aria"),
+    });
+    expect(list).toHaveTextContent("Personaje.docx");
+    expect(list).toHaveTextContent("1200");
+  });
+});
+
+describe("AIAssistantSidebar image attachments", () => {
+  const image = {
+    id: "img-1",
+    name: "faro.png",
+    kind: "image" as const,
+    chars: 240,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("accepts images in the attach action", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input.accept).toBe(".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif");
+  });
+
+  it("sends the image question when only an image is attached", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Look",
+          messages: [],
+          createdAt: 1,
+          attachments: [image],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      tEs("assistant.attach.defaultPromptImage"),
+    );
+  });
+
+  it("keeps the document summary prompt when a document is also attached", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        sendMessage,
+        activeSession: {
+          id: "session-42",
+          title: "Mixed",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            image,
+            {
+              id: "doc-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(tEs("assistant.attach.defaultPrompt"));
+  });
+});
+
+describe("AIAssistantSidebar attachment previews", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  const baseSession = {
+    id: "session-42",
+    title: "Preview",
+    messages: [],
+    createdAt: 1,
+  };
+
+  it("renders the thumbnail image for an image attachment", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "img-1",
+              name: "faro.png",
+              kind: "image",
+              chars: 240,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const { container } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const image = container.querySelector('img[src*="/thumbnail"]') as HTMLImageElement;
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("src")).toBe(
+      "/api/Vibrantes/ai/attachments/img-1/thumbnail",
+    );
+  });
+
+  it("renders the type badge for a document attachment", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "doc-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 1200,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const list = screen.getByRole("list", {
+      name: tEs("assistant.attach.list.aria"),
+    });
+    expect(list).toHaveTextContent("docx");
+    expect(list.querySelector("img")).toBeNull();
+  });
+
+  it("uses the global context for thumbnails without a world", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          ...baseSession,
+          attachments: [
+            {
+              id: "img-2",
+              name: "idea.png",
+              kind: "image",
+              chars: 90,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    const { container } = render(<AIAssistantSidebar />);
+    const image = container.querySelector('img[src*="/thumbnail"]') as HTMLImageElement;
+    expect(image.getAttribute("src")).toBe(
+      "/api/ideas-global/ai/attachments/img-2/thumbnail",
+    );
+  });
+});
+
+
+describe("AIAssistantSidebar attachment progress", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("names the accepted file types on the attach button", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const button = screen.getByRole("button", { name: tEs("assistant.attach.aria") });
+    const hint = button.getAttribute("title") ?? "";
+    for (const extension of [".docx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"]) {
+      expect(hint).toContain(extension);
+    }
+  });
+
+  it("shows an indeterminate progress chip while an image is analyzed", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({ attaching: { name: "faro.png", kind: "image" } }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("faro.png");
+    expect(status).toHaveTextContent(tEs("assistant.attach.analyzingImage"));
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.attach.aria") }),
+    ).toBeDisabled();
+  });
+
+  it("shows the extraction copy for a document", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({ attaching: { name: "Personaje.docx", kind: "document" } }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      tEs("assistant.attach.extracting"),
+    );
+  });
+
+  it("blocks sending while a file is still processing", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        attaching: { name: "faro.png", kind: "image" },
+        activeSession: {
+          id: "session-42",
+          title: "Busy",
+          messages: [],
+          createdAt: 1,
+          attachments: [
+            {
+              id: "att-1",
+              name: "Personaje.docx",
+              kind: "docx",
+              chars: 10,
+              truncated: false,
+            },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: tEs("assistant.send.aria") }),
+    ).toBeDisabled();
   });
 });

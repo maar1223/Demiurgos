@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "5efba2b3",
+  "source_commit": "f322172f",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -60,6 +60,8 @@
     "src/tools/demiurgos-suite/wiki/backup/transport/base.py",
     "src/tools/demiurgos-suite/wiki/backup/transport/folder.py",
     "src/tools/demiurgos-suite/wiki/bug_report.py",
+    "src/tools/demiurgos-suite/wiki/chat_attachments.py",
+    "src/tools/demiurgos-suite/wiki/chat_vision.py",
     "src/tools/demiurgos-suite/wiki/co_creation_attachments.py",
     "src/tools/demiurgos-suite/wiki/co_creation_materializer.py",
     "src/tools/demiurgos-suite/wiki/co_creation_protocol.py",
@@ -219,6 +221,8 @@
     "mimetypes",
     "os",
     "pathlib",
+    "pdfminer",
+    "pdfplumber",
     "platform",
     "platformdirs",
     "plugins",
@@ -306,7 +310,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1421
+        "line": 1433
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -330,6 +334,18 @@
       }
     ],
     "sync_lore": [
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_attachments.py",
+        "line": 164
+      },
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_vision.py",
+        "line": 59
+      },
+      {
+        "file": "src/tools/demiurgos-suite/wiki/chat_vision.py",
+        "line": 60
+      },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_analysis.py",
         "line": 430
@@ -356,11 +372,11 @@
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",
-        "line": 226
+        "line": 245
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",
-        "line": 227
+        "line": 246
       },
       {
         "file": "src/tools/idea_capture/hermes_handler.py",

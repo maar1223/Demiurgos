@@ -9,11 +9,13 @@ import type {
   AssistantActivityEvent,
   AssistantActivityEvidence,
   AssistantActivityItem,
+  ChatAttachment,
   EditProposal,
   GuidedFlowEcho,
   GuidedCharacterSession,
   SemanticDecisionEvent,
 } from "@/api/types";
+import { ApiError } from "@/api/types";
 import {
   acceptGuidedCharacterProposal,
   acceptGuidedConsent,
@@ -23,12 +25,27 @@ import {
 } from "@/api/guidedCharacter";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
+import { attachmentKindFromName, uploadChatAttachment } from "@/api/chatAttachments";
+import { MAX_ATTACHMENTS_PER_TURN } from "@/api/chatAttachments";
+import { localizeApiError } from "@/i18n/errors";
 import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Snapshot of the attachments sent WITH this user turn, kept for display in
+   * the message. The conversation-level ``Session.attachments`` stays the
+   * active set that is re-sent on follow-up turns (S1/S7); this record is
+   * historical and survives removing the attachment from the active set.
+   */
+  attachments?: ChatAttachment[];
+}
+
+export interface PendingAttachment {
+  name: string;
+  kind: "image" | "document";
 }
 
 export interface Session {
@@ -53,6 +70,8 @@ export interface Session {
   consentToken?: string;
   /** Server-resolved flow for the pending consent card (S1). */
   consentFlow?: GuidedFlowEcho;
+  /** Documents attached to this conversation; re-sent until removed (S1/S7). */
+  attachments?: ChatAttachment[];
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
@@ -90,6 +109,10 @@ export interface AIAssistantSessionsResult {
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   sendMessage: (prompt: string) => Promise<void>;
+  attachDocument: (file: File) => Promise<void>;
+  removeAttachment: (attachmentId: string) => void;
+  /** The file currently uploading/analyzing, or null (S18). */
+  attaching: PendingAttachment | null;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
   resolveGuidedConsent: (
     accept: boolean,
@@ -315,6 +338,7 @@ export function useAIAssistantSessions(
       : null;
   });
   const [isSending, setIsSending] = useState(false);
+  const [attaching, setAttaching] = useState<PendingAttachment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
@@ -377,6 +401,77 @@ export function useAIAssistantSessions(
     setActiveSessionId((prev) => (prev === id ? null : prev));
   }, []);
 
+  const attachDocument = useCallback(
+    async (file: File) => {
+      setError(null);
+      if ((activeSession?.attachments?.length ?? 0) >= MAX_ATTACHMENTS_PER_TURN) {
+        setError(t("error.attachment.too_many"));
+        return;
+      }
+      let attachment: ChatAttachment;
+      // The upload can take seconds (vision analysis); surface it immediately.
+      setAttaching({
+        name: file.name || t("assistant.attach.unnamed"),
+        kind: attachmentKindFromName(file.name || ""),
+      });
+      try {
+        attachment = await uploadChatAttachment(contextMundo, file);
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? localizeApiError(err, t)
+            : t("error.attachment.conversion_failed"),
+        );
+        return;
+      } finally {
+        setAttaching(null);
+      }
+      // Attaching before the first message opens the conversation: the
+      // attachment belongs to it, so the session must exist first.
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const id = generateId();
+        const session: Session = {
+          id,
+          title: defaultTitle,
+          titleIsDefault: true,
+          messages: [],
+          createdAt: Date.now(),
+        };
+        setSessions((prev) => [session, ...prev]);
+        setActiveSessionId(id);
+        sessionId = id;
+      }
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? { ...s, attachments: [...(s.attachments ?? []), attachment] }
+            : s,
+        ),
+      );
+    },
+    [activeSession, activeSessionId, contextMundo, defaultTitle, t],
+  );
+
+  const removeAttachment = useCallback(
+    (attachmentId: string) => {
+      if (!activeSessionId) return;
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeSessionId
+            ? {
+                ...s,
+                attachments: (s.attachments ?? []).filter(
+                  (attachment) => attachment.id !== attachmentId,
+                ),
+              }
+            : s,
+        ),
+      );
+    },
+    [activeSessionId],
+  );
+
   const sendMessage = useCallback(
     async (prompt: string) => {
       const trimmed = prompt.trim();
@@ -397,7 +492,12 @@ export function useAIAssistantSessions(
         sessionId = id;
       }
 
-      const userMessage: Message = { role: "user", content: trimmed };
+      const attachments = activeSession?.attachments ?? [];
+      const userMessage: Message = {
+        role: "user",
+        content: trimmed,
+        ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
+      };
 
       // Add user message and update title on first message
       setSessions((prev) =>
@@ -406,6 +506,11 @@ export function useAIAssistantSessions(
             ? {
                 ...s,
                 messages: [...s.messages, userMessage],
+                // Sent once: the message keeps the record for display, and the
+                // attachment leaves the composer queue. Follow-up turns rely on
+                // the runtime's conversation history instead of re-injecting
+                // the attachment content on every message (S7/S20).
+                attachments: [],
                 // Structural default-title check: fires for every language
                 // and for legacy mojibake drafts (AD-12, SES-REQ-2).
                 title: isDefaultTitle(s.title, s.titleIsDefault)
@@ -454,6 +559,9 @@ export function useAIAssistantSessions(
           guided_session_id: guided.session_id,
           guided_revision: guided.revision,
         } : {}),
+        ...(attachments.length > 0
+          ? { attachment_ids: attachments.map((attachment) => attachment.id) }
+          : {}),
       };
 
       const legacyRequest = async () => {
@@ -566,6 +674,20 @@ export function useAIAssistantSessions(
         }
       } catch (err) {
         if (controller.signal.aborted) return;
+        const dropStaleAttachments = (error: ApiError): void => {
+          // The turn never ran: drop the stale references and tell the author
+          // to re-attach, instead of leaving every later send broken.
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId ? { ...s, attachments: [] } : s,
+            ),
+          );
+          setError(localizeApiError(error, t));
+        };
+        if (err instanceof ApiError && err.code?.startsWith("attachment.")) {
+          dropStaleAttachments(err);
+          return;
+        }
         if (err instanceof AssistantActivityUnavailable && !activityAccepted) {
           setActivity({
             ...INITIAL_ACTIVITY,
@@ -576,6 +698,15 @@ export function useAIAssistantSessions(
             const result = await legacyRequest();
             applySemanticOutcome(mapSemanticDecision(result, language));
           } catch (legacyError) {
+            // The legacy fallback can also reject the turn for a stale id;
+            // handle it the same way instead of faking a blocked answer.
+            if (
+              legacyError instanceof ApiError &&
+              legacyError.code?.startsWith("attachment.")
+            ) {
+              dropStaleAttachments(legacyError);
+              return;
+            }
             applyBlocked(semanticBlockedText(language), true);
           }
         } else if (
@@ -596,7 +727,7 @@ export function useAIAssistantSessions(
         setIsSending(false);
       }
     },
-    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language, defaultTitle],
+    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language, defaultTitle, t],
   );
 
   const resolveGuidedProposal = useCallback(async (accept: boolean) => {
@@ -686,6 +817,9 @@ export function useAIAssistantSessions(
     switchSession,
     deleteSession,
     sendMessage,
+    attachDocument,
+    removeAttachment,
+    attaching,
     resolveGuidedProposal,
     resolveGuidedConsent,
     requestGuidedReview,

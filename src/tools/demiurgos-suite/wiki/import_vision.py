@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -82,6 +82,8 @@ class VisionConfig:
     model: str
     api_key_env: str
     timeout: int = _VISION_TIMEOUT
+    #: Resolved from the stored Hermes env file; never serialized or repr'd.
+    api_key: str = field(default="", repr=False)
 
 
 def _normalize_verdict(value: Any) -> str:
@@ -115,6 +117,8 @@ def _run_vision(coro: Any, timeout: int) -> Any:
 
 def _read_assistant_vision_config(
     settings_path: Path | None,
+    *,
+    accepted_capability: str | None = None,
 ) -> VisionConfig | None:
     """Read the active assistant settings; ``None`` unless multimodal.
 
@@ -131,6 +135,7 @@ def _read_assistant_vision_config(
             _provider_key_env,
             _read_config,
             _resolve_profile_paths,
+            _stored_api_key,
         )
         if settings_path is None:
             settings_path = _resolve_profile_paths().config
@@ -156,6 +161,11 @@ def _read_assistant_vision_config(
             None,
         )
         capability = str((catalog or {}).get("capability") or "unknown")
+    # A product-recorded causal vision acceptance for this config revision is
+    # proof the model is multimodal even when the stored metadata predates the
+    # catalog entry (S14). Callers pass it explicitly; the importer does not.
+    if capability != "multimodal" and accepted_capability == "multimodal":
+        capability = "multimodal"
     if capability != "multimodal":
         logger.info("Model %s is %s; vision skipped", model_id, capability)
         return None
@@ -165,7 +175,14 @@ def _read_assistant_vision_config(
         base_url=base_url,
         model=model_id,
         api_key_env=_provider_key_env(provider),
+        # The server process may not export the Hermes env file into its own
+        # environment, so resolve the stored key explicitly.
+        api_key=_stored_api_key(provider),
     )
+
+
+#: Public alias for callers outside this module (the chat image seam).
+read_vision_config = _read_assistant_vision_config
 
 
 def _safe_cache_lookup(
@@ -201,6 +218,7 @@ def build_vision_callable(
     generate_thumbnail: Callable[[bytes, int], bytes] | None = None,
     vision_cache_lookup: Callable[[str], VisionResult | None] | None = None,
     vision_cache_store: Callable[[str, VisionResult], None] | None = None,
+    accepted_capability: str | None = None,
 ) -> Callable[[list[ImageEntry], str], list[VisionResult]] | None:
     """Build the vision callable from assistant settings; ``None`` when disabled.
 
@@ -210,7 +228,8 @@ def build_vision_callable(
     SHA-256 of the original bytes), thumbnails to 300px before the provider
     call, and fails open at every boundary.
     """
-    config = _read_assistant_vision_config(settings_path)
+    config = _read_assistant_vision_config(
+        settings_path, accepted_capability=accepted_capability)
     if config is None:
         return None
 
@@ -245,7 +264,7 @@ def build_vision_callable(
                     api_key_env=config.api_key_env,
                     timeout=config.timeout,
                 ),
-            ))
+            ), api_key=config.api_key or None, vision_api_key=config.api_key or None)
         except Exception as exc:  # noqa: BLE001 — fail-open: never block import
             logger.warning("Vision provider construction failed: %s", exc)
             return results

@@ -45,7 +45,7 @@ class _FakeVisionProvider:
 
     instances: list["_FakeVisionProvider"] = []
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
         self.instances.append(self)
@@ -63,7 +63,7 @@ class _FakeVisionProvider:
 class _FlakyVisionProvider:
     """Fails on the first call, succeeds afterwards."""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
 
@@ -79,7 +79,7 @@ class _FlakyVisionProvider:
 class _NoneVisionProvider:
     """Mimics LlmProvider returning None (unconfigured/failed analysis)."""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
 
@@ -422,3 +422,20 @@ class TestVisionCacheOrchestration:
 
         results = analyze([_entry()], "")
         assert len(results) == 1  # result still returned despite store failure
+
+class TestAcceptedCapability:
+    def test_unknown_capability_with_accepted_vision_evidence_is_multimodal(
+        self, tmp_path
+    ) -> None:
+        """S14 — a product-recorded vision acceptance proves the capability."""
+        settings = _settings_file(
+            tmp_path, model_id="deepseek-flash", capability="unknown")
+        assert build_vision_callable(settings) is None
+        assert build_vision_callable(
+            settings, accepted_capability="multimodal") is not None
+
+    def test_accepted_text_only_evidence_keeps_vision_disabled(self, tmp_path) -> None:
+        settings = _settings_file(
+            tmp_path, model_id="deepseek-flash", capability="unknown")
+        assert build_vision_callable(
+            settings, accepted_capability="text-only") is None

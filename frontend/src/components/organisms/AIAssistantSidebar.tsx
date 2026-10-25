@@ -13,6 +13,8 @@ import {
   NEUTRAL_EVIDENCE_WARNING,
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
+import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
+import { chatAttachmentThumbnailUrl } from "@/api/chatAttachments";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
@@ -121,6 +123,9 @@ interface ChatScreenProps {
   activity: ReturnType<typeof useAIAssistantSessions>["activity"];
   evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
   sendMessage: (prompt: string) => void;
+  attachDocument: (file: File) => Promise<void>;
+  removeAttachment: (attachmentId: string) => void;
+  attaching: ReturnType<typeof useAIAssistantSessions>["attaching"];
   whisperStatus: ReturnType<typeof useWhisper>["status"];
   whisperIsRecording: boolean;
   whisperIsTranscribing: boolean;
@@ -248,6 +253,9 @@ function ChatScreen({
   activity,
   evidence,
   sendMessage,
+  attachDocument,
+  removeAttachment,
+  attaching,
   whisperStatus,
   whisperIsRecording,
   whisperIsTranscribing,
@@ -268,6 +276,7 @@ function ChatScreen({
   const [input, setInput] = useState("");
   const [consentMethodId, setConsentMethodId] = useState("factory");
   const [consentMethodTouched, setConsentMethodTouched] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -276,12 +285,43 @@ function ChatScreen({
     } catch { /* jsdom */ }
   }, [activeSession?.messages, isSending]);
 
+  const { language: appLanguage, t } = useAppLanguage();
+  const attachments = activeSession?.attachments ?? [];
+  const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
+  const messages = activeSession?.messages ?? [];
+  const confirmationPending = activeSession?.guided?.phase === "confirmation";
+  const consentToken = activeSession?.consentToken;
+  const guidedMethodology = activeSession?.guided?.methodology ?? null;
+
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
-    if (!trimmed || isSending) return;
-    sendMessage(trimmed);
+    if (isSending) return;
+    // An attachment is a complete turn on its own: ask for a summary (or the
+    // image question) with the localized default when nothing was typed (S6).
+    const onlyImages =
+      attachments.length > 0 && attachments.every((item) => item.kind === "image");
+    const fallback = onlyImages
+      ? t("assistant.attach.defaultPromptImage")
+      : t("assistant.attach.defaultPrompt");
+    const prompt = trimmed || (attachments.length > 0 ? fallback : "");
+    if (!prompt) return;
+    sendMessage(prompt);
     setInput("");
-  }, [input, isSending, sendMessage]);
+  }, [attachments, input, isSending, sendMessage, t]);
+
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      // Reset first: picking the same file twice must still fire a change.
+      event.target.value = "";
+      if (file) void attachDocument(file);
+    },
+    [attachDocument],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -313,11 +353,6 @@ function ChatScreen({
     }
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
-  const { language: appLanguage, t } = useAppLanguage();
-  const messages = activeSession?.messages ?? [];
-  const confirmationPending = activeSession?.guided?.phase === "confirmation";
-  const consentToken = activeSession?.consentToken;
-  const guidedMethodology = activeSession?.guided?.methodology ?? null;
   const guidedMethodName = guidedMethodology
     ? guidedMethodology.factory
       ? t("guided.methodFactory")
@@ -555,9 +590,45 @@ function ChatScreen({
                     className="prose-sm"
                   />
                 ) : (
-                  <div className="whitespace-pre-wrap break-words text-body">
-                    {msg.content}
-                  </div>
+                  <>
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <ul
+                        aria-label={t("assistant.attach.sent.aria")}
+                        className="mb-1.5 flex flex-wrap gap-1.5"
+                      >
+                        {msg.attachments.map((attachment) => (
+                          <li
+                            key={attachment.id}
+                            className="flex max-w-full items-center gap-1.5 rounded border border-white/25 bg-black/15 px-1.5 py-1 text-[11px]"
+                          >
+                            {attachment.kind === "image" ? (
+                              <img
+                                src={chatAttachmentThumbnailUrl(
+                                  attachmentMundo,
+                                  attachment.id,
+                                )}
+                                alt=""
+                                className="h-8 w-8 shrink-0 rounded object-cover"
+                                onError={(event) => {
+                                  event.currentTarget.style.display = "none";
+                                }}
+                              />
+                            ) : (
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-white/10 text-[9px] font-semibold uppercase tracking-wide">
+                                {attachment.kind}
+                              </span>
+                            )}
+                            <span className="max-w-[10rem] truncate" title={attachment.name}>
+                              {attachment.name}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="whitespace-pre-wrap break-words text-body">
+                      {msg.content}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -719,6 +790,74 @@ function ChatScreen({
 
       {/* Input area */}
       <div className="border-t border-edge px-4 py-3 shrink-0">
+        {attaching && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-2 flex max-w-full items-center gap-2 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
+          >
+            <span aria-hidden="true">
+              <Spinner size="sm" />
+            </span>
+            <span className="max-w-[12rem] truncate">{attaching.name}</span>
+            <span className="text-muted">
+              {attaching.kind === "image"
+                ? t("assistant.attach.analyzingImage")
+                : t("assistant.attach.extracting")}
+            </span>
+          </div>
+        )}
+        {attachments.length > 0 && (
+          <ul
+            aria-label={t("assistant.attach.list.aria")}
+            className="mb-2 flex flex-wrap gap-1.5"
+          >
+            {attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                className="flex max-w-full items-center gap-2 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-primary"
+              >
+                {attachment.kind === "image" ? (
+                  <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded border border-edge bg-surface">
+                    <Icon name="image" size={14} className="text-muted" />
+                    <img
+                      src={chatAttachmentThumbnailUrl(attachmentMundo, attachment.id)}
+                      alt=""
+                      className="absolute inset-0 h-full w-full object-cover"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </span>
+                ) : (
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-edge bg-surface text-[9px] font-semibold uppercase tracking-wide text-muted">
+                    {attachment.kind}
+                  </span>
+                )}
+                <span
+                  className="max-w-[12rem] truncate"
+                  title={
+                    attachment.truncated
+                      ? t("assistant.attach.truncated", { chars: attachment.chars })
+                      : attachment.name
+                  }
+                >
+                  {attachment.name}
+                </span>
+                <span className="text-muted">{attachment.chars}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.id)}
+                  disabled={isSending}
+                  aria-label={t("assistant.attach.remove.aria", { name: attachment.name })}
+                  className="flex h-5 w-5 items-center justify-center rounded text-muted hover:text-primary disabled:opacity-50"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -730,6 +869,26 @@ function ChatScreen({
             disabled={confirmationPending || isSending}
           />
           <div className="flex shrink-0 items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif"
+              onChange={handleFileChange}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+              data-testid="assistant-attachment-input"
+            />
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={confirmationPending || isSending || Boolean(attaching)}
+              title={t("assistant.attach.hint")}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              aria-label={t("assistant.attach.aria")}
+            >
+              <Icon name="upload" size={16} />
+            </button>
             <button
               type="button"
               onClick={handleMicClick}
@@ -763,7 +922,12 @@ function ChatScreen({
             <button
               type="button"
               onClick={handleSend}
-              disabled={confirmationPending || isSending || !input.trim()}
+              disabled={
+                confirmationPending ||
+                isSending ||
+                Boolean(attaching) ||
+                (!input.trim() && attachments.length === 0)
+              }
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-action-text hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
               aria-label={t("assistant.send.aria")}
             >
@@ -1003,6 +1167,9 @@ export function AIAssistantSidebar({
           activity={sessions.activity}
           evidence={sessions.evidence}
           sendMessage={sessions.sendMessage}
+          attachDocument={sessions.attachDocument}
+          removeAttachment={sessions.removeAttachment}
+          attaching={sessions.attaching}
           whisperStatus={whisper.status}
           whisperIsRecording={whisper.isRecording}
           whisperIsTranscribing={whisper.isTranscribing}

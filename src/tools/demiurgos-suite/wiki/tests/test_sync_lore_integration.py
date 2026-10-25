@@ -62,7 +62,7 @@ class _CountingVisionProvider:
 
     instances: list["_CountingVisionProvider"] = []
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.calls: list[tuple[bytes, str]] = []
         self.instances.append(self)
@@ -82,7 +82,7 @@ class _BoomVisionProvider:
 
     instances: list["_BoomVisionProvider"] = []
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, **_kwargs) -> None:
         self.config = config
         self.instances.append(self)
 

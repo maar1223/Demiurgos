@@ -8,7 +8,9 @@ import {
 import { AssistantActivityUnavailable, streamAssistantActivity } from "@/api/assistantActivity";
 import { acceptGuidedConsent, declineGuidedConsent } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
+import { uploadChatAttachment } from "@/api/chatAttachments";
 import { CATALOGUE } from "@/i18n/messages";
+import { ApiError } from "@/api/types";
 import type { AppLanguage, GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
 
 const mockUseAppLanguage = vi.fn();
@@ -39,6 +41,11 @@ vi.mock("@/api/wiki", async (importOriginal) => {
 vi.mock("@/api/guidedCharacter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/guidedCharacter")>();
   return { ...actual, acceptGuidedConsent: vi.fn(), declineGuidedConsent: vi.fn() };
+});
+
+vi.mock("@/api/chatAttachments", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/chatAttachments")>();
+  return { ...actual, uploadChatAttachment: vi.fn() };
 });
 
 const SESSIONS_KEY = "demiurgos-ai-sessions";
@@ -669,5 +676,301 @@ describe("useAIAssistantSessions default-title defect (AD-12, SES-REQ-1/2)", () 
 
     expect(result.current.sessions[0].title).toBe("Mi aventura");
     expect(result.current.sessions[0].titleIsDefault).not.toBe(true);
+  });
+});
+describe("useAIAssistantSessions document attachments", () => {
+  const attachment = {
+    id: "att-1",
+    name: "Personaje.docx",
+    kind: "docx" as const,
+    chars: 1200,
+    truncated: false,
+  };
+
+  it("attaches a document to the active session and clears it on removal", async () => {
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+
+    expect(result.current.activeSession?.attachments).toEqual([attachment]);
+
+    act(() => {
+      result.current.removeAttachment("att-1");
+    });
+    expect(result.current.activeSession?.attachments).toEqual([]);
+  });
+
+  it("persists attachments with the session", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+
+    const stored = JSON.parse(window.localStorage.getItem(SESSIONS_KEY) ?? "[]");
+    expect(stored[0].attachments).toEqual([attachment]);
+  });
+
+  it("reports a rejected upload with localized copy and attaches nothing", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockRejectedValue(
+      new ApiError(422, "unsupported", "unsupported", "attachment.unsupported_type"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "notes.txt"));
+    });
+
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+    expect(result.current.error).toBe(
+      "Solo se admiten documentos .docx y .pdf.",
+    );
+  });
+
+  it("sends the attachment ids with the turn", async () => {
+    const streamMock = vi.mocked(streamAssistantActivity);
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: "Listo",
+      terminalStatus: "succeeded" as const,
+      semanticDecision: {
+        kind: "semantic_decision" as const,
+        request_id: "r1",
+        state: "allow" as const,
+        action: "answer" as const,
+        unavailable: false,
+        continuation: null,
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+    await act(async () => {
+      await result.current.sendMessage("¿Quién es el personaje?");
+    });
+
+    const requests = streamMock.mock.calls;
+    const request = requests[requests.length - 1]?.[1] as { attachment_ids?: string[] };
+    expect(request.attachment_ids).toEqual(["att-1"]);
+  });
+
+  it("records the attachment on the sent message and stops re-sending it", async () => {
+    const streamMock = vi.mocked(streamAssistantActivity);
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: "Listo",
+      terminalStatus: "succeeded" as const,
+      semanticDecision: {
+        kind: "semantic_decision" as const,
+        request_id: "r1",
+        state: "allow" as const,
+        action: "answer" as const,
+        unavailable: false,
+        continuation: null,
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+    await act(async () => {
+      await result.current.sendMessage("¿Quién es el personaje?");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const userMessage = messages.find((message) => message.role === "user");
+    // The message carries the sent record for display...
+    expect(userMessage?.attachments).toEqual([attachment]);
+    // ...and the attachment leaves the composer queue: it is sent once.
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+
+    // A follow-up turn carries no attachment ids; continuity comes from the
+    // runtime's conversation history, not from re-injecting the attachment.
+    await act(async () => {
+      await result.current.sendMessage("¿y de qué color es el fondo?");
+    });
+    const requests = streamMock.mock.calls;
+    const followUp = requests[requests.length - 1]?.[1] as { attachment_ids?: string[] };
+    expect(followUp.attachment_ids).toBeUndefined();
+  });
+
+  it("drops stale attachments when the server reports them expired", async () => {
+    const streamMock = vi.mocked(streamAssistantActivity);
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+    streamMock.mockRejectedValue(
+      new ApiError(409, "expired", "expired", "attachment.expired"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+    await act(async () => {
+      await result.current.sendMessage("¿Quién es el personaje?");
+    });
+
+    expect(result.current.activeSession?.attachments).toEqual([]);
+    expect(result.current.error).toBe(
+      "El documento adjunto ya no está disponible. Vuelve a adjuntarlo.",
+    );
+  });
+});
+
+describe("useAIAssistantSessions attachment cap", () => {
+  it("stops at five attachments without calling the upload endpoint", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    const existing = Array.from({ length: 5 }, (_, index) => ({
+      id: `att-${index}`,
+      name: `doc${index}.pdf`,
+      kind: "pdf" as const,
+      chars: 10,
+      truncated: false,
+    }));
+    seedSessions([
+      {
+        id: "capped",
+        title: "Capped",
+        messages: [],
+        createdAt: Date.now(),
+        attachments: existing,
+      },
+    ]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("capped"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "extra.pdf"));
+    });
+
+    expect(uploadMock).not.toHaveBeenCalled();
+    expect(result.current.error).toBe(
+      "Puedes adjuntar como máximo 5 documentos por mensaje.",
+    );
+    expect(result.current.activeSession?.attachments).toHaveLength(5);
+  });
+});
+
+describe("useAIAssistantSessions image attachment errors", () => {
+  it("localizes a vision-unavailable rejection", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    uploadMock.mockRejectedValue(
+      new ApiError(
+        422,
+        "vision unavailable",
+        "vision unavailable",
+        "attachment.vision_unavailable",
+      ),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.error).toBe(
+      "La visión no está disponible para el modelo del asistente.",
+    );
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+  });
+});
+
+describe("useAIAssistantSessions attachment progress", () => {
+  const attachment = {
+    id: "att-progress",
+    name: "faro.png",
+    kind: "image" as const,
+    chars: 240,
+    truncated: false,
+  };
+
+  it("reports the pending attachment until the upload finishes", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    let release!: (value: typeof attachment) => void;
+    uploadMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    let done!: Promise<void>;
+    act(() => {
+      done = result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.attaching).toEqual({ name: "faro.png", kind: "image" });
+
+    await act(async () => {
+      release(attachment);
+      await done;
+    });
+
+    expect(result.current.attaching).toBeNull();
+    expect(result.current.activeSession?.attachments).toEqual([attachment]);
+  });
+
+  it("clears the pending state and attaches nothing when the upload fails", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    uploadMock.mockRejectedValue(
+      new ApiError(422, "bad", "bad", "attachment.vision_unavailable"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "faro.png"));
+    });
+
+    expect(result.current.attaching).toBeNull();
+    expect(result.current.activeSession?.attachments ?? []).toEqual([]);
+    expect(result.current.error).toBe(
+      "La visión no está disponible para el modelo del asistente.",
+    );
+  });
+
+  it("classifies the pending kind from the file name", async () => {
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockClear();
+    let release!: (value: typeof attachment) => void;
+    uploadMock.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    let done!: Promise<void>;
+    act(() => {
+      done = result.current.attachDocument(new File(["x"], "Personaje.DOCX"));
+    });
+    expect(result.current.attaching).toEqual({
+      name: "Personaje.DOCX",
+      kind: "document",
+    });
+
+    await act(async () => {
+      release(attachment);
+      await done;
+    });
   });
 });

@@ -54,6 +54,18 @@ from assistant_activity import (
     SemanticDecisionEvent,
     TerminalEvent,
 )
+from chat_attachments import (
+    ATTACHMENTS,
+    MAX_ATTACHMENTS_PER_TURN,
+    ChatAttachmentError,
+    attachment_context_block,
+    attachment_metadata_note,
+    cap_attachment_text,
+    extract_attachment,
+    normalize_attachment_name,
+    validate_attachment_size,
+)
+from chat_vision import describe_chat_image
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -6937,6 +6949,22 @@ def generate_thumbnail(image_bytes: bytes, width: int = 300) -> bytes:
     return buf.getvalue()
 
 
+def generate_chat_thumbnail(image_bytes: bytes, max_side: int = 300) -> bytes:
+    """Fit an image inside a ``max_side`` square (portrait-safe) as JPEG.
+
+    ``generate_thumbnail`` scales by width, so a tall portrait (100x1000)
+    becomes 300x3000. Chat vision bounds the LONGEST side instead: the
+    thumbnail never exceeds the 300px box and the aspect ratio is preserved.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue()
+
+
 @app.get("/api/{mundo}/media")
 def get_media(mundo: str, path: str = Query(..., description="Ruta relativa del archivo")):
     """Serve an image file from wiki/media/ or referencias/visuales/imagenes/."""
@@ -7286,6 +7314,7 @@ class AskRequest(BaseModel):
     file_path: str = ""
     guided_session_id: str = ""
     guided_revision: int | None = None
+    attachment_ids: list[str] = []
 
 @app.post("/api/chat")
 async def chat_endpoint(body: ChatRequest):
@@ -7471,6 +7500,61 @@ _SKILL_CREATION_MARKERS = (
 )
 
 
+def _resolve_chat_attachments(attachment_ids: list[str] | None) -> list:
+    """Resolve the turn's attachment ids, failing closed on an expired id (S7).
+
+    Duplicates collapse to the first occurrence, the per-turn cap is enforced
+    before any provider call, and an unknown id is a ``409 attachment.expired``
+    so the frontend can drop the stale chips instead of silently losing them.
+    """
+    unique = list(dict.fromkeys(attachment_ids or []))
+    if len(unique) > MAX_ATTACHMENTS_PER_TURN:
+        raise problem("attachment.too_many")
+    resolved = []
+    for attachment_id in unique:
+        record = ATTACHMENTS.get(attachment_id)
+        if record is None:
+            raise problem("attachment.expired")
+        resolved.append(record)
+    return resolved
+
+
+def _accepted_vision_capability() -> str | None:
+    """The product-recorded causal vision proof for the live config (S14).
+
+    A stored ``capability: unknown`` is not evidence; the acceptance written
+    after a save whose text and vision probes passed is. It only counts for the
+    revision it was recorded for, so a later config change invalidates it.
+    """
+    try:
+        evidence = _local_state().snapshot().get("assistant_acceptance")
+    except Exception:  # noqa: BLE001 — evidence is advisory, fail closed
+        return None
+    if not isinstance(evidence, dict):
+        return None
+    if evidence.get("text") != "passed" or evidence.get("vision") != "passed":
+        return None
+    try:
+        revision = int(evidence.get("revision"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        current = assistant_settings.current_config_revision()
+    except Exception:  # noqa: BLE001 — unknown revision never proves anything
+        return None
+    if revision != current:
+        return None
+    return "multimodal"
+
+
+def _memory_user_prompt(prompt: str, attachments: list) -> str:
+    """The user turn persisted to conversation memory: names, never text (S8)."""
+    if not attachments:
+        return prompt
+    names = ", ".join(record.name for record in attachments)
+    return f"{prompt}\n[Adjuntos: {names}]"
+
+
 def _skill_creation_redirect(prompt: str) -> dict | None:
     """Chat-level redirection recommendation (REQ-CC-2 / TW9 refined).
 
@@ -7491,6 +7575,83 @@ def _skill_creation_redirect(prompt: str) -> dict | None:
             "message": "Para crear una skill, te recomiendo ir al Taller de Herramientas.",
         }
     return None
+
+
+@app.post("/api/{mundo}/ai/attachments", status_code=201)
+async def upload_chat_attachment(mundo: str, file: UploadFile = File(...)):
+    """Extract a ``.docx``/``.pdf`` attachment for the Assistant chat (S2).
+
+    The document never reaches the model as bytes: it is converted to cleaned
+    text here and referenced later by an opaque id, so the ask payload stays
+    small. Extraction failures are structured ``attachment.*`` rejections and
+    store nothing (S3). Same world/global context rules as the ask endpoints.
+    """
+    context_kind, _ = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
+        raise problem("world.not_found")
+    data = await file.read()
+    thumbnail_bytes = None
+    try:
+        display_name, kind = normalize_attachment_name(file.filename or "document")
+        validate_attachment_size(data)
+        if kind == "image":
+            # One thumbnail serves both the vision call and the chip preview.
+            try:
+                thumbnail_bytes = generate_chat_thumbnail(data, 300)
+            except Exception as exc:  # noqa: BLE001 — undecodable input
+                raise ChatAttachmentError(
+                    "attachment.unsupported_type",
+                    422,
+                    "The image could not be read.",
+                ) from exc
+            description = await describe_chat_image(
+                data,
+                accepted_capability=_accepted_vision_capability(),
+                thumbnail=thumbnail_bytes,
+            )
+            text, chars, truncated = cap_attachment_text(description)
+        else:
+            text, chars, truncated = extract_attachment(
+                file.filename or display_name, data
+            )
+    except ChatAttachmentError as exc:
+        raise problem(exc.code, detail=exc.message) from exc
+    record = ATTACHMENTS.put(
+        name=display_name,
+        kind=kind,
+        text=text,
+        chars=chars,
+        truncated=truncated,
+        thumbnail=thumbnail_bytes,
+    )
+    return {
+        "id": record.id,
+        "name": record.name,
+        "kind": record.kind,
+        "chars": record.chars,
+        "truncated": record.truncated,
+    }
+
+
+@app.get("/api/{mundo}/ai/attachments/{attachment_id}/thumbnail")
+def get_chat_attachment_thumbnail(mundo: str, attachment_id: str):
+    """Serve the bounded preview JPEG for one image attachment (S16/S17).
+
+    Only the thumbnail generated at upload is served — never the original
+    bytes. Same world/global scoping as the upload; an unknown or expired id
+    is a plain 404 so the chip can fall back to its type icon.
+    """
+    context_kind, _ = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
+        raise problem("world.not_found")
+    record = ATTACHMENTS.get(attachment_id)
+    if record is None or not record.thumbnail:
+        raise HTTPException(status_code=404, detail="Attachment thumbnail not found")
+    return Response(
+        content=record.thumbnail,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/{mundo}/ai/ask")
@@ -7547,6 +7708,7 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             session_id=body.session_id or None,
             unavailable=True,
         ).as_dict()
+    attachments = _resolve_chat_attachments(body.attachment_ids)
     ficha = _active_ficha_context(mundo, body)
     if context_kind == "global":
         context = SemanticContext()
@@ -7557,7 +7719,7 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         )
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
-        mundo, body.prompt,
+        mundo, body.prompt + attachment_metadata_note(attachments),
         context=context,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
@@ -7593,7 +7755,10 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             # it neither persists nor triggers a routing/LLM call.
             if body.session_id:
                 skill_id = await _route_skill(body.prompt, mundo, distilled_state)
-                _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
+                _persist_memory_turn(
+                    body.session_id, mundo, "user",
+                    _memory_user_prompt(body.prompt, attachments), skill_id,
+                )
                 _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
                 await _maybe_refresh_distilled(body.session_id, mundo)
         payload = result.as_dict()
@@ -8408,6 +8573,7 @@ def _build_ai_ask_prompt(
     memory_turns: list[Turn] | None = None,
     distilled_state: str | None = None,
     skill_contract: str | None = None,
+    attachments: list | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -8517,6 +8683,9 @@ def _build_ai_ask_prompt(
         )
     if skill_contract:
         parts.append(skill_contract)
+    attachment_block = attachment_context_block(attachments or [])
+    if attachment_block:
+        parts.append(attachment_block)
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
@@ -8649,6 +8818,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     context_kind, world_root = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
         return _activity_unavailable()
+    attachments = _resolve_chat_attachments(body.attachment_ids)
 
     # Mandatory Hermes semantic interpretation FIRST with bounded authorized
     # context. No classifier, action, session, proposal, or write precedes the
@@ -8661,7 +8831,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         context, _, _, _ = _semantic_context(mundo, body.prompt)
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
-        mundo, body.prompt,
+        mundo, body.prompt + attachment_metadata_note(attachments),
         context=context,
         request_id=request_id,
         distilled_state=distilled_state,
@@ -8748,6 +8918,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             mundo, body,
             distilled_state=distilled_state,
             skill_contract=skill_contract,
+            attachments=attachments,
         ),
         session_id=_channel_session_id(body.session_id),
     )
@@ -8864,7 +9035,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     skill_id = await route_task
                 except Exception:
                     skill_id = None
-            _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
+            _persist_memory_turn(
+                body.session_id, mundo, "user",
+                _memory_user_prompt(body.prompt, attachments), skill_id,
+            )
             if not disconnected and assistant_parts:
                 _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
                 await _maybe_refresh_distilled(body.session_id, mundo)
