@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -316,6 +317,16 @@ async def _lifespan(app: FastAPI):
     # next start's reconciliation pass catches whatever changed (SC-BE-6.3).
     engine = _backup_engine()
     engine.start()
+    # Startup convergence (best-effort, off the boot path): a revision saved
+    # while the runtime was not ready converges to accepted once it is.
+    try:
+        threading.Thread(
+            target=_converge_assistant_acceptance,
+            name="assistant-acceptance-convergence",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001 — never block startup
+        logger.warning("assistant acceptance convergence could not start")
     try:
         yield
     finally:
@@ -888,6 +899,71 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
     registry.atomic_commit(state)
 
 
+_ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK = threading.Lock()
+#: The launcher starts the API and the gateway close together, but the gateway
+#: needs ~15 s to write ``gateway_state.json``: a single startup check would
+#: look at the wrong moment and silently never converge. Wait for it, bounded.
+ASSISTANT_CONVERGENCE_WAIT_SECONDS = 90.0
+ASSISTANT_CONVERGENCE_POLL_SECONDS = 3.0
+
+
+def _converge_assistant_acceptance(
+    *,
+    wait_seconds: float = ASSISTANT_CONVERGENCE_WAIT_SECONDS,
+    poll_seconds: float = ASSISTANT_CONVERGENCE_POLL_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Upgrade a stale non-accepted acceptance once the runtime proves itself.
+
+    The save-time acceptance is recorded ONCE. A revision saved while the
+    runtime could not complete a run (gateway down, provider warming, restart
+    in flight) stayed ``saved-not-active`` forever, so every later read — and
+    every restart — reported a working assistant as inactive. This convergence
+    runs once at startup, waiting (bounded) for the gateway the launcher starts
+    beside the API, and is UP ONLY: it requires the current revision's
+    recorded text+vision proofs, a live gateway and one completed real run; it
+    never downgrades an accepted revision and never re-probes a healthy one, so
+    a transient provider failure cannot flip a working assistant to inactive.
+
+    Returns True only when the registry was upgraded.
+    """
+    try:
+        with _ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK:
+            deadline = clock() + max(0.0, wait_seconds)
+            while not _assistant_gateway_probe().is_running():
+                if clock() >= deadline:
+                    return False
+                sleep(poll_seconds)
+            revision = assistant_settings.current_config_revision()
+            if revision is None:
+                return False
+            registry = _local_state()
+            state = registry.snapshot()
+            evidence = state.get("assistant_acceptance")
+            if not isinstance(evidence, dict):
+                return False
+            if (
+                evidence.get("revision") != revision
+                or evidence.get("text") != "passed"
+                or evidence.get("vision") != "passed"
+                or evidence.get("runtime") == "accepted"
+            ):
+                return False
+            if not _assistant_runtime_run_probe():
+                return False
+            state["assistant_acceptance"] = {
+                **evidence,
+                "runtime": "accepted",
+                "revision": revision,
+            }
+            registry.atomic_commit(state)
+            return True
+    except Exception:  # noqa: BLE001 — convergence is best-effort, never fatal
+        logger.warning("assistant acceptance convergence failed", exc_info=True)
+        return False
+
+
 _GATEWAY_PROBE = None
 
 
@@ -897,6 +973,22 @@ def _assistant_gateway_probe() -> "HermesGatewayProbe":
     if _GATEWAY_PROBE is None:
         _GATEWAY_PROBE = HermesGatewayProbe()
     return _GATEWAY_PROBE
+
+
+def _assistant_runtime_run_probe() -> bool:
+    """One bounded real Hermes run: the only truthful save-time acceptance.
+
+    Gateway liveness accepts a run asynchronously even when the provider cannot
+    be resolved, so it can report "Activo" while every answer fails closed. This
+    probe submits a tiny run through the documented runs API and only accepts a
+    completed, non-empty output. Every failure path fails closed.
+    """
+    try:
+        return HermesRunProbe(
+            _hermes_api_base(_GATEWAY_URL), api_key=_GATEWAY_KEY
+        ).probe()
+    except Exception:
+        return False
 
 
 def _resolve_assistant_runtime_state(revision: int) -> str:
@@ -9122,6 +9214,7 @@ from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from hermes_runtime_probe import HermesGatewayProbe  # noqa: E402
+from hermes_run_probe import HermesRunProbe  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
@@ -9764,6 +9857,9 @@ app.include_router(
         # revision, so a server restart no longer degrades "Activo" to a lie.
         runtime_state_resolver=_resolve_assistant_runtime_state,
         runtime_liveness=lambda: _assistant_gateway_probe().is_running(),
+        # Acceptance is one real run, not gateway liveness: a live gateway with
+        # an unresolvable provider still fails every run (bug #3816).
+        runtime_probe=lambda: _assistant_runtime_run_probe(),
     ),
 )
 

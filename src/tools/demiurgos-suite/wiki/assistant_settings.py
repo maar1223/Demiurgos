@@ -50,6 +50,30 @@ _PROVIDER_KEY_ENV = {
     "openrouter": "OPENROUTER_API_KEY",
     "compatible": "ASSISTANT_PROVIDER_API_KEY",
 }
+# Hermes resolves ``model.provider`` against its own registry; the Demiurgos
+# provider ids are a product vocabulary the installed runtime does not know
+# (``compatible`` and even ``openai`` are rejected — the latter is only a
+# models.dev alias of ``openrouter``). Persist the Hermes-resolvable identity
+# for the same OpenAI-compatible chat-completions transport the probes
+# validated. ``compatible``/``openai`` use Hermes' bare ``custom`` endpoint
+# instead of the native ``openai-api`` identity because the latter forces the
+# Responses transport, which Demiurgos never probes.
+_HERMES_PROVIDERS = {
+    "opencode-go": "opencode-go",
+    "openrouter": "openrouter",
+    "openai": "custom",
+    "compatible": "custom",
+    "ollama": "ollama",
+    "lm-studio": "lmstudio",
+}
+# ``model.api_key`` references Demiurgos owns. Only the generic ``compatible``
+# endpoint needs one: its host is unknown, so Hermes cannot fall back to a
+# host-gated ``<VENDOR>_API_KEY``. The reference resolves the secret Demiurgos
+# already stores in the profile .env (mode 600); the secret never lands in
+# config.yaml.
+_MODEL_API_KEY_REFERENCES = {
+    "compatible": "${ASSISTANT_PROVIDER_API_KEY}",
+}
 _API_KEY_MAX_LENGTH = 1024
 _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -230,6 +254,20 @@ def _provider_key_env(provider: str) -> str:
     return _PROVIDER_KEY_ENV.get(provider, _API_KEY_ENV)
 
 
+def _hermes_provider(provider: str) -> str:
+    """Hermes-resolvable id for a Demiurgos provider (S1).
+
+    Unknown ids pass through unchanged: they come from a legacy profile, and
+    rewriting them into a guess would be worse than the existing value.
+    """
+    return _HERMES_PROVIDERS.get(provider, provider)
+
+
+def _managed_api_key_reference(provider: str) -> str | None:
+    """The ``model.api_key`` reference Demiurgos owns for ``provider``, if any."""
+    return _MODEL_API_KEY_REFERENCES.get(provider)
+
+
 def _status_from_config(paths: HermesProfilePaths, data: dict[str, Any]) -> AssistantSettingsStatus:
     model = data.get("model") if isinstance(data.get("model"), dict) else {}
     normalized = data.get("assistant_settings")
@@ -382,8 +420,26 @@ def _set_env_content(content: str, value: str | None, env_key: str = _API_KEY_EN
     return updated, updated != content
 
 
-def _set_model_config_content(content: str, model: str, provider: str, base_url: str) -> str:
-    """Update only the top-level model block and preserve other config text."""
+def _set_model_config_content(
+    content: str,
+    model: str,
+    provider: str,
+    base_url: str,
+    api_key: str | None = None,
+    *,
+    replace_foreign_api_key: bool = False,
+) -> str:
+    """Update only the top-level model block and preserve other config text.
+
+    ``provider`` is the Demiurgos id; the persisted ``model.provider`` is its
+    Hermes-resolvable counterpart (S1). ``api_key`` is the reference Demiurgos
+    owns for that provider (S2). When it is ``None`` a previously owned
+    reference is removed while any other ``model.api_key`` value is preserved
+    untouched. A foreign ``model.api_key`` is only replaced when the caller
+    supplies a NEW secret (``replace_foreign_api_key``); a keyless save must
+    never swap the user's own inline key for Demiurgos' reference (S4).
+    """
+    hermes_provider = _hermes_provider(provider)
     lines = content.splitlines(keepends=True)
     newline = "\r\n" if "\r\n" in content else "\n"
     model_index = next(
@@ -391,11 +447,13 @@ def _set_model_config_content(content: str, model: str, provider: str, base_url:
         None,
     )
     if model_index is None:
+        reference = f"  api_key: {api_key}{newline}" if api_key else ""
         return (
             f"model:{newline}"
             f"  default: {model}{newline}"
-            f"  provider: {provider}{newline}"
+            f"  provider: {hermes_provider}{newline}"
             f"  base_url: {base_url}{newline}"
+            f"{reference}"
             + content
         )
 
@@ -407,21 +465,44 @@ def _set_model_config_content(content: str, model: str, provider: str, base_url:
 
     desired = {
         "default": model,
-        "provider": provider,
+        "provider": hermes_provider,
         "base_url": base_url,
     }
+    if api_key:
+        desired["api_key"] = api_key
+    managed_references = frozenset(_MODEL_API_KEY_REFERENCES.values())
     found: set[str] = set()
     updated: list[str] = []
+    dropped = 0
     for index, line in enumerate(lines):
-        match = re.fullmatch(r"(\s{2})(default|provider|base_url):.*?(\r?\n)?", line)
-        if model_index < index < block_end and match:
-            key = match.group(2)
-            found.add(key)
-            updated.append(f"  {key}: {desired[key]}{newline}")
-        else:
-            updated.append(line)
+        if model_index < index < block_end:
+            match = re.fullmatch(r"(\s{2})(default|provider|base_url|api_key):(.*?)(\r?\n)?", line)
+            if match:
+                key = match.group(2)
+                if key == "api_key":
+                    value = match.group(3).strip()
+                    if "api_key" not in desired:
+                        if value in managed_references:
+                            # Demiurgos' own stale reference: drop it so a
+                            # later provider never expands a secret it does
+                            # not use.
+                            dropped += 1
+                            continue
+                        # A value Demiurgos does not own is preserved verbatim.
+                        found.add(key)
+                    elif value in managed_references or replace_foreign_api_key or not value:
+                        found.add(key)
+                        line = f"  {key}: {desired[key]}{newline}"
+                    else:
+                        # Keyless save: the user's own inline key wins over the
+                        # reference Demiurgos would have written.
+                        found.add(key)
+                else:
+                    found.add(key)
+                    line = f"  {key}: {desired[key]}{newline}"
+        updated.append(line)
 
-    insert_at = block_end
+    insert_at = block_end - dropped
     missing_lines = [f"  {key}: {desired[key]}{newline}" for key in desired if key not in found]
     updated[insert_at:insert_at] = missing_lines
     return "".join(updated)
@@ -502,11 +583,16 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
         key_configured=bool(candidate.api_key),
         revision=current_status.revision + 1,
     )
+    payload_had_key = isinstance(payload.get("api_key"), str) and bool(payload.get("api_key").strip())
     next_config = _set_model_config_content(
-        config_content, model.id, candidate.provider, candidate.base_url
+        config_content,
+        model.id,
+        candidate.provider,
+        candidate.base_url,
+        _managed_api_key_reference(candidate.provider),
+        replace_foreign_api_key=payload_had_key,
     )
     next_config = _set_normalized_content(next_config, next_status)
-    payload_had_key = isinstance(payload.get("api_key"), str) and bool(payload.get("api_key").strip())
     if payload_had_key and candidate.api_key:
         next_env, env_changed = _set_env_content(
             env_content, candidate.api_key, _provider_key_env(candidate.provider)
@@ -546,6 +632,7 @@ def create_assistant_settings_router(
     on_acceptance: Callable[[str], None] | None = None,
     runtime_state_resolver: Callable[[int], str] | None = None,
     runtime_liveness: Callable[[], bool] | None = None,
+    runtime_probe: Callable[[], bool] | None = None,
 ) -> APIRouter:
     """Build authenticated assistant settings routes.
 
@@ -557,8 +644,11 @@ def create_assistant_settings_router(
     ``runtime_state_resolver`` (optional) derives the runtime state for a config
     revision from persisted evidence plus live liveness; when provided it owns
     every read/save state (``runtime_seam`` then stays as the legacy fallback for
-    callers that inject only the seam). ``runtime_liveness`` reports whether the
-    runtime is up right now and feeds the save-time acceptance state.
+    callers that inject only the seam). ``runtime_probe`` performs the save-time
+    acceptance: one bounded real runtime turn whose success alone may report
+    ``active`` (gateway liveness is not acceptance — a live gateway can still
+    fail every run). When it is not injected, ``runtime_liveness`` keeps the
+    legacy liveness-only behavior for callers/tests that only own liveness.
     """
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
     if provider_registry is None:
@@ -648,14 +738,26 @@ def create_assistant_settings_router(
             current_status = _status_from_config(paths, config_data)
             _check_revision(payload.get("revision"), current_status.revision)
             env_content = paths.env.read_text(encoding="utf-8") if paths.env.is_file() else ""
+            next_model_id = selected_model or current_status.model.id
+            provider = current_status.provider or _PROVIDER
+            # A model-only save must also keep a previously owned api_key
+            # reference; a key-only save refreshes the block so a legacy profile
+            # gains the Hermes-resolvable provider and the reference.
+            reference = (
+                _managed_api_key_reference(provider)
+                if (has_key or current_status.key_configured)
+                else None
+            )
             next_config = (
                 _set_model_config_content(
                     config_content,
-                    selected_model,
-                    current_status.provider or _PROVIDER,
+                    next_model_id,
+                    provider,
                     current_status.base_url or _BASE_URL,
+                    reference,
+                    replace_foreign_api_key=has_key,
                 )
-                if selected_model is not None
+                if next_model_id and (selected_model is not None or has_key)
                 else config_content
             )
             next_status = AssistantSettingsStatus(
@@ -758,15 +860,24 @@ def create_assistant_settings_router(
                 ),
             )
             if runtime_state_resolver is not None:
-                # Real runtime truth: exactly ONE liveness observation drives
-                # both the recorded acceptance and the response. Probing a
-                # second time (through the resolver) could disagree with itself
-                # — a TOCTOU race — and the recorded acceptance is the arbiter,
-                # so the response must be the value that was just recorded. A
-                # save with the gateway down therefore stays non-active until a
-                # later save observes it up (fail closed, by design).
-                live = runtime_liveness is not None and runtime_liveness()
-                runtime_state = "active" if live else "saved-not-active"
+                # Real runtime truth: exactly ONE acceptance observation drives
+                # both the recorded evidence and the response. When the host
+                # injects the real-run probe, only a completed run accepts;
+                # gateway liveness alone cannot (a live gateway still fails
+                # every run when the provider is misconfigured). Probing a
+                # second time could disagree with itself — a TOCTOU race — and
+                # the recorded acceptance is the arbiter, so the response is
+                # the value that was just recorded. Any probe failure stays
+                # non-active until a later save observes a completed run (fail
+                # closed, by design).
+                if runtime_probe is not None:
+                    try:
+                        accepted = bool(runtime_probe())
+                    except Exception:
+                        accepted = False
+                else:
+                    accepted = runtime_liveness is not None and runtime_liveness()
+                runtime_state = "active" if accepted else "saved-not-active"
             else:
                 runtime_state = seam.apply(saved["revision"]).state
             saved["runtime_state"] = runtime_state
@@ -802,7 +913,25 @@ def create_assistant_settings_router(
                 key_configured=False,
                 revision=current_status.revision + 1,
             )
-            next_config = _set_normalized_content(config_content, next_status)
+            # Clearing the key also releases the reference Demiurgos owns, so
+            # the runtime never expands an unset variable into a bearer token.
+            base_url = (
+                current_status.base_url
+                or default_base_url(current_status.provider)
+                or ""
+            )
+            next_config = (
+                _set_model_config_content(
+                    config_content,
+                    current_status.model.id,
+                    current_status.provider,
+                    base_url,
+                    None,
+                )
+                if base_url and current_status.model.id
+                else config_content
+            )
+            next_config = _set_normalized_content(next_config, next_status)
             config_changed = next_config != config_content
             try:
                 if config_changed:

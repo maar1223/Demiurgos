@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -318,8 +319,12 @@ class TestAssistantSettings:
 
         assert response.status_code == 200
         config_text = paths.config.read_text(encoding="utf-8")
-        assert "provider: compatible" in config_text
         assert "base_url: https://provider.example/v1" in config_text
+        # The endpoint survives; the persisted id becomes Hermes-resolvable and
+        # the normalized block keeps the product provider for the UI.
+        model_block = config_text.split("assistant_settings:", 1)[0]
+        assert "provider: custom" in model_block
+        assert "provider: compatible" in config_text.split("assistant_settings:", 1)[1]
 
     def test_config_and_key_persistence_use_same_directory_atomic_replacements(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -722,6 +727,7 @@ class TestRuntimeStateResolver:
         resolver,
         liveness=None,
         on_acceptance=None,
+        runtime_probe=None,
     ) -> TestClient:
         hermes = tmp_path / "hermes-resolver"
         hermes.mkdir()
@@ -743,6 +749,7 @@ class TestRuntimeStateResolver:
                 runtime_state_resolver=resolver,
                 runtime_liveness=liveness,
                 on_acceptance=on_acceptance,
+                runtime_probe=runtime_probe,
             )
         )
         return TestClient(local_app, client=("127.0.0.1", 50000))
@@ -793,6 +800,74 @@ class TestRuntimeStateResolver:
         # Both the recorded acceptance and the response are the same observation.
         assert response.json()["runtime_state"] == captured[0]
 
+
+    @pytest.mark.parametrize("ready", [True, False])
+    def test_save_uses_the_real_run_probe_for_acceptance(
+            self, tmp_path, monkeypatch, ready):
+        """S5: the save acceptance is one real Hermes run. Gateway liveness
+        alone must never accept a revision, and the probe must run exactly
+        once so the recorded evidence and the response agree."""
+        captured: list[str] = []
+        calls: list[bool] = []
+
+        def _probe() -> bool:
+            calls.append(True)
+            return ready
+
+        def _liveness_must_not_be_used():  # pragma: no cover - tripwire
+            raise AssertionError("gateway liveness alone must not accept a save")
+
+        client = self._build(
+            tmp_path,
+            monkeypatch,
+            resolver=lambda revision: "unused",
+            liveness=_liveness_must_not_be_used,
+            on_acceptance=captured.append,
+            runtime_probe=_probe,
+        )
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-probe-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert calls == [True]
+        expected = "active" if ready else "saved-not-active"
+        assert captured == [expected]
+        assert response.json()["runtime_state"] == expected
+
+    def test_run_probe_exception_fails_closed(self, tmp_path, monkeypatch):
+        captured: list[str] = []
+
+        def _probe() -> bool:
+            raise RuntimeError("probe exploded")
+
+        client = self._build(
+            tmp_path,
+            monkeypatch,
+            resolver=lambda revision: "unused",
+            on_acceptance=captured.append,
+            runtime_probe=_probe,
+        )
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-probe-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["runtime_state"] == "saved-not-active"
+        assert captured == ["saved-not-active"]
+
     def test_current_config_revision_matches_active_profile(self, tmp_path, monkeypatch):
         hermes = tmp_path / "hermes-revision"
         hermes.mkdir()
@@ -804,3 +879,158 @@ class TestRuntimeStateResolver:
         monkeypatch.setenv("HERMES_HOME", str(hermes))
         assert isinstance(assistant_settings.current_config_revision(), int)
 
+
+
+class TestHermesProviderMapping:
+    """S1-S4 — the persisted model block must use an id the installed Hermes
+    runtime resolves, while the product vocabulary stays in the normalized
+    block. ``compatible`` needs the stored secret reachable from the config
+    without inlining it."""
+
+    def _save(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: str,
+        *,
+        api_key: str | None = None,
+        model_id: str = "manual-model",
+    ) -> "object":
+        def transport(method, url, headers):
+            return 200, {"data": [{"id": model_id, "name": "Manual Model"}]}
+
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", transport)
+        _install_fake_probes(monkeypatch)
+        payload = {"provider": provider, "manual_model_id": model_id}
+        if provider == "compatible":
+            payload["base_url"] = "https://api.deepseek.com"
+        payload["api_key"] = (
+            api_key
+            if api_key is not None
+            else ("" if provider in {"ollama", "lm-studio"} else "fixture-mapping-key")
+        )
+        return client.put("/api/profile/assistant/configuration", json=payload)
+
+    @pytest.mark.parametrize(
+        ("provider", "hermes_id", "expects_reference"),
+        [
+            ("opencode-go", "opencode-go", False),
+            ("openrouter", "openrouter", False),
+            ("openai", "custom", False),
+            ("compatible", "custom", True),
+            ("ollama", "ollama", False),
+            ("lm-studio", "lmstudio", False),
+        ],
+    )
+    def test_save_writes_the_hermes_provider_id_and_keeps_the_product_one(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+        provider: str, hermes_id: str, expects_reference: bool,
+    ):
+        response = self._save(client, monkeypatch, provider)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["provider"] == provider
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        model_block = config.split("assistant_settings:", 1)[0]
+        assert f"provider: {hermes_id}" in model_block
+        assert "provider: ${}".format(hermes_id) not in model_block
+        # The normalized block keeps the Demiurgos id (UI, vision gate, key env).
+        assert f"provider: {provider}" in config.split("assistant_settings:", 1)[1]
+        reference = "api_key: ${ASSISTANT_PROVIDER_API_KEY}"
+        assert (reference in model_block) is expects_reference
+        parsed = yaml.safe_load(config)["model"]
+        assert parsed["provider"] == hermes_id
+        assert ("api_key" in parsed) is expects_reference
+
+    def test_switching_away_from_compatible_drops_only_the_managed_reference(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        first = self._save(client, monkeypatch, "compatible")
+        assert first.status_code == 200, first.text
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" in (
+            assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        )
+
+        second = self._save(client, monkeypatch, "openai")
+
+        assert second.status_code == 200, second.text
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" not in config
+        assert "provider: custom" in config
+
+    def test_key_clear_drops_the_managed_reference(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        saved = self._save(client, monkeypatch, "compatible")
+        assert saved.status_code == 200, saved.text
+
+        cleared = client.request(
+            "DELETE",
+            "/api/profile/assistant/configuration/key",
+            json={"revision": saved.json()["revision"]},
+        )
+
+        assert cleared.status_code == 200, cleared.text
+        config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        assert "api_key: ${ASSISTANT_PROVIDER_API_KEY}" not in config
+        assert "provider: custom" in config
+
+    def test_a_foreign_model_api_key_is_preserved(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ):
+        paths = assistant_settings._resolve_profile_paths()
+        paths.config.write_text(
+            "model:\n  default: old-model\n  provider: opencode-go\n"
+            "  base_url: https://opencode.ai/zen/go/v1\n"
+            "  api_key: ${SOME_OTHER_VARIABLE}\n",
+            encoding="utf-8",
+        )
+
+        response = client.put("/api/profile/assistant", json={"model": "deepseek-v4-flash"})
+
+        assert response.status_code == 200, response.text
+        config = paths.config.read_text(encoding="utf-8")
+        assert "api_key: ${SOME_OTHER_VARIABLE}" in config
+
+
+class TestRuntimeRunProbeWiring:
+    """S5 — the wired acceptance probe uses the configured gateway and fails
+    closed. Unit coverage for the probe itself lives in
+    ``test_hermes_run_probe.py``; this pins the api_server seam."""
+
+    def test_api_server_acceptance_uses_the_real_run_probe(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        class _FakeProbe:
+            def __init__(self, base_url, *, api_key=""):
+                seen["base_url"] = base_url
+                seen["api_key"] = api_key
+
+            def probe(self) -> bool:
+                seen["called"] = True
+                return True
+
+        monkeypatch.setattr(api_server, "HermesRunProbe", _FakeProbe)
+        monkeypatch.setattr(
+            api_server, "_GATEWAY_URL", "http://127.0.0.1:8642/v1/chat/completions"
+        )
+        monkeypatch.setattr(api_server, "_GATEWAY_KEY", "gateway-fixture")
+
+        assert api_server._assistant_runtime_run_probe() is True
+        assert seen == {
+            "base_url": "http://127.0.0.1:8642/v1",
+            "api_key": "gateway-fixture",
+            "called": True,
+        }
+
+    def test_api_server_run_probe_fails_closed_on_error(self, monkeypatch):
+        class _ExplodingProbe:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def probe(self) -> bool:
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(api_server, "HermesRunProbe", _ExplodingProbe)
+
+        assert api_server._assistant_runtime_run_probe() is False

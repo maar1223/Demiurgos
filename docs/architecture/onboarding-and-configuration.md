@@ -169,6 +169,15 @@
 - Se distingue **instalado/descargado** (disponible) de **cargado/no cargado** (en memoria); un modelo no cargado **puede cargarse bajo demanda** si el runtime lo permite. `[OBJETIVO — OC17]`
 - La **UI es común** para todos los runtimes; los **adaptadores específicos por runtime** implementan el descubrimiento y el estado. `[OBJETIVO — OC17]`
 
+**Persistencia en el runtime `[ACTUAL]`:**
+
+- El panel no escribe el id de proveedor de producto en el bloque `model` del perfil activo de Hermes: lo traduce a la identidad que el runtime resuelve. `opencode-go`, `openrouter`, `ollama` y `lm-studio` se persisten como `opencode-go`, `openrouter`, `ollama` y `lmstudio`; `openai` y `compatible` se persisten como `custom`, el endpoint OpenAI-compatible; para `api.openai.com` el runtime decide su transporte (Responses) por contrato propio.
+- Para un endpoint `compatible`, el bloque `model` referencia el secreto ya almacenado en el `.env` del perfil (`api_key: ${ASSISTANT_PROVIDER_API_KEY}`); el secreto nunca se escribe en `config.yaml`. Al cambiar de proveedor o borrar la clave, la referencia se retira; un `api_key` ajeno al producto se conserva intacto, salvo que el guardado aporte un secreto nuevo (la entrada explícita gana).
+- El bloque normalizado `assistant_settings` conserva el id de producto y sigue siendo la fuente del panel y del gate de visión.
+- La **aceptación del runtime es una corrida real pequeña** en cada guardado (subida de un run por la API documentada y espera de su estado terminal): la mera liveness del gateway no acredita el Asistente, porque un gateway vivo acepta el run con `202` y puede fallar de forma asíncrona cuando el proveedor no se resuelve. Una corrida fallida, cancelada, vacía, inalcanzable o agotada deja el estado en `saved-not-active`.
+
+  Una aceptación `saved-not-active` para la revisión vigente **se re-evalúa una vez al arrancar**: si el gateway está vivo y una corrida real completada lo demuestra, la evidencia pasa a `accepted` y el panel deja de mostrar como inactivo un Asistente que funciona. La convergencia es **solo ascendente**: nunca degrada una revisión aceptada ni vuelve a probar una sana, para que un fallo transitorio del proveedor no marque como inactivo un Asistente operativo.
+
 **Credenciales `[OBJETIVO — OC18]`:**
 
 - La configuración **local no requiere API key**; la configuración **remota usa un secreto protegido** (el panel actual ya solo envía la clave al backend autenticado, `[ACTUAL]`). `[OBJETIVO — OC18]`
