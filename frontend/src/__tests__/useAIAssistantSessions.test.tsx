@@ -766,6 +766,41 @@ describe("useAIAssistantSessions document attachments", () => {
     expect(request.attachment_ids).toEqual(["att-1"]);
   });
 
+  it("records the attachments on the sent message and keeps them active", async () => {
+    const streamMock = vi.mocked(streamAssistantActivity);
+    const uploadMock = vi.mocked(uploadChatAttachment);
+    uploadMock.mockResolvedValue(attachment);
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: "Listo",
+      terminalStatus: "succeeded" as const,
+      semanticDecision: {
+        kind: "semantic_decision" as const,
+        request_id: "r1",
+        state: "allow" as const,
+        action: "answer" as const,
+        unavailable: false,
+        continuation: null,
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.attachDocument(new File(["x"], "Personaje.docx"));
+    });
+    await act(async () => {
+      await result.current.sendMessage("¿Quién es el personaje?");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const userMessage = messages.find((message) => message.role === "user");
+    // The message carries the sent record for display...
+    expect(userMessage?.attachments).toEqual([attachment]);
+    // ...while the conversation still re-sends it on follow-up turns (S7).
+    expect(result.current.activeSession?.attachments).toEqual([attachment]);
+  });
+
   it("drops stale attachments when the server reports them expired", async () => {
     const streamMock = vi.mocked(streamAssistantActivity);
     const uploadMock = vi.mocked(uploadChatAttachment);

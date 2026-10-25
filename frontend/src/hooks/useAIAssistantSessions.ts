@@ -34,6 +34,13 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Snapshot of the attachments sent WITH this user turn, kept for display in
+   * the message. The conversation-level ``Session.attachments`` stays the
+   * active set that is re-sent on follow-up turns (S1/S7); this record is
+   * historical and survives removing the attachment from the active set.
+   */
+  attachments?: ChatAttachment[];
 }
 
 export interface PendingAttachment {
@@ -485,7 +492,12 @@ export function useAIAssistantSessions(
         sessionId = id;
       }
 
-      const userMessage: Message = { role: "user", content: trimmed };
+      const attachments = activeSession?.attachments ?? [];
+      const userMessage: Message = {
+        role: "user",
+        content: trimmed,
+        ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
+      };
 
       // Add user message and update title on first message
       setSessions((prev) =>
@@ -530,7 +542,6 @@ export function useAIAssistantSessions(
       };
 
       const guided = activeSession?.guided;
-      const attachments = activeSession?.attachments ?? [];
       const requestBody = {
         prompt: trimmed,
         session_id: sessionId ?? "",

@@ -1235,6 +1235,73 @@ describe("AIAssistantSidebar document attachments", () => {
   });
 });
 
+describe("AIAssistantSidebar sent attachments", () => {
+  const attachment = {
+    id: "att-1",
+    name: "meme.png",
+    kind: "image" as const,
+    chars: 1242,
+    truncated: false,
+  };
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("shows the sent attachment inside the message, not only in the tray", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          createdAt: 1,
+          attachments: [attachment],
+          messages: [
+            { role: "user", content: "me puedes describir esta imagen?", attachments: [attachment] },
+            { role: "assistant", content: "Es un meme con Bob Esponja." },
+          ],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const sent = screen.getByRole("list", {
+      name: tEs("assistant.attach.sent.aria"),
+    });
+    expect(sent).toHaveTextContent("meme.png");
+    // The conversation context is still visible, in its compact form only.
+    const active = screen.getByRole("group", {
+      name: tEs("assistant.attach.active.aria"),
+    });
+    expect(active).toHaveTextContent("meme.png");
+    expect(
+      screen.queryByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the full chip in the composer for an attachment not sent yet", () => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Revise the opening",
+          createdAt: 1,
+          attachments: [attachment],
+          messages: [{ role: "user", content: "hola" }],
+        },
+      }),
+    );
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("list", { name: tEs("assistant.attach.list.aria") }),
+    ).toHaveTextContent("meme.png");
+    expect(
+      screen.queryByRole("group", { name: tEs("assistant.attach.active.aria") }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("AIAssistantSidebar attachment chip", () => {
   it("shows the extracted character count next to the name", () => {
     useAppLanguageMock.mockReturnValue(lang("es"));
