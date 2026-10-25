@@ -137,8 +137,55 @@ def test_a_down_gateway_never_runs_the_probe(tmp_path: Path, monkeypatch):
     _prepare(tmp_path, monkeypatch, _evidence())
     _gateway, probes = _wire(monkeypatch, running=False, probe=True)
 
-    assert api_server._converge_assistant_acceptance() is False
+    assert api_server._converge_assistant_acceptance(wait_seconds=0) is False
     assert probes == []
+
+
+def test_convergence_waits_for_the_gateway_to_come_up(tmp_path: Path, monkeypatch):
+    """The launcher starts the API and the gateway together; the gateway's state
+    file lands ~15 s later. The bounded wait must cover that window (regression:
+    the 23:02 restart checked once, too early, and silently never converged)."""
+    _prepare(tmp_path, monkeypatch, _evidence())
+
+    class _LateGateway:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def is_running(self) -> bool:
+            self.calls += 1
+            return self.calls >= 3
+
+    class _FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+            self.sleeps: list[float] = []
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def sleep(self, seconds: float) -> None:
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    gateway = _LateGateway()
+    probes: list[bool] = []
+    clock = _FakeClock()
+    monkeypatch.setattr(api_server, "_assistant_gateway_probe", lambda: gateway)
+    monkeypatch.setattr(
+        api_server,
+        "_assistant_runtime_run_probe",
+        lambda: probes.append(True) or True,
+    )
+
+    assert api_server._converge_assistant_acceptance(
+        wait_seconds=90,
+        poll_seconds=3,
+        clock=clock.monotonic,
+        sleep=clock.sleep,
+    ) is True
+    assert gateway.calls == 3
+    assert probes == [True]
+    assert _state(tmp_path)["assistant_acceptance"]["runtime"] == "accepted"
 
 
 def test_missing_probe_evidence_for_the_current_revision_is_not_accepted(

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -899,16 +900,28 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
 
 
 _ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK = threading.Lock()
+#: The launcher starts the API and the gateway close together, but the gateway
+#: needs ~15 s to write ``gateway_state.json``: a single startup check would
+#: look at the wrong moment and silently never converge. Wait for it, bounded.
+ASSISTANT_CONVERGENCE_WAIT_SECONDS = 90.0
+ASSISTANT_CONVERGENCE_POLL_SECONDS = 3.0
 
 
-def _converge_assistant_acceptance() -> bool:
+def _converge_assistant_acceptance(
+    *,
+    wait_seconds: float = ASSISTANT_CONVERGENCE_WAIT_SECONDS,
+    poll_seconds: float = ASSISTANT_CONVERGENCE_POLL_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
     """Upgrade a stale non-accepted acceptance once the runtime proves itself.
 
     The save-time acceptance is recorded ONCE. A revision saved while the
     runtime could not complete a run (gateway down, provider warming, restart
     in flight) stayed ``saved-not-active`` forever, so every later read — and
     every restart — reported a working assistant as inactive. This convergence
-    runs once at startup and is UP ONLY: it requires the current revision's
+    runs once at startup, waiting (bounded) for the gateway the launcher starts
+    beside the API, and is UP ONLY: it requires the current revision's
     recorded text+vision proofs, a live gateway and one completed real run; it
     never downgrades an accepted revision and never re-probes a healthy one, so
     a transient provider failure cannot flip a working assistant to inactive.
@@ -917,8 +930,11 @@ def _converge_assistant_acceptance() -> bool:
     """
     try:
         with _ASSISTANT_ACCEPTANCE_CONVERGENCE_LOCK:
-            if not _assistant_gateway_probe().is_running():
-                return False
+            deadline = clock() + max(0.0, wait_seconds)
+            while not _assistant_gateway_probe().is_running():
+                if clock() >= deadline:
+                    return False
+                sleep(poll_seconds)
             revision = assistant_settings.current_config_revision()
             if revision is None:
                 return False
