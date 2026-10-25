@@ -253,6 +253,11 @@ Reglas de la estructura recomendada:
 - La cuenta Google y el acceso a Google Drive son **consentimientos separados** (sección 4); el backup usa solo el consentimiento de Drive, nunca el de identidad general. `[DECISIÓN CERRADA — OC10]`
 - El paquete de respaldo incluye el **mundo y la configuración no secreta**, con restauración granular por mundo/carpeta cuando corresponda. **API keys, tokens, contraseñas y demás secretos quedan excluidos**; tras restaurar se revalidan los servicios y las credenciales en la instalación destino. `[DECISIÓN CERRADA — OC24]`
 
+**Retención del destino `[ACTUAL]`:**
+
+- El destino conserva un historial GFS: la última snapshot de cada uno de los **7 días**, **4 semanas ISO** y **6 meses** más recientes, más como máximo las **4 snapshots más recientes del día UTC en curso**. Las anteriores del mismo día se podan; el borrado es definitivo (una carpeta simple no tiene papelera).
+- Los logs de ejecución (`logs/`) **no** forman parte del respaldo: son runtime regenerable y, al vivir dentro de la raíz de datos, incluirlos realimentaba el motor (cada request programaba una snapshot).
+
 ---
 
 ## 11. Listo para Trabajar
