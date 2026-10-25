@@ -355,12 +355,21 @@ async function handleLink(
       if (typeof body.account_key !== "string") {
         return fail(400, "link.invalid_account");
       }
+      // An omitted flag stays omitted. Coercing it to `true` here would make a
+      // reused ticket silently re-enable a permission the account had turned off.
+      for (const flag of ["report_identity", "notify_releases"] as const) {
+        if (body[flag] !== undefined && typeof body[flag] !== "boolean") {
+          return fail(400, "relay.invalid_payload");
+        }
+      }
       const started = await startLink(
         env.LINKS,
         {
           account_key: body.account_key,
-          report_identity: body.report_identity !== false,
-          notify_releases: body.notify_releases !== false,
+          report_identity:
+            typeof body.report_identity === "boolean" ? body.report_identity : undefined,
+          notify_releases:
+            typeof body.notify_releases === "boolean" ? body.notify_releases : undefined,
         },
         new Date(),
       );

@@ -242,3 +242,32 @@ test("a telegram account moving to another account key leaves no stale pointer",
     "acct_second1",
   );
 });
+
+test("an omitted flag keeps the stored value and a flagless reuse changes nothing", async () => {
+  const kv = new MemoryKv();
+  await startLink(
+    kv,
+    { account_key: "acct_abc123", report_identity: false, notify_releases: false },
+    T0,
+  );
+  await startLink(kv, { account_key: "acct_abc123", notify_releases: true }, later(1));
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, later(2));
+
+  const identity = await redeemTicket(kv, ticket, telegram(), later(3));
+
+  assert.deepEqual(identity.permissions, {
+    report_identity: false,
+    notify_releases: true,
+  });
+});
+
+test("the stored identity carries account_key and never principal_id", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "Mr. Smith" }, T0);
+  await redeemTicket(kv, ticket, telegram(), later(1));
+
+  const raw = JSON.parse(kv.map.get("identity:tg:1234567890")!);
+
+  assert.equal(raw.account_key, "Mr. Smith");
+  assert.equal(Object.prototype.hasOwnProperty.call(raw, "principal_id"), false);
+});
