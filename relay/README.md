@@ -35,6 +35,48 @@ Relay codes are non-secret and never carry a credential:
 `relay.provider_unreachable`, `relay.provider_rejected`, `relay.delivery_failed`,
 `relay.method_not_allowed`.
 
+## Identity store (Telegram linking)
+
+A linked account binds a Telegram user to the app's local principal. The relay
+is the only component that knows both sides, so the store lives here
+(`src/identity.ts`) in the `LINKS` KV namespace:
+
+```
+identity:tg:<telegram_user_id>      -> IdentityRecord (JSON)
+identity:principal:<principal_id>   -> <telegram_user_id>            (pointer)
+```
+
+```json
+{
+  "telegram_user_id": "1234567890",
+  "username": "brook",
+  "display_name": "Brook",
+  "principal_id": "prin_abc123",
+  "linked_at": "2026-10-25T12:00:00.000Z",
+  "started_bots": { "ideas": false, "reports": true },
+  "permissions": { "report_identity": true, "notify_releases": true }
+}
+```
+
+Rules the store enforces:
+
+- **Reads fail closed.** A malformed value or a dangling pointer reads as
+  absent, so corruption can only lose a link, never grant one.
+- **One Telegram account per principal.** Relinking retires the previous
+  telegram-side record instead of leaving an identity that can no longer be
+  revoked.
+- **Delivery permission is per bot.** `started_bots` records which bots the
+  account has actually started; a bot cannot transfer that permission to
+  another bot.
+- **Permissions are separate.** `report_identity` and `notify_releases` are
+  granted and read independently.
+- **Revoke erases both directions.** `revokeIdentity` deletes the record and the
+  pointer, so unlinked personal data does not linger.
+
+`LINKS` is a separate namespace from `RATE_LIMIT` on purpose: identities are
+personal data with no TTL, while the counters are disposable and expires.
+Mixing them would eventually let a TTL sweep erase a link.
+
 ## Prerequisites
 
 1. **Cloudflare account** with `wrangler` available (`npm install` in this

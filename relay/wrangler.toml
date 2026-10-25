@@ -20,6 +20,18 @@ binding = "RATE_LIMIT"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
 
+# Linked Telegram identities live in their OWN namespace, never in RATE_LIMIT:
+# they are personal data with no expiry (removed only by revoke), while the
+# counters above are disposable and TTL-bounded. Mixing them would eventually
+# let a TTL sweep erase a link.
+#
+#   npx wrangler kv namespace create LINKS
+#   npx wrangler kv namespace create LINKS --preview
+[[kv_namespaces]]
+binding = "LINKS"
+id = "REPLACE_WITH_LINKS_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_LINKS_KV_PREVIEW_NAMESPACE_ID"
+
 # Secrets are NOT set here. Provide them out-of-band (never committed):
 #   npx wrangler secret put BREVO_API_KEY
 #   npx wrangler secret put OWNER_INBOX

@@ -40,6 +40,12 @@
 export interface Env {
   /** KV namespace backing the per-IP + global-daily rate-limit counters. */
   RATE_LIMIT: KVNamespace;
+  /**
+   * KV namespace holding linked Telegram identities (`identity:tg:*` records and
+   * `identity:principal:*` pointers). Kept apart from `RATE_LIMIT` because these
+   * entries are personal data with no TTL, not disposable counters.
+   */
+  LINKS: KVNamespace;
   /** Provider API key (Worker secret). Never logged or returned. */
   BREVO_API_KEY: string;
   /** Fixed Owner inbox that receives every report (Worker secret/variable). */
