@@ -294,3 +294,29 @@ test("malformed updates never throw and never call out, including wrong-typed id
 
   assert.equal(kv.map.size, 0, "no identity written for a malformed update");
 });
+
+test("a negative group chat id and a positive user id still redeem", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, new Date());
+
+  const group = {
+    update_id: 1,
+    message: {
+      chat: { id: -1001234567890 },
+      from: { id: 1234567890, username: "brook", first_name: "Brook" },
+      text: `/start ${ticket}`,
+    },
+  };
+
+  let status = 0;
+  const { sent } = await withTelegram(async () => {
+    const response = await worker.fetch(webhook(group), makeEnv(kv), {} as never);
+    status = response.status;
+  });
+
+  assert.equal(status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chatId, "-1001234567890");
+  assert.match(sent[0].text, /^Conectado/);
+  assert.equal((await readIdentity(kv, "1234567890"))?.account_key, "acct_abc123");
+});
