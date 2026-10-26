@@ -278,7 +278,8 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - **The relay's PNG check took 4 signature bytes, the backend 8.** Aligned on the full `89 50 4E 47 0D 0A 1A 0A`.
 - **The relay silently dropped an `attachments` part with an empty filename** (multipart parses it as a plain string, and the filter removed it): it now fails with `relay.invalid_attachment` instead of delivering a report whose image never arrived.
 - Regression tests from the probes: the 5 MB boundary accepted / 5 MB + 1 refused on both sides, JPEG and WebP typed by bytes, a partial PNG signature refused, an empty-filename part refused, bidi/C1 stripping, and the forgotten-screenshot case (published, then deduped only when identical).
-- Relay **119 passed**, backend router **47 passed**, typecheck clean; Worker redeployed and verified live.
+- Recheck: **A1 FIXED, A2 FIXED, A3 FIXED, A4 FIXED, no new blocker.** The dedup probe now publishes a later screenshot (4 calls) and still dedups the identical text+image pair (0 calls). One residual closed afterwards: the relay's filename filter was a curated Cf subset, so `U+061C`, `U+180E` and the `U+2060..U+206F` block were added; the backend already stripped all Cf.
+- Relay **119 passed**, backend router **47 passed** + identity **5 passed**, typecheck clean; Worker redeployed and verified live.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.

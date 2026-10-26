@@ -484,7 +484,7 @@ test("invisible characters are stripped from the filename", async () => {
     await worker.fetch(
       multipartRequest(REPORT, [
         {
-          name: "a\u0085b\u202ec.png",
+          name: "a\u0085b\u202ec\u061cd\u2060e.png",
           type: "image/png",
           bytes: PNG_BYTES,
         },
@@ -495,7 +495,7 @@ test("invisible characters are stripped from the filename", async () => {
 
     const document = telegram.calls[2].form?.get("document");
     assert.ok(document instanceof File);
-    assert.equal(document.name, "abc.png");
+    assert.equal(document.name, "abcde.png");
   } finally {
     telegram.restore();
   }

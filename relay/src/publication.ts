@@ -184,7 +184,10 @@ export function attachmentName(raw: string, index: number, type: string): string
   // filename must render exactly as it reads.
   // eslint-disable-next-line no-control-regex
   const cleaned = base
-    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g,
+      "",
+    )
     .trim();
   const name = cleaned.length === 0 ? "" : cleaned.slice(0, ATTACHMENT_NAME_MAX);
   if (name.length > 0) {
