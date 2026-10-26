@@ -100,8 +100,15 @@ export interface Env {
   OWNER_TELEGRAM_USER_IDS?: string;
 }
 
-/** Wire contract version, must match `_RELAY_SCHEMA` in `bug_report.py`. */
-const RELAY_SCHEMA = 1;
+/**
+ * Wire contract versions this relay understands, newest first.
+ *
+ * 2 adds the `context` block (where in the app the bug happened). Both are
+ * accepted so a backend that still speaks 1 keeps delivering while the relay is
+ * rolled out ahead of it: a version mismatch here would drop reports, and a
+ * dropped report is worse than a report without context.
+ */
+const RELAY_SCHEMAS = new Set([1, 2]);
 
 /** The only top-level keys the contract allows. */
 const ALLOWED_FIELDS = new Set([
@@ -111,6 +118,7 @@ const ALLOWED_FIELDS = new Set([
   "description",
   "contact",
   "logs",
+  "context",
 ]);
 
 /** The only platform facts the contract allows. */
@@ -121,11 +129,15 @@ const ALLOWED_PLATFORM_KEYS = new Set([
   "python_version",
 ]);
 
+/** Where in the app a report came from (schema 2). */
+const ALLOWED_CONTEXT_KEYS = new Set(["route", "view", "ui_area", "world_id"]);
+
 // Size caps — kept identical to the backend caps in `bug_report.py` so the
 // relay is never the weaker link in the validation chain.
 const DESCRIPTION_MAX_CHARS = 4000;
 const CONTACT_MAX_CHARS = 200;
 const LOGS_MAX_CHARS = 65536;
+const CONTEXT_VALUE_MAX_CHARS = 200;
 const PAYLOAD_MAX_BYTES = 98304;
 
 // Abuse bounds. KV is eventually consistent, not atomic, so these are
@@ -144,6 +156,8 @@ interface Report {
   description: string;
   contact: string | null;
   logs: string | null;
+  /** Where in the app it happened; empty on a schema-1 client. */
+  context: Record<string, string>;
 }
 
 /** Internal error carrying the HTTP status and non-secret relay code. */
@@ -203,7 +217,7 @@ function validateReport(raw: unknown): Report {
       throw new RelayError(400, "relay.invalid_payload");
     }
   }
-  if (raw.schema !== RELAY_SCHEMA) {
+  if (typeof raw.schema !== "number" || !RELAY_SCHEMAS.has(raw.schema)) {
     throw new RelayError(400, "relay.unsupported_schema");
   }
 
@@ -223,6 +237,23 @@ function validateReport(raw: unknown): Report {
       throw new RelayError(400, "relay.invalid_payload");
     }
     platform[key] = value;
+  }
+
+  const contextRaw = raw.context ?? {};
+  if (!isPlainObject(contextRaw)) {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  const context: Record<string, string> = {};
+  for (const [key, value] of Object.entries(contextRaw)) {
+    if (!ALLOWED_CONTEXT_KEYS.has(key) || typeof value !== "string") {
+      throw new RelayError(400, "relay.invalid_payload");
+    }
+    if (value.length > CONTEXT_VALUE_MAX_CHARS) {
+      throw new RelayError(413, "relay.too_large");
+    }
+    if (value.trim().length > 0) {
+      context[key] = value;
+    }
   }
 
   const contact = normalizeOptional(raw.contact, "relay.invalid_payload");
@@ -245,6 +276,7 @@ function validateReport(raw: unknown): Report {
     app_version: appVersion,
     platform,
     description,
+    context,
     contact,
     logs,
   };
@@ -272,11 +304,15 @@ function buildBody(report: Report, attribution: Attribution): string {
   const platform = Object.entries(report.platform)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
+  const context = Object.entries(report.context)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
   return [
     "Demiurgos bug report",
     "",
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",

@@ -32,6 +32,8 @@ export interface PublishableReport {
   description: string;
   contact: string | null;
   logs: string | null;
+  /** Where in the app it happened; empty when the client sent none. */
+  context: Record<string, string>;
   /**
    * Who sent it and how that was established. Required on purpose: every
    * delivery path must state it, and the compiler refuses a report that forgot.
@@ -57,14 +59,21 @@ export function topicName(report: PublishableReport): string {
   return truncate(`BUG · v${version} · ${who}`, TOPIC_NAME_MAX);
 }
 
-/** The message shown in the topic: what fits, with the rest in the document. */
-export function summaryText(report: PublishableReport): string {
-  const platform = Object.entries(report.platform)
+/** `key=value` pairs in their original order, or an empty string. */
+function pairs(values: Record<string, string>): string {
+  return Object.entries(values)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
+}
+
+/** The message shown in the topic: what fits, with the rest in the document. */
+export function summaryText(report: PublishableReport): string {
+  const platform = pairs(report.platform);
+  const context = pairs(report.context);
   const header = [
     `🐞 v${report.app_version === "" ? "unknown" : report.app_version}`,
     platform === "" ? null : `🖥️ ${platform}`,
+    context === "" ? null : `🧭 ${context}`,
     report.attribution.line,
   ].filter((line): line is string => line !== null);
   const body = report.description.trim() === "" ? "(sin descripción)" : report.description;
@@ -73,15 +82,15 @@ export function summaryText(report: PublishableReport): string {
 
 /** The complete report, delivered as a document so nothing is truncated. */
 export function bundleText(report: PublishableReport, reportId: string): string {
-  const platform = Object.entries(report.platform)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(" ");
+  const platform = pairs(report.platform);
+  const context = pairs(report.context);
   return [
     "Demiurgos bug report",
     "",
     `Report id: ${reportId}`,
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    `Where: ${context || "(not provided)"}`,
     `Reported by: ${report.attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",

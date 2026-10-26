@@ -69,7 +69,14 @@ SHARED_SECRET_FIXTURES = {
     "author-path": "spreadsheet" + "Id",
 }
 
-_TOP_LEVEL_KEYS = {"app_version", "platform", "logs", "allow_list", "contact_slot"}
+_TOP_LEVEL_KEYS = {
+    "app_version",
+    "platform",
+    "logs",
+    "allow_list",
+    "context_keys",
+    "contact_slot",
+}
 
 # Repo root: tests/ -> wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> <root>.
 _REPO_ROOT = _HERE.parents[4]
@@ -88,6 +95,10 @@ def _make_app(
     app_version: str = "0.2.0",
     relay_url=None,
     relay_post=None,
+    relay_key=None,
+    bot_username=None,
+    local_state=None,
+    vault_active=None,
     clock=None,
     issue_url=None,
 ) -> FastAPI:
@@ -107,6 +118,14 @@ def _make_app(
     kwargs = {}
     if relay_post is not None:
         kwargs["relay_post"] = relay_post
+    if relay_key is not None:
+        kwargs["relay_key"] = relay_key
+    if bot_username is not None:
+        kwargs["bot_username"] = bot_username
+    if local_state is not None:
+        kwargs["local_state"] = local_state
+    if vault_active is not None:
+        kwargs["vault_active"] = vault_active
     if clock is not None:
         kwargs["clock"] = clock
     if issue_url is not None:
@@ -214,6 +233,7 @@ def test_assemble_returns_only_allowlisted_keys(tmp_path: Path) -> None:
     assert set(body.keys()) == _TOP_LEVEL_KEYS
     assert set(body["platform"].keys()) <= ALLOWED_PLATFORM_KEYS
     assert set(body["allow_list"]) == set(ALLOWED_FIELDS)
+    assert set(body["context_keys"]) == {"route", "view", "ui_area", "world_id"}
     assert body["app_version"] == "0.2.0"
     # No identity key of any kind is assembled.
     assert "username" not in body
@@ -300,7 +320,7 @@ def test_submit_requires_principal() -> None:
     """No principal -> 401, and NO delivery is attempted (fail closed)."""
     calls = []
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -319,7 +339,7 @@ def test_submit_rejects_disallowed_field() -> None:
     """
     calls = []
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -350,7 +370,7 @@ def test_submit_rejects_oversized() -> None:
     """Per-field size caps reject oversized payloads with the distinct code."""
     calls = []
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -378,7 +398,7 @@ def test_submit_caps_contact_at_200_chars() -> None:
     """The optional contact is capped at 200 chars (at the cap is accepted)."""
     calls = []
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -409,7 +429,7 @@ def test_submit_rejects_total_byte_cap() -> None:
     """
     calls = []
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -435,7 +455,7 @@ def test_submit_rate_limited() -> None:
     def _clock():
         return clock_state["t"]
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         return 200, {"ok": True, "delivery_id": "d1"}
 
     app = _make_app(
@@ -464,7 +484,7 @@ def test_submit_relay_down_fails_closed() -> None:
     answers but reports ``ok:false`` -> ``bugreport.delivery_failed``. No secret
     or traceback is ever leaked in the response.
     """
-    def _unreachable(url, payload):
+    def _unreachable(url, payload, headers=None):
         raise ConnectionError("relay unreachable: http://relay.test")
 
     app = _make_app(relay_url="http://relay.test", relay_post=_unreachable)
@@ -482,7 +502,7 @@ def test_submit_relay_down_fails_closed() -> None:
     assert resp.json()["code"] == "bugreport.relay_unavailable"
 
     # Relay answered but reported failure.
-    def _reports_failure(url, payload):
+    def _reports_failure(url, payload, headers=None):
         return 200, {"ok": False, "code": "provider_error"}
 
     failing = _make_app(relay_url="http://relay.test", relay_post=_reports_failure)
@@ -503,7 +523,7 @@ def test_submit_success_stores_nothing(tmp_path: Path) -> None:
     before = sorted(p.relative_to(install_root) for p in install_root.rglob("*"))
     captured = {}
 
-    def _relay(url, payload):
+    def _relay(url, payload, headers=None):
         captured["url"] = url
         captured["payload"] = payload
         return 200, {"ok": True, "delivery_id": "delivery-42"}
@@ -673,3 +693,310 @@ def test_payload_manifest_includes_bug_report_modules() -> None:
     payload = manifest["payload"]
     assert "src/tools/demiurgos-suite/wiki/bug_report.py" in payload
     assert "src/tools/demiurgos-suite/wiki/content_scan.py" in payload
+
+
+# ---------------------------------------------------------------------------
+# Schema 2 — where in the app it happened (S4)
+# ---------------------------------------------------------------------------
+
+
+def _capture(captured: list) -> Callable:
+    """A relay stub that records ``(url, payload, headers)``."""
+
+    def _send(url, payload, headers=None):
+        captured.append({"url": url, "payload": payload, "headers": dict(headers or {})})
+        return 200, {"ok": True, "delivery_id": "delivery-ctx"}
+
+    return _send
+
+
+def test_submit_forwards_context_as_schema_two() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+    context = {
+        "route": "/perfil",
+        "view": "perfil",
+        "ui_area": "reportes",
+        "world_id": "w1",
+    }
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context=context)
+    )
+
+    assert resp.status_code == 200, resp.text
+    sent = captured[0]["payload"]
+    assert sent["schema"] == 2
+    assert sent["context"] == context
+
+
+def test_submit_without_context_keeps_the_legacy_contract() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    sent = captured[0]["payload"]
+    # A relay that predates schema 2 must keep accepting the report.
+    assert sent["schema"] == 1
+    assert "context" not in sent
+
+
+def test_context_rejects_a_key_outside_the_allow_list() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context={"screen": "perfil"})
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.not_allowlisted"
+
+
+def test_context_value_is_capped() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context={"route": "x" * 201})
+    )
+
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "bugreport.too_large"
+
+
+def test_a_credential_typed_into_the_context_is_redacted() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        json=_valid_payload(context={"route": "/x?token=" + BOT_TOKEN}),
+    )
+
+    assert resp.status_code == 200, resp.text
+    forwarded = captured[0]["payload"]["context"]["route"]
+    assert BOT_TOKEN not in forwarded
+    assert "[redacted" in forwarded
+
+
+# ---------------------------------------------------------------------------
+# The install token signs the report and never enters the bundle (S15)
+# ---------------------------------------------------------------------------
+
+
+def _state_with_token(tmp_path: Path, token: str = "cd" * 32):
+    from local_state import LocalState
+
+    from bugreport_identity import store_install_token
+
+    state = LocalState(tmp_path / "state.json")
+    store_install_token(state, token)
+    return state
+
+
+def test_submit_sends_the_stored_token_as_a_header_only(tmp_path: Path) -> None:
+    token = "cd" * 32
+    state = _state_with_token(tmp_path, token)
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_capture(captured),
+        local_state=lambda: state,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    assert captured[0]["headers"]["x-install-token"] == token
+    assert token not in json.dumps(captured[0]["payload"])
+
+
+def test_without_a_token_no_header_is_sent() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    assert "x-install-token" not in captured[0]["headers"]
+
+
+# ---------------------------------------------------------------------------
+# Linking surface — the browser never talks to the relay (S7, S9)
+# ---------------------------------------------------------------------------
+
+
+def _link_relay(captured: list, routes: dict):
+    """A relay stub routing on the URL suffix, recording every call."""
+
+    def _send(url, payload, headers=None):
+        captured.append({"url": url, "payload": payload, "headers": dict(headers or {})})
+        for suffix, answer in routes.items():
+            if url.endswith(suffix):
+                return answer(payload)
+        return 404, {"ok": False, "code": "relay.not_found"}
+
+    return _send
+
+
+def test_link_start_forwards_the_stable_key_never_the_browser_one(tmp_path: Path) -> None:
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            captured,
+            {"/link/start": lambda _p: (200, {"ok": True, "ticket": "ABC123", "expires_at": "2026-10-25T12:10:00Z", "reused": False})},
+        ),
+        relay_key="shared-key",
+        bot_username="ReportesDemiurgosBot",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post(
+        "/api/bugreport/link/start", json={"report_identity": False}
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ticket"] == "ABC123"
+    assert body["telegram_url"] == "https://t.me/ReportesDemiurgosBot?start=ABC123"
+    call = captured[0]
+    assert call["url"].endswith("/link/start")
+    assert call["headers"]["x-relay-key"] == "shared-key"
+    assert call["payload"]["account_key"].startswith("install_")
+    assert call["payload"]["report_identity"] is False
+    assert "notify_releases" not in call["payload"]
+    # The stable key is the backend's business, not the browser's.
+    assert body["ticket"] not in json.dumps(body).replace("ABC123", "")
+
+
+def test_link_start_rejects_a_non_boolean_flag() -> None:
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_capture([]),
+        relay_key="k",
+        bot_username="b",
+    )
+
+    resp = TestClient(app).post(
+        "/api/bugreport/link/start", json={"report_identity": "false"}
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.not_allowlisted"
+
+
+def test_link_status_keeps_the_token_server_side(tmp_path: Path) -> None:
+    from bugreport_identity import read_install_token
+    from local_state import LocalState
+
+    token = "ef" * 32
+    state = LocalState(tmp_path / "state.json")
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            [],
+            {
+                "/link/status": lambda _p: (
+                    200,
+                    {
+                        "ok": True,
+                        "state": "linked",
+                        "install_token": token,
+                        "identity": {
+                            "telegram_user_id": "42",
+                            "username": "brook",
+                            "display_name": "Brook",
+                            "account_key": "install_secret",
+                            "permissions": {
+                                "report_identity": True,
+                                "notify_releases": False,
+                            },
+                        },
+                    },
+                )
+            },
+        ),
+        relay_key="k",
+        bot_username="b",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "ABC"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "linked"
+    assert body["username"] == "brook"
+    assert body["permissions"] == {"report_identity": True, "notify_releases": False}
+    # The token, the numeric id and the account key stay server-side.
+    text = resp.text
+    assert token not in text
+    assert "42" not in json.dumps(body)
+    assert "install_secret" not in text
+    assert read_install_token(state) == token
+
+
+def test_link_revoke_clears_the_stored_token(tmp_path: Path) -> None:
+    from bugreport_identity import read_install_token
+
+    state = _state_with_token(tmp_path)
+    assert read_install_token(state) is not None
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            [], {"/link/revoke": lambda _p: (200, {"ok": True, "revoked": True})}
+        ),
+        relay_key="k",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/revoke", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"revoked": True}
+    assert read_install_token(state) is None
+
+
+def test_linking_fails_closed_without_the_relay_key(tmp_path: Path) -> None:
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_capture([]),
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/start", json={})
+
+    assert resp.status_code == 502
+    assert resp.json()["code"] == "bugreport.relay_unavailable"
+
+
+def test_link_status_expired_does_not_store_anything(tmp_path: Path) -> None:
+    from bugreport_identity import read_install_token
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay([], {"/link/status": lambda _p: (200, {"ok": True, "state": "expired"})}),
+        relay_key="k",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "ABC"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"state": "expired"}
+    assert read_install_token(state) is None

@@ -14,12 +14,13 @@ the relay validates it, rate-limits it, and forwards it to the email provider.
 ```
 POST /   Content-Type: application/json
 {
-  "schema": 1,
+  "schema": 2,
   "app_version": "...",
   "platform": { "os": "...", "os_version": "...", "arch": "...", "python_version": "..." },
   "description": "...",
   "contact": "..." | null,
-  "logs": "..." | null
+  "logs": "..." | null,
+  "context": { "route": "...", "view": "...", "ui_area": "...", "world_id": "..." }
 }
 -> 200 { "ok": true,  "delivery_id": "...", "deduped"?: true }
 -> 4xx/5xx { "ok": false, "code": "<relay code>" }
@@ -32,7 +33,13 @@ its Telegram account; it is never part of the body.
 
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for
 the wire shape. Field caps (`description` 4000, `contact` 200, `logs` 65536,
-total 98304 bytes) are identical on both sides.
+`context` 200 per value, total 98304 bytes) are identical on both sides.
+
+`context` (schema 2) says **where in the app** the bug happened, so the reporter
+never has to describe it. Both schema **1 and 2** are accepted: a backend without
+context keeps speaking the older contract, and a version mismatch here would drop
+reports — which is worse than a report without context. Unknown context keys are
+refused, so the block cannot become a smuggling channel.
 
 Relay codes are non-secret and never carry a credential:
 `relay.invalid_payload`, `relay.unsupported_schema`, `relay.too_large`,
