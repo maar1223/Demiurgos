@@ -121,9 +121,23 @@ def _fake_module(clearer=None):
     return SimpleNamespace(clear_skills_system_prompt_cache=clearer)
 
 
-def test_cache_safe_returns_false_when_modules_absent():
+def _without_hermes_hook_modules(monkeypatch):
+    """State that no Hermes hook module is importable, instead of inheriting it.
+
+    On a machine with the bundled runtime, another test in the suite puts
+    ``~/.hermes/hermes-agent`` on ``sys.path`` (the plugin's capture adapter
+    does), and the real ``agent.prompt_builder`` — which does expose the
+    clearer — becomes importable. These two cells are about ABSENCE and about
+    the second candidate winning, so the precondition is declared here.
+    """
+    monkeypatch.setitem(sys.modules, "agent.prompt_builder", None)
+    monkeypatch.setitem(sys.modules, "prompt_builder", None)
+
+
+def test_cache_safe_returns_false_when_modules_absent(monkeypatch):
     """Spec 'Hook point absent degrades to no-op': with neither Hermes module
     importable the hook reports False and does not raise."""
+    _without_hermes_hook_modules(monkeypatch)
     assert clear_skills_system_prompt_cache_safe() is False
 
 
@@ -149,6 +163,9 @@ def test_cache_safe_version_fallback_to_plain_prompt_builder(monkeypatch):
     def clearer():
         calls.append(True)
 
+    # The first candidate must be genuinely unavailable: an importable real
+    # ``agent.prompt_builder`` would win and this cell would prove nothing.
+    _without_hermes_hook_modules(monkeypatch)
     monkeypatch.setitem(sys.modules, "prompt_builder", _fake_module(clearer))
     assert clear_skills_system_prompt_cache_safe() is True
     assert calls == [True]
