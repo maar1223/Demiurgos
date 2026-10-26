@@ -549,14 +549,24 @@ async function handleLink(
       if (typeof body.account_key !== "string") {
         return fail(400, "link.invalid_account");
       }
-      // The app's "am I still linked?" read. It answers from the identity store
-      // and never hands back a signing credential: the install token was spent
-      // once, at redemption.
+      // The app's "am I still linked?" read. Only what the connected state
+      // renders leaves the store: the account key, the numeric Telegram id and
+      // the bot bookkeeping stay here, and no signing credential is ever
+      // returned (the install token was spent once, at redemption).
       const identity = await readIdentityByAccount(env.LINKS, body.account_key);
+      if (identity === null) {
+        return jsonResponse({ ok: true, state: "unlinked" }, 200);
+      }
       return jsonResponse(
-        identity === null
-          ? { ok: true, state: "unlinked" }
-          : { ok: true, state: "linked", identity },
+        {
+          ok: true,
+          state: "linked",
+          identity: {
+            username: identity.username,
+            display_name: identity.display_name,
+            permissions: identity.permissions,
+          },
+        },
         200,
       );
     }

@@ -356,3 +356,34 @@ test("state requires the shared key and an account key", async () => {
   assert.equal(missing.status, 400);
   assert.deepEqual(await missing.json(), { ok: false, code: "link.invalid_account" });
 });
+
+test("state exposes no account key, telegram id or bot bookkeeping", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+
+  const started = await worker.fetch(
+    call("/link/start", { account_key: "acct_state03", notify_releases: false }),
+    env,
+    {} as never,
+  );
+  const { ticket } = (await started.json()) as Record<string, string>;
+  await redeemTicket(
+    kv,
+    ticket,
+    { id: "1234567890", username: "brook", displayName: "Brook" },
+    new Date(),
+  );
+
+  const response = await worker.fetch(
+    call("/link/state", { account_key: "acct_state03" }),
+    env,
+    {} as never,
+  );
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(body.state, "linked");
+  // The caller renders a handle and two flags; nothing else leaves the store.
+  assert.deepEqual(
+    Object.keys(body.identity as Record<string, unknown>).sort(),
+    ["display_name", "permissions", "username"],
+  );
+});

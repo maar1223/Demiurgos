@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { QrCode } from "@/components/atoms/QrCode";
@@ -67,9 +67,14 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
   const [copied, setCopied] = useState(false);
   const [reportIdentity, setReportIdentity] = useState(true);
   const [notifyReleases, setNotifyReleases] = useState(true);
+  // Set the moment a ticket is requested. A synchronous ref, because the mount
+  // read must not overwrite a ticket that was already minted while it was in
+  // flight — React state would still be the pre-click value in that closure.
+  const startedByUser = useRef(false);
 
   const start = useCallback(
     async (silent: boolean, flags: BugReportLinkFlags) => {
+      startedByUser.current = true;
       if (!silent) setPhase("starting");
       setError(null);
       setCopied(false);
@@ -97,7 +102,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     const read = async () => {
       try {
         const next = await telegramLinkState();
-        if (!active || next.state !== "linked") return;
+        if (!active || startedByUser.current || next.state !== "linked") return;
         setLinked({
           username: next.username,
           display_name: next.display_name,

@@ -154,8 +154,10 @@ Behaviour worth knowing:
 - `install_token` is returned by `/link/status` **once**, then withheld, so a
   reload cannot re-expose it.
 - `/link/state` is how the panel remembers a link after a reload: it answers
-  from the identity store and never returns a credential, so a link revoked from
-  Telegram stops being reported as connected.
+  from the identity store with the handle, the display name and the two
+  permission flags only — never the account key, the numeric Telegram id or a
+  credential — so a link revoked from Telegram stops being reported as
+  connected.
 - Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.

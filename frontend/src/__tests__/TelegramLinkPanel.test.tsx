@@ -241,6 +241,35 @@ describe("TelegramLinkPanel — linking surface (S8–S11)", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not let the mount read clobber a ticket that already started", async () => {
+    let resolveState!: (value: unknown) => void;
+    (telegramLinkState as Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveState = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    );
+    await screen.findByTestId("bugreport-telegram-ticket");
+
+    resolveState({
+      state: "linked",
+      username: "brook",
+      display_name: "Brook",
+      permissions: { report_identity: true, notify_releases: false },
+      telegram_url: "https://t.me/ReportesDemiurgosBot",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The QR must keep carrying the ticket: a bare bot URL cannot link anyone.
+    expect(screen.getByTestId("bugreport-telegram-link")).toHaveAttribute("href", URL);
+    expect(screen.getByTestId("bugreport-telegram-ticket")).toHaveTextContent(TICKET);
+  });
+
   it("reports a failed start instead of pretending a link exists", async () => {
     (startTelegramLink as Mock).mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();
