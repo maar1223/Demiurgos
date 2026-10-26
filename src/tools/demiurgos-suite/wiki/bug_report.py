@@ -160,6 +160,22 @@ def _platform_facts() -> Dict[str, str]:
     }
 
 
+def _sniff_image(data: bytes) -> str | None:
+    """The real image type from the magic bytes, or ``None``.
+
+    A declared content type is a client claim: a renamed HTML file would pass it
+    and reach the group as a document. The bytes decide, and a mismatch is
+    corrected rather than trusted.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def _safe_attachment_name(raw: str | None, index: int, mime: str) -> str:
     """A filename safe to hand downstream: no paths, no control characters."""
     base = (raw or "").replace("\\", "/").split("/")[-1]
@@ -178,14 +194,14 @@ def _attachment_parts(
         raise problem("bugreport.too_large", field="attachments")
     parts: List[Tuple[str, bytes, str]] = []
     for index, upload in enumerate(uploads):
-        mime = (getattr(upload, "content_type", "") or "").split(";")[0].strip().lower()
-        if mime not in _ATTACHMENT_TYPES:
-            raise problem("bugreport.invalid_attachment")
         data = upload.file.read() if hasattr(upload, "file") else b""
         if not data:
             raise problem("bugreport.invalid_attachment")
         if len(data) > _ATTACHMENT_MAX_BYTES:
             raise problem("bugreport.too_large", field="attachments")
+        mime = _sniff_image(data)
+        if mime is None or mime not in _ATTACHMENT_TYPES:
+            raise problem("bugreport.invalid_attachment")
         name = _safe_attachment_name(getattr(upload, "filename", None), index, mime)
         parts.append((name, data, mime))
     return parts

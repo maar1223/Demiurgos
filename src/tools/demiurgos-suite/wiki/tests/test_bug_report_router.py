@@ -1068,6 +1068,7 @@ def test_link_status_refuses_to_report_linked_when_the_token_was_lost(
 # ---------------------------------------------------------------------------
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 8
+JPEG_BYTES = b"\xff\xd8\xff" + b"0" * 8
 
 
 def _capture_parts(captured: list) -> Callable:
@@ -1104,7 +1105,7 @@ def test_two_screenshots_are_forwarded_as_parts_beside_the_bundle() -> None:
             _valid_payload(context={"route": "/perfil"}),
             [
                 ("pantalla-1.png", PNG_BYTES, "image/png"),
-                ("pantalla-2.png", PNG_BYTES, "image/jpeg"),
+                ("pantalla-2.jpg", JPEG_BYTES, "image/jpeg"),
             ],
         ),
     )
@@ -1113,7 +1114,7 @@ def test_two_screenshots_are_forwarded_as_parts_beside_the_bundle() -> None:
     sent = captured[0]
     assert [name for name, _data, _mime in sent["attachments"]] == [
         "pantalla-1.png",
-        "pantalla-2.png",
+        "pantalla-2.jpg",
     ]
     assert [mime for _name, _data, mime in sent["attachments"]] == [
         "image/png",
@@ -1200,3 +1201,33 @@ def test_a_json_submit_still_forwards_no_attachments() -> None:
 
     assert resp.status_code == 200, resp.text
     assert captured[0]["attachments"] == []
+
+
+def test_the_declared_type_is_corrected_by_the_bytes() -> None:
+    """A PNG renamed to .jpg is a PNG: the bytes decide what Telegram receives."""
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(
+            _valid_payload(),
+            [("captura.jpg", PNG_BYTES, "image/jpeg")],
+        ),
+    )
+
+    assert resp.status_code == 200, resp.text
+    _name, _data, mime = captured[0]["attachments"][0]
+    assert mime == "image/png"
+
+
+def test_a_renamed_text_file_is_not_an_image() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("captura.png", b"<html>hola</html>", "image/png")]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.invalid_attachment"

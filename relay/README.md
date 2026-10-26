@@ -49,8 +49,9 @@ Each image is published as a **document**, never as a photo: `sendPhoto`
 recompresses and destroys exactly the interface detail a screenshot exists to
 show. The order inside the topic is summary → screenshots → `report-<id>.txt`.
 A bad type, an empty file or an oversized image fails closed before any Telegram
-call; the filename is reduced to its basename so a path can never travel
-downstream. The email channel carries text only, and states how many attachments
+call. The **magic bytes** decide the type, not the client's claim: a renamed HTML
+file is refused, and a PNG declared as JPEG is published as a PNG. The filename is
+reduced to its basename so a path can never travel downstream. The email channel carries text only, and states how many attachments
 it could not deliver instead of pretending they arrived.
 
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for

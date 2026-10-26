@@ -59,6 +59,7 @@ import {
   ATTACHMENT_TYPES,
   attachmentName,
   publishReport,
+  sniffImageType,
   type ReportAttachment,
 } from "./publication.ts";
 import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
@@ -338,16 +339,22 @@ async function readReportBody(request: Request): Promise<ParsedReportBody> {
 
   const attachments: ReportAttachment[] = [];
   for (const [index, file] of files.entries()) {
-    if (!ATTACHMENT_TYPES.has(file.type) || file.size === 0) {
+    if (file.size === 0) {
       throw new RelayError(400, "relay.invalid_attachment");
     }
     if (file.size > ATTACHMENT_MAX_BYTES) {
       throw new RelayError(413, "relay.too_large");
     }
+    const bytes = await file.arrayBuffer();
+    // The bytes decide the type, not the client's claim about it.
+    const type = sniffImageType(bytes);
+    if (type === null || !ATTACHMENT_TYPES.has(type)) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
     attachments.push({
-      name: attachmentName(file.name, index, file.type),
-      type: file.type,
-      bytes: await file.arrayBuffer(),
+      name: attachmentName(file.name, index, type),
+      type,
+      bytes,
     });
   }
   return { raw, attachments };

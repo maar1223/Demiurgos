@@ -328,3 +328,51 @@ test("publishing without attachments keeps the three-call sequence", async () =>
     telegram.restore();
   }
 });
+
+
+test("a renamed text file is not an image, whatever it claims", async () => {
+  const kv = new MemoryKv();
+  const telegram = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      multipartRequest(REPORT, [
+        {
+          name: "captura.png",
+          type: "image/png",
+          bytes: new TextEncoder().encode("<html>hola</html>"),
+        },
+      ]),
+      env(kv),
+      {} as never,
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "relay.invalid_attachment",
+    });
+    assert.equal(telegram.calls.length, 0);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("the bytes decide the type, not the declared one", async () => {
+  const kv = new MemoryKv();
+  const telegram = stubTelegram();
+  try {
+    await worker.fetch(
+      multipartRequest(REPORT, [
+        { name: "captura.jpg", type: "image/jpeg", bytes: PNG_BYTES },
+      ]),
+      env(kv),
+      {} as never,
+    );
+
+    const document = telegram.calls[2].form?.get("document");
+    assert.ok(document instanceof File);
+    assert.equal(document.type, "image/png");
+  } finally {
+    telegram.restore();
+  }
+});
