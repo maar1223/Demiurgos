@@ -152,7 +152,9 @@ Behaviour worth knowing:
 - Reopening the panel reuses the pending ticket, so it does not burn the
   three-per-hour allowance (only minting does).
 - `install_token` is returned by `/link/status` **once**, then withheld, so a
-  reload cannot re-expose it.
+  reload cannot re-expose it. It is minted **at that handover**, never at
+  redemption: no usable credential waits in KV while the user scans the QR, and
+  the store keeps only its digest.
 - `/link/state` is how the panel remembers a link after a reload: it answers
   from the identity store with the handle, the display name and the two
   permission flags only — never the account key, the numeric Telegram id or a

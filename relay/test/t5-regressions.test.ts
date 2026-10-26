@@ -258,7 +258,7 @@ test("a token in the JSON body is rejected, never accepted as a header substitut
   });
 });
 
-test("a token signs only after the handover, never at redemption", async () => {
+test("no token exists at redemption: it is minted at the handover", async () => {
   const kv = new MemoryKv();
   const started = await startLink(
     kv,
@@ -272,15 +272,18 @@ test("a token signs only after the handover, never at redemption", async () => {
     new Date("2026-10-25T12:01:00Z"),
   );
   const stored = JSON.parse(kv.map.get(`ticket:${started.ticket}`) ?? "{}") as {
-    install_token?: string;
+    install_token?: string | null;
   };
-  assert.equal(typeof stored.install_token, "string");
-  const token = stored.install_token ?? "";
-
-  assert.equal(await readIdentityByInstallToken(kv, token), null);
+  // Nothing usable waits in KV between the redemption and the poll.
+  assert.equal(stored.install_token, null);
+  for (const [key] of kv.map) {
+    assert.equal(key.startsWith("link_token:"), false);
+  }
 
   const status = await linkStatus(kv, started.ticket, new Date("2026-10-25T12:02:00Z"));
   assert.equal(status.state, "linked");
+  const token = status.state === "linked" ? status.install_token : null;
+  assert.ok(typeof token === "string");
   assert.notEqual(await readIdentityByInstallToken(kv, token), null);
 });
 

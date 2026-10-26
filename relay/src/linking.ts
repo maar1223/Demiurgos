@@ -98,7 +98,14 @@ interface TicketRecord {
   expires_at: string;
   consumed_at: string | null;
   consumed_by: string | null;
+  /**
+   * Legacy: a token minted at redemption and never stored again. Records
+   * written before the handover minted it still carry one, so a deploy cannot
+   * strand a link that was mid-flight.
+   */
   install_token: string | null;
+  /** True once the one-time token was handed to the app. */
+  token_issued: boolean;
 }
 
 export type LinkStatus =
@@ -187,6 +194,7 @@ function parseTicket(raw: string | null): TicketRecord | null {
     consumed_at: typeof value.consumed_at === "string" ? value.consumed_at : null,
     consumed_by: typeof value.consumed_by === "string" ? value.consumed_by : null,
     install_token: typeof value.install_token === "string" ? value.install_token : null,
+    token_issued: value.token_issued === true,
   };
 }
 
@@ -281,6 +289,7 @@ export async function startLink(
     consumed_at: null,
     consumed_by: null,
     install_token: null,
+    token_issued: false,
   };
   await writeTicket(kv, record, TICKET_TTL_SECONDS);
   await kv.put(pendingKey(request.account_key), record.ticket, {
@@ -330,11 +339,14 @@ export async function redeemTicket(
   };
   await writeIdentity(kv, identity);
 
+  // No token is minted here: it would sit in KV, in clear, for up to the whole
+  // ticket TTL. linkStatus mints it at the handover instead.
   const consumed: TicketRecord = {
     ...record,
     consumed_at: now.toISOString(),
     consumed_by: telegramUser.id,
-    install_token: randomToken(),
+    install_token: null,
+    token_issued: false,
   };
   await writeTicket(kv, consumed, TICKET_TTL_SECONDS);
 
@@ -363,14 +375,28 @@ export async function linkStatus(
       return { state: "expired" };
     }
     if (record.install_token !== null) {
-      // The token is registered before the ticket forgets it: a report can only
-      // present it after this handover, and losing it here would leave the link
-      // unverifiable until the account relinked.
+      // Legacy record, minted at redemption before the token moved here. Hand it
+      // over and forget it, so a deploy cannot strand a link that was in flight.
       if (record.consumed_by !== null) {
         await recordInstallToken(kv, record.install_token, record.consumed_by);
       }
-      await writeTicket(kv, { ...record, install_token: null }, TICKET_TTL_SECONDS);
+      await writeTicket(
+        kv,
+        { ...record, install_token: null, token_issued: true },
+        TICKET_TTL_SECONDS,
+      );
       return { state: "linked", identity, install_token: record.install_token };
+    }
+    if (!record.token_issued) {
+      // Minted HERE, so the ticket record never holds a usable credential. It is
+      // registered before it is answered — the app can only present it after
+      // storing it — and the store keeps a digest, never the token itself.
+      const token = randomToken();
+      if (record.consumed_by !== null) {
+        await recordInstallToken(kv, token, record.consumed_by);
+      }
+      await writeTicket(kv, { ...record, token_issued: true }, TICKET_TTL_SECONDS);
+      return { state: "linked", identity, install_token: token };
     }
     return { state: "linked", identity, install_token: null };
   }
