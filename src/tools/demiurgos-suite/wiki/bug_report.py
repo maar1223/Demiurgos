@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bug-report REST router — ``/api/bugreport`` (S1b assemble + S1c submit + S3b fallback).
 
-This module ships three endpoints:
+This module ships four endpoints:
 
 * ``GET /api/bugreport/assemble`` — build the default, sanitized report bundle:
   the app version, a fixed set of allow-listed platform facts, content-scanned
@@ -91,6 +91,16 @@ _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
 #: Logs are dropped (``included=false``) once the redacted text exceeds this cap.
 _LOGS_MAX_BYTES = 65536
+
+def _utf16_units(text: str) -> int:
+    """Length in UTF-16 code units — the unit the relay (JavaScript) enforces.
+
+    ``len()`` counts code points, so 200 emoji pass here and fail there. A cap
+    that disagrees with the other side of the contract is a cap that rejects
+    valid reports at the last hop.
+    """
+    return len(text.encode("utf-16-le")) // 2
+
 
 #: Stable ordering for the assembled platform facts.
 _PLATFORM_FACT_ORDER: Tuple[str, ...] = ("os", "os_version", "arch", "python_version")
@@ -255,7 +265,7 @@ def create_bug_report_router(
         for key, value in context_raw.items():
             if not isinstance(value, str):
                 raise problem("bugreport.not_allowlisted")
-            if len(value) > _CONTEXT_VALUE_MAX_CHARS:
+            if _utf16_units(value) > _CONTEXT_VALUE_MAX_CHARS:
                 raise problem("bugreport.too_large", field="context")
             # App-generated, but a pasted credential must still not survive.
             redacted, _hits = content_scan.redact_secrets(value)
@@ -498,7 +508,6 @@ def create_bug_report_router(
             "platform": _platform_facts(),
             "logs": _assemble_logs(),
             "allow_list": sorted(ALLOWED_FIELDS),
-            "context_keys": sorted(CONTEXT_KEYS),
             "contact_slot": True,
         }
 
@@ -602,6 +611,11 @@ def create_bug_report_router(
         token = data.get("install_token")
         if isinstance(token, str) and token:
             _store_install_token(token)
+        elif _current_install_token() is None:
+            # The relay hands the token exactly once. If it is gone — a failed
+            # store, a wiped state file, another poll that won the race — the
+            # link cannot sign reports, so "connected" would be a lie.
+            raise problem("bugreport.link_incomplete")
         identity = data.get("identity")
         identity = identity if isinstance(identity, dict) else {}
         permissions = identity.get("permissions")

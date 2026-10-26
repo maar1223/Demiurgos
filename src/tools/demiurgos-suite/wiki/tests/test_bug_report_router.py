@@ -69,14 +69,7 @@ SHARED_SECRET_FIXTURES = {
     "author-path": "spreadsheet" + "Id",
 }
 
-_TOP_LEVEL_KEYS = {
-    "app_version",
-    "platform",
-    "logs",
-    "allow_list",
-    "context_keys",
-    "contact_slot",
-}
+_TOP_LEVEL_KEYS = {"app_version", "platform", "logs", "allow_list", "contact_slot"}
 
 # Repo root: tests/ -> wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> <root>.
 _REPO_ROOT = _HERE.parents[4]
@@ -233,7 +226,6 @@ def test_assemble_returns_only_allowlisted_keys(tmp_path: Path) -> None:
     assert set(body.keys()) == _TOP_LEVEL_KEYS
     assert set(body["platform"].keys()) <= ALLOWED_PLATFORM_KEYS
     assert set(body["allow_list"]) == set(ALLOWED_FIELDS)
-    assert set(body["context_keys"]) == {"route", "view", "ui_area", "world_id"}
     assert body["app_version"] == "0.2.0"
     # No identity key of any kind is assembled.
     assert "username" not in body
@@ -1000,3 +992,72 @@ def test_link_status_expired_does_not_store_anything(tmp_path: Path) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"state": "expired"}
     assert read_install_token(state) is None
+
+
+def test_context_cap_counts_utf16_units_like_the_relay() -> None:
+    """200 emoji are 400 UTF-16 units: the relay would refuse them at the last hop."""
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context={"route": "😀" * 200})
+    )
+
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "bugreport.too_large"
+
+
+def test_link_status_refuses_to_report_linked_when_the_token_was_lost(
+    tmp_path: Path,
+) -> None:
+    """A lost one-time token means the link cannot sign: never a false success."""
+    from local_state import LocalState
+
+    class Flaky(LocalState):
+        fail_next = True
+
+        def atomic_commit(self, state):
+            if Flaky.fail_next:
+                Flaky.fail_next = False
+                raise OSError("disk full")
+            return super().atomic_commit(state)
+
+    state = Flaky(tmp_path / "state.json")
+    answers = iter(
+        [
+            (
+                200,
+                {
+                    "ok": True,
+                    "state": "linked",
+                    "install_token": "ef" * 32,
+                    "identity": {"username": "brook", "permissions": {}},
+                },
+            ),
+            (
+                200,
+                {
+                    "ok": True,
+                    "state": "linked",
+                    "install_token": None,
+                    "identity": {"username": "brook", "permissions": {}},
+                },
+            ),
+        ]
+    )
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=lambda _url, _payload, _headers=None: next(answers),
+        relay_key="k",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    first = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "T"})
+    second = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "T"})
+
+    assert first.status_code == 500
+    assert first.json()["code"] == "bugreport.storage_unavailable"
+    # The relay already consumed the token; claiming "linked" would leave the
+    # reporter permanently unsigned, so the UI is told to link again.
+    assert second.status_code == 409
+    assert second.json()["code"] == "bugreport.link_incomplete"

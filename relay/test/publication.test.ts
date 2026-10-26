@@ -114,7 +114,7 @@ test("a schema-1 report without context still renders and delivers", () => {
   const text = summaryText(report({ context: {} }));
 
   assert.equal(text.includes("🧭"), false);
-  assert.ok(bundleText(report({ context: {} }), "abc-123").includes("Where: (not provided)"));
+  assert.equal(bundleText(report({ context: {} }), "abc-123").includes("Where:"), false);
 });
 
 test("a report with no context omits the line from the summary", () => {

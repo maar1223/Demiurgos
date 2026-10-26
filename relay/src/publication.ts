@@ -90,7 +90,9 @@ export function bundleText(report: PublishableReport, reportId: string): string 
     `Report id: ${reportId}`,
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
-    `Where: ${context || "(not provided)"}`,
+    // Omitted when there is no context: a schema-1 report must keep the exact
+    // document shape it had before, not gain a line saying "nothing here".
+    ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${report.attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
