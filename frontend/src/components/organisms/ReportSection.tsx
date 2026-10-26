@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { TelegramLinkPanel } from "@/components/organisms/TelegramLinkPanel";
 import { assembleBugReport, fallbackBody, submitBugReport } from "@/api/bugReports";
 import {
   ApiError,
@@ -265,6 +266,8 @@ export function ReportSection() {
         {t("profile.bugreport.panelTitle")}
       </h3>
       <p className="mt-1 text-small text-muted">{t("profile.bugreport.intro")}</p>
+
+      <TelegramLinkPanel />
 
       {assembling ? (
         <div className="mt-4 flex items-center gap-2 text-small text-muted">
