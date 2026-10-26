@@ -94,7 +94,7 @@ A configuration value is never presented as Telegram verification.
 
 - [ ] T12 — Relay: release DM to reporters of the fixed bugs only. (`S12`) **Deferred by S12's own ordering:** the in-app notice shipped first and covers the need; a DM would require storing a report→person mapping, which is the privacy cost the current design avoids. Revisit when there are reporters to notify.
 - [x] T13 — Tests across relay, backend and frontend; `relay/README.md`, i18n in both catalogues, `payload_manifest.json` regenerated. (`S13`, `S14`). Evidence in L32; the manifest is regenerated and stable apart from its `source_commit` stamp.
-- [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S18`)
+- [x] T14 — Full checks per runner, `Risk:` lines and delivery slice boundaries recorded. (`S1`–`S18`). See L35; creating the pull requests stays the Owner's call.
 - [x] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Commit recorded in L32.
 
 ## Log
@@ -319,6 +319,24 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - **T12 deferred, not forgotten:** the DM needs a report→person mapping stored at publish time. S12 itself puts the in-app notice first and calls the DM "the optional extra"; with no reporters to notify yet, storing that mapping would be a privacy cost with no benefit. It is the first thing to build when there are users.
 - Tests: relay `release.test.ts` (7 — record/read, replace-on-repeat, newest first, duplicate ids, key guard, malformed input, id cap, summary carries the id) → **126**; backend 3 proxy cases → **50** (+5 identity, +4 payload-boot = 59); frontend `bugReportHistory.test.ts` (6) + 3 `UpdateSection` cases + the `ReportSection` local-id case → **1552**; typecheck clean.
 - `Risk: none — the new routes are additive and guarded by the existing shared key; nothing personal is stored anywhere new.`
+
+**L35 — T14: final checks and the delivery slices (2026-10-25).**
+- **Runners, all green at `8aec5f03`:** relay `npm test` **126**, `npm run typecheck` clean, `wrangler deploy --dry-run` 47 KiB; backend `test_bug_report_router.py` **50**, `test_bugreport_identity.py` **5**, `test_payload_boot.py` **4**, `test_installer_contract.py::TestPointerAndEnvSeed` **2**; frontend **1552** over 126 files, `tsc --noEmit` clean. The deployed Worker (`e4f35c4f`) serves the same relay tree as `d0714707`.
+- **Risk lines** are recorded per slice in L22, L24, L26, L28, L31 and L34; no slice was merged without one, and each high-risk slice got an independent verification round with its corrections logged.
+- **Proposed slices for `stacked-to-main` (D3), in dependency order** — 36 commits, grouped so each PR is one reviewable behaviour:
+  1. `8bfb410d..8f9267cd` — relay identity store + linking tickets behind the shared key.
+  2. `c3618a4d..ad98529b` — webhook, deployment bindings and secrets hygiene.
+  3. `ac885e09..f81e7e88` — publication into the triage group, id hardening, bare `/start`.
+  4. `62c6965f` — attribution (verified / declared / owner).
+  5. `da6f0b5f..79ea5715` — abuse control and the rolling window.
+  6. `0c26d269..4d092d64` — backend schema 2, context, install token, link proxies.
+  7. `2ef3c14e..0d7033d5` — screenshot transport.
+  8. `995c20a0..8c00db6` — frontend: screenshot picker.
+  9. `8ac00db6` — frontend: Telegram linking panel.
+  10. `1bb341b6` — installer defaults.
+  11. `d0714707..764eb5af` — release notices.
+  The `docs(odd)` commits ride with the slice they describe. Push, PR creation and merge remain the Owner's decisions, per the delivery rule.
+- One caveat kept visible: the PowerShell installer change in T15 is untested here (no `pwsh` on this machine, and the installer contract tests are POSIX-only).
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
