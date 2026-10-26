@@ -399,6 +399,13 @@ seed_env_file() {
         {
             printf 'DEMIURGOS_AUTH_MODE=local-dev\n'
             printf 'DEMIURGOS_LANGUAGE=%s\n' "$locale"
+            # A released install must know where a report goes, or no report can
+            # reach the triage group (S18). Overridable for a private relay.
+            printf 'DEMIURGOS_BUGREPORT_RELAY_URL=%s\n' \
+                "${DEMIURGOS_BUGREPORT_RELAY_URL:-https://demiurgos-bugreport-relay.demiurgos.workers.dev}"
+            # The bot handle builds the https://t.me deep link behind the QR.
+            printf 'DEMIURGOS_BUGREPORT_BOT_USERNAME=%s\n' \
+                "${DEMIURGOS_BUGREPORT_BOT_USERNAME:-ReportesDemiurgosBot}"
             if [ -n "${DEMIURGOS_WORLD:-}" ]; then
                 printf 'DEMIURGOS_WORLD=%s\n' "$DEMIURGOS_WORLD"
             fi

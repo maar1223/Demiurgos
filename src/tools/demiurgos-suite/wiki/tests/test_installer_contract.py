@@ -1066,6 +1066,13 @@ class TestPointerAndEnvSeed:
         content = env_file.read_text(encoding="utf-8")
         assert "DEMIURGOS_AUTH_MODE=local-dev" in content
         assert "DEMIURGOS_LANGUAGE=en" in content
+        # S18: a released install carries the relay URL and the bot handle, or
+        # no report can reach the group and the QR has no deep link.
+        assert (
+            "DEMIURGOS_BUGREPORT_RELAY_URL="
+            "https://demiurgos-bugreport-relay.demiurgos.workers.dev"
+        ) in content
+        assert "DEMIURGOS_BUGREPORT_BOT_USERNAME=ReportesDemiurgosBot" in content
         # Never shipped inside the payload: the seeded .env lives only in the
         # data root, not in the staged app tree.
         assert list((install_root / "app").rglob(".env")) == []

@@ -415,6 +415,20 @@ function Invoke-SeedEnvFile {
     if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
         $locale = if ($env:DEMIURGOS_LANGUAGE) { $env:DEMIURGOS_LANGUAGE } else { "es" }
         $lines = @("DEMIURGOS_AUTH_MODE=local-dev", "DEMIURGOS_LANGUAGE=$locale")
+        # A released install must know where a report goes, or no report can
+        # reach the triage group (S18). Overridable for a private relay.
+        $relayUrl = if ($env:DEMIURGOS_BUGREPORT_RELAY_URL) {
+            $env:DEMIURGOS_BUGREPORT_RELAY_URL
+        } else {
+            "https://demiurgos-bugreport-relay.demiurgos.workers.dev"
+        }
+        $botUsername = if ($env:DEMIURGOS_BUGREPORT_BOT_USERNAME) {
+            $env:DEMIURGOS_BUGREPORT_BOT_USERNAME
+        } else {
+            "ReportesDemiurgosBot"
+        }
+        $lines += "DEMIURGOS_BUGREPORT_RELAY_URL=$relayUrl"
+        $lines += "DEMIURGOS_BUGREPORT_BOT_USERNAME=$botUsername"
         if ($env:DEMIURGOS_WORLD) { $lines += "DEMIURGOS_WORLD=$($env:DEMIURGOS_WORLD)" }
         Set-Content -LiteralPath $envFile -Value $lines -Encoding ASCII
         Write-Host "install-demiurgos: seeded $envFile (DEMIURGOS_AUTH_MODE=local-dev)"

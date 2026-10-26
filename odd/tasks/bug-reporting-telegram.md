@@ -88,14 +88,14 @@ A configuration value is never presented as Telegram verification.
 - [x] T8 — Frontend: screenshot picker, thumbnails in the preview, capped at 2 × 5 MB. (`S3`, `S5`). Commit recorded in L30.
 - [x] T9 — Frontend: linking panel — QR (`qrcode`, SVG, white card, 4-module quiet zone, never inverted), deep link, copy code, countdown, regenerate, 2 s polling, auto-close. (`S8`, `S9`). Commit recorded in L31.
 - [x] T10 — Frontend: connected state with the `Abrir Telegram` action, the two permissions shown separately and a disconnect action. (`S11`). Commit recorded in L31.
-- [ ] T11 — Frontend: `Perfil → Actualizaciones` shows fixed reports, keyed by local `report_id`. (`S12`)
+- [ ] T11 — Frontend: `Perfil → Actualizaciones` shows fixed reports, keyed by local `report_id`. (`S12`) **Blocked on the release-signal decision in L33** — the app has nothing to match against until a release declares which report ids it fixes.
 
 ### T4 — Follow-up and close
 
-- [ ] T12 — Relay: release DM to reporters of the fixed bugs only. (`S12`)
-- [ ] T13 — Tests across relay, backend and frontend; `relay/README.md`, i18n in both catalogues, `payload_manifest.json` regenerated. (`S13`, `S14`)
+- [ ] T12 — Relay: release DM to reporters of the fixed bugs only. (`S12`) **Blocked on the same decision (L33).**
+- [x] T13 — Tests across relay, backend and frontend; `relay/README.md`, i18n in both catalogues, `payload_manifest.json` regenerated. (`S13`, `S14`). Evidence in L32; the manifest is regenerated and stable apart from its `source_commit` stamp.
 - [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S18`)
-- [ ] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Touches the installer/config, not the relay.
+- [x] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Commit recorded in L32.
 
 ## Log
 
@@ -300,6 +300,16 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - **Known gap, recorded:** there is no "am I already linked?" read, so a linked install sees the connect button again after a reload; relinking is idempotent, and a read route would need a relay query by account key (follow-up, not this task).
 - Tests: `TelegramLinkPanel.test.tsx` (7 — mint/QR/link/countdown, poll-to-linked with each permission, expiry stops polling, copy code, separate permission re-mint, disconnect, failed start). Frontend **1542 passed** (125 files); `tsc --noEmit` clean.
 - `Risk: item 5 (a new dependency, `qrcode` + its types).` No other high-risk item: the panel is UI, and the backend routes it calls were verified in T7a.
+
+**L32 — T15 + T13 evidence (2026-10-25).**
+- **T15:** both installers now seed `DEMIURGOS_BUGREPORT_RELAY_URL` (the deployed Worker, overridable by the same env var for a private relay) and `DEMIURGOS_BUGREPORT_BOT_USERNAME` (the handle the QR deep link needs) into a **new** install's `.env`. Existing installs stay untouched, as the bootstrap-once contract requires. The installer contract test now asserts both lines. The local `.env` got the bot username; the relay key is still the Owner's to supply.
+- **T13:** the sweep is done rather than deferred — relay **119** tests, backend router **47** + identity **5** + payload-boot **4**, frontend **1542**, all three suites green with typecheck clean. Both i18n catalogues carry every new UI key and every new server code. `payload_manifest.json` regenerated; the only change since the last regen is its `source_commit` stamp.
+- Caveat recorded: the PowerShell installer edit is untested here — no `pwsh` on this machine and the installer contract tests are POSIX-only.
+
+**L33 — T11/T12 need a decision the spec does not make (2026-10-25).** S12 says a fixed report shows in `Perfil → Actualizaciones` and that a linked reporter may get a DM, but it never says **how a release declares which reports it fixes**, and that mechanism does not exist. Everything downstream is blocked on it: the relay must store which reporter each `report_id` belongs to (today it stores only a dedup hash → delivery id), the app must keep its own ids, and something must trigger the DMs at release time.
+- The natural shape, if the Owner agrees: `POST /release {version, report_ids[]}` on the relay behind `x-relay-key`, called once per release; the relay DMs only the reporters who granted `notify_releases`, deletes the mapping afterwards, and exposes `GET /releases` so the app can show the in-app notice without Telegram.
+- The open part is workflow, not code: whether the Owner wants to run that call as part of the release protocol (`docs/RELEASING.md` + the `release-protocol` skill), or would rather derive fixed reports from the GitHub release notes. That changes who writes the report ids and when the DMs fire.
+- Consequence: S12 stays unimplemented and no reporter mapping is stored yet, which is also the privacy-friendlier default until the workflow is agreed.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
