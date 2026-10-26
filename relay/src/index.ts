@@ -53,7 +53,14 @@ import {
   type StartLinkRequest,
 } from "./linking.ts";
 import { handleTelegramUpdate } from "./telegram.ts";
-import { publishReport } from "./publication.ts";
+import {
+  ATTACHMENTS_MAX,
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENT_TYPES,
+  attachmentName,
+  publishReport,
+  type ReportAttachment,
+} from "./publication.ts";
 import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
@@ -282,6 +289,70 @@ function validateReport(raw: unknown): Report {
   };
 }
 
+interface ParsedReportBody {
+  raw: unknown;
+  attachments: ReportAttachment[];
+}
+
+/**
+ * Read a report from either a JSON body (no attachments) or a multipart body
+ * carrying the JSON in a `report` part plus up to two screenshots.
+ *
+ * Attachments never travel inside the JSON: the bundle is size-capped at 98 KB,
+ * and base64 would both break that cap and make the report harder to audit. They
+ * are delivered as documents, never as photos, so Telegram does not recompress
+ * a screenshot into uselessness.
+ */
+async function readReportBody(request: Request): Promise<ParsedReportBody> {
+  const contentType = (request.headers.get("content-type") ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "multipart/form-data") {
+    return { raw: await request.json(), attachments: [] };
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  const report = form.get("report");
+  if (typeof report !== "string") {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(report);
+  } catch {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+
+  const files = form
+    .getAll("attachments")
+    .filter((value): value is File => typeof File !== "undefined" && value instanceof File);
+  if (files.length > ATTACHMENTS_MAX) {
+    throw new RelayError(413, "relay.too_large");
+  }
+
+  const attachments: ReportAttachment[] = [];
+  for (const [index, file] of files.entries()) {
+    if (!ATTACHMENT_TYPES.has(file.type) || file.size === 0) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      throw new RelayError(413, "relay.too_large");
+    }
+    attachments.push({
+      name: attachmentName(file.name, index, file.type),
+      type: file.type,
+      bytes: await file.arrayBuffer(),
+    });
+  }
+  return { raw, attachments };
+}
+
 /** Best-effort client IP for the per-IP bucket. */
 function clientIp(request: Request): string {
   return (
@@ -300,7 +371,11 @@ function buildSubject(report: Report): string {
   return `[Demiurgos] Bug report — ${version}`;
 }
 
-function buildBody(report: Report, attribution: Attribution): string {
+function buildBody(
+  report: Report,
+  attribution: Attribution,
+  attachmentCount = 0,
+): string {
   const platform = Object.entries(report.platform)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
@@ -315,6 +390,11 @@ function buildBody(report: Report, attribution: Attribution): string {
     ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
+    // The email channel carries text only; a dropped attachment is stated, so
+    // nobody believes a screenshot arrived when it did not.
+    ...(attachmentCount === 0
+      ? []
+      : [`Attachments: ${attachmentCount} (not delivered over email)`]),
     "",
     "Description:",
     report.description || "(empty)",
@@ -333,6 +413,7 @@ async function sendViaProvider(
   env: Env,
   report: Report,
   attribution: Attribution,
+  attachmentCount = 0,
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
@@ -349,7 +430,7 @@ async function sendViaProvider(
         sender: { email: env.SENDER_FROM },
         to: [{ email: env.OWNER_INBOX }],
         subject: buildSubject(report),
-        textContent: buildBody(report, attribution),
+        textContent: buildBody(report, attribution, attachmentCount),
       }),
       signal: controller.signal,
     });
@@ -529,12 +610,16 @@ export default {
       return fail(500, "relay.not_configured");
     }
 
-    let raw: unknown;
+    let body: ParsedReportBody;
     try {
-      raw = await request.json();
-    } catch {
+      body = await readReportBody(request);
+    } catch (error) {
+      if (error instanceof RelayError) {
+        return fail(error.status, error.code);
+      }
       return fail(400, "relay.invalid_payload");
     }
+    const raw = body.raw;
 
     let report: Report;
     try {
@@ -640,9 +725,15 @@ export default {
           },
           { ...report, attribution },
           deliveryId,
+          body.attachments,
         );
       } else {
-        deliveryId = await sendViaProvider(env, report, attribution);
+        deliveryId = await sendViaProvider(
+          env,
+          report,
+          attribution,
+          body.attachments.length,
+        );
       }
     } catch (error) {
       if (error instanceof RelayError) {

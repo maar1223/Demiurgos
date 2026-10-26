@@ -31,6 +31,28 @@ hours and `delivery_id` is the original one; nothing new was posted. An optional
 `x-install-token` header carries the credential the app received when it linked
 its Telegram account; it is never part of the body.
 
+### Screenshots
+
+A report may carry up to **two screenshots**, 5 MB each. They are sent as
+`multipart/form-data`: the bundle travels in a `report` part (the same JSON as
+above) and each image is an `attachments` file part. Binaries never enter the
+JSON bundle — it is capped at 98 KB, and base64 would both break that cap and
+make the report harder to audit.
+
+```
+POST /   Content-Type: multipart/form-data
+  report       = <the JSON bundle>
+  attachments  = <image/png | image/jpeg | image/webp>   (at most two, 5 MB each)
+```
+
+Each image is published as a **document**, never as a photo: `sendPhoto`
+recompresses and destroys exactly the interface detail a screenshot exists to
+show. The order inside the topic is summary → screenshots → `report-<id>.txt`.
+A bad type, an empty file or an oversized image fails closed before any Telegram
+call; the filename is reduced to its basename so a path can never travel
+downstream. The email channel carries text only, and states how many attachments
+it could not deliver instead of pretending they arrived.
+
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for
 the wire shape. Field caps (`description` 4000, `contact` 200, `logs` 65536,
 `context` 200 per value, total 98304 bytes) are identical on both sides.

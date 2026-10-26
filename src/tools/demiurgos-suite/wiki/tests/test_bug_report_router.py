@@ -312,7 +312,7 @@ def test_submit_requires_principal() -> None:
     """No principal -> 401, and NO delivery is attempted (fail closed)."""
     calls = []
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -331,7 +331,7 @@ def test_submit_rejects_disallowed_field() -> None:
     """
     calls = []
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -362,7 +362,7 @@ def test_submit_rejects_oversized() -> None:
     """Per-field size caps reject oversized payloads with the distinct code."""
     calls = []
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -390,7 +390,7 @@ def test_submit_caps_contact_at_200_chars() -> None:
     """The optional contact is capped at 200 chars (at the cap is accepted)."""
     calls = []
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -421,7 +421,7 @@ def test_submit_rejects_total_byte_cap() -> None:
     """
     calls = []
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         calls.append((url, payload))
         return 200, {"ok": True, "delivery_id": "d1"}
 
@@ -447,7 +447,7 @@ def test_submit_rate_limited() -> None:
     def _clock():
         return clock_state["t"]
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         return 200, {"ok": True, "delivery_id": "d1"}
 
     app = _make_app(
@@ -476,7 +476,7 @@ def test_submit_relay_down_fails_closed() -> None:
     answers but reports ``ok:false`` -> ``bugreport.delivery_failed``. No secret
     or traceback is ever leaked in the response.
     """
-    def _unreachable(url, payload, headers=None):
+    def _unreachable(url, payload, headers=None, attachments=None):
         raise ConnectionError("relay unreachable: http://relay.test")
 
     app = _make_app(relay_url="http://relay.test", relay_post=_unreachable)
@@ -494,7 +494,7 @@ def test_submit_relay_down_fails_closed() -> None:
     assert resp.json()["code"] == "bugreport.relay_unavailable"
 
     # Relay answered but reported failure.
-    def _reports_failure(url, payload, headers=None):
+    def _reports_failure(url, payload, headers=None, attachments=None):
         return 200, {"ok": False, "code": "provider_error"}
 
     failing = _make_app(relay_url="http://relay.test", relay_post=_reports_failure)
@@ -515,7 +515,7 @@ def test_submit_success_stores_nothing(tmp_path: Path) -> None:
     before = sorted(p.relative_to(install_root) for p in install_root.rglob("*"))
     captured = {}
 
-    def _relay(url, payload, headers=None):
+    def _relay(url, payload, headers=None, attachments=None):
         captured["url"] = url
         captured["payload"] = payload
         return 200, {"ok": True, "delivery_id": "delivery-42"}
@@ -695,7 +695,7 @@ def test_payload_manifest_includes_bug_report_modules() -> None:
 def _capture(captured: list) -> Callable:
     """A relay stub that records ``(url, payload, headers)``."""
 
-    def _send(url, payload, headers=None):
+    def _send(url, payload, headers=None, attachments=None):
         captured.append({"url": url, "payload": payload, "headers": dict(headers or {})})
         return 200, {"ok": True, "delivery_id": "delivery-ctx"}
 
@@ -822,7 +822,7 @@ def test_without_a_token_no_header_is_sent() -> None:
 def _link_relay(captured: list, routes: dict):
     """A relay stub routing on the URL suffix, recording every call."""
 
-    def _send(url, payload, headers=None):
+    def _send(url, payload, headers=None, attachments=None):
         captured.append({"url": url, "payload": payload, "headers": dict(headers or {})})
         for suffix, answer in routes.items():
             if url.endswith(suffix):
@@ -1046,7 +1046,7 @@ def test_link_status_refuses_to_report_linked_when_the_token_was_lost(
     )
     app = _make_app(
         relay_url="http://relay.test",
-        relay_post=lambda _url, _payload, _headers=None: next(answers),
+        relay_post=lambda _url, _payload, _headers=None, _attachments=None: next(answers),
         relay_key="k",
         local_state=lambda: state,
         vault_active=lambda: False,
@@ -1061,3 +1061,142 @@ def test_link_status_refuses_to_report_linked_when_the_token_was_lost(
     # reporter permanently unsigned, so the UI is told to link again.
     assert second.status_code == 409
     assert second.json()["code"] == "bugreport.link_incomplete"
+
+
+# ---------------------------------------------------------------------------
+# Screenshot attachments (S5) — multipart, never inside the JSON bundle
+# ---------------------------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 8
+
+
+def _capture_parts(captured: list) -> Callable:
+    def _send(url, payload, headers=None, attachments=None):
+        captured.append(
+            {
+                "url": url,
+                "payload": payload,
+                "headers": dict(headers or {}),
+                "attachments": list(attachments or []),
+            }
+        )
+        return 200, {"ok": True, "delivery_id": "delivery-att"}
+
+    return _send
+
+
+def _multipart(report: dict, files: list) -> dict:
+    return {
+        "data": {"report": json.dumps(report)},
+        "files": [
+            ("attachments", (name, content, mime)) for name, content, mime in files
+        ],
+    }
+
+
+def test_two_screenshots_are_forwarded_as_parts_beside_the_bundle() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(
+            _valid_payload(context={"route": "/perfil"}),
+            [
+                ("pantalla-1.png", PNG_BYTES, "image/png"),
+                ("pantalla-2.png", PNG_BYTES, "image/jpeg"),
+            ],
+        ),
+    )
+
+    assert resp.status_code == 200, resp.text
+    sent = captured[0]
+    assert [name for name, _data, _mime in sent["attachments"]] == [
+        "pantalla-1.png",
+        "pantalla-2.png",
+    ]
+    assert [mime for _name, _data, mime in sent["attachments"]] == [
+        "image/png",
+        "image/jpeg",
+    ]
+    assert sent["attachments"][0][1] == PNG_BYTES
+    # Binaries never enter the JSON bundle.
+    assert "PNG" not in json.dumps(sent["payload"])
+
+
+def test_a_third_screenshot_is_refused() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(
+            _valid_payload(),
+            [
+                ("a.png", PNG_BYTES, "image/png"),
+                ("b.png", PNG_BYTES, "image/png"),
+                ("c.png", PNG_BYTES, "image/png"),
+            ],
+        ),
+    )
+
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "bugreport.too_large"
+
+
+def test_a_non_image_attachment_is_refused() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("notes.txt", b"hello", "text/plain")]),
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.invalid_attachment"
+
+
+def test_an_oversized_screenshot_is_refused() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("huge.png", b"0" * (5 * 1024 * 1024 + 1), "image/png")]),
+    )
+
+    assert resp.status_code == 413
+    assert resp.json()["code"] == "bugreport.too_large"
+
+
+def test_an_attachment_filename_never_carries_a_path() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("../../evil/captura.png", PNG_BYTES, "image/png")]),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured[0]["attachments"][0][0] == "captura.png"
+
+
+def test_multipart_without_the_report_part_is_refused() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts([]))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        files=[("attachments", ("a.png", PNG_BYTES, "image/png"))],
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.not_allowlisted"
+
+
+def test_a_json_submit_still_forwards_no_attachments() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    assert captured[0]["attachments"] == []

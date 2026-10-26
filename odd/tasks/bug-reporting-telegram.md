@@ -84,7 +84,7 @@ A configuration value is never presented as Telegram verification.
 ### T3 — App
 
 - [x] T7a — Backend: `schema: 2` with `context`, the `x-install-token` header, the stable `account_key` (vault username or persisted `install_id`) and the `/link/start|status|revoke` proxies; scrubbing unchanged (`S4`, `S7`, `S10`, `S15`). Commit recorded in L26.
-- [ ] T7b — Attachments transport (2 × 5 MB, delivered as documents) across backend → relay → group; deferred to pair with T8, since the upload shape and the picker are one unit and no client can send an attachment before T8 exists.
+- [x] T7b — Attachments transport: `multipart/form-data` with the bundle in a `report` part and up to two 5 MB images as `attachments` file parts, backend → relay → group, delivered as documents (`S5`, `S15`). Commit recorded in L28. The picker itself is T8.
 - [ ] T8 — Frontend: screenshot picker, thumbnails in the preview, capped at 2 × 5 MB. (`S3`, `S5`)
 - [ ] T9 — Frontend: linking modal — QR (`qrcode`), deep link, copy code, countdown, regenerate, 2 s polling, auto-close. (`S8`, `S9`)
 - [ ] T10 — Frontend: success screen with the optional `Abrir Telegram` action and the two separate permissions. (`S11`)
@@ -263,6 +263,14 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - **Recheck (same verifier, same probes): B1 FIXED, B2 FIXED, A1 FIXED, A3 FIXED, no new blocker.** The schema-1 document matches baseline byte-for-byte (UUID-normalized, `diff` empty); a failed store followed by a tokenless poll answers `500` then `409` and never `linked`, while a normal second poll still answers `linked`; `/assemble` keys match baseline; 200 ASCII and 100 emoji pass, 201 ASCII and 101 emoji are refused at both hops.
 - One out-of-domain note from the recheck: a hand-crafted lone surrogate would now be reported as over the cap instead of raising, but a real HTTP client cannot even encode that body — no test added, since it cannot be exercised.
 - `npm test` (relay) -> **103 passed**; backend router+identity -> **41 passed**; `test_payload_boot` -> 4 passed.
+
+**L28 — T7b evidence (2026-10-25).** Screenshots now reach the group without ever entering the JSON bundle.
+- **Transport decision:** `multipart/form-data` — the bundle in a `report` part, images as `attachments` file parts. Rejected base64-in-JSON: the bundle is capped at 98 KB and base64 of 5 MB would break the contract and pollute the audited payload. The JSON path stays valid, so an older client keeps working.
+- **Backend** (`bug_report.py`): `submit` accepts either content type; `_attachment_parts` enforces ≤2, ≤5 MB, `image/png|jpeg|webp`, non-empty, and reduces the filename to its basename (`_safe_attachment_name`). `_deliver` forwards multipart when there are parts and JSON otherwise. New code `bugreport.invalid_attachment` (400); count/size map to `bugreport.too_large` (413).
+- **Relay** (`publication.ts`, `index.ts`): `readReportBody` parses either content type, `attachmentName` strips paths and control characters, and each image goes out as a **document** (`sendDocument`, never `sendPhoto`) between the summary and `report-<id>.txt` — a test pins that order. The email sink states `Attachments: N (not delivered over email)` instead of pretending they arrived.
+- Security posture: a bad type, an empty file or an oversized image fails before any Telegram call; the filename can never carry a path; the binary never appears in the summary, the bundle or the email body.
+- Tests: `relay/test/attachments.test.ts` (8 — document order, third file, oversized, bad type/empty, traversal name, missing report part, email note, no-attachment sequence) and 7 new backend cases (parts forwarded beside the bundle, third file, bad type, oversized, traversal, missing `report`, JSON path still attachment-free). Relay **111 passed**; backend router **43 passed**; `npx wrangler deploy --dry-run` 44.46 KiB.
+- `Risk: item 2 (untrusted binary upload: size, type and filename) and item 3 (a second wire shape).` Independent verification required.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.

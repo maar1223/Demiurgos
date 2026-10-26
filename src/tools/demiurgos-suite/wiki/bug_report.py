@@ -8,7 +8,9 @@ This module ships four endpoints:
   logs (default-on), the optional-contact slot flag, and the allow-list itself.
 * ``POST /api/bugreport/submit`` — re-validate the raw payload against the same
   allow-list, enforce the size caps and the per-principal rate limit, then
-  deliver the bundle through a separately-deployable relay. The submit is
+  deliver the bundle through a separately-deployable relay. Accepts JSON, or
+  ``multipart/form-data`` carrying the bundle in a ``report`` part plus up to
+  two screenshots as ``attachments`` file parts (delivered as documents). The submit is
   STATELESS: nothing about the report, a copy or a derived record is persisted.
 * ``POST /api/bugreport/link/start|status|revoke`` — the Telegram linking
   surface. These proxy the relay's ``/link/*`` routes with the shared
@@ -113,6 +115,13 @@ def _utf16_units(text: str) -> int:
 _PLATFORM_FACT_ORDER: Tuple[str, ...] = ("os", "os_version", "arch", "python_version")
 
 # --- Submit caps (report-submission) --------------------------------------
+#: Screenshot attachments (S5): at most two, 5 MB each, images only, and they
+#: travel as multipart file parts — never inside the 98 KB JSON bundle.
+_ATTACHMENTS_MAX = 2
+_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+_ATTACHMENT_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+_ATTACHMENT_NAME_MAX = 64
+
 #: Per-field character caps and the total serialized-byte cap.
 _DESCRIPTION_MAX_CHARS = 4000
 _CONTACT_MAX_CHARS = 200
@@ -151,10 +160,42 @@ def _platform_facts() -> Dict[str, str]:
     }
 
 
+def _safe_attachment_name(raw: str | None, index: int, mime: str) -> str:
+    """A filename safe to hand downstream: no paths, no control characters."""
+    base = (raw or "").replace("\\", "/").split("/")[-1]
+    cleaned = "".join(ch for ch in base if ord(ch) >= 32 and ord(ch) != 127).strip()
+    if cleaned:
+        return cleaned[:_ATTACHMENT_NAME_MAX]
+    extension = "jpg" if mime == "image/jpeg" else mime.split("/")[-1] or "png"
+    return "screenshot-%d.%s" % (index + 1, extension)
+
+
+def _attachment_parts(
+    uploads: List[Any],
+) -> List[Tuple[str, bytes, str]]:
+    """Validate the uploaded screenshots; return ``(name, bytes, mime)`` parts."""
+    if len(uploads) > _ATTACHMENTS_MAX:
+        raise problem("bugreport.too_large", field="attachments")
+    parts: List[Tuple[str, bytes, str]] = []
+    for index, upload in enumerate(uploads):
+        mime = (getattr(upload, "content_type", "") or "").split(";")[0].strip().lower()
+        if mime not in _ATTACHMENT_TYPES:
+            raise problem("bugreport.invalid_attachment")
+        data = upload.file.read() if hasattr(upload, "file") else b""
+        if not data:
+            raise problem("bugreport.invalid_attachment")
+        if len(data) > _ATTACHMENT_MAX_BYTES:
+            raise problem("bugreport.too_large", field="attachments")
+        name = _safe_attachment_name(getattr(upload, "filename", None), index, mime)
+        parts.append((name, data, mime))
+    return parts
+
+
 def _default_relay_post(
     url: str,
     payload: Dict[str, Any],
     headers: Dict[str, str] | None = None,
+    attachments: List[Tuple[str, bytes, str]] | None = None,
 ) -> Tuple[int, Dict[str, Any]]:
     """Production relay invocation: ``POST`` the bundle to ``url`` via httpx.
 
@@ -165,9 +206,18 @@ def _default_relay_post(
     """
     import httpx  # local import keeps the module import surface light
 
-    resp = httpx.post(
-        url, json=payload, headers=headers or {}, timeout=_RELAY_TIMEOUT_SECONDS
-    )
+    if attachments:
+        resp = httpx.post(
+            url,
+            data={"report": json.dumps(payload, ensure_ascii=False)},
+            files=[("attachments", part) for part in attachments],
+            headers=headers or {},
+            timeout=_RELAY_TIMEOUT_SECONDS,
+        )
+    else:
+        resp = httpx.post(
+            url, json=payload, headers=headers or {}, timeout=_RELAY_TIMEOUT_SECONDS
+        )
     try:
         data = resp.json()
     except ValueError:
@@ -182,7 +232,7 @@ def create_bug_report_router(
     install_root: Path | None,
     relay_url: str | None = None,
     issue_url: str = DEFAULT_ISSUE_URL,
-    relay_post: Callable[[str, dict, dict], Tuple[int, dict]] | None = None,
+    relay_post: Callable[[str, dict, dict, list], Tuple[int, dict]] | None = None,
     relay_key: str | None = None,
     bot_username: str | None = None,
     local_state: Callable[[], LocalState] | None = None,
@@ -348,7 +398,7 @@ def create_bug_report_router(
             raise problem("bugreport.relay_unavailable")
         try:
             status, data = _relay_sender()(
-                relay_url.rstrip("/") + path, payload, {"x-relay-key": relay_key}
+                relay_url.rstrip("/") + path, payload, {"x-relay-key": relay_key}, []
             )
         except Exception:  # noqa: BLE001 - network/config failure fails closed
             raise problem("bugreport.relay_unavailable")
@@ -362,7 +412,10 @@ def create_bug_report_router(
             raise problem("bugreport.relay_unavailable")
         raise problem("bugreport.delivery_failed")
 
-    def _deliver(bundle: Dict[str, Any]) -> Dict[str, Any]:
+    def _deliver(
+        bundle: Dict[str, Any],
+        attachments: List[Tuple[str, bytes, str]] | None = None,
+    ) -> Dict[str, Any]:
         """Forward the validated bundle to the relay; fail closed on any failure.
 
         The contract is vendor-neutral: ``{schema, app_version, platform,
@@ -394,7 +447,7 @@ def create_bug_report_router(
         if token:
             headers["x-install-token"] = token
         try:
-            status, data = _relay_sender()(relay_url, payload, headers)
+            status, data = _relay_sender()(relay_url, payload, headers, attachments or [])
         except Exception:  # noqa: BLE001 - network/config failure fails closed
             raise problem("bugreport.relay_unavailable")
         if not isinstance(data, dict):
@@ -529,12 +582,31 @@ def create_bug_report_router(
         principal = _guard(request)
         principal_id = str(getattr(principal, "id", None) or id(principal))
         _check_rate_limit(principal_id)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
-            raise problem("bugreport.not_allowlisted")
+        content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+        attachments: List[Tuple[str, bytes, str]] = []
+        if content_type == "multipart/form-data":
+            # The JSON bundle travels in the `report` part; binaries never enter
+            # the bundle, so the 98 KB contract and the preview gate both hold.
+            try:
+                form = await request.form()
+            except Exception:  # noqa: BLE001
+                raise problem("bugreport.not_allowlisted")
+            report_raw = form.get("report")
+            if not isinstance(report_raw, str):
+                raise problem("bugreport.not_allowlisted")
+            try:
+                body = json.loads(report_raw)
+            except Exception:  # noqa: BLE001
+                raise problem("bugreport.not_allowlisted")
+            uploads = [value for key, value in form.multi_items() if key == "attachments"]
+            attachments = _attachment_parts(uploads)
+        else:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
+                raise problem("bugreport.not_allowlisted")
         bundle = _validate_and_cap(body)
-        return _deliver(bundle)
+        return _deliver(bundle, attachments)
 
     def _link_body_status() -> None:
         raise problem("bugreport.not_allowlisted")

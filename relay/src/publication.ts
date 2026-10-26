@@ -15,6 +15,19 @@
 import type { Attribution } from "./attribution.ts";
 
 const TELEGRAM_API = "https://api.telegram.org";
+
+/** Screenshot attachments ride the same document path, capped by the client. */
+export const ATTACHMENTS_MAX = 2;
+export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+export const ATTACHMENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const ATTACHMENT_NAME_MAX = 64;
+
+/** One user-chosen screenshot, already validated by the caller. */
+export interface ReportAttachment {
+  name: string;
+  type: string;
+  bytes: ArrayBuffer;
+}
 const REQUEST_TIMEOUT_MS = 10000;
 const TOPIC_NAME_MAX = 128;
 const SUMMARY_MAX = 3800;
@@ -135,6 +148,55 @@ async function callTelegram(
   }
 }
 
+/** A filename safe to hand to Telegram: no paths, no control characters. */
+export function attachmentName(raw: string, index: number, type: string): string {
+  const base = raw.split(/[\\/]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  const name = cleaned.length === 0 ? "" : cleaned.slice(0, ATTACHMENT_NAME_MAX);
+  if (name.length > 0) {
+    return name;
+  }
+  const extension = type === "image/jpeg" ? "jpg" : (type.split("/").pop() || "png");
+  return `screenshot-${index + 1}.${extension}`;
+}
+
+/** Send one screenshot as a DOCUMENT, never as a photo: no recompression. */
+async function sendAttachment(
+  env: PublicationEnv,
+  reportId: string,
+  index: number,
+  attachment: ReportAttachment,
+  threadId: number | null,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const body = new FormData();
+  body.set("chat_id", env.TELEGRAM_CHAT_ID);
+  if (threadId !== null) {
+    body.set("message_thread_id", String(threadId));
+  }
+  body.set("caption", truncate(`Captura ${index + 1} · ${reportId}`, 1024));
+  body.set(
+    "document",
+    new Blob([attachment.bytes], { type: attachment.type }),
+    attachment.name,
+  );
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(
+      `${TELEGRAM_API}/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`,
+      { method: "POST", body, signal: controller.signal },
+    );
+    if (!response.ok) {
+      throw new Error("telegram.sendDocument.rejected");
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function sendBundle(
   env: PublicationEnv,
   reportId: string,
@@ -181,6 +243,7 @@ export async function publishReport(
   env: PublicationEnv,
   report: PublishableReport,
   reportId: string,
+  attachments: ReportAttachment[] = [],
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ threadId: number | null }> {
   let threadId: number | null = null;
@@ -207,6 +270,10 @@ export async function publishReport(
     message.message_thread_id = threadId;
   }
   await callTelegram(env, "sendMessage", message, fetchImpl);
+
+  for (const [index, attachment] of attachments.entries()) {
+    await sendAttachment(env, reportId, index, attachment, threadId, fetchImpl);
+  }
 
   await sendBundle(
     env,
