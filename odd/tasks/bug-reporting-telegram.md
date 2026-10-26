@@ -331,7 +331,7 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
   5. `da6f0b5f..79ea5715` — abuse control and the rolling window.
   6. `0c26d269..4d092d64` — backend schema 2, context, install token, link proxies.
   7. `2ef3c14e..0d7033d5` — screenshot transport.
-  8. `995c20a0..8c00db6` — frontend: screenshot picker.
+  8. `995c20a0..98852ea4` — frontend: screenshot picker.
   9. `8ac00db6` — frontend: Telegram linking panel.
   10. `1bb341b6` — installer defaults.
   11. `d0714707..764eb5af` — release notices.
