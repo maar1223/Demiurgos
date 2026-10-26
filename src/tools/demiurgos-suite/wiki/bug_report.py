@@ -98,8 +98,15 @@ def _utf16_units(text: str) -> int:
     ``len()`` counts code points, so 200 emoji pass here and fail there. A cap
     that disagrees with the other side of the contract is a cap that rejects
     valid reports at the last hop.
+
+    A lone surrogate (hand-crafted JSON, never a real route) cannot be encoded;
+    it is reported as over the cap so the caller refuses it like any other
+    unusable value instead of raising a 500.
     """
-    return len(text.encode("utf-16-le")) // 2
+    try:
+        return len(text.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        return _CONTEXT_VALUE_MAX_CHARS + 1
 
 
 #: Stable ordering for the assembled platform facts.
