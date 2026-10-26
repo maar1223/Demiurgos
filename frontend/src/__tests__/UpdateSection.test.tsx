@@ -9,9 +9,11 @@ import {
 } from "@/api/updates";
 import { apiFetch } from "@/api/client";
 import { getAppConfig } from "@/api/config";
+import { getBugReportReleases } from "@/api/bugReports";
 import { getAuthStatus, logoutSession } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
 import { ApiError } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import type { Mock } from "vitest";
 
 vi.mock("@/api/updates", () => ({
@@ -22,6 +24,10 @@ vi.mock("@/api/updates", () => ({
 
 vi.mock("@/api/config", () => ({
   getAppConfig: vi.fn(),
+}));
+
+vi.mock("@/api/bugReports", () => ({
+  getBugReportReleases: vi.fn(),
 }));
 
 vi.mock("@/api/wiki", () => ({
@@ -58,6 +64,9 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     (logoutSession as Mock).mockReset();
     (getAuthStatus as Mock).mockReset();
     (apiFetch as Mock).mockReset();
+    (getBugReportReleases as Mock).mockReset();
+    (getBugReportReleases as Mock).mockResolvedValue({ releases: [] });
+    localStorage.clear();
     (getAppConfig as Mock).mockReset();
     (getAppConfig as Mock).mockResolvedValue({
       language: "es",
@@ -356,5 +365,60 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
       credentials: "same-origin",
       timeout: 90_000,
     });
+  });
+});
+
+
+describe("UpdateSection — fixed reports (S12)", () => {
+  beforeEach(() => {
+    (getBugReportReleases as Mock).mockReset();
+    (getBugReportReleases as Mock).mockResolvedValue({ releases: [] });
+    localStorage.clear();
+  });
+
+  it("shows the releases that fixed this install's own reports", async () => {
+    localStorage.setItem(
+      "demiurgos.bugreport.reports",
+      JSON.stringify([
+        { id: "aaaa1111-2222", at: "2026-10-01T10:00:00Z", app_version: "0.4.0" },
+      ]),
+    );
+    (getBugReportReleases as Mock).mockResolvedValue({
+      releases: [
+        { version: "v0.5.0", report_ids: ["aaaa1111-2222"], at: "2026-10-25T00:00:00Z" },
+        { version: "v0.4.1", report_ids: ["otro-reporte"], at: "2026-10-20T00:00:00Z" },
+      ],
+    });
+
+    render(<UpdateSection />);
+
+    const block = await screen.findByTestId("updates-fixed-reports");
+    expect(within(block).getByTestId("updates-fixed-report")).toHaveTextContent(
+      tEs("profile.updates.fixedIn", { id: "aaaa1111", version: "v0.5.0" }),
+    );
+    // A release that touches nobody's report is not shown.
+    expect(within(block).queryByText(/v0\.4\.1/)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing when this install reported nothing, without an error", async () => {
+    (getBugReportReleases as Mock).mockResolvedValue({
+      releases: [{ version: "v0.5.0", report_ids: ["ajeno"], at: "2026-10-25" }],
+    });
+
+    render(<UpdateSection />);
+
+    await waitFor(() => expect(getBugReportReleases).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("updates-fixed-reports")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the panel working when the release list is unavailable", async () => {
+    (getBugReportReleases as Mock).mockRejectedValue(new ApiError(502, "down"));
+
+    render(<UpdateSection />);
+
+    await waitFor(() => expect(getBugReportReleases).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("updates-fixed-reports")).not.toBeInTheDocument();
+    expect(screen.getByTestId("update-current-version")).toBeInTheDocument();
   });
 });

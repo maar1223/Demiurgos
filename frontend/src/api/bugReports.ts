@@ -3,6 +3,7 @@ import { API_BASE_URL } from "@/lib/constants";
 import type {
   BugReportBundle,
   BugReportFallback,
+  BugReportRelease,
   BugReportLinkStatus,
   BugReportLinkTicket,
   BugReportSubmitPayload,
@@ -137,5 +138,14 @@ export function revokeTelegramLink(): Promise<{ revoked: boolean }> {
       body: JSON.stringify({}),
       timeout: 15_000,
     },
+  );
+}
+
+/** GET /api/bugreport/releases — released versions and the reports they fixed.
+ *  The list is public; the app matches the ids it kept locally (S12). */
+export function getBugReportReleases(): Promise<{ releases: BugReportRelease[] }> {
+  return apiFetch<{ releases: BugReportRelease[] }>(
+    `${API_BASE_URL}/api/bugreport/releases`,
+    { credentials: "same-origin", timeout: 10_000 },
   );
 }
