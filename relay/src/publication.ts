@@ -79,8 +79,14 @@ function pairs(values: Record<string, string>): string {
     .join(" ");
 }
 
-/** The message shown in the topic: what fits, with the rest in the document. */
-export function summaryText(report: PublishableReport): string {
+/**
+ * The message shown in the topic: what fits, with the rest in the document.
+ *
+ * With the report id it ends with it, because that is the value the Owner copies
+ * into a release ("this version fixed A, B") — reading it out of the attached
+ * document would be needless friction.
+ */
+export function summaryText(report: PublishableReport, reportId?: string): string {
   const platform = pairs(report.platform);
   const context = pairs(report.context);
   const header = [
@@ -90,7 +96,9 @@ export function summaryText(report: PublishableReport): string {
     report.attribution.line,
   ].filter((line): line is string => line !== null);
   const body = report.description.trim() === "" ? "(sin descripción)" : report.description;
-  return truncate([...header, "", body].join("\n"), SUMMARY_MAX);
+  const footer = reportId === undefined ? [] : ["", `🆔 ${reportId}`];
+  // The id goes last so truncation of a huge description can never hide it.
+  return truncate([...header, "", body, ...footer].join("\n"), SUMMARY_MAX);
 }
 
 /** The complete report, delivered as a document so nothing is truncated. */
@@ -299,7 +307,7 @@ export async function publishReport(
 
   const message: Record<string, unknown> = {
     chat_id: env.TELEGRAM_CHAT_ID,
-    text: summaryText(report),
+    text: summaryText(report, reportId),
     link_preview_options: { is_disabled: true },
   };
   if (threadId !== null) {

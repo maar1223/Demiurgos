@@ -730,6 +730,22 @@ def create_bug_report_router(
             },
         }
 
+    @router.get("/releases")
+    def releases(request: Request) -> Dict[str, Any]:
+        """Released versions and the report ids each one fixed (S12).
+
+        The list is public and anonymous — no reporter, no contact — so the app can
+        match the ids it kept locally and show "this was fixed" without a Telegram
+        link. A relay failure is reported as unavailable instead of pretending
+        there is nothing to show.
+        """
+        _guard(request)
+        status, data = _link_call("/releases", {})
+        if not (200 <= status < 300) or data.get("ok") is not True:
+            raise problem("bugreport.relay_unavailable")
+        records = data.get("releases")
+        return {"releases": records if isinstance(records, list) else []}
+
     @router.post("/link/revoke")
     async def link_revoke(request: Request) -> Dict[str, Any]:
         """Unlink this install: the relay drops the binding and blocks the token."""

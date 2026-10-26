@@ -63,6 +63,7 @@ import {
   type ReportAttachment,
 } from "./publication.ts";
 import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
+import { normalizeRelease, readReleases, recordRelease } from "./release.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
@@ -558,6 +559,64 @@ async function handleLink(
 }
 
 /**
+ * Release records: "version X fixed reports A, B" (S12).
+ *
+ * Guarded by the same shared key as the identity routes, and POST for both
+ * directions so one guard and one call shape cover every back-office route.
+ * Nothing personal is stored: the app matches its own report ids against this
+ * public list, which is what keeps the in-app notice free of a person→report
+ * mapping.
+ */
+async function handleRelease(
+  request: Request,
+  env: Env,
+  path: string,
+): Promise<Response> {
+  if (!env.LINKS || !env.RELAY_KEY) {
+    return fail(500, "relay.not_configured");
+  }
+  if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
+    return fail(401, "relay.unauthorized");
+  }
+  if (request.method !== "POST") {
+    return fail(405, "relay.method_not_allowed");
+  }
+
+  if (path === "/releases") {
+    return jsonResponse({ ok: true, releases: await readReleases(env.LINKS) }, 200);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return fail(400, "relay.invalid_payload");
+  }
+  let release: { version: string; report_ids: string[] };
+  try {
+    release = normalizeRelease(body);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "release.invalid_payload";
+    return fail(code === "release.too_large" ? 413 : 400, code);
+  }
+  const releases = await recordRelease(
+    env.LINKS,
+    release.version,
+    release.report_ids,
+    new Date(),
+  );
+  return jsonResponse(
+    {
+      ok: true,
+      version: release.version,
+      report_ids: release.report_ids,
+      releases: releases.length,
+    },
+    200,
+  );
+}
+
+/**
  * Telegram webhook. Authenticated by the secret header Telegram echoes, not by
  * the backend key: the caller here is Telegram, not the app.
  */
@@ -607,6 +666,9 @@ export default {
     }
     if (LINK_PATHS.has(url.pathname)) {
       return handleLink(request, env, url.pathname);
+    }
+    if (url.pathname === "/release" || url.pathname === "/releases") {
+      return handleRelease(request, env, url.pathname);
     }
     if (url.pathname !== "/") {
       return fail(404, "relay.not_found");
