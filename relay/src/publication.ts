@@ -12,6 +12,8 @@
  * thread — instead of being lost.
  */
 
+import type { Attribution } from "./attribution.ts";
+
 const TELEGRAM_API = "https://api.telegram.org";
 const REQUEST_TIMEOUT_MS = 10000;
 const TOPIC_NAME_MAX = 128;
@@ -30,16 +32,28 @@ export interface PublishableReport {
   description: string;
   contact: string | null;
   logs: string | null;
+  /**
+   * Who sent it and how that was established. Required on purpose: every
+   * delivery path must state it, and the compiler refuses a report that forgot.
+   */
+  attribution: Attribution;
 }
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
-/** Forum topic names are capped by Telegram and cannot be empty. */
+/**
+ * Forum topic names are capped by Telegram and cannot be empty.
+ *
+ * The attribution tag leads, so truncation can only ever cut the name, never
+ * the statement of how the identity was established: a typed `@handle` and a
+ * Telegram-verified one never produce the same topic.
+ */
 export function topicName(report: PublishableReport): string {
   const version = report.app_version === "" ? "unknown" : report.app_version;
-  const who = report.contact ?? "sin contacto";
+  const { tag, label } = report.attribution;
+  const who = label === tag || label.length === 0 ? tag : `${tag} · ${label}`;
   return truncate(`BUG · v${version} · ${who}`, TOPIC_NAME_MAX);
 }
 
@@ -51,7 +65,7 @@ export function summaryText(report: PublishableReport): string {
   const header = [
     `🐞 v${report.app_version === "" ? "unknown" : report.app_version}`,
     platform === "" ? null : `🖥️ ${platform}`,
-    `👤 ${report.contact ?? "sin contacto"}`,
+    report.attribution.line,
   ].filter((line): line is string => line !== null);
   const body = report.description.trim() === "" ? "(sin descripción)" : report.description;
   return truncate([...header, "", body].join("\n"), SUMMARY_MAX);
@@ -68,6 +82,7 @@ export function bundleText(report: PublishableReport, reportId: string): string 
     `Report id: ${reportId}`,
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    `Reported by: ${report.attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
     "Description:",
@@ -113,6 +128,7 @@ async function sendBundle(
   env: PublicationEnv,
   reportId: string,
   text: string,
+  attributionTag: string,
   threadId: number | null,
   fetchImpl: typeof fetch,
 ): Promise<void> {
@@ -121,7 +137,10 @@ async function sendBundle(
   if (threadId !== null) {
     body.set("message_thread_id", String(threadId));
   }
-  body.set("caption", truncate(`Reporte completo · ${reportId}`, 1024));
+  body.set(
+    "caption",
+    truncate(`Reporte completo · ${reportId} · ${attributionTag}`, 1024),
+  );
   body.set(
     "document",
     new Blob([text], { type: "text/plain;charset=utf-8" }),
@@ -178,7 +197,14 @@ export async function publishReport(
   }
   await callTelegram(env, "sendMessage", message, fetchImpl);
 
-  await sendBundle(env, reportId, bundleText(report, reportId), threadId, fetchImpl);
+  await sendBundle(
+    env,
+    reportId,
+    bundleText(report, reportId),
+    report.attribution.tag,
+    threadId,
+    fetchImpl,
+  );
 
   return { threadId };
 }

@@ -22,6 +22,12 @@
  *   -> 200 { "ok": true,  "delivery_id": "..." }
  *   -> 4xx/5xx { "ok": false, "code": "<relay code>" }
  *
+ * An optional `x-install-token` header carries the credential the app received
+ * when it linked its Telegram account. It is a header on purpose: the token
+ * never enters the bundle, so it can never be published to the group or reach a
+ * log. Its only job is letting the relay establish who is reporting, instead of
+ * trusting a caller-supplied claim.
+ *
  * Fail-closed: any validation, configuration, rate-limit or provider error
  * returns `{ "ok": false, "code": ... }` with a non-secret message. No
  * credential, token, or upstream response body is ever echoed to the caller.
@@ -46,6 +52,7 @@ import {
 } from "./linking.ts";
 import { handleTelegramUpdate } from "./telegram.ts";
 import { publishReport } from "./publication.ts";
+import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
@@ -83,6 +90,12 @@ export interface Env {
    * value fails closed (`relay.not_configured`).
    */
   RELAY_KEY: string;
+  /**
+   * Comma- or space-separated Telegram user ids of the Owner (optional). A
+   * linked account on this list is labelled `owner`; an unlinked one never is,
+   * because configuration must never be presented as verification.
+   */
+  OWNER_TELEGRAM_USER_IDS?: string;
 }
 
 /** Wire contract version, must match `_RELAY_SCHEMA` in `bug_report.py`. */
@@ -266,7 +279,7 @@ function buildSubject(report: Report): string {
   return `[Demiurgos] Bug report — ${version}`;
 }
 
-function buildBody(report: Report): string {
+function buildBody(report: Report, attribution: Attribution): string {
   const platform = Object.entries(report.platform)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
@@ -275,6 +288,7 @@ function buildBody(report: Report): string {
     "",
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    `Reported by: ${attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
     "Description:",
@@ -290,7 +304,11 @@ function buildBody(report: Report): string {
  * code on timeout, network failure, or a non-2xx provider response. The
  * provider response body is never propagated to the caller.
  */
-async function sendViaProvider(env: Env, report: Report): Promise<string> {
+async function sendViaProvider(
+  env: Env,
+  report: Report,
+  attribution: Attribution,
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   let response: Response;
@@ -306,7 +324,7 @@ async function sendViaProvider(env: Env, report: Report): Promise<string> {
         sender: { email: env.SENDER_FROM },
         to: [{ email: env.OWNER_INBOX }],
         subject: buildSubject(report),
-        textContent: buildBody(report),
+        textContent: buildBody(report, attribution),
       }),
       signal: controller.signal,
     });
@@ -526,6 +544,17 @@ export default {
       return fail(503, "relay.rate_limit_unavailable");
     }
 
+    // Who is reporting is resolved here, from a credential the relay issued —
+    // never from a claim in the body. A missing, unknown or revoked token simply
+    // falls back to what the reporter typed.
+    const installToken = (request.headers.get("x-install-token") ?? "").trim();
+    const attribution = await resolveAttribution(
+      env.LINKS,
+      installToken.length === 0 ? null : installToken,
+      report.contact,
+      ownerTelegramIds(env.OWNER_TELEGRAM_USER_IDS),
+    );
+
     try {
       if (telegramSink && env.TELEGRAM_CHAT_ID) {
         const deliveryId = crypto.randomUUID();
@@ -534,12 +563,12 @@ export default {
             TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
             TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
           },
-          report,
+          { ...report, attribution },
           deliveryId,
         );
         return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
       }
-      const deliveryId = await sendViaProvider(env, report);
+      const deliveryId = await sendViaProvider(env, report, attribution);
       return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
     } catch (error) {
       if (error instanceof RelayError) {

@@ -43,8 +43,14 @@ is the only component that knows both sides, so the store lives here
 
 ```
 identity:tg:<telegram_user_id>      -> IdentityRecord (JSON)
-identity:acct:<account_key>   -> <telegram_user_id>            (pointer)
+identity:acct:<account_key>         -> <telegram_user_id>      (pointer)
+link_token:<sha256(install_token)>  -> <telegram_user_id>      (report signature)
+identity:token:<telegram_user_id>   -> <sha256(install_token)> (pointer)
 ```
+
+Only the hash of the `install_token` is stored, and it is removed by a revoke.
+That is what lets a report prove who sent it without ever carrying a secret in
+its body.
 
 ```json
 {
@@ -109,6 +115,33 @@ Behaviour worth knowing:
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
 
+## Who sent it (attribution)
+
+A report states how the reporter's identity was established, and a group message
+never blurs the three levels:
+
+| Rendered line | What it means |
+|---|---|
+| `👤 @user · verified by Telegram` | The relay resolved the link from the report's `x-install-token`. |
+| `👤 Name — declared · local session` | No link; the name is what the person typed. |
+| `👤 owner` | The linked Telegram id is listed in `OWNER_TELEGRAM_USER_IDS`. |
+
+Rules that keep it honest (`src/attribution.ts`):
+
+- The token travels in the **`x-install-token` header**, never in the body, so it
+  can never reach the group or a log. Unknown, revoked, replaced or malformed
+  tokens fall back to the declared level instead of failing the report.
+- A linked account only signs its reports while it holds `report_identity`.
+  Turning that permission off turns the report back into a declared one; the link
+  itself is untouched.
+- Configuration never impersonates verification: an id on the Owner list is only
+  labelled `owner` when the report presents a link that resolves to it. Without a
+  link the report stays declared.
+- A linked account is named by its Telegram handle, else its display name, else
+  its numeric id. A name is never invented.
+
+The email path carries the same line, as `Reported by:` in the body.
+
 ## Publication into the triage group
 
 When `TELEGRAM_CHAT_ID` is set, a report is published into the Telegram group
@@ -119,10 +152,14 @@ link Telegram.
 One report becomes one **forum topic**, so the group stays readable and each bug
 keeps its thread:
 
-1. `createForumTopic` named `BUG · v<version> · <contact>`.
+1. `createForumTopic` named `BUG · v<version> · <level> · <who>`. The level
+   leads (`verified by Telegram`, `declared · local session`, `owner`,
+   `sin contacto`) so truncation can never cut it and a typed `@handle` can
+   never produce the topic of a verified account.
 2. `sendMessage` with a bounded summary (Telegram caps a message at 4096
    characters; the summary is cut at 3800).
-3. `sendDocument` with `report-<id>.txt` holding the **complete** report —
+3. `sendDocument` with `report-<id>.txt` (its caption carries the same level)
+   holding the **complete** report —
    description and up to 65536 characters of logs — because the message alone
    could never carry them.
 
@@ -205,6 +242,7 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 | `OWNER_INBOX` | Fixed inbox that receives every report. |
 | `SENDER_FROM` | Verified sender address for the outgoing email. |
 | `RELAY_KEY` | Shared secret the backend presents as `x-relay-key` on identity calls. |
+| `OWNER_TELEGRAM_USER_IDS` (optional var) | Comma- or space-separated Telegram user ids labelled `owner`. Never shipped as a secret. |
 | `TELEGRAM_BOT_TOKEN` | Reports-bot token from @BotFather. |
 | `TELEGRAM_WEBHOOK_SECRET` | Value Telegram must echo on the webhook; set with `setWebhook`. |
 | `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters. |

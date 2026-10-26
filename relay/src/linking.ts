@@ -21,6 +21,7 @@ import { bumpCounter } from "./counters.ts";
 import {
   readIdentity,
   readIdentityByAccount,
+  recordInstallToken,
   revokeIdentity,
   writeIdentity,
   type IdentityPermissions,
@@ -359,6 +360,12 @@ export async function linkStatus(
       return { state: "expired" };
     }
     if (record.install_token !== null) {
+      // The token is registered before the ticket forgets it: a report can only
+      // present it after this handover, and losing it here would leave the link
+      // unverifiable until the account relinked.
+      if (record.consumed_by !== null) {
+        await recordInstallToken(kv, record.install_token, record.consumed_by);
+      }
       await writeTicket(kv, { ...record, install_token: null }, TICKET_TTL_SECONDS);
       return { state: "linked", identity, install_token: record.install_token };
     }
