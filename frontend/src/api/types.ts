@@ -278,7 +278,7 @@ export interface BugReportLinkPermissions {
   notify_releases: boolean;
 }
 
-/** POST /api/bugreport/link/status — the ticket's state. The one-time
+/** POST /api/bugreport/link/ticket — the ticket's state. The one-time
  *  `install_token` is kept server-side and never appears here (S15). */
 export type BugReportLinkStatus =
   | { state: "pending"; expires_at: string | null }

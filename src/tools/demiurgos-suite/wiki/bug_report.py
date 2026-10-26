@@ -677,13 +677,18 @@ def create_bug_report_router(
             "telegram_url": telegram_url,
         }
 
-    @router.post("/link/status")
+    @router.post("/link/ticket")
     async def link_status(request: Request) -> Dict[str, Any]:
         """Poll the ticket; on completion, keep the token server-side.
 
         The ``install_token`` the relay hands over exactly once is persisted and
         NEVER returned to the browser: it signs later reports and nothing else
         needs it (S15).
+
+        The backend path is ``/link/ticket``, not ``/link/status``: the wiki's
+        ``POST /api/{mundo}/{section}/status`` route matches
+        ``/api/bugreport/link/status`` and answered 400 "Sección inválida" before
+        this handler could run. The relay keeps its own ``/link/status``.
         """
         _guard(request)
         try:

@@ -112,13 +112,16 @@ export function startTelegramLink(
   );
 }
 
-/** POST /api/bugreport/link/status — poll the ticket. On completion the backend
- *  stores the signing token; this answer never carries it. */
+/** POST /api/bugreport/link/ticket — poll the ticket. On completion the backend
+ *  stores the signing token; this answer never carries it.
+ *
+ *  Not ``/link/status``: the wiki's ``/api/{mundo}/{section}/status`` route
+ *  matches that shape and swallowed the request before it reached this router. */
 export function telegramLinkStatus(
   ticket: string,
 ): Promise<BugReportLinkStatus> {
   return apiFetch<BugReportLinkStatus>(
-    `${API_BASE_URL}/api/bugreport/link/status`,
+    `${API_BASE_URL}/api/bugreport/link/ticket`,
     {
       method: "POST",
       credentials: "same-origin",

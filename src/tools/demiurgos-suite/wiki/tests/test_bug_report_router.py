@@ -284,6 +284,30 @@ def test_assemble_redacts_secret_log_line(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_link_routes_are_not_shadowed_by_the_world_content_routes() -> None:
+    """The assembled app must route our link endpoints, not the wiki catch-all.
+
+    ``POST /api/{mundo}/{section}/status`` matches ``/api/bugreport/link/ticket``
+    and answered 400 "Sección inválida" before the bugreport handler ran, which
+    left the Telegram panel polling a dead route forever. The unit tests here
+    build a minimal app with only this router, so only the real app catches it.
+    """
+    import api_server
+
+    client = TestClient(api_server.app)
+    # No session: our handlers fail closed with 401. The catch-all answered 400
+    # (or the path did not exist at all).
+    for path in (
+        "/api/bugreport/link/start",
+        "/api/bugreport/link/ticket",
+        "/api/bugreport/link/revoke",
+    ):
+        resp = client.post(path, json={})
+        assert resp.status_code == 401, (path, resp.status_code, resp.text)
+
+    assert client.get("/api/bugreport/link").status_code == 401
+
+
 def test_assemble_registered_in_api_server_app() -> None:
     """The production ``api_server`` app registers the assemble route.
 
@@ -920,7 +944,7 @@ def test_link_status_keeps_the_token_server_side(tmp_path: Path) -> None:
         vault_active=lambda: False,
     )
 
-    resp = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "ABC"})
+    resp = TestClient(app).post("/api/bugreport/link/ticket", json={"ticket": "ABC"})
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -987,7 +1011,7 @@ def test_link_status_expired_does_not_store_anything(tmp_path: Path) -> None:
         vault_active=lambda: False,
     )
 
-    resp = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "ABC"})
+    resp = TestClient(app).post("/api/bugreport/link/ticket", json={"ticket": "ABC"})
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"state": "expired"}
@@ -1142,8 +1166,8 @@ def test_link_status_refuses_to_report_linked_when_the_token_was_lost(
         vault_active=lambda: False,
     )
 
-    first = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "T"})
-    second = TestClient(app).post("/api/bugreport/link/status", json={"ticket": "T"})
+    first = TestClient(app).post("/api/bugreport/link/ticket", json={"ticket": "T"})
+    second = TestClient(app).post("/api/bugreport/link/ticket", json={"ticket": "T"})
 
     assert first.status_code == 500
     assert first.json()["code"] == "bugreport.storage_unavailable"
