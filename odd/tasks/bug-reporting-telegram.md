@@ -61,7 +61,7 @@ A configuration value is never presented as Telegram verification.
 
 **S18 — The relay URL ships with the release.** Every install must know where to deliver a report. Today `DEMIURGOS_BUGREPORT_RELAY_URL` only comes from the environment (`api_server.py:10142`), and with no value the submit fails closed into the copy-paste/GitHub-issue fallback. A released build must carry the relay URL as its default (installer/config), or no user's report can reach the group.
 
-**S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`).
+**S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`). A bare `/start` still gets one canned answer pointing to the app, because Telegram's own START button sends exactly that and silence there reads as a broken bot; it interprets nothing and handles no free text.
 
 ## Tasks
 
@@ -198,3 +198,9 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - A report is visible **only in the Telegram triage group**: one forum topic per report, a summary message, and `report-<id>.txt` with the full bundle. There is no in-app list and no dashboard; the group is the inbox. In-app surfacing (T11) is the "your report was fixed" notice, not a report browser.
 - **Gap found:** the relay URL is read only from the environment (`api_server.py:10142`) with no default, and an unset value fails closed into the copy-paste/GitHub-issue fallback. Only this machine has the variable (added to `.env`). A released install would therefore never deliver to the group. Recorded as S18 and task T15.
 - Also not yet visible in the group: the verified signature (needs T5 + the linking path T7–T10) and dedup/limits (T6). Until then every report says `sin contacto` unless the reporter typed one.
+
+**L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
+- That behavior is correct but is a bad first impression, since pressing START is what every new user does.
+- Fix: a bare `/start` (optionally `@bot`) now answers one canned line pointing to `Perfil → Reporte de errores → Conectar Telegram`. It interprets nothing and still handles no free text, so D2 holds.
+- Also fixed while here: `sendMessage` now logs `telegram.send_failed` with the status (never a secret) instead of failing silently, which is what made this take a round-trip to diagnose.
+- Tests: 2 added (bare `/start` answered and links nothing; `@bot` form answered; `/help`, `/start algo con espacios` and plain text still silent). `npm test` -> **60 passed, 0 failed**.

@@ -45,6 +45,8 @@ export interface TelegramEnv {
 
 /** User-facing copy. Spanish is the product's primary language. */
 const COPY = {
+  welcome:
+    "Para conectar tu cuenta, abre Demiurgos en Perfil, entra en Reporte de errores y pulsa Conectar Telegram. Yo te aviso por aquí cuando arreglemos lo que reportes.",
   linked: "Conectado. Te avisaré cuando arreglemos lo que reportes.",
   invalid:
     "Ese enlace ya no es válido. Genera uno nuevo desde Demiurgos, en Perfil.",
@@ -61,6 +63,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export function parseStartCommand(text: string): string | null {
   const match = /^\/start(?:@[A-Za-z0-9_]+)?\s+([0-9A-Za-z]{4,32})\s*$/.exec(text);
   return match === null ? null : match[1];
+}
+
+/**
+ * A bare `/start`, which is what Telegram's own START button sends. It carries
+ * no ticket, so it cannot link anything — but answering it is the difference
+ * between "the bot is broken" and "here is the button you need to press".
+ */
+export function isBareStart(text: string): boolean {
+  return /^\/start(?:@[A-Za-z0-9_]+)?\s*$/.test(text);
 }
 
 /** `/link/revoke` (optionally addressed to the bot) -> true. */
@@ -113,8 +124,13 @@ async function sendMessage(
         signal: controller.signal,
       },
     );
+    if (!response.ok) {
+      // No secret in the log: only which call failed and its status.
+      console.error("telegram.send_failed", { status: response.status });
+    }
     return response.ok;
   } catch {
+    console.error("telegram.send_failed", { status: "network" });
     return false;
   } finally {
     clearTimeout(timer);
@@ -174,6 +190,11 @@ export async function handleTelegramUpdate(
           : COPY.invalid;
       await sendMessage(env, chatId, copy, fetchImpl);
     }
+    return;
+  }
+
+  if (isBareStart(text)) {
+    await sendMessage(env, chatId, COPY.welcome, fetchImpl);
     return;
   }
 

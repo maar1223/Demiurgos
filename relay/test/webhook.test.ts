@@ -320,3 +320,31 @@ test("a negative group chat id and a positive user id still redeem", async () =>
   assert.match(sent[0].text, /^Conectado/);
   assert.equal((await readIdentity(kv, "1234567890"))?.account_key, "acct_abc123");
 });
+
+test("a bare /start answers with where to get the link", async () => {
+  const kv = new MemoryKv();
+
+  const { sent, calls } = await withTelegram(async () => {
+    const response = await worker.fetch(webhook(update("/start")), makeEnv(kv), {} as never);
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(sent[0].text, /^Para conectar tu cuenta/);
+  assert.equal(kv.map.size, 0, "a bare /start links nothing");
+});
+
+test("a bare /start addressed to the bot is answered too, but other text is not", async () => {
+  const kv = new MemoryKv();
+  const bodies = ["/start@ReportesDemiurgosBot", "/help", "/start algo con espacios", "hola"];
+
+  const counts: number[] = [];
+  for (const body of bodies) {
+    const { sent } = await withTelegram(async () => {
+      await worker.fetch(webhook(update(body)), makeEnv(kv), {} as never);
+    });
+    counts.push(sent.length);
+  }
+
+  assert.deepEqual(counts, [1, 0, 0, 0]);
+});

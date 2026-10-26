@@ -148,6 +148,7 @@ channel by decision):
 
 | Command | Effect |
 |---|---|
+| `/start` (no ticket) | Telegram's own START button sends this. Answers where to get the link instead of staying silent. |
 | `/start <ticket>` | Redeems the linking ticket, answers `Conectado. Te avisaré cuando arreglemos lo que reportes.` |
 | `/link/revoke` | Unlinks the account, erases the identity, confirms |
 
