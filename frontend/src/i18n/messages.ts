@@ -206,6 +206,15 @@ export const messages = {
     "profile.bugreport.contactLabel": "Contacto (opcional)",
     "profile.bugreport.contactPlaceholder":
       "Correo o identificador para responder (opcional)",
+    "profile.bugreport.attachmentsTitle": "Capturas (opcional)",
+    "profile.bugreport.attachmentsHint":
+      "Hasta 2 imágenes de 5 MB. Se envían como archivos, sin recomprimir; nada sale sin que lo veas.",
+    "profile.bugreport.addScreenshot": "Añadir captura",
+    "profile.bugreport.removeScreenshot": "Quitar captura",
+    "profile.bugreport.attachmentLimit": "Puedes adjuntar como máximo 2 capturas.",
+    "profile.bugreport.attachmentType": "Solo se admiten imágenes PNG, JPEG o WebP.",
+    "profile.bugreport.attachmentTooLarge": "Cada captura debe pesar 5 MB o menos.",
+    "profile.bugreport.previewAttachments": "Capturas incluidas: {count}",
     "profile.bugreport.includeLogs": "Incluir registros en el informe",
     "profile.bugreport.preview": "Previsualizar informe",
     "profile.bugreport.previewTitle": "Vista previa del informe",
@@ -1163,6 +1172,12 @@ export const messages = {
     "error.bugreport.not_allowlisted": "El informe contiene campos no permitidos.",
     "error.bugreport.too_large": "El informe supera el tamaño máximo permitido.",
     "error.bugreport.rate_limited": "Se enviaron demasiados informes. Inténtalo más tarde.",
+    "error.bugreport.invalid_attachment":
+      "Una captura no es una imagen válida (PNG, JPEG o WebP).",
+    "error.bugreport.link_incomplete":
+      "La vinculación con Telegram quedó incompleta. Vuelve a vincular tu cuenta.",
+    "error.bugreport.storage_unavailable":
+      "No se pudo leer el estado local del informe.",
     "error.bugreport.relay_unavailable": "El servicio de envío no está disponible.",
     "error.bugreport.delivery_failed": "No se pudo entregar el informe.",
     "error.bugreport.fallbackFailed":
@@ -2266,6 +2281,15 @@ export const messages = {
     "profile.bugreport.contactLabel": "Contact (optional)",
     "profile.bugreport.contactPlaceholder":
       "Email or handle for a reply (optional)",
+    "profile.bugreport.attachmentsTitle": "Screenshots (optional)",
+    "profile.bugreport.attachmentsHint":
+      "Up to 2 images of 5 MB. Sent as files, never recompressed; nothing leaves until you have seen it.",
+    "profile.bugreport.addScreenshot": "Add screenshot",
+    "profile.bugreport.removeScreenshot": "Remove screenshot",
+    "profile.bugreport.attachmentLimit": "You can attach at most 2 screenshots.",
+    "profile.bugreport.attachmentType": "Only PNG, JPEG or WebP images are accepted.",
+    "profile.bugreport.attachmentTooLarge": "Each screenshot must be 5 MB or less.",
+    "profile.bugreport.previewAttachments": "Included screenshots: {count}",
     "profile.bugreport.includeLogs": "Include logs in the report",
     "profile.bugreport.preview": "Preview report",
     "profile.bugreport.previewTitle": "Report preview",
@@ -3209,6 +3233,12 @@ export const messages = {
     "error.bugreport.not_allowlisted": "The report contains fields that are not allowed.",
     "error.bugreport.too_large": "The report exceeds the maximum allowed size.",
     "error.bugreport.rate_limited": "Too many reports were sent. Try again later.",
+    "error.bugreport.invalid_attachment":
+      "One screenshot is not a valid image (PNG, JPEG or WebP).",
+    "error.bugreport.link_incomplete":
+      "The Telegram link is incomplete. Link your account again.",
+    "error.bugreport.storage_unavailable":
+      "The local report state could not be read.",
     "error.bugreport.relay_unavailable": "The delivery service is not available.",
     "error.bugreport.delivery_failed": "The report could not be delivered.",
     "error.bugreport.fallbackFailed":
