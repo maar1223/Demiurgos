@@ -59,6 +59,8 @@ A configuration value is never presented as Telegram verification.
 
 **S16 — Distinct from the idea-bank bridge.** A bot cannot transfer delivery permission to another bot, so the idea-bank link cannot pre-authorize the reports bot. No bridge is built in this feature; the QR already removes the need to return to the PC.
 
+**S18 — The relay URL ships with the release.** Every install must know where to deliver a report. Today `DEMIURGOS_BUGREPORT_RELAY_URL` only comes from the environment (`api_server.py:10142`), and with no value the submit fails closed into the copy-paste/GitHub-issue fallback. A released build must carry the relay URL as its default (installer/config), or no user's report can reach the group.
+
 **S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`).
 
 ## Tasks
@@ -91,7 +93,8 @@ A configuration value is never presented as Telegram verification.
 
 - [ ] T12 — Relay: release DM to reporters of the fixed bugs only. (`S12`)
 - [ ] T13 — Tests across relay, backend and frontend; `relay/README.md`, i18n in both catalogues, `payload_manifest.json` regenerated. (`S13`, `S14`)
-- [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S17`)
+- [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S18`)
+- [ ] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Touches the installer/config, not the relay.
 
 ## Log
 
@@ -190,3 +193,8 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Regression test added covering `null`, `true`, `{}`, negative, fractional and non-numeric ids for both fields, plus a `text` that is not a string.
 - `npm test` -> **57 passed, 0 failed**; `npm run typecheck` -> clean.
 - Everything else in the round met its requirement: publication order, the 65536-character log preserved, the topic/summary/caption bounds, degradation without topics, `delivery_failed` on a failed summary, both sink-selection paths, and no token in any output. Advisory noted, unchanged from baseline: a 65536-character **multibyte** log exceeds the pre-existing 98304-byte payload cap.
+
+**L19 — Where a report is visible, and the gap behind it (2026-10-25).** Verified while answering the Owner.
+- A report is visible **only in the Telegram triage group**: one forum topic per report, a summary message, and `report-<id>.txt` with the full bundle. There is no in-app list and no dashboard; the group is the inbox. In-app surfacing (T11) is the "your report was fixed" notice, not a report browser.
+- **Gap found:** the relay URL is read only from the environment (`api_server.py:10142`) with no default, and an unset value fails closed into the copy-paste/GitHub-issue fallback. Only this machine has the variable (added to `.env`). A released install would therefore never deliver to the group. Recorded as S18 and task T15.
+- Also not yet visible in the group: the verified signature (needs T5 + the linking path T7–T10) and dedup/limits (T6). Until then every report says `sin contacto` unless the reporter typed one.
