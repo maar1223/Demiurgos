@@ -5,6 +5,7 @@ import { TelegramLinkPanel } from "@/components/organisms/TelegramLinkPanel";
 import {
   revokeTelegramLink,
   startTelegramLink,
+  telegramLinkState,
   telegramLinkStatus,
 } from "@/api/bugReports";
 import { tEs } from "@/__tests__/i18nTestUtils";
@@ -13,6 +14,7 @@ import type { Mock } from "vitest";
 vi.mock("@/api/bugReports", () => ({
   startTelegramLink: vi.fn(),
   telegramLinkStatus: vi.fn(),
+  telegramLinkState: vi.fn(),
   revokeTelegramLink: vi.fn(),
 }));
 
@@ -47,6 +49,57 @@ describe("TelegramLinkPanel — linking surface (S8–S11)", () => {
       state: "pending",
       expires_at: ticketResponse().expires_at,
     });
+    (telegramLinkState as Mock).mockResolvedValue({
+      state: "unlinked",
+      telegram_url: null,
+    });
+  });
+
+  it("remembers an existing link on mount instead of asking to connect again", async () => {
+    (telegramLinkState as Mock).mockResolvedValue({
+      state: "linked",
+      username: "brook",
+      display_name: "Brook",
+      permissions: { report_identity: true, notify_releases: false },
+      telegram_url: "https://t.me/ReportesDemiurgosBot",
+    });
+    renderPanel();
+
+    await screen.findByText(
+      tEs("profile.bugreport.telegramConnected", { user: "@brook" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("bugreport-telegram-permission-releases"),
+    ).toHaveTextContent(`✕ ${tEs("profile.bugreport.telegramPermReleases")}`);
+    expect(screen.getByTestId("bugreport-telegram-open")).toHaveAttribute(
+      "href",
+      "https://t.me/ReportesDemiurgosBot",
+    );
+    expect(startTelegramLink).not.toHaveBeenCalled();
+  });
+
+  it("offers to connect when the relay says this install is not linked", async () => {
+    renderPanel();
+
+    await waitFor(() => expect(telegramLinkState).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the connect button usable when the state read fails", async () => {
+    (telegramLinkState as Mock).mockRejectedValue(new Error("offline"));
+    renderPanel();
+
+    await waitFor(() => expect(telegramLinkState).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("mints a ticket, then shows the QR, the link and the code", async () => {

@@ -293,3 +293,66 @@ test("an explicit single flag on reuse applies without touching the other", asyn
     notify_releases: true,
   });
 });
+
+test("state answers unlinked, then linked after the ticket is redeemed", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+
+  const before = await worker.fetch(
+    call("/link/state", { account_key: "acct_state01" }),
+    env,
+    {} as never,
+  );
+  assert.equal(before.status, 200);
+  assert.deepEqual(await before.json(), { ok: true, state: "unlinked" });
+
+  const started = await worker.fetch(
+    call("/link/start", { account_key: "acct_state01", notify_releases: false }),
+    env,
+    {} as never,
+  );
+  const { ticket } = (await started.json()) as Record<string, string>;
+  await redeemTicket(
+    kv,
+    ticket,
+    { id: "1234567890", username: "brook", displayName: "Brook" },
+    new Date(),
+  );
+
+  const after = await worker.fetch(
+    call("/link/state", { account_key: "acct_state01" }),
+    env,
+    {} as never,
+  );
+  assert.equal(after.status, 200);
+  const body = (await after.json()) as Record<string, unknown>;
+  assert.equal(body.state, "linked");
+  const identity = body.identity as Record<string, unknown>;
+  assert.equal(identity.username, "brook");
+  assert.deepEqual(identity.permissions, {
+    report_identity: true,
+    notify_releases: false,
+  });
+  // A state read never hands back a signing credential.
+  assert.equal("install_token" in identity, false);
+  assert.equal("install_token" in body, false);
+});
+
+test("state requires the shared key and an account key", async () => {
+  const kv = new MemoryKv();
+
+  const unauthorized = await worker.fetch(
+    call("/link/state", { account_key: "acct_state02" }, { key: null }),
+    makeEnv(kv),
+    {} as never,
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const missing = await worker.fetch(
+    call("/link/state", {}),
+    makeEnv(kv),
+    {} as never,
+  );
+  assert.equal(missing.status, 400);
+  assert.deepEqual(await missing.json(), { ok: false, code: "link.invalid_account" });
+});

@@ -994,6 +994,96 @@ def test_link_status_expired_does_not_store_anything(tmp_path: Path) -> None:
     assert read_install_token(state) is None
 
 
+def test_link_state_reports_the_stored_link_without_a_token(tmp_path: Path) -> None:
+    """The panel reads the link from the relay, not from a local flag (S10)."""
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            captured,
+            {
+                "/link/state": lambda _p: (
+                    200,
+                    {
+                        "ok": True,
+                        "state": "linked",
+                        "identity": {
+                            "telegram_user_id": "42",
+                            "username": "brook",
+                            "display_name": "Brook",
+                            "account_key": "install_secret",
+                            "permissions": {
+                                "report_identity": True,
+                                "notify_releases": False,
+                            },
+                        },
+                    },
+                )
+            },
+        ),
+        relay_key="shared-key",
+        bot_username="ReportesDemiurgosBot",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).get("/api/bugreport/link")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["state"] == "linked"
+    assert body["username"] == "brook"
+    assert body["permissions"] == {"report_identity": True, "notify_releases": False}
+    assert body["telegram_url"] == "https://t.me/ReportesDemiurgosBot"
+    call = captured[0]
+    assert call["url"].endswith("/link/state")
+    assert call["headers"]["x-relay-key"] == "shared-key"
+    # The stable key is resolved server-side, never taken from the browser.
+    assert call["payload"]["account_key"].startswith("install_")
+    assert "42" not in json.dumps(body)
+    assert "install_secret" not in resp.text
+
+
+def test_link_state_reports_unlinked(tmp_path: Path) -> None:
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            [], {"/link/state": lambda _p: (200, {"ok": True, "state": "unlinked"})}
+        ),
+        relay_key="k",
+        bot_username="b",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).get("/api/bugreport/link")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "state": "unlinked",
+        "telegram_url": "https://t.me/b",
+    }
+
+
+def test_link_state_requires_a_principal() -> None:
+    app = _make_app(
+        authed=False,
+        relay_url="http://relay.test",
+        relay_post=_capture([]),
+        relay_key="k",
+    )
+
+    resp = TestClient(app).get("/api/bugreport/link")
+
+    assert resp.status_code == 401
+
+
 def test_context_cap_counts_utf16_units_like_the_relay() -> None:
     """200 emoji are 400 UTF-16 units: the relay would refuse them at the last hop."""
     app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))

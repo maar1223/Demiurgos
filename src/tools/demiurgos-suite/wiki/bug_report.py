@@ -730,6 +730,41 @@ def create_bug_report_router(
             },
         }
 
+    @router.get("/link")
+    def link_state(request: Request) -> Dict[str, Any]:
+        """Whether this install is still linked, read from the relay (S10).
+
+        The panel used to forget the link on reload and offer "Connect" again.
+        The identity store is the relay's, so a local flag would be a second,
+        lying copy: this reads the real one. A ``linked`` answer carries what the
+        connected state renders — handle and the two permissions — and never the
+        signing token or the numeric Telegram id.
+        """
+        _guard(request)
+        account = _stable_account_key()
+        status, data = _link_call("/link/state", {"account_key": account})
+        if not (200 <= status < 300) or data.get("ok") is not True:
+            _raise_link_failure(status, data)
+
+        telegram_url = "https://t.me/%s" % bot_username if bot_username else None
+        if data.get("state") != "linked":
+            return {"state": "unlinked", "telegram_url": telegram_url}
+
+        identity = data.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        permissions = identity.get("permissions")
+        permissions = permissions if isinstance(permissions, dict) else {}
+        return {
+            "state": "linked",
+            "username": identity.get("username"),
+            "display_name": identity.get("display_name"),
+            "permissions": {
+                "report_identity": permissions.get("report_identity") is True,
+                "notify_releases": permissions.get("notify_releases") is True,
+            },
+            "telegram_url": telegram_url,
+        }
+
     @router.get("/releases")
     def releases(request: Request) -> Dict[str, Any]:
         """Released versions and the report ids each one fixed (S12).

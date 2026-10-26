@@ -5,6 +5,7 @@ import { QrCode } from "@/components/atoms/QrCode";
 import {
   revokeTelegramLink,
   startTelegramLink,
+  telegramLinkState,
   telegramLinkStatus,
   type BugReportLinkFlags,
 } from "@/api/bugReports";
@@ -86,6 +87,35 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     },
     [t],
   );
+
+  // The link lives in the relay (S10), so the panel asks it once on mount
+  // instead of trusting a local flag. A failed read is not an error worth an
+  // alert: the connect action still works, it just cannot say "already linked".
+  useEffect(() => {
+    let active = true;
+
+    const read = async () => {
+      try {
+        const next = await telegramLinkState();
+        if (!active || next.state !== "linked") return;
+        setLinked({
+          username: next.username,
+          display_name: next.display_name,
+          permissions: next.permissions,
+        });
+        setTelegramUrl(next.telegram_url);
+        // A click that already started a ticket must win over this read.
+        setPhase((current) => (current === "idle" ? "linked" : current));
+      } catch {
+        // Offline or relay down: leaving the connect action in place is honest.
+      }
+    };
+
+    void read();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Countdown to the ticket's expiry; at zero the ticket is gone and polling
   // must stop instead of asking a dead ticket forever.

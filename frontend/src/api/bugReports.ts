@@ -4,6 +4,7 @@ import type {
   BugReportBundle,
   BugReportFallback,
   BugReportRelease,
+  BugReportLinkState,
   BugReportLinkStatus,
   BugReportLinkTicket,
   BugReportSubmitPayload,
@@ -139,6 +140,18 @@ export function revokeTelegramLink(): Promise<{ revoked: boolean }> {
       timeout: 15_000,
     },
   );
+}
+
+/** GET /api/bugreport/link — is this install still linked?
+ *
+ * The identity store is the relay's, so this is the one truthful answer after a
+ * reload; a local flag would keep claiming "connected" after a revoke done from
+ * Telegram. It also carries the bot URL the connected state opens. */
+export function telegramLinkState(): Promise<BugReportLinkState> {
+  return apiFetch<BugReportLinkState>(`${API_BASE_URL}/api/bugreport/link`, {
+    credentials: "same-origin",
+    timeout: 10_000,
+  });
 }
 
 /** GET /api/bugreport/releases — released versions and the reports they fixed.

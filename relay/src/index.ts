@@ -44,7 +44,7 @@
 
 import { admitCounter } from "./counters.ts";
 import { admitReport, rememberReport, secondsUntilUtcMidnight } from "./abuse.ts";
-import { isBlockedInstall } from "./identity.ts";
+import { isBlockedInstall, readIdentityByAccount } from "./identity.ts";
 import {
   LinkError,
   linkStatus,
@@ -471,7 +471,7 @@ async function sendViaProvider(
 }
 
 /** Identity routes. All POST: a ticket must never travel in a URL or a log. */
-const LINK_PATHS = new Set(["/link/start", "/link/status", "/link/revoke"]);
+const LINK_PATHS = new Set(["/link/start", "/link/status", "/link/state", "/link/revoke"]);
 
 /**
  * Identity endpoints. The caller must present the shared `x-relay-key`: an
@@ -543,6 +543,22 @@ async function handleLink(
       }
       const status = await linkStatus(env.LINKS, body.ticket, new Date());
       return jsonResponse({ ok: true, ...status }, 200);
+    }
+
+    if (path === "/link/state") {
+      if (typeof body.account_key !== "string") {
+        return fail(400, "link.invalid_account");
+      }
+      // The app's "am I still linked?" read. It answers from the identity store
+      // and never hands back a signing credential: the install token was spent
+      // once, at redemption.
+      const identity = await readIdentityByAccount(env.LINKS, body.account_key);
+      return jsonResponse(
+        identity === null
+          ? { ok: true, state: "unlinked" }
+          : { ok: true, state: "linked", identity },
+        200,
+      );
     }
 
     if (typeof body.account_key !== "string") {
@@ -652,6 +668,31 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ ok: true }, 200);
   }
   return jsonResponse({ ok: true }, 200);
+}
+
+/**
+ * Remember a delivered report for dedup, retrying once.
+ *
+ * The report has already reached the group, so this write is the only thing
+ * keeping the same failure from opening a second topic inside 24 h. One
+ * transient KV error is worth a retry; if both attempts fail the request still
+ * answers success, because telling the reporter it failed would invite a retry
+ * that publishes the same report twice.
+ */
+async function rememberDeliveredReport(
+  kv: KVNamespace,
+  fingerprint: string,
+  deliveryId: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await rememberReport(kv, fingerprint, deliveryId);
+      return;
+    } catch {
+      // Falls through to the second attempt.
+    }
+  }
+  console.error("dedup.write_failed", deliveryId);
 }
 
 export default {
@@ -819,11 +860,7 @@ export default {
     }
 
     // Only a delivered report is remembered: a failed one must be retryable.
-    try {
-      await rememberReport(env.RATE_LIMIT, admission.fingerprint, deliveryId);
-    } catch {
-      console.error("dedup.write_failed");
-    }
+    await rememberDeliveredReport(env.RATE_LIMIT, admission.fingerprint, deliveryId);
 
     return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
   },

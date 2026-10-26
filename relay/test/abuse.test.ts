@@ -235,6 +235,99 @@ test("a failed delivery is not remembered, so a retry can still arrive", async (
   }
 });
 
+/** A KV whose dedup writes fail for the first `failures` attempts. */
+class FlakyDedupKv extends MemoryKv {
+  failures: number;
+  attempts = 0;
+
+  constructor(failures: number) {
+    super();
+    this.failures = failures;
+  }
+
+  async put(
+    key: string,
+    value: string,
+    options?: { expirationTtl?: number },
+  ): Promise<void> {
+    if (key.startsWith("dedup:")) {
+      this.attempts += 1;
+      if (this.attempts <= this.failures) {
+        throw new Error("kv write failed");
+      }
+    }
+    return super.put(key, value, options);
+  }
+}
+
+test("a dedup write that fails once is retried, so the next copy is caught", async () => {
+  const kv = new FlakyDedupKv(1);
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, REPORT);
+    assert.equal(first.status, 200);
+    // The first attempt failed; the retry is what remembered the report.
+    assert.equal(kv.attempts, 2);
+
+    const second = await submit(kv, REPORT);
+    assert.equal(second.status, 200);
+    assert.equal(second.body.delivery_id, first.body.delivery_id);
+    assert.equal(second.body.deduped, true);
+    assert.equal(telegram.calls.length, 3);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a dedup write that keeps failing still answers the delivery, never a 502", async () => {
+  const kv = new FlakyDedupKv(Number.POSITIVE_INFINITY);
+  const telegram = stubTelegram();
+  try {
+    const delivered = await submit(kv, REPORT);
+
+    // The report reached the group; telling the reporter it failed would invite
+    // a retry that publishes it again.
+    assert.equal(delivered.status, 200);
+    assert.equal(typeof delivered.body.delivery_id, "string");
+    assert.equal(kv.attempts, 2);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("two accounts sending the same failure get the first delivery, published once", async () => {
+  const tokenA = "2".repeat(64);
+  const tokenB = "3".repeat(64);
+  const kv = new MemoryKv();
+  await writeIdentity(kv, linked());
+  await recordInstallToken(kv, tokenA, "1234567890");
+  await writeIdentity(
+    kv,
+    linked({
+      telegram_user_id: "9876543210",
+      username: "other",
+      account_key: "acct_other123",
+    }),
+  );
+  await recordInstallToken(kv, tokenB, "9876543210");
+
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, REPORT, { token: tokenA });
+    const second = await submit(kv, REPORT, { token: tokenB });
+
+    // S13 asks for one topic per unique failure: the second reporter is told it
+    // is already reported, and only the first delivery is published.
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(second.body.deduped, true);
+    assert.equal(second.body.delivery_id, first.body.delivery_id);
+    assert.equal(telegram.calls.length, 3);
+  } finally {
+    telegram.restore();
+  }
+});
+
 test("a linked principal is capped per hour, and a duplicate does not count", async () => {
   const token = "1".repeat(64);
   const kv = await linkedKv(token);

@@ -290,6 +290,19 @@ export type BugReportLinkStatus =
       permissions: BugReportLinkPermissions;
     };
 
+/** GET /api/bugreport/link — whether this install is still linked. Read from
+ *  the relay's identity store, so it survives a reload (S10). Carries no ticket
+ *  and no signing token. */
+export type BugReportLinkState =
+  | { state: "unlinked"; telegram_url: string | null }
+  | {
+      state: "linked";
+      username: string | null;
+      display_name: string | null;
+      permissions: BugReportLinkPermissions;
+      telegram_url: string | null;
+    };
+
 /** GET /api/bugreport/releases — a released version and the report ids it fixed.
  *  Public and anonymous: no reporter, no contact. The app matches its own ids. */
 export interface BugReportRelease {

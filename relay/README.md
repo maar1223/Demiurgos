@@ -134,12 +134,13 @@ Mixing them would eventually let a TTL sweep erase a link.
 Called by the **backend**, never by the app: the backend owns the session that
 proves the account, and the relay trusts only that caller. Every route requires
 the `x-relay-key` header and rejects a mismatch with `401 relay.unauthorized`.
-All three are `POST` so a ticket never travels in a URL or a Worker log.
+All of them are `POST` so a ticket never travels in a URL or a Worker log.
 
 | Route | Body | Answer |
 |---|---|---|
 | `POST /link/start` | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
 | `POST /link/status` | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
+| `POST /link/state` | `{account_key}` | `{ok, state: linked\|unlinked, identity?}` |
 | `POST /link/revoke` | `{account_key}` | `{ok, revoked}` |
 | `POST /release` | `{version, report_ids[]}` (shared key) | `{ok, version, report_ids, releases}` |
 | `POST /releases` | `{}` (shared key) | `{ok, releases[]}` |
@@ -152,6 +153,9 @@ Behaviour worth knowing:
   three-per-hour allowance (only minting does).
 - `install_token` is returned by `/link/status` **once**, then withheld, so a
   reload cannot re-expose it.
+- `/link/state` is how the panel remembers a link after a reload: it answers
+  from the identity store and never returns a credential, so a link revoked from
+  Telegram stops being reported as connected.
 - Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
@@ -236,6 +240,13 @@ Notes worth keeping:
 - Dedup runs **first**, so an accidental double submit neither opens a second
   topic nor spends the reporter's allowance. Only a **delivered** report is
   remembered, so a failed one stays retryable.
+- The dedup write is **retried once**. If both attempts fail the request still
+  answers success: the report already reached the group, and a 502 would invite a
+  retry that publishes it twice. The loss is logged as `dedup.write_failed`.
+- Dedup is **per failure, not per person**: two accounts reporting the same crash
+  get the first `delivery_id` and only the first is published, which is what keeps
+  one topic per distinct problem. The id is not a secret — it already appears in
+  the public release list.
 - The fingerprint deliberately excludes the contact and the app version: adding a
   contact or upgrading must not look like a new report.
 - A **refused attempt never extends the window it is being refused by**. The
