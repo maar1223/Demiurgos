@@ -43,6 +43,8 @@
  */
 
 import { bumpCounter } from "./counters.ts";
+import { admitReport, rememberReport, secondsUntilUtcMidnight } from "./abuse.ts";
+import { isBlockedInstall } from "./identity.ts";
 import {
   LinkError,
   linkStatus,
@@ -259,19 +261,6 @@ function clientIp(request: Request): string {
 
 function utcDayKey(now: Date): string {
   return `global:${now.toISOString().slice(0, 10)}`;
-}
-
-function secondsUntilUtcMidnight(now: Date): number {
-  const next = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + 1,
-    0,
-    0,
-    0,
-    0,
-  );
-  return (next - now.getTime()) / 1000;
 }
 
 function buildSubject(report: Report): string {
@@ -522,42 +511,89 @@ export default {
     }
 
     const now = new Date();
+    const installToken = (request.headers.get("x-install-token") ?? "").trim();
+
+    // A revoked install must not keep reporting through the credential the
+    // revoke just killed; only callers presenting a credential are checked, so
+    // an unbound namespace never blocks the anonymous fallback path.
+    //
+    // A store that *fails* is refused, not assumed clean: the same fail-closed
+    // posture as the counters. S14's copy-paste/GitHub fallback is what keeps a
+    // reporter unblocked when the relay cannot answer.
+    let attribution: Attribution;
     try {
-      const perIp = await bumpCounter(
-        env.RATE_LIMIT,
-        `ip:${clientIp(request)}`,
-        PER_IP_WINDOW_SECONDS,
-      );
-      if (perIp > PER_IP_MAX) {
-        return fail(429, "relay.rate_limited");
+      if (installToken.length > 0 && env.LINKS) {
+        if (await isBlockedInstall(env.LINKS, installToken)) {
+          return fail(403, "relay.report_blocked");
+        }
       }
-      const daily = await bumpCounter(
-        env.RATE_LIMIT,
-        utcDayKey(now),
-        secondsUntilUtcMidnight(now),
+
+      // Who is reporting is resolved here, from a credential the relay issued —
+      // never from a claim in the body. A missing, unknown or revoked token
+      // simply falls back to what the reporter typed.
+      attribution = await resolveAttribution(
+        env.LINKS,
+        installToken.length === 0 ? null : installToken,
+        report.contact,
+        ownerTelegramIds(env.OWNER_TELEGRAM_USER_IDS),
       );
-      if (daily > GLOBAL_DAILY_MAX) {
-        return fail(429, "relay.rate_limited");
-      }
     } catch {
-      // A rate-limit backend failure must fail CLOSED, never open.
       return fail(503, "relay.rate_limit_unavailable");
     }
 
-    // Who is reporting is resolved here, from a credential the relay issued —
-    // never from a claim in the body. A missing, unknown or revoked token simply
-    // falls back to what the reporter typed.
-    const installToken = (request.headers.get("x-install-token") ?? "").trim();
-    const attribution = await resolveAttribution(
-      env.LINKS,
-      installToken.length === 0 ? null : installToken,
-      report.contact,
-      ownerTelegramIds(env.OWNER_TELEGRAM_USER_IDS),
-    );
+    // Dedup first: an accidental double submit must not spend the reporter's
+    // allowance, and it must not open a second topic for the same failure.
+    let admission: Awaited<ReturnType<typeof admitReport>>;
+    try {
+      admission = await admitReport(
+        env.RATE_LIMIT,
+        report,
+        attribution.identity?.account_key ?? null,
+        now,
+      );
+    } catch {
+      // Abuse control fails CLOSED, never open.
+      return fail(503, "relay.rate_limit_unavailable");
+    }
+    if (admission.verdict === "duplicate") {
+      return jsonResponse(
+        { ok: true, delivery_id: admission.deliveryId, deduped: true },
+        200,
+      );
+    }
+    if (admission.verdict === "limited") {
+      return fail(429, admission.code);
+    }
 
+    // Linked principals are bounded by their own buckets; unlinked reporters
+    // keep the per-IP and global-daily ceilings.
+    if (attribution.identity === null) {
+      try {
+        const perIp = await bumpCounter(
+          env.RATE_LIMIT,
+          `ip:${clientIp(request)}`,
+          PER_IP_WINDOW_SECONDS,
+        );
+        if (perIp > PER_IP_MAX) {
+          return fail(429, "relay.rate_limited");
+        }
+        const daily = await bumpCounter(
+          env.RATE_LIMIT,
+          utcDayKey(now),
+          secondsUntilUtcMidnight(now),
+        );
+        if (daily > GLOBAL_DAILY_MAX) {
+          return fail(429, "relay.rate_limited");
+        }
+      } catch {
+        return fail(503, "relay.rate_limit_unavailable");
+      }
+    }
+
+    let deliveryId: string;
     try {
       if (telegramSink && env.TELEGRAM_CHAT_ID) {
-        const deliveryId = crypto.randomUUID();
+        deliveryId = crypto.randomUUID();
         await publishReport(
           {
             TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
@@ -566,15 +602,23 @@ export default {
           { ...report, attribution },
           deliveryId,
         );
-        return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
+      } else {
+        deliveryId = await sendViaProvider(env, report, attribution);
       }
-      const deliveryId = await sendViaProvider(env, report, attribution);
-      return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
     } catch (error) {
       if (error instanceof RelayError) {
         return fail(error.status, error.code);
       }
       return fail(502, "relay.delivery_failed");
     }
+
+    // Only a delivered report is remembered: a failed one must be retryable.
+    try {
+      await rememberReport(env.RATE_LIMIT, admission.fingerprint, deliveryId);
+    } catch {
+      console.error("dedup.write_failed");
+    }
+
+    return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
   },
 } satisfies ExportedHandler<Env>;

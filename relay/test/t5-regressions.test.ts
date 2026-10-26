@@ -202,7 +202,7 @@ test("an unbound LINKS namespace degrades to declared instead of failing the rep
   }
 });
 
-test("a store that throws loses the signature, never the report or a secret", async () => {
+test("a failing store refuses the report instead of assuming the credential is clean", async () => {
   const token = "3".repeat(64);
   const broken: KvLike = {
     async get(): Promise<string | null> {
@@ -210,11 +210,6 @@ test("a store that throws loses the signature, never the report or a secret", as
     },
     async put(): Promise<void> {},
     async delete(): Promise<void> {},
-  };
-  const logged: string[] = [];
-  const originalError = console.error;
-  console.error = (...args: unknown[]) => {
-    logged.push(args.map(String).join(" "));
   };
   const telegram = stubTelegram();
   try {
@@ -224,16 +219,29 @@ test("a store that throws loses the signature, never the report or a secret", as
       {} as never,
     );
 
-    assert.equal(response.status, 200);
-    const summary = JSON.stringify(callNamed(telegram.calls, "sendMessage").json);
-    assert.ok(summary.includes("declared · local session"));
-    assert.equal(summary.includes("verified by Telegram"), false);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "relay.rate_limit_unavailable",
+    });
+    assert.equal(telegram.calls.length, 0);
   } finally {
     telegram.restore();
-    console.error = originalError;
   }
-  assert.ok(logged.includes("attribution.resolve_failed"));
-  assert.equal(logged.join(" ").includes(token), false);
+
+  // Without a credential nothing is checked, so an outage cannot silence the
+  // anonymous fallback path.
+  const anonymous = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      request({ ...BODY, contact: "Maria" }),
+      env(new MemoryKv(), { LINKS: broken }),
+      {} as never,
+    );
+    assert.equal(response.status, 200);
+  } finally {
+    anonymous.restore();
+  }
 });
 
 test("a token in the JSON body is rejected, never accepted as a header substitute", async () => {

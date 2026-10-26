@@ -125,25 +125,17 @@ export async function resolveAttribution(
 }
 
 /**
- * Read the link behind a presented token. Attribution is a label, never a
- * delivery dependency: an unbound namespace, a store outage or any unexpected
- * failure degrades to "nothing verified" instead of failing a report the person
- * already wrote. It can only ever lose a signature, never invent one.
+ * Read the link behind a presented token. An unbound namespace means nothing
+ * can be verified, so the report still travels as a declared one. A store that
+ * *fails* is different: the caller refuses the report (fail closed, like every
+ * other abuse check), because it cannot prove the credential is still allowed.
  */
 async function lookupIdentity(
   kv: KvLike | null | undefined,
   installToken: string | null,
 ): Promise<IdentityRecord | null> {
-  if (installToken === null) {
+  if (installToken === null || kv === null || kv === undefined) {
     return null;
   }
-  if (kv === null || kv === undefined) {
-    return null;
-  }
-  try {
-    return await readIdentityByInstallToken(kv, installToken);
-  } catch {
-    console.error("attribution.resolve_failed");
-    return null;
-  }
+  return readIdentityByInstallToken(kv, installToken);
 }

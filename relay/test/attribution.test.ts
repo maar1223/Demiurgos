@@ -204,11 +204,18 @@ test("an install token resolves only while it is the account's current one", asy
   assert.equal(kv.map.has(`link_token:${TOKEN}`), false);
 });
 
-test("revoking an account erases the token lookup too", async () => {
+test("revoking an account erases the token lookup, and blocks the dead one", async () => {
   const kv = await withLink();
 
   await revokeIdentity(kv, "1234567890");
 
-  assert.equal(kv.map.size, 0);
+  const keys = [...kv.map.keys()];
+  assert.deepEqual(
+    keys.filter((key) => !key.startsWith("blocked:")),
+    [],
+  );
   assert.equal(await readIdentityByInstallToken(kv, TOKEN), null);
+  // A digest, with a bounded life: the guard outlives the link, the token does not.
+  assert.equal(keys.filter((key) => key.startsWith("blocked:")).length, 1);
+  assert.equal(keys.some((key) => key.includes(TOKEN)), false);
 });

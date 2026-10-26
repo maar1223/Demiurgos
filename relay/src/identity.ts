@@ -84,6 +84,18 @@ function tokenPointerKey(telegramUserId: string): string {
   return `identity:token:${telegramUserId}`;
 }
 
+/**
+ * A revoked install keeps its credential digest for a bounded time, so the
+ * client that unlinked cannot keep reporting through the dead token. It is a
+ * digest, never the token, and it expires: a block is a guard, not a permanent
+ * shadow over a person.
+ */
+const BLOCK_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+function blockKey(hash: string): string {
+  return `blocked:${hash}`;
+}
+
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -231,10 +243,27 @@ export async function revokeIdentity(
   if (current === null) {
     return false;
   }
+  const hash = await kv.get(tokenPointerKey(telegramUserId));
+  if (hash !== null) {
+    await kv.put(blockKey(hash), "revoked", { expirationTtl: BLOCK_TTL_SECONDS });
+  }
+
   await kv.delete(identityKeyForTelegram(telegramUserId));
   await kv.delete(identityKeyForAccount(current.account_key));
   await eraseInstallToken(kv, telegramUserId);
   return true;
+}
+
+/**
+ * Whether this credential belongs to an install that unlinked. Malformed tokens
+ * are not blocked — they are simply not identity, and `resolveAttribution`
+ * already refuses them.
+ */
+export async function isBlockedInstall(kv: KvLike, token: string): Promise<boolean> {
+  if (!INSTALL_TOKEN.test(token)) {
+    return false;
+  }
+  return (await kv.get(blockKey(await sha256Hex(token)))) !== null;
 }
 
 /** Drop the token lookup of one Telegram account, if it has one. */

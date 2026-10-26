@@ -21,9 +21,14 @@ POST /   Content-Type: application/json
   "contact": "..." | null,
   "logs": "..." | null
 }
--> 200 { "ok": true,  "delivery_id": "..." }
+-> 200 { "ok": true,  "delivery_id": "...", "deduped"?: true }
 -> 4xx/5xx { "ok": false, "code": "<relay code>" }
 ```
+
+`deduped: true` means the same report was already published inside the last 24
+hours and `delivery_id` is the original one; nothing new was posted. An optional
+`x-install-token` header carries the credential the app received when it linked
+its Telegram account; it is never part of the body.
 
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for
 the wire shape. Field caps (`description` 4000, `contact` 200, `logs` 65536,
@@ -31,9 +36,9 @@ total 98304 bytes) are identical on both sides.
 
 Relay codes are non-secret and never carry a credential:
 `relay.invalid_payload`, `relay.unsupported_schema`, `relay.too_large`,
-`relay.rate_limited`, `relay.rate_limit_unavailable`, `relay.not_configured`,
-`relay.provider_unreachable`, `relay.provider_rejected`, `relay.delivery_failed`,
-`relay.method_not_allowed`.
+`relay.rate_limited`, `relay.rate_limit_unavailable`, `relay.report_blocked`,
+`relay.not_configured`, `relay.provider_unreachable`, `relay.provider_rejected`,
+`relay.delivery_failed`, `relay.method_not_allowed`.
 
 ## Identity store (Telegram linking)
 
@@ -46,9 +51,13 @@ identity:tg:<telegram_user_id>      -> IdentityRecord (JSON)
 identity:acct:<account_key>         -> <telegram_user_id>      (pointer)
 link_token:<sha256(install_token)>  -> <telegram_user_id>      (report signature)
 identity:token:<telegram_user_id>   -> <sha256(install_token)> (pointer)
+blocked:<sha256(install_token)>     -> "revoked"                 (30-day guard)
 ```
 
 Only the hash of the `install_token` is stored, and it is removed by a revoke.
+The revoked digest survives for 30 days so the unlinked client cannot keep
+reporting through the dead credential; relinking issues a new token that is not
+blocked.
 That is what lets a report prove who sent it without ever carrying a secret in
 its body.
 
@@ -129,8 +138,13 @@ never blurs the three levels:
 Rules that keep it honest (`src/attribution.ts`):
 
 - The token travels in the **`x-install-token` header**, never in the body, so it
-  can never reach the group or a log. Unknown, revoked, replaced or malformed
-  tokens fall back to the declared level instead of failing the report.
+  can never reach the group or a log. Unknown, replaced or malformed tokens fall
+  back to the declared level instead of failing the report; a revoked one is
+  refused with `403 relay.report_blocked`.
+- An **unbound** `LINKS` namespace means nothing can be verified, so the report
+  still travels as a declared one. A store that *fails* refuses the report with
+  `503 relay.rate_limit_unavailable` — the same fail-closed posture as the
+  counters, because the relay cannot prove the credential is still allowed.
 - A linked account only signs its reports while it holds `report_identity`.
   Turning that permission off turns the report back into a declared one; the link
   itself is untouched.
@@ -141,6 +155,31 @@ Rules that keep it honest (`src/attribution.ts`):
   its numeric id. A name is never invented.
 
 The email path carries the same line, as `Reported by:` in the body.
+
+## Abuse control (S13)
+
+A bot can post roughly 20 messages a minute to a group before Telegram answers
+429, so every bound is enforced here, before Telegram, or the channel becomes
+unusable for legitimate reports.
+
+| Layer | Bound | Storage |
+|---|---|---|
+| Dedup | Same `description + platform + logs` inside 24 h returns the first `delivery_id` and posts nothing. | `dedup:<sha256>` (24 h) |
+| Linked principal | 5 per rolling hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
+| Unlinked reporter | 5 per IP per 10 min, 200 per UTC day globally | `ip:<addr>`, `global:<date>` |
+| Linking tickets | 3 mints per hour per account (reuse is free) | `linkstart:<account_key>` |
+| Revoked install | Its dead token is refused for 30 days | `blocked:<sha256>` |
+
+Notes worth keeping:
+
+- Dedup runs **first**, so an accidental double submit neither opens a second
+  topic nor spends the reporter's allowance. Only a **delivered** report is
+  remembered, so a failed one stays retryable.
+- The fingerprint deliberately excludes the contact and the app version: adding a
+  contact or upgrading must not look like a new report.
+- Every counter failure is **fail-CLOSED**. KV is eventually consistent, so two
+  identical reports racing each other can both publish; these are best-effort
+  bounds for the Alpha volume, never the only line of defence.
 
 ## Publication into the triage group
 
