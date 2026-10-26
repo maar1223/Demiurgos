@@ -157,7 +157,11 @@ async function callTelegram(
  */
 export function sniffImageType(bytes: ArrayBuffer): string | null {
   const view = new Uint8Array(bytes);
-  if (view.length >= 8 && view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4e && view[3] === 0x47) {
+  if (
+    view.length >= 8 &&
+    view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4e && view[3] === 0x47 &&
+    view[4] === 0x0d && view[5] === 0x0a && view[6] === 0x1a && view[7] === 0x0a
+  ) {
     return "image/png";
   }
   if (view.length >= 3 && view[0] === 0xff && view[1] === 0xd8 && view[2] === 0xff) {
@@ -176,8 +180,12 @@ export function sniffImageType(bytes: ArrayBuffer): string | null {
 /** A filename safe to hand to Telegram: no paths, no control characters. */
 export function attachmentName(raw: string, index: number, type: string): string {
   const base = raw.split(/[\\/]/).pop() ?? "";
+  // Control characters AND the invisible ones that reorder text on screen: a
+  // filename must render exactly as it reads.
   // eslint-disable-next-line no-control-regex
-  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .trim();
   const name = cleaned.length === 0 ? "" : cleaned.slice(0, ATTACHMENT_NAME_MAX);
   if (name.length > 0) {
     return name;

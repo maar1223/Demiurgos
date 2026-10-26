@@ -376,3 +376,173 @@ test("the bytes decide the type, not the declared one", async () => {
     telegram.restore();
   }
 });
+
+
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46]);
+const WEBP_BYTES = new Uint8Array([
+  0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
+]);
+
+test("exactly 5 MB is accepted and one byte more is refused", async () => {
+  const exact = new Uint8Array(5 * 1024 * 1024);
+  exact.set(PNG_BYTES);
+  const over = new Uint8Array(5 * 1024 * 1024 + 1);
+  over.set(PNG_BYTES);
+
+  const okTg = stubTelegram();
+  try {
+    const ok = await worker.fetch(
+      multipartRequest(REPORT, [{ name: "big.png", type: "image/png", bytes: exact }]),
+      env(new MemoryKv()),
+      {} as never,
+    );
+    assert.equal(ok.status, 200);
+    const doc = okTg.calls[2].form?.get("document");
+    assert.ok(doc instanceof File);
+    assert.equal(doc.size, exact.length);
+  } finally {
+    okTg.restore();
+  }
+
+  const badTg = stubTelegram();
+  try {
+    const bad = await worker.fetch(
+      multipartRequest(REPORT, [{ name: "big.png", type: "image/png", bytes: over }]),
+      env(new MemoryKv()),
+      {} as never,
+    );
+    assert.equal(bad.status, 413);
+    assert.equal(badTg.calls.length, 0);
+  } finally {
+    badTg.restore();
+  }
+});
+
+test("JPEG and WebP are typed by their bytes", async () => {
+  const telegram = stubTelegram();
+  try {
+    await worker.fetch(
+      multipartRequest(REPORT, [
+        { name: "a.png", type: "image/png", bytes: JPEG_BYTES },
+        { name: "b.bin", type: "text/plain", bytes: WEBP_BYTES },
+      ]),
+      env(new MemoryKv()),
+      {} as never,
+    );
+
+    assert.equal((telegram.calls[2].form?.get("document") as File).type, "image/jpeg");
+    assert.equal((telegram.calls[3].form?.get("document") as File).type, "image/webp");
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a partial PNG signature is not a PNG", async () => {
+  const telegram = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      multipartRequest(REPORT, [
+        {
+          name: "fake.png",
+          type: "image/png",
+          bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x41, 0x42, 0x43, 0x44]),
+        },
+      ]),
+      env(new MemoryKv()),
+      {} as never,
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(telegram.calls.length, 0);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a filename part that is not a file is refused, not silently dropped", async () => {
+  const kv = new MemoryKv();
+  const form = new FormData();
+  form.set("report", JSON.stringify(REPORT));
+  form.append("attachments", "" as unknown as Blob);
+
+  const response = await worker.fetch(
+    new Request("https://relay.example/", { method: "POST", body: form }),
+    env(kv),
+    {} as never,
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    code: "relay.invalid_attachment",
+  });
+});
+
+test("invisible characters are stripped from the filename", async () => {
+  const telegram = stubTelegram();
+  try {
+    await worker.fetch(
+      multipartRequest(REPORT, [
+        {
+          name: "a\u0085b\u202ec.png",
+          type: "image/png",
+          bytes: PNG_BYTES,
+        },
+      ]),
+      env(new MemoryKv()),
+      {} as never,
+    );
+
+    const document = telegram.calls[2].form?.get("document");
+    assert.ok(document instanceof File);
+    assert.equal(document.name, "abc.png");
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a screenshot you had forgotten is not swallowed by dedup", async () => {
+  const kv = new MemoryKv();
+  const first = stubTelegram();
+  try {
+    await worker.fetch(multipartRequest(REPORT, []), env(kv), {} as never);
+  } finally {
+    first.restore();
+  }
+
+  const second = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      multipartRequest(REPORT, [
+        { name: "olvidada.png", type: "image/png", bytes: PNG_BYTES },
+      ]),
+      env(kv),
+      {} as never,
+    );
+
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.equal(body.deduped, undefined);
+    // topic + summary + the screenshot + the bundle document
+    assert.equal(second.calls.length, 4);
+  } finally {
+    second.restore();
+  }
+
+  const third = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      multipartRequest(REPORT, [
+        { name: "olvidada.png", type: "image/png", bytes: PNG_BYTES },
+      ]),
+      env(kv),
+      {} as never,
+    );
+
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.equal(body.deduped, true);
+    assert.equal(third.calls.length, 0);
+  } finally {
+    third.restore();
+  }
+});

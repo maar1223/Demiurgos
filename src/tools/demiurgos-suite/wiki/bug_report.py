@@ -60,6 +60,7 @@ from __future__ import annotations
 import json
 import platform as _platform
 import time
+import unicodedata
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Tuple
@@ -179,7 +180,11 @@ def _sniff_image(data: bytes) -> str | None:
 def _safe_attachment_name(raw: str | None, index: int, mime: str) -> str:
     """A filename safe to hand downstream: no paths, no control characters."""
     base = (raw or "").replace("\\", "/").split("/")[-1]
-    cleaned = "".join(ch for ch in base if ord(ch) >= 32 and ord(ch) != 127).strip()
+    # Control characters AND the invisible ones that reorder text on screen: a
+    # filename must render exactly as it reads.
+    cleaned = "".join(
+        ch for ch in base if unicodedata.category(ch) not in ("Cc", "Cf")
+    ).strip()
     if cleaned:
         return cleaned[:_ATTACHMENT_NAME_MAX]
     extension = "jpg" if mime == "image/jpeg" else mime.split("/")[-1] or "png"

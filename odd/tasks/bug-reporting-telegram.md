@@ -44,7 +44,7 @@ A configuration value is never presented as Telegram verification.
 ### T4 — Abuse control
 
 **S13 — Layered anti-spam.** Mandatory: `es importante que no se pueda hacer spam por dicho canal`.
-- Dedup by hash of `description + platform + logs`: the same report within 24 h returns the existing `report_id` and posts nothing new.
+- Dedup by hash of `description + platform + logs + the attached screenshots`: the same report within 24 h returns the existing `report_id` and posts nothing new. Re-submitting the same text **with a screenshot you had forgotten** is a new report: a second success that silently dropped the image would be a lie.
 - Linked principals: 5/hour, 20/day.
 - Unlinked reports: the relay's existing per-IP plus global-daily ceiling in KV, which already fails closed when the rate-limit backend errors.
 - Linking tickets: at most 3/hour per principal, one use each.
@@ -271,6 +271,14 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Security posture: a bad type, an empty file or an oversized image fails before any Telegram call; the filename can never carry a path; the binary never appears in the summary, the bundle or the email body. **The declared MIME is not trusted**: both sides sniff the magic bytes (`_sniff_image` / `sniffImageType`), so a renamed HTML file is refused and a PNG declared as JPEG is published as a PNG.
 - Tests: `relay/test/attachments.test.ts` (8 — document order, third file, oversized, bad type/empty, traversal name, missing report part, email note, no-attachment sequence) and 7 new backend cases (parts forwarded beside the bundle, third file, bad type, oversized, traversal, missing `report`, JSON path still attachment-free). Relay **111 passed**; backend router **43 passed**; `npx wrangler deploy --dry-run` 44.46 KiB.
 - `Risk: item 2 (untrusted binary upload: size, type and filename) and item 3 (a second wire shape).` Independent verification required.
+
+**L29 — T7b verification (2026-10-25).** `gentle-ai-verify` returned **PASS** with no blockers and four advisories; three were hardening and one was a lie to the user, so all four were closed.
+- **Dedup swallowed a newly attached screenshot.** Same text, screenshot added later -> `200 deduped` and nothing posted. Fixed by including the digest of the attached image bytes in the fingerprint; `S13` was rewritten because its literal hash no longer matched the intent, and the omission is recorded here rather than hidden. Re-submitting the identical text *and* image is still deduped.
+- **Invisible filename characters survived.** C0/DEL were stripped, but `U+0085` and the bidi overrides `U+202A..U+202E` were not, so a filename could render reversed in the group. Both sides now strip Unicode categories **Cc and Cf**.
+- **The relay's PNG check took 4 signature bytes, the backend 8.** Aligned on the full `89 50 4E 47 0D 0A 1A 0A`.
+- **The relay silently dropped an `attachments` part with an empty filename** (multipart parses it as a plain string, and the filter removed it): it now fails with `relay.invalid_attachment` instead of delivering a report whose image never arrived.
+- Regression tests from the probes: the 5 MB boundary accepted / 5 MB + 1 refused on both sides, JPEG and WebP typed by bytes, a partial PNG signature refused, an empty-filename part refused, bidi/C1 stripping, and the forgotten-screenshot case (published, then deduped only when identical).
+- Relay **119 passed**, backend router **47 passed**, typecheck clean; Worker redeployed and verified live.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.

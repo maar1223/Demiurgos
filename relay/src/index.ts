@@ -330,9 +330,15 @@ async function readReportBody(request: Request): Promise<ParsedReportBody> {
     throw new RelayError(400, "relay.invalid_payload");
   }
 
-  const files = form
-    .getAll("attachments")
-    .filter((value): value is File => typeof File !== "undefined" && value instanceof File);
+  const entries = form.getAll("attachments");
+  // A part with an empty filename is parsed as a plain string: dropping it
+  // silently would accept a report whose attachment never arrives.
+  for (const entry of entries) {
+    if (typeof File === "undefined" || !(entry instanceof File)) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
+  }
+  const files = entries as File[];
   if (files.length > ATTACHMENTS_MAX) {
     throw new RelayError(413, "relay.too_large");
   }
@@ -678,6 +684,7 @@ export default {
         report,
         attribution.identity?.account_key ?? null,
         now,
+        body.attachments.map((attachment) => attachment.bytes),
       );
     } catch {
       // Abuse control fails CLOSED, never open.

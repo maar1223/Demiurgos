@@ -1231,3 +1231,43 @@ def test_a_renamed_text_file_is_not_an_image() -> None:
 
     assert resp.status_code == 400
     assert resp.json()["code"] == "bugreport.invalid_attachment"
+
+
+def test_invisible_filename_characters_are_stripped() -> None:
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(
+            _valid_payload(),
+            [("a\u0085b\u202ec.png", PNG_BYTES, "image/png")],
+        ),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured[0]["attachments"][0][0] == "abc.png"
+
+
+def test_exactly_five_mb_is_accepted_and_one_more_refused() -> None:
+    exact = PNG_BYTES + b"\x00" * (5 * 1024 * 1024 - len(PNG_BYTES))
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(captured))
+
+    ok = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("big.png", exact, "image/png")]),
+    )
+
+    assert ok.status_code == 200, ok.text
+    assert captured[0]["attachments"][0][1] == exact
+
+    calls: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture_parts(calls))
+    over = TestClient(app).post(
+        "/api/bugreport/submit",
+        **_multipart(_valid_payload(), [("big.png", exact + b"\x00", "image/png")]),
+    )
+
+    assert over.status_code == 413
+    assert calls == []
