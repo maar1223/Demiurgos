@@ -83,7 +83,8 @@ A configuration value is never presented as Telegram verification.
 
 ### T3 — App
 
-- [ ] T7 — Backend: `schema: 2` contract (`context`, `attachments`, `install_token`), assemble path for the screenshot, scrubbing unchanged. (`S4`, `S5`, `S15`)
+- [x] T7a — Backend: `schema: 2` with `context`, the `x-install-token` header, the stable `account_key` (vault username or persisted `install_id`) and the `/link/start|status|revoke` proxies; scrubbing unchanged (`S4`, `S7`, `S10`, `S15`). Commit recorded in L26.
+- [ ] T7b — Attachments transport (2 × 5 MB, delivered as documents) across backend → relay → group; deferred to pair with T8, since the upload shape and the picker are one unit and no client can send an attachment before T8 exists.
 - [ ] T8 — Frontend: screenshot picker, thumbnails in the preview, capped at 2 × 5 MB. (`S3`, `S5`)
 - [ ] T9 — Frontend: linking modal — QR (`qrcode`), deep link, copy code, countdown, regenerate, 2 s polling, auto-close. (`S8`, `S9`)
 - [ ] T10 — Frontend: success screen with the optional `Abrir Telegram` action and the two separate permissions. (`S11`)
@@ -242,6 +243,16 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Regression tests from the verifier's probes: `relay/test/abuse-window.test.ts` (3) over a TTL-aware KV — the principal hour rolls, hammering the limit leaves the expiry untouched (asserted), and the linking window rolls instead of being pushed — plus one test that an unsigned linked account is still counted against its principal bucket.
 - `npm test` -> **100 passed, 0 failed**; `npm run typecheck` -> clean.
 - Advisories not changed: the pre-existing plaintext `install_token` in `ticket:<ticket>` until handover (L23/A1), the swallowed `rememberReport` failure after a delivered report, and cross-principal dedup returning the first reporter's `delivery_id` (literal to S13's hash definition).
+
+**L26 — T7a evidence (2026-10-25).** The app can now say where a bug happened and prove who is reporting, without the browser ever touching the relay.
+- **Schema 2 + `context`.** `ALLOWED_FIELDS` gains `context`; `CONTEXT_KEYS = {route, view, ui_area, world_id}`, 200 characters per value, raw-dict re-validation as before (an unknown key is `bugreport.not_allowlisted`, not silently dropped). Each value is passed through `content_scan.redact_secrets`, so a credential pasted into a route cannot leave the machine. The relay accepts **schema 1 and 2** and refuses unknown context keys and over-long values.
+- **Rollout guard, deliberate:** the backend sends `schema: 2` + `context` only when there is context, and otherwise stays on `schema: 1` with the key omitted. The deployed Worker predates schema 2, so a hard switch would have rejected every report until the relay was redeployed. A dropped report is worse than a report without context.
+- **`install_token` in the backend.** `bugreport_identity.py` (new) owns the stable `account_key` — the vault username when the vault is on, else an `install_id` minted once and persisted in `capabilities.bugreport` — plus the token slot (64 hex, validated on read). `_deliver` reads it and sends `x-install-token`; the token never enters the payload, the response, or a log (S15).
+- **Linking proxies.** `POST /link/start` resolves the account key server-side and forwards the two permission flags only when they are booleans; `/link/status` **keeps** the one-time `install_token` and returns only `state`, `username`, `display_name` and the two permissions — never the token, the numeric Telegram id or the account key; `/link/revoke` clears the stored token. All three require the principal and fail closed (`bugreport.relay_unavailable`) without `DEMIURGOS_BUGREPORT_RELAY_KEY`.
+- **Wiring:** `api_server.py` passes `relay_key`, `bot_username`, `local_state=_local_state` and `vault_active=_vault_active`. Required config (not committed): `DEMIURGOS_BUGREPORT_RELAY_KEY` (same value as the Worker secret) and `DEMIURGOS_BUGREPORT_BOT_USERNAME`.
+- `payload_manifest.json` regenerated: it was missing the new module, which broke payload-boot and installer tests until updated.
+- Tests: `wiki/tests/test_bugreport_identity.py` (5) and 13 new cases in `wiki/tests/test_bug_report_router.py` (context forwarding and schema choice, unknown key, cap, secret redaction, header present/absent, link start/status/revoke, token kept server-side, fail-closed without the relay key); relay `npm test` 103. Backend suite: **4241 passed, 18 skipped**; the 2 `test_gateway_hooks` failures only appear in full-suite ordering and pass on their own file (pre-existing pollution, not this change).
+- `Risk: item 2 (credentials/identity) and item 3 (the relay wire contract).` Independent verification required.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
