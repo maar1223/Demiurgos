@@ -42,7 +42,7 @@
  * the backend's own per-principal limit and the provider's free-tier cap.
  */
 
-import { bumpCounter } from "./counters.ts";
+import { admitCounter } from "./counters.ts";
 import { admitReport, rememberReport, secondsUntilUtcMidnight } from "./abuse.ts";
 import { isBlockedInstall } from "./identity.ts";
 import {
@@ -565,24 +565,27 @@ export default {
       return fail(429, admission.code);
     }
 
-    // Linked principals are bounded by their own buckets; unlinked reporters
-    // keep the per-IP and global-daily ceilings.
+    // Linked principals are bounded by their own buckets — including the ones
+    // that declined to sign, since declining a signature is not a way out of the
+    // bounds. Anonymous reporters keep the per-IP and global-daily ceilings.
     if (attribution.identity === null) {
       try {
-        const perIp = await bumpCounter(
+        const perIp = await admitCounter(
           env.RATE_LIMIT,
           `ip:${clientIp(request)}`,
           PER_IP_WINDOW_SECONDS,
+          PER_IP_MAX,
         );
-        if (perIp > PER_IP_MAX) {
+        if (!perIp) {
           return fail(429, "relay.rate_limited");
         }
-        const daily = await bumpCounter(
+        const daily = await admitCounter(
           env.RATE_LIMIT,
           utcDayKey(now),
           secondsUntilUtcMidnight(now),
+          GLOBAL_DAILY_MAX,
         );
-        if (daily > GLOBAL_DAILY_MAX) {
+        if (!daily) {
           return fail(429, "relay.rate_limited");
         }
       } catch {

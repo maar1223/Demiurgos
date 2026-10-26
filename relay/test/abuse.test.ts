@@ -262,6 +262,29 @@ test("a linked principal is capped per hour, and a duplicate does not count", as
   }
 });
 
+test("declining the signature is not a way out of the principal ceiling", async () => {
+  const token = "7".repeat(64);
+  const kv = new MemoryKv();
+  await writeIdentity(
+    kv,
+    linked({ permissions: { report_identity: false, notify_releases: false } }),
+  );
+  await recordInstallToken(kv, token, "1234567890");
+  const telegram = stubTelegram();
+  try {
+    for (let i = 0; i < PRINCIPAL_HOURLY_MAX; i += 1) {
+      const result = await submit(kv, { ...REPORT, description: `unsigned ${i}` }, { token });
+      assert.equal(result.status, 200);
+    }
+
+    const limited = await submit(kv, { ...REPORT, description: "unsigned over" }, { token });
+    assert.equal(limited.status, 429);
+    assert.equal(kv.map.get("principal:hour:acct_abc123"), "5");
+  } finally {
+    telegram.restore();
+  }
+});
+
 test("the daily cap applies even when the hourly one is clear", async () => {
   const token = "2".repeat(64);
   const kv = await linkedKv(token);

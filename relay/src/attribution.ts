@@ -36,7 +36,11 @@ export interface Attribution {
   tag: string;
   /** Who, in the shortest correct form. */
   label: string;
-  /** The resolved link, or null when nothing could be verified. */
+  /**
+   * The link the token resolved to, whatever level it earned. It stays set when
+   * the account declined `report_identity`, because the account-level ceilings
+   * still apply: declining a signature is not a way out of the abuse bounds.
+   */
   identity: IdentityRecord | null;
 }
 
@@ -111,7 +115,7 @@ export async function resolveAttribution(
       line: `👤 ${declared} — declared · local session`,
       tag: "declared · local session",
       label: declared,
-      identity: null,
+      identity,
     };
   }
 
@@ -120,7 +124,7 @@ export async function resolveAttribution(
     line: NO_CONTACT_LINE,
     tag: "sin contacto",
     label: "sin contacto",
-    identity: null,
+    identity,
   };
 }
 

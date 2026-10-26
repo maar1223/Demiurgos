@@ -165,7 +165,7 @@ unusable for legitimate reports.
 | Layer | Bound | Storage |
 |---|---|---|
 | Dedup | Same `description + platform + logs` inside 24 h returns the first `delivery_id` and posts nothing. | `dedup:<sha256>` (24 h) |
-| Linked principal | 5 per rolling hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
+| Linked principal | 5 per hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
 | Unlinked reporter | 5 per IP per 10 min, 200 per UTC day globally | `ip:<addr>`, `global:<date>` |
 | Linking tickets | 3 mints per hour per account (reuse is free) | `linkstart:<account_key>` |
 | Revoked install | Its dead token is refused for 30 days | `blocked:<sha256>` |
@@ -177,6 +177,9 @@ Notes worth keeping:
   remembered, so a failed one stays retryable.
 - The fingerprint deliberately excludes the contact and the app version: adding a
   contact or upgrading must not look like a new report.
+- A **refused attempt never extends the window it is being refused by**. The
+  window starts at the last accepted report, so a reporter who keeps retrying
+  cannot push it forward and lock themselves out for good.
 - Every counter failure is **fail-CLOSED**. KV is eventually consistent, so two
   identical reports racing each other can both publish; these are best-effort
   bounds for the Alpha volume, never the only line of defence.

@@ -17,7 +17,7 @@
  * from the same Telegram account — a double tap must never look like an error.
  */
 
-import { bumpCounter } from "./counters.ts";
+import { admitCounter } from "./counters.ts";
 import {
   readIdentity,
   readIdentityByAccount,
@@ -251,17 +251,20 @@ export async function startLink(
     return { ticket: pending.ticket, expires_at: pending.expires_at, reused: true };
   }
 
-  let attempts: number;
+  let withinHour: boolean;
   try {
-    attempts = await bumpCounter(
+    // A refused attempt must not push the window forward, or hammering the
+    // button would keep the account locked out indefinitely.
+    withinHour = await admitCounter(
       kv,
       startCounterKey(request.account_key),
       3600,
+      LINK_START_MAX_PER_HOUR,
     );
   } catch {
     throw new LinkError(503, "link.rate_limit_unavailable");
   }
-  if (attempts > LINK_START_MAX_PER_HOUR) {
+  if (!withinHour) {
     throw new LinkError(429, "link.rate_limited");
   }
 

@@ -19,7 +19,7 @@
  * caller must treat a counter failure as fail-CLOSED.
  */
 
-import { bumpCounter } from "./counters.ts";
+import { admitCounter } from "./counters.ts";
 import type { KvLike } from "./identity.ts";
 
 /** How long a published report is remembered for dedup. */
@@ -135,16 +135,24 @@ export async function admitReport(
   }
 
   if (accountKey !== null) {
-    const hourly = await bumpCounter(kv, `principal:hour:${accountKey}`, 3600);
-    if (hourly > PRINCIPAL_HOURLY_MAX) {
+    // Refusals must not extend the window they are being refused by: a
+    // reporter who keeps retrying would otherwise never get through.
+    const withinHour = await admitCounter(
+      kv,
+      `principal:hour:${accountKey}`,
+      3600,
+      PRINCIPAL_HOURLY_MAX,
+    );
+    if (!withinHour) {
       return { verdict: "limited", code: "relay.rate_limited" };
     }
-    const daily = await bumpCounter(
+    const withinDay = await admitCounter(
       kv,
       `principal:day:${accountKey}`,
       secondsUntilUtcMidnight(now),
+      PRINCIPAL_DAILY_MAX,
     );
-    if (daily > PRINCIPAL_DAILY_MAX) {
+    if (!withinDay) {
       return { verdict: "limited", code: "relay.rate_limited" };
     }
   }
