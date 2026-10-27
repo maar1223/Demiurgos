@@ -15,6 +15,7 @@ import {
   rememberSubmittedReport,
   writePseudonymPreference,
 } from "@/lib/bugReportHistory";
+import { formatFrontendBuild, readFrontendBuildInfo } from "@/lib/buildInfo";
 import { getErrorMessage } from "@/lib/utils";
 
 /** Resolve a localized message for a caught error, falling back when the
@@ -106,6 +107,12 @@ const FIELD_INPUT_CLASS =
  */
 export function ReportSection() {
   const { t } = useAppLanguage();
+  // The served bundle's own identity (plan A): next to the backend version it
+  // makes a stale `dist` visible at a glance.
+  const frontendBuild = formatFrontendBuild(
+    readFrontendBuildInfo(),
+    t("profile.bugreport.frontendBuildDirty"),
+  );
 
   const [bundle, setBundle] = useState<BugReportBundle | null>(null);
   const [assembling, setAssembling] = useState(true);
@@ -309,6 +316,17 @@ export function ReportSection() {
                 data-testid="bugreport-app-version"
               >
                 {bundle.app_version}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-small text-muted">
+                {t("profile.bugreport.frontendBuild")}
+              </dt>
+              <dd
+                className="font-medium text-primary"
+                data-testid="bugreport-frontend-build"
+              >
+                {frontendBuild}
               </dd>
             </div>
             <div>

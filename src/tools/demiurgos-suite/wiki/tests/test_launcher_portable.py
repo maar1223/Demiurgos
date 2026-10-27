@@ -125,6 +125,37 @@ class TestLayoutContract:
         text = _text(PORTABLE_LAUNCHER)
         assert "/tmp" not in text
 
+    @pytest.mark.skipif(
+        os.name == "nt" or shutil.which("bash") is None,
+        reason="POSIX-bash sourcing probe: on Windows a bare `bash` is the WSL stub",
+    )
+    def test_runtime_base_survives_an_unset_tmpdir(self):
+        """A minimal env (Git Bash on Windows) must not abort on `set -u`.
+
+        ``RUNTIME_BASE`` read ``$TMPDIR`` directly, so any environment without
+        it — Git Bash on Windows, a minimal container — died with
+        "TMPDIR: unbound variable" before the launcher did anything. The
+        fallback must stay inside the user's home and never a hardcoded
+        temp path (see ``test_no_hardcoded_tmp_paths``).
+        """
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"TMPDIR", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME"}
+        }
+        probe = '. "$1" || exit 9; printf %s "${RUNTIME_BASE:-UNSET}"'
+        result = subprocess.run(
+            ["bash", "-c", probe, "bash", str(PORTABLE_LAUNCHER)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout != "UNSET" and result.stdout, "RUNTIME_BASE was not derived"
+        expected = Path(os.path.expanduser("~")) / ".cache" / "demiurgos" / "runtime"
+        assert result.stdout == str(expected)
+
     def test_no_forced_data_root_export(self):
         text = _text(PORTABLE_LAUNCHER)
         assert 'export DEMIURGOS_DATA_ROOT="$PROJECT_ROOT"' not in text
