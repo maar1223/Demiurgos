@@ -166,8 +166,8 @@ export const messages = {
     "profile.updates.versionUnknown": "Sin verificar",
     "profile.updates.channelLabel": "Canal",
     "profile.updates.channelAria": "Selección de canal de actualizaciones",
-    "profile.updates.channel.estable": "Estable",
-    "profile.updates.channel.beta": "Beta",
+    "profile.updates.channel.estable": "Recomendado",
+    "profile.updates.channel.beta": "Anticipado",
     "profile.updates.check": "Buscar actualizaciones",
     "profile.updates.checking": "Buscando…",
     "profile.updates.checkError": "No se pudieron buscar actualizaciones.",
@@ -322,10 +322,10 @@ export const messages = {
 
     "profile.guide.updates.title": "Actualizaciones",
     "profile.guide.updates.lead":
-      "Mantén Demiurgos al día con los canales Estable o Beta.",
+      "Mantén Demiurgos al día con los canales Recomendado o Anticipado.",
     "profile.guide.updates.step1": "Ve a Perfil → Actualizaciones.",
     "profile.guide.updates.step2":
-      "Elige el canal Estable para versiones estables o Beta para probar antes.",
+      "Elige el canal Recomendado para las versiones de todos los días o Anticipado para probar antes.",
     "profile.guide.updates.step3":
       "Pulsa Buscar actualizaciones para comprobar si hay una versión nueva.",
     "profile.guide.updates.step4":
@@ -2281,8 +2281,8 @@ export const messages = {
     "profile.updates.versionUnknown": "Not checked",
     "profile.updates.channelLabel": "Channel",
     "profile.updates.channelAria": "Update channel selection",
-    "profile.updates.channel.estable": "Stable",
-    "profile.updates.channel.beta": "Beta",
+    "profile.updates.channel.estable": "Recommended",
+    "profile.updates.channel.beta": "Preview",
     "profile.updates.check": "Check for updates",
     "profile.updates.checking": "Checking…",
     "profile.updates.checkError": "Could not check for updates.",
@@ -2437,10 +2437,10 @@ export const messages = {
 
     "profile.guide.updates.title": "Updates",
     "profile.guide.updates.lead":
-      "Keep Demiurgos current with the Stable or Beta channels.",
+      "Keep Demiurgos current with the Recommended or Preview channels.",
     "profile.guide.updates.step1": "Go to Profile → Updates.",
     "profile.guide.updates.step2":
-      "Pick the Stable channel for stable releases or Beta to test early.",
+      "Pick the Recommended channel for everyday versions or Preview to test early.",
     "profile.guide.updates.step3":
       "Press Check for updates to see if a new version exists.",
     "profile.guide.updates.step4":

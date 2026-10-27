@@ -121,8 +121,9 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     );
     // The channel is server-owned: it starts at the documented default until a
     // check reports the selected channel.
-    expect(screen.getByTestId("update-channel-value")).toHaveTextContent(
-      "Estable",
+    expect(screen.getByRole("radio", { name: "Recomendado" })).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
     expect(getUpdateStatus).not.toHaveBeenCalled();
 
@@ -135,8 +136,19 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
         "0.2.0",
       ),
     );
-    expect(screen.getByTestId("update-channel-value")).toHaveTextContent("Beta");
+    expect(screen.getByRole("radio", { name: "Anticipado" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(getUpdateStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the channel once, with its own selector label", () => {
+    render(<UpdateSection />);
+    // The channel used to be printed twice: once as a readout row and once as
+    // the selector label. The selected radio already carries the value.
+    expect(screen.getAllByText("Canal")).toHaveLength(1);
+    expect(screen.queryByTestId("update-channel-value")).not.toBeInTheDocument();
   });
 
   it("fetches once per explicit click and never in the background", async () => {
@@ -159,21 +171,18 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     const user = userEvent.setup();
     render(<UpdateSection />);
 
-    expect(screen.getByRole("radio", { name: "Estable" })).toHaveAttribute(
+    expect(screen.getByRole("radio", { name: "Recomendado" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
-    await user.click(screen.getByRole("radio", { name: "Beta" }));
+    await user.click(screen.getByRole("radio", { name: "Anticipado" }));
 
+    // The visible label changed; the wire value the API persists did not.
     expect(setUpdateChannel).toHaveBeenCalledWith("Beta");
     await waitFor(() =>
-      expect(screen.getByTestId("update-channel-value")).toHaveTextContent(
-        "Beta",
-      ),
-    );
-    expect(screen.getByRole("radio", { name: "Beta" })).toHaveAttribute(
-      "aria-checked",
-      "true",
+      expect(
+        screen.getByRole("radio", { name: "Anticipado" }),
+      ).toHaveAttribute("aria-checked", "true"),
     );
   });
 
@@ -182,10 +191,10 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     const user = userEvent.setup();
     render(<UpdateSection />);
 
-    await user.click(screen.getByRole("radio", { name: "Beta" }));
+    await user.click(screen.getByRole("radio", { name: "Anticipado" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("radio", { name: "Estable" })).toHaveAttribute(
+      expect(screen.getByRole("radio", { name: "Recomendado" })).toHaveAttribute(
         "aria-checked",
         "true",
       ),

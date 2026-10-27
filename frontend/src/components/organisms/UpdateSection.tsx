@@ -19,7 +19,9 @@ import {
 } from "@/lib/bugReportHistory";
 
 /** Selectable channels in display order. The wire value doubles as the label
- *  key suffix; "Estable" is the server-owned fresh-install default. */
+ *  key suffix: it is the server-owned contract (`"Estable"` is the fresh-install
+ *  default), while the rendered label is plain language ("Recomendado",
+ *  "Anticipado"). Never show the wire value to the user. */
 const CHANNELS: UpdateChannel[] = ["Estable", "Beta"];
 
 const CHANNEL_LABEL_KEY = {
@@ -234,7 +236,7 @@ export function UpdateSection() {
       </h3>
       <p className="mt-1 text-small text-muted">{t("profile.updates.manualHint")}</p>
 
-      <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <dl className="mt-4 grid grid-cols-1 gap-3">
         <div>
           <dt className="text-small text-muted">
             {t("profile.updates.currentVersion")}
@@ -243,14 +245,6 @@ export function UpdateSection() {
             {status?.current_version ??
               appVersion ??
               t("profile.updates.versionUnknown")}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-small text-muted">
-            {t("profile.updates.channelLabel")}
-          </dt>
-          <dd className="font-medium text-primary" data-testid="update-channel-value">
-            {t(CHANNEL_LABEL_KEY[channel])}
           </dd>
         </div>
       </dl>
