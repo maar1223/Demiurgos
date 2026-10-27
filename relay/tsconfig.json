@@ -7,6 +7,8 @@
     "types": ["@cloudflare/workers-types"],
     "strict": true,
     "noEmit": true,
+    // Explicit .ts specifiers keep the Node test runner working without a build.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

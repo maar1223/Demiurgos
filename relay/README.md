@@ -35,6 +35,83 @@ Relay codes are non-secret and never carry a credential:
 `relay.provider_unreachable`, `relay.provider_rejected`, `relay.delivery_failed`,
 `relay.method_not_allowed`.
 
+## Identity store (Telegram linking)
+
+A linked account binds a Telegram user to the app's stable account key. The relay
+is the only component that knows both sides, so the store lives here
+(`src/identity.ts`) in the `LINKS` KV namespace:
+
+```
+identity:tg:<telegram_user_id>      -> IdentityRecord (JSON)
+identity:acct:<account_key>   -> <telegram_user_id>            (pointer)
+```
+
+```json
+{
+  "telegram_user_id": "1234567890",
+  "username": "brook",
+  "display_name": "Brook",
+  "account_key": "prin_abc123",
+  "linked_at": "2026-10-25T12:00:00.000Z",
+  "started_bots": { "ideas": false, "reports": true },
+  "permissions": { "report_identity": true, "notify_releases": true }
+}
+```
+
+Rules the store enforces:
+
+- **Reads fail closed.** A malformed value or a dangling pointer reads as
+  absent, so corruption can only lose a link, never grant one.
+- **One Telegram account per account key.** Relinking retires the previous
+  telegram-side record instead of leaving an identity that can no longer be
+  revoked.
+- **Delivery permission is per bot.** `started_bots` records which bots the
+  account has actually started; a bot cannot transfer that permission to
+  another bot.
+- **Permissions are separate.** `report_identity` and `notify_releases` are
+  granted and read independently. A caller that states one explicitly on a
+  reused ticket has it applied, never silently dropped.
+- **`account_key` validation matches the vault, not a stricter rule.** The vault
+  stores any non-empty trimmed username (`account.py::create_account` imposes no
+  charset), so the relay only rejects what a KV key cannot hold: empty, untrimmed,
+  containing control characters, or over 400 UTF-8 bytes.
+- **Revoke erases both directions.** `revokeLink` deletes the record, the
+  pointer, the pending ticket **and** the ticket record, so a ticket
+  photographed before the revoke cannot re-link the account for the rest of its
+  TTL.
+
+`LINKS` is a separate namespace from `RATE_LIMIT` on purpose: identities are
+personal data with no TTL, while the counters are disposable and expires.
+Mixing them would eventually let a TTL sweep erase a link.
+
+## Identity endpoints
+
+Called by the **backend**, never by the app: the backend owns the session that
+proves the account, and the relay trusts only that caller. Every route requires
+the `x-relay-key` header and rejects a mismatch with `401 relay.unauthorized`.
+All three are `POST` so a ticket never travels in a URL or a Worker log.
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /link/start` | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
+| `POST /link/status` | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
+| `POST /link/revoke` | `{account_key}` | `{ok, revoked}` |
+
+Behaviour worth knowing:
+
+- A ticket lives 10 minutes and is single-use; the **link** it creates never expires.
+- Reopening the panel reuses the pending ticket, so it does not burn the
+  three-per-hour allowance (only minting does).
+- `install_token` is returned by `/link/status` **once**, then withheld, so a
+  reload cannot re-expose it.
+- Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
+  function the Telegram webhook calls, because a public redeem endpoint would
+  let the app bind a Telegram account it does not control.
+
+New codes: `relay.unauthorized`, `relay.not_found`, `link.invalid_account`,
+`link.rate_limited`, `link.rate_limit_unavailable`, `link.ticket_invalid`,
+`link.ticket_expired`, `link.ticket_consumed`, `link.failed`.
+
 ## Prerequisites
 
 1. **Cloudflare account** with `wrangler` available (`npm install` in this
@@ -50,21 +127,23 @@ Relay codes are non-secret and never carry a credential:
 
 ## Configure
 
-Create the KV namespace used for rate limiting, then paste the printed ids into
-`wrangler.toml`:
+Create both KV namespaces, then paste the printed ids into `wrangler.toml`:
 
 ```bash
 npx wrangler kv namespace create RATE_LIMIT
 npx wrangler kv namespace create RATE_LIMIT --preview
+npx wrangler kv namespace create LINKS
+npx wrangler kv namespace create LINKS --preview
 ```
 
-Set the three secrets. They are stored by Cloudflare and are **never** committed
+Set the secrets. They are stored by Cloudflare and are **never** committed
 to the repository:
 
 ```bash
 npx wrangler secret put BREVO_API_KEY    # the provider key from step 2
 npx wrangler secret put OWNER_INBOX      # the fixed destination inbox
 npx wrangler secret put SENDER_FROM      # a verified sender on the domain from step 3
+npx wrangler secret put RELAY_KEY        # shared with the backend; guards the identity routes
 ```
 
 | Secret / binding | Purpose |
@@ -72,7 +151,9 @@ npx wrangler secret put SENDER_FROM      # a verified sender on the domain from 
 | `BREVO_API_KEY` | Provider API key (sent as the `api-key` request header). |
 | `OWNER_INBOX` | Fixed inbox that receives every report. |
 | `SENDER_FROM` | Verified sender address for the outgoing email. |
+| `RELAY_KEY` | Shared secret the backend presents as `x-relay-key` on identity calls. |
 | `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters. |
+| `LINKS` (KV) | Linked Telegram identities and pending tickets. |
 
 ## Run locally
 
@@ -83,6 +164,16 @@ npx wrangler dev
 Local KV is simulated, so no real namespace id is required for a local run. To
 exercise the handler without a real provider, point it at a stub: send the
 contract body to the local `POST /` URL and confirm the JSON response shape.
+
+## Tests
+
+```bash
+npm test
+```
+
+Node's built-in test runner with type stripping, so the relay gains tests
+without a new dependency. The clock is injected, so ticket expiry is tested by
+moving time, never by sleeping.
 
 ## Typecheck
 
