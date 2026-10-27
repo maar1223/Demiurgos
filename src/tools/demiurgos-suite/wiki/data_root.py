@@ -41,9 +41,22 @@ must keep that constant monkeypatchable after migrating — resolve lazily and
 rebind the module attribute, never resolve at import time. Those modules are
 NOT migrated here; this module is additive and imported by nothing yet.
 
-**Injection seams**: ``environ`` and ``config_dir`` are keyword arguments on
-every public function, so tests are hermetic (``tmp_path`` plus a fake environ)
-without touching the real process environment or the real user config dir.
+**Content root vs state root (the sync boundary).** :func:`resolve_data_root`
+names the AUTHOR CONTENT folder — the one the author may back up with a cloud
+client of their choice. Machine state does NOT belong there: the five SQLite
+stores, the world recycle bin and the migration evidence are opened with locks
+and WAL, and a cloud client syncing them between two machines corrupts them.
+The product already classifies that material as machine state
+(``backup.inventory`` excludes ``data/``), so :func:`resolve_state_root` names
+the separate, machine-local location for it. Nothing consumes that resolver yet:
+moving the stores over is a later step, and it must decide EXPLICITLY how an
+existing ``<data root>/data`` is adopted — the resolver never guesses from
+filesystem presence.
+
+**Injection seams**: ``environ``, ``config_dir`` and ``state_dir`` are keyword
+arguments on the public functions, so tests are hermetic (``tmp_path`` plus a
+fake environ) without touching the real process environment, the real user
+config dir or the real user data dir.
 """
 
 from __future__ import annotations
@@ -67,6 +80,7 @@ _HAS_PLATFORMDIRS = _platformdirs is not None
 
 
 ENV_VAR = "DEMIURGOS_DATA_ROOT"
+ENV_STATE_ROOT = "DEMIURGOS_STATE_ROOT"
 APP_NAME = "demiurgos"
 POINTER_NAME = "data-root.json"
 SCHEMA_VERSION = 1
@@ -105,6 +119,36 @@ def _fallback_config_dir() -> Path:
         xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
         base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
     return base / APP_NAME
+
+
+def _fallback_data_dir() -> Path:
+    """State dir used ONLY when ``platformdirs`` is unavailable.
+
+    POSIX: ``$XDG_DATA_HOME`` when set and non-blank, else ``~/.local/share``.
+    Windows: ``%LOCALAPPDATA%`` when set and non-blank, else
+    ``~/AppData/Local``. ``APP_NAME`` is always appended. This mirrors the
+    platformdirs ``user_data_dir`` base only for the hosts that would otherwise
+    raise ``ImportError``.
+    """
+    if _is_windows():
+        local = (os.environ.get("LOCALAPPDATA") or "").strip()
+        base = (
+            Path(local).expanduser()
+            if local
+            else Path.home() / "AppData" / "Local"
+        )
+    else:
+        xdg = (os.environ.get("XDG_DATA_HOME") or "").strip()
+        base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
+    return base / APP_NAME
+
+
+def _state_dir(state_dir: Path | None) -> Path:
+    if state_dir is not None:
+        return Path(state_dir)
+    if _HAS_PLATFORMDIRS:
+        return Path(_platformdirs.user_data_dir(APP_NAME))
+    return _fallback_data_dir()
 
 
 def _config_dir(config_dir: Path | None) -> Path:
@@ -199,6 +243,36 @@ def resolve_data_root(
         f"no data root configured: set {ENV_VAR} or write the bootstrap pointer "
         f"at {pointer_path(config_dir)}"
     )
+
+
+def resolve_state_root(
+    *,
+    environ: Mapping[str, str] | None = None,
+    state_dir: Path | None = None,
+) -> Path:
+    """Resolve the machine-local state root (locks, WAL and SQLite live here).
+
+    Two steps, applied in this order:
+
+    1. ``DEMIURGOS_STATE_ROOT`` when it is set to a non-blank value. The value
+       is returned as a normalized absolute path.
+    2. ``state_dir`` when injected, else ``platformdirs.user_data_dir
+       ("demiurgos")`` — ``$XDG_DATA_HOME``/``~/.local/share`` on POSIX or
+       ``%LOCALAPPDATA%`` on Windows when the optional dependency is absent.
+
+    Unlike :func:`resolve_data_root` this never raises: machine state has a
+    platform-defined home, so there is nothing for the author to configure and
+    nothing to fail loudly about. It never reads the data-root pointer and
+    never inspects the filesystem — an existing ``<data root>/data`` is NOT
+    adopted here; a consumer switching over must decide that explicitly.
+    """
+    env = os.environ if environ is None else environ
+
+    override = (env.get(ENV_STATE_ROOT) or "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+
+    return _state_dir(state_dir)
 
 
 def write_pointer(root: Path, *, config_dir: Path | None = None) -> None:
