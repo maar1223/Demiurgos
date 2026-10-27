@@ -312,6 +312,22 @@ describe("TelegramLinkPanel — linking surface (S8–S11)", () => {
     ).toBeInTheDocument();
   });
 
+  it("says what to do when the phone does not confirm soon", async () => {
+    const user = userEvent.setup();
+    render(<TelegramLinkPanel pollIntervalMs={10} slowHintMs={10} />);
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    );
+    await screen.findByTestId("bugreport-telegram-ticket");
+
+    // The bare "waiting" line is replaced by something actionable once the
+    // expected window passes.
+    expect(await screen.findByTestId("bugreport-telegram-slow")).toHaveTextContent(
+      tEs("profile.bugreport.telegramWaitingSlow"),
+    );
+  });
+
   it("reports a failed start instead of pretending a link exists", async () => {
     (startTelegramLink as Mock).mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();

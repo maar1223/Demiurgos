@@ -59,7 +59,13 @@ interface LinkedIdentity {
  * `pollIntervalMs` exists so tests do not have to wait two seconds; production
  * always uses the default.
  */
-export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: number }) {
+export function TelegramLinkPanel({
+  pollIntervalMs = 2000,
+  slowHintMs = 30_000,
+}: {
+  pollIntervalMs?: number;
+  slowHintMs?: number;
+}) {
   const { t } = useAppLanguage();
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -67,6 +73,9 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
   const [telegramUrl, setTelegramUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // When the phone has not confirmed after a while, say what to do instead of
+  // leaving a bare "waiting" on screen.
+  const [waitedLong, setWaitedLong] = useState(false);
   const [linked, setLinked] = useState<LinkedIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -96,6 +105,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
           expires_at: next.expires_at,
           telegram_url: next.telegram_url,
         });
+        setWaitedLong(false);
         setPhase("pending");
       } catch (cause: unknown) {
         setError(describeError(cause, t("profile.bugreport.telegramError")));
@@ -138,6 +148,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       setTicket(pending.ticket);
       setTelegramUrl(pending.telegram_url);
       setExpiresAt(pending.expires_at);
+      setWaitedLong(false);
       setPhase((current) => (current === "idle" ? "pending" : current));
     };
 
@@ -164,6 +175,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       setSecondsLeft(left);
       if (left === 0) {
         clearPendingLink();
+        setWaitedLong(false);
         setPhase((current) => (current === "pending" ? "expired" : current));
       }
     };
@@ -171,6 +183,15 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [expiresAt, phase]);
+
+  // A phone that never confirms would leave "waiting" on screen with nothing to
+  // do about it. After a short window, say what actually helps — and re-arm the
+  // window whenever a new ticket is minted.
+  useEffect(() => {
+    if (phase !== "pending") return;
+    const id = setTimeout(() => setWaitedLong(true), slowHintMs);
+    return () => clearTimeout(id);
+  }, [phase, slowHintMs, ticket]);
 
   // The phone does the work; the panel polls until it answers.
   useEffect(() => {
@@ -186,6 +207,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
         if (!active) return;
         if (next.state === "linked") {
           clearPendingLink();
+          setWaitedLong(false);
           setLinked({
             username: next.username,
             display_name: next.display_name,
@@ -252,6 +274,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       return;
     }
     clearPendingLink();
+    setWaitedLong(false);
     setPhase("idle");
     setTicket(null);
     setTelegramUrl(null);
@@ -349,6 +372,11 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
             <p role="status" className="text-small text-muted">
               {t("profile.bugreport.telegramWaiting")}
             </p>
+            {waitedLong && (
+              <p className="text-small text-muted" data-testid="bugreport-telegram-slow">
+                {t("profile.bugreport.telegramWaitingSlow")}
+              </p>
+            )}
             <div className="flex flex-col gap-1">
               <label className="flex items-start gap-2 text-small text-primary">
                 <input

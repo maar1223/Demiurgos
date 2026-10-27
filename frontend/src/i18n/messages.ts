@@ -224,7 +224,10 @@ export const messages = {
     "profile.bugreport.telegramCopyCode": "Copiar código",
     "profile.bugreport.telegramCopied": "Código copiado",
     "profile.bugreport.telegramExpiresIn": "Caduca en {time}",
-    "profile.bugreport.telegramWaiting": "Esperando confirmación en Telegram…",
+    "profile.bugreport.telegramWaiting":
+      "Esperando confirmación en Telegram… suele tardar menos de 30 segundos.",
+    "profile.bugreport.telegramWaitingSlow":
+      "Si ya escaneaste el código y no pasa nada, pulsa «Generar de nuevo» y escanea el nuevo: el anterior sigue caducando solo.",
     "profile.bugreport.telegramExpired": "El enlace caducó.",
     "profile.bugreport.telegramRegenerate": "Generar de nuevo",
     "profile.bugreport.telegramPermReport":
@@ -2334,7 +2337,10 @@ export const messages = {
     "profile.bugreport.telegramCopyCode": "Copy code",
     "profile.bugreport.telegramCopied": "Code copied",
     "profile.bugreport.telegramExpiresIn": "Expires in {time}",
-    "profile.bugreport.telegramWaiting": "Waiting for confirmation in Telegram…",
+    "profile.bugreport.telegramWaiting":
+      "Waiting for confirmation in Telegram… it usually takes under 30 seconds.",
+    "profile.bugreport.telegramWaitingSlow":
+      "If you already scanned and nothing happens, press \"Generate again\" and scan the new code; the old one keeps expiring on its own.",
     "profile.bugreport.telegramExpired": "The link expired.",
     "profile.bugreport.telegramRegenerate": "Generate again",
     "profile.bugreport.telegramPermReport":

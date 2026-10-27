@@ -417,6 +417,12 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Runners: frontend **1572** over 127 files, `tsc --noEmit` clean, `dist` rebuilt (served asset `index-BiFvb-D5.js`).
 - `Risk: none — panel-local persistence of a short-lived ticket; it already travels in the QR, and it is cleared on every terminal state.`
 
+**L42 — The waiting state now says how long and what to do (2026-10-27).** The panel sat on a bare "Esperando confirmación en Telegram…" for as long as the ticket lived, which reads as a hang even when the flow is healthy (the real handover in L41 completed eight seconds after the QR appeared).
+- The waiting line now sets the expectation — "suele tardar menos de 30 segundos" — and after that window an actionable hint appears: if you already scanned and nothing happens, press "Generar de nuevo" and scan the new code, because the old one keeps expiring on its own. The hint is re-armed whenever a new ticket is minted and cleared on linked, expired and disconnect.
+- `slowHintMs` is a prop with a production default of 30 s, the same seam `pollIntervalMs` already used, so the behaviour is testable without waiting half a minute.
+- Tests: one new cell asserts the hint appears once the window passes; both catalogues carry the two strings. Frontend **1573** over 127 files, `tsc --noEmit` clean, `dist` rebuilt.
+- `Risk: none — copy and a local timer; no request, credential or stored data changed.`
+
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
 - Fix: a bare `/start` (optionally `@bot`) now answers one canned line pointing to `Perfil → Reporte de errores → Conectar Telegram`. It interprets nothing and still handles no free text, so D2 holds.
