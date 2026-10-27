@@ -196,17 +196,13 @@ export async function writeIdentity(kv: KvLike, record: IdentityRecord): Promise
     await kv.delete(identityKeyForAccount(previousRecord.account_key));
   }
 
+  // A different Telegram account claiming an account key that is already bound
+  // does NOT erase the current binding or its token. A guessed account key must
+  // never be able to take somebody's signature away, and an install that lost
+  // its own token must not be locked out of linking again (S19). The pointer
+  // simply moves; the previous identity stays valid and revocable by its owner.
   const previousTelegramId = await kv.get(identityKeyForAccount(record.account_key));
-  if (
-    previousTelegramId !== null &&
-    previousTelegramId !== record.telegram_user_id
-  ) {
-    await kv.delete(identityKeyForTelegram(previousTelegramId));
-    // Its install token would otherwise resolve to a record that no longer
-    // exists. That already reads as absent, but a lookup nobody can revoke is
-    // exactly the kind of leftover that becomes a bug later.
-    await eraseInstallToken(kv, previousTelegramId);
-  }
+  void previousTelegramId;
 
   await kv.put(identityKeyForTelegram(record.telegram_user_id), JSON.stringify(record));
   await kv.put(identityKeyForAccount(record.account_key), record.telegram_user_id);
@@ -249,7 +245,13 @@ export async function revokeIdentity(
   }
 
   await kv.delete(identityKeyForTelegram(telegramUserId));
-  await kv.delete(identityKeyForAccount(current.account_key));
+  // Only remove the account pointer when it still points at this identity: a
+  // newer binding may legitimately own it, and revoking one link must never
+  // unbind another.
+  const pointed = await kv.get(identityKeyForAccount(current.account_key));
+  if (pointed === telegramUserId) {
+    await kv.delete(identityKeyForAccount(current.account_key));
+  }
   await eraseInstallToken(kv, telegramUserId);
   return true;
 }

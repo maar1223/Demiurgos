@@ -132,18 +132,33 @@ Mixing them would eventually let a TTL sweep erase a link.
 ## Identity endpoints
 
 Called by the **backend**, never by the app: the backend owns the session that
-proves the account, and the relay trusts only that caller. Every route requires
-the `x-relay-key` header and rejects a mismatch with `401 relay.unauthorized`.
-All three are `POST` so a ticket never travels in a URL or a Worker log.
+proves the account and keeps the credentials server-side. Because a released
+install cannot carry a shared secret, the client routes do **not** use
+`x-relay-key`; each one presents the credential that install already holds:
 
-| Route | Body | Answer |
-|---|---|---|
-| `POST /link/start` | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
-| `POST /link/status` | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
-| `POST /link/revoke` | `{account_key}` | `{ok, revoked}` |
-| `POST /release` | `{version, report_ids[]}` (shared key) | `{ok, version, report_ids, releases}` |
-| `POST /releases` | `{}` (shared key) | `{ok, releases[]}` |
-| `POST /telegram/webhook` | Telegram update | `{ok: true}` |
+| Route | Auth | Body | Answer |
+|---|---|---|---|
+| `POST /link/start` | open, per-IP bounded | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
+| `POST /link/status` | the `ticket` itself (random, single-use, 10 min) | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
+| `POST /link/state` | `x-install-token` | `{}` | `{ok, state: linked\|unlinked, identity?}` |
+| `POST /link/revoke` | `x-install-token` | `{}` | `{ok, revoked}` |
+| `POST /link/reset` | `x-relay-key` (operator only) | `{account_key}` | `{ok, revoked}` |
+| `POST /release` | `x-relay-key` | `{version, report_ids[]}` | `{ok, version, report_ids, releases}` |
+| `POST /releases` | open (public read) | `{}` | `{ok, releases[]}` |
+| `POST /telegram/webhook` | Telegram secret header | Telegram update | `{ok: true}` |
+
+Why it is split this way: `RELAY_KEY` cannot ship in a public installer — anyone
+holding it could mint tickets for another account or revoke somebody's link — so
+the routes a user's install needs are bounded per IP instead, and the
+self-service half proves possession of the install token. Guessing an account
+key reveals nothing, because no route accepts one for reading or revoking.
+
+Claiming an account key that is already bound moves the pointer but **never
+erases the existing identity or its token**: a guessed key cannot take somebody's
+signature away, and an install that lost its token is never locked out of
+linking again. The only case the client cannot fix itself — a link whose install
+no longer holds the token — is what `POST /link/reset` is for, behind the shared
+key.
 
 Behaviour worth knowing:
 
@@ -151,7 +166,16 @@ Behaviour worth knowing:
 - Reopening the panel reuses the pending ticket, so it does not burn the
   three-per-hour allowance (only minting does).
 - `install_token` is returned by `/link/status` **once**, then withheld, so a
-  reload cannot re-expose it.
+  reload cannot re-expose it. It is minted **at that handover**, never at
+  redemption: no usable credential waits in KV while the user scans the QR, and
+  the store keeps only its digest.
+- `/link/state` is how the panel remembers a link after a reload: it proves
+  possession with the `install_token`, and answers with the handle, the display
+  name and the two permission flags only — never the account key, the numeric
+  Telegram id or a credential — so a link revoked from Telegram stops being
+  reported as connected.
+- `/releases` is a public read on purpose: every install shows "this was fixed"
+  without linking anything. Only writing a release needs the shared key.
 - Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
@@ -229,6 +253,7 @@ unusable for legitimate reports.
 | Linked principal | 5 per hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
 | Unlinked reporter | 5 per IP per 10 min, 200 per UTC day globally | `ip:<addr>`, `global:<date>` |
 | Linking tickets | 3 mints per hour per account (reuse is free) | `linkstart:<account_key>` |
+| Linking by IP | 10 link-start calls and 1200 polls per hour (reuse counts) | `linkstart:ip:<addr>`, `linkpoll:ip:<addr>` |
 | Revoked install | Its dead token is refused for 30 days | `blocked:<sha256>` |
 
 Notes worth keeping:
@@ -236,6 +261,18 @@ Notes worth keeping:
 - Dedup runs **first**, so an accidental double submit neither opens a second
   topic nor spends the reporter's allowance. Only a **delivered** report is
   remembered, so a failed one stays retryable.
+- The dedup write is **retried once**. If both attempts fail the request still
+  answers success: the report already reached the group, and a 502 would invite a
+  retry that publishes it twice. The loss is logged as `dedup.write_failed`.
+- Dedup is **per failure, not per person**: two accounts reporting the same crash
+  get the first `delivery_id` and only the first is published, which is what keeps
+  one topic per distinct problem. The id is not a secret — it already appears in
+  the public release list.
+- The optional **install pseudonym** (`x-install-id`, sent only when the reporter
+  keeps it on) is a ranking aid, never a credential: the relay stores only its
+  sha256 under `reporter:<digest>` and shows `🆔 instalación a3f9 · N reportes`.
+  The counter is cumulative, written only after a delivery, and grants nothing —
+  the per-IP and principal bounds above are unchanged.
 - The fingerprint deliberately excludes the contact and the app version: adding a
   contact or upgrading must not look like a new report.
 - A **refused attempt never extends the window it is being refused by**. The
@@ -344,11 +381,11 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 | `BREVO_API_KEY` | Provider API key (sent as the `api-key` request header). |
 | `OWNER_INBOX` | Fixed inbox that receives every report. |
 | `SENDER_FROM` | Verified sender address for the outgoing email. |
-| `RELAY_KEY` | Shared secret the backend presents as `x-relay-key` on identity calls. |
+| `RELAY_KEY` | Admin secret for `POST /release` (`x-relay-key`). The app no longer needs it: the routes a user's install calls are bounded per IP or prove possession of the install token. |
 | `OWNER_TELEGRAM_USER_IDS` (optional var) | Comma- or space-separated Telegram user ids labelled `owner`. Never shipped as a secret. |
 | `TELEGRAM_BOT_TOKEN` | Reports-bot token from @BotFather. |
 | `TELEGRAM_WEBHOOK_SECRET` | Value Telegram must echo on the webhook; set with `setWebhook`. |
-| `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters. |
+| `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters, plus the per-install pseudonym tally. |
 | `LINKS` (KV) | Linked Telegram identities and pending tickets. |
 
 ## Run locally

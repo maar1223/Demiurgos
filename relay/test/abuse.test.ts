@@ -121,11 +121,14 @@ function env(kv: KvLike, overrides: Record<string, unknown> = {}) {
 
 function post(
   payload: unknown = REPORT,
-  options: { token?: string; ip?: string } = {},
+  options: { token?: string; ip?: string; installId?: string } = {},
 ): Request {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token !== undefined) {
     headers["x-install-token"] = options.token;
+  }
+  if (options.installId !== undefined) {
+    headers["x-install-id"] = options.installId;
   }
   headers["CF-Connecting-IP"] = options.ip ?? "203.0.113.7";
   return new Request("https://relay.example/", {
@@ -138,7 +141,12 @@ function post(
 async function submit(
   kv: KvLike,
   payload: unknown = REPORT,
-  options: { token?: string; ip?: string; env?: Record<string, unknown> } = {},
+  options: {
+    token?: string;
+    ip?: string;
+    installId?: string;
+    env?: Record<string, unknown>;
+  } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await worker.fetch(
     post(payload, options),
@@ -190,6 +198,99 @@ test("a different report is published even within the same window", async () => 
   }
 });
 
+test("an install pseudonym labels the report and counts the accepted ones", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"ab".repeat(12)}`;
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, { ...REPORT, description: "primer fallo" }, { installId });
+    assert.equal(first.status, 200);
+    const second = await submit(kv, { ...REPORT, description: "segundo fallo" }, { installId });
+    assert.equal(second.status, 200);
+
+    const summaries = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json));
+    assert.match(summaries[0] ?? "", /instalación [0-9a-f]{4} · 1 reporte/);
+    assert.match(summaries[1] ?? "", /instalación [0-9a-f]{4} · 2 reportes/);
+
+    // Only the digest is stored: neither the key nor the value carries the id.
+    for (const [key, value] of kv.map) {
+      assert.equal(key.includes(installId), false);
+      assert.equal(value.includes(installId), false);
+    }
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a deduped report does not inflate the pseudonym count", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"cd".repeat(12)}`;
+  const telegram = stubTelegram();
+  try {
+    assert.equal((await submit(kv, REPORT, { installId })).status, 200);
+    const duplicate = await submit(kv, REPORT, { installId });
+    assert.equal(duplicate.body.deduped, true);
+    await submit(kv, { ...REPORT, description: "otro fallo" }, { installId });
+
+    const summaries = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json));
+    // Two publications, and the second one counts two — not three.
+    assert.equal(summaries.length, 2);
+    assert.match(summaries[1] ?? "", /· 2 reportes/);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("an unusable install id is ignored, never published", async () => {
+  const kv = new MemoryKv();
+  const telegram = stubTelegram();
+  try {
+    for (const installId of ["install_ZZZ", "install_" + "a".repeat(23), "x".repeat(80)]) {
+      const result = await submit(kv, { ...REPORT, description: `fallo ${installId}` }, { installId });
+      assert.equal(result.status, 200);
+    }
+    for (const call of telegram.calls) {
+      assert.equal(JSON.stringify(call.json).includes("instalación"), false);
+    }
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a failed report never increments the pseudonym count", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"34".repeat(12)}`;
+
+  let telegram = stubTelegram("sendMessage");
+  try {
+    const failed = await submit(kv, { ...REPORT, description: "falla" }, { installId });
+    assert.equal(failed.status, 502);
+  } finally {
+    telegram.restore();
+  }
+  assert.equal(
+    [...kv.map.keys()].some((key) => key.startsWith("reporter:")),
+    false,
+  );
+
+  telegram = stubTelegram();
+  try {
+    const retry = await submit(kv, { ...REPORT, description: "reintento" }, { installId });
+    assert.equal(retry.status, 200);
+    const summary = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json))[0];
+    // The retry is the first ACCEPTED report, not the second attempt.
+    assert.match(summary ?? "", /· 1 reporte/);
+  } finally {
+    telegram.restore();
+  }
+});
+
 test("the fingerprint ignores key order and an absent log", async () => {
   const a = await reportFingerprint({
     description: "boom",
@@ -232,6 +333,99 @@ test("a failed delivery is not remembered, so a retry can still arrive", async (
     );
   } finally {
     retry.restore();
+  }
+});
+
+/** A KV whose dedup writes fail for the first `failures` attempts. */
+class FlakyDedupKv extends MemoryKv {
+  failures: number;
+  attempts = 0;
+
+  constructor(failures: number) {
+    super();
+    this.failures = failures;
+  }
+
+  async put(
+    key: string,
+    value: string,
+    options?: { expirationTtl?: number },
+  ): Promise<void> {
+    if (key.startsWith("dedup:")) {
+      this.attempts += 1;
+      if (this.attempts <= this.failures) {
+        throw new Error("kv write failed");
+      }
+    }
+    return super.put(key, value, options);
+  }
+}
+
+test("a dedup write that fails once is retried, so the next copy is caught", async () => {
+  const kv = new FlakyDedupKv(1);
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, REPORT);
+    assert.equal(first.status, 200);
+    // The first attempt failed; the retry is what remembered the report.
+    assert.equal(kv.attempts, 2);
+
+    const second = await submit(kv, REPORT);
+    assert.equal(second.status, 200);
+    assert.equal(second.body.delivery_id, first.body.delivery_id);
+    assert.equal(second.body.deduped, true);
+    assert.equal(telegram.calls.length, 3);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a dedup write that keeps failing still answers the delivery, never a 502", async () => {
+  const kv = new FlakyDedupKv(Number.POSITIVE_INFINITY);
+  const telegram = stubTelegram();
+  try {
+    const delivered = await submit(kv, REPORT);
+
+    // The report reached the group; telling the reporter it failed would invite
+    // a retry that publishes it again.
+    assert.equal(delivered.status, 200);
+    assert.equal(typeof delivered.body.delivery_id, "string");
+    assert.equal(kv.attempts, 2);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("two accounts sending the same failure get the first delivery, published once", async () => {
+  const tokenA = "2".repeat(64);
+  const tokenB = "3".repeat(64);
+  const kv = new MemoryKv();
+  await writeIdentity(kv, linked());
+  await recordInstallToken(kv, tokenA, "1234567890");
+  await writeIdentity(
+    kv,
+    linked({
+      telegram_user_id: "9876543210",
+      username: "other",
+      account_key: "acct_other123",
+    }),
+  );
+  await recordInstallToken(kv, tokenB, "9876543210");
+
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, REPORT, { token: tokenA });
+    const second = await submit(kv, REPORT, { token: tokenB });
+
+    // S13 asks for one topic per unique failure: the second reporter is told it
+    // is already reported, and only the first delivery is published.
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(second.body.deduped, true);
+    assert.equal(second.body.delivery_id, first.body.delivery_id);
+    assert.equal(telegram.calls.length, 3);
+  } finally {
+    telegram.restore();
   }
 });
 

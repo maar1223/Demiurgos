@@ -131,17 +131,25 @@ test("a duplicate report id is stored once", async () => {
   assert.deepEqual((await readReleases(kv))[0].report_ids, ["44444444-dddd"]);
 });
 
-test("release routes need the shared key", async () => {
+test("writing a release needs the shared key, reading the list does not", async () => {
   const kv = new MemoryKv();
 
-  for (const path of ["/release", "/releases"]) {
-    const response = await worker.fetch(
-      call(path, { version: "v1", report_ids: [] }, { key: null }),
-      env(kv),
-      {} as never,
-    );
-    assert.equal(response.status, 401);
-  }
+  const write = await worker.fetch(
+    call("/release", { version: "v1", report_ids: [] }, { key: null }),
+    env(kv),
+    {} as never,
+  );
+  assert.equal(write.status, 401);
+
+  // Every install shows "this was fixed" without holding any secret (S19): the
+  // list is versions and report ids, never a reporter.
+  const read = await worker.fetch(
+    call("/releases", {}, { key: null }),
+    env(kv),
+    {} as never,
+  );
+  assert.equal(read.status, 200);
+  assert.deepEqual(await read.json(), { ok: true, releases: [] });
 });
 
 test("a malformed version or report id is refused", async () => {

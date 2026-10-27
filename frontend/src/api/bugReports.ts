@@ -4,6 +4,7 @@ import type {
   BugReportBundle,
   BugReportFallback,
   BugReportRelease,
+  BugReportLinkState,
   BugReportLinkStatus,
   BugReportLinkTicket,
   BugReportSubmitPayload,
@@ -48,6 +49,7 @@ export function assembleBugReport(): Promise<BugReportBundle> {
 export function submitBugReport(
   payload: BugReportSubmitPayload,
   attachments: File[] = [],
+  pseudonym = true,
 ): Promise<BugReportSubmitResult> {
   const body =
     attachments.length === 0
@@ -66,6 +68,9 @@ export function submitBugReport(
       method: "POST",
       credentials: "same-origin",
       body,
+      // Stated explicitly so the backend never has to guess: the anonymous
+      // install pseudonym is optional (S20) and off means no header at all.
+      headers: { "x-bugreport-pseudonym": pseudonym ? "1" : "0" },
       timeout: 30_000,
     },
   );
@@ -93,9 +98,10 @@ export interface BugReportLinkFlags {
 /**
  * POST /api/bugreport/link/start — mint (or reuse) the linking ticket.
  *
- * The backend resolves the stable account key server-side and proxies the relay
- * with the shared key, so the browser never talks to the relay. Reopening the
- * panel reuses a live ticket instead of burning the three-per-hour allowance.
+ * The backend resolves the stable account key server-side and proxies the relay,
+ * so the browser never talks to the relay. No shared secret is involved: a
+ * released install cannot carry one (S19). Reopening the panel reuses a live
+ * ticket instead of burning the three-per-hour allowance.
  */
 export function startTelegramLink(
   flags: BugReportLinkFlags = {},
@@ -111,13 +117,16 @@ export function startTelegramLink(
   );
 }
 
-/** POST /api/bugreport/link/status — poll the ticket. On completion the backend
- *  stores the signing token; this answer never carries it. */
+/** POST /api/bugreport/link/ticket — poll the ticket. On completion the backend
+ *  stores the signing token; this answer never carries it.
+ *
+ *  Not ``/link/status``: the wiki's ``/api/{mundo}/{section}/status`` route
+ *  matches that shape and swallowed the request before it reached this router. */
 export function telegramLinkStatus(
   ticket: string,
 ): Promise<BugReportLinkStatus> {
   return apiFetch<BugReportLinkStatus>(
-    `${API_BASE_URL}/api/bugreport/link/status`,
+    `${API_BASE_URL}/api/bugreport/link/ticket`,
     {
       method: "POST",
       credentials: "same-origin",
@@ -139,6 +148,18 @@ export function revokeTelegramLink(): Promise<{ revoked: boolean }> {
       timeout: 15_000,
     },
   );
+}
+
+/** GET /api/bugreport/link — is this install still linked?
+ *
+ * The identity store is the relay's, so this is the one truthful answer after a
+ * reload; a local flag would keep claiming "connected" after a revoke done from
+ * Telegram. It also carries the bot URL the connected state opens. */
+export function telegramLinkState(): Promise<BugReportLinkState> {
+  return apiFetch<BugReportLinkState>(`${API_BASE_URL}/api/bugreport/link`, {
+    credentials: "same-origin",
+    timeout: 10_000,
+  });
 }
 
 /** GET /api/bugreport/releases — released versions and the reports they fixed.

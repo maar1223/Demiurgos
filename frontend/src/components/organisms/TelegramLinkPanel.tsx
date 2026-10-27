@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { QrCode } from "@/components/atoms/QrCode";
 import {
   revokeTelegramLink,
   startTelegramLink,
+  telegramLinkState,
   telegramLinkStatus,
   type BugReportLinkFlags,
 } from "@/api/bugReports";
@@ -14,6 +15,11 @@ import {
   type BugReportLinkStatus,
 } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import {
+  clearPendingLink,
+  readPendingLink,
+  writePendingLink,
+} from "@/lib/bugReportHistory";
 import { getErrorMessage } from "@/lib/utils";
 
 /** Resolve a localized message for a caught error, falling back when the thrown
@@ -53,7 +59,13 @@ interface LinkedIdentity {
  * `pollIntervalMs` exists so tests do not have to wait two seconds; production
  * always uses the default.
  */
-export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: number }) {
+export function TelegramLinkPanel({
+  pollIntervalMs = 2000,
+  slowHintMs = 30_000,
+}: {
+  pollIntervalMs?: number;
+  slowHintMs?: number;
+}) {
   const { t } = useAppLanguage();
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -61,14 +73,22 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
   const [telegramUrl, setTelegramUrl] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // When the phone has not confirmed after a while, say what to do instead of
+  // leaving a bare "waiting" on screen.
+  const [waitedLong, setWaitedLong] = useState(false);
   const [linked, setLinked] = useState<LinkedIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [reportIdentity, setReportIdentity] = useState(true);
   const [notifyReleases, setNotifyReleases] = useState(true);
+  // Set the moment a ticket is requested. A synchronous ref, because the mount
+  // read must not overwrite a ticket that was already minted while it was in
+  // flight — React state would still be the pre-click value in that closure.
+  const startedByUser = useRef(false);
 
   const start = useCallback(
     async (silent: boolean, flags: BugReportLinkFlags) => {
+      startedByUser.current = true;
       if (!silent) setPhase("starting");
       setError(null);
       setCopied(false);
@@ -78,6 +98,14 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
         setTelegramUrl(next.telegram_url);
         setExpiresAt(next.expires_at);
         setLinked(null);
+        // The token is minted on the first poll after the phone confirms, so a
+        // reload mid-flow must be able to resume this ticket.
+        writePendingLink({
+          ticket: next.ticket,
+          expires_at: next.expires_at,
+          telegram_url: next.telegram_url,
+        });
+        setWaitedLong(false);
         setPhase("pending");
       } catch (cause: unknown) {
         setError(describeError(cause, t("profile.bugreport.telegramError")));
@@ -86,6 +114,49 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     },
     [t],
   );
+
+  // The link lives in the relay (S10), so the panel asks it once on mount
+  // instead of trusting a local flag. A failed read is not an error worth an
+  // alert: the connect action still works, it just cannot say "already linked".
+  useEffect(() => {
+    let active = true;
+
+    const read = async () => {
+      let linkedNow = false;
+      try {
+        const next = await telegramLinkState();
+        if (active && !startedByUser.current && next.state === "linked") {
+          linkedNow = true;
+          setLinked({
+            username: next.username,
+            display_name: next.display_name,
+            permissions: next.permissions,
+          });
+          setTelegramUrl(next.telegram_url);
+          // A click that already started a ticket must win over this read.
+          setPhase((current) => (current === "idle" ? "linked" : current));
+        }
+      } catch {
+        // Offline or relay down: leaving the connect action in place is honest.
+      }
+
+      // No link yet: a ticket minted before a reload is still live, so resume
+      // polling it instead of making the user scan a second QR.
+      if (!active || startedByUser.current || linkedNow) return;
+      const pending = readPendingLink();
+      if (pending === null) return;
+      setTicket(pending.ticket);
+      setTelegramUrl(pending.telegram_url);
+      setExpiresAt(pending.expires_at);
+      setWaitedLong(false);
+      setPhase((current) => (current === "idle" ? "pending" : current));
+    };
+
+    void read();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Countdown to the ticket's expiry; at zero the ticket is gone and polling
   // must stop instead of asking a dead ticket forever.
@@ -103,6 +174,8 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       const left = Math.max(0, Math.ceil((target - Date.now()) / 1000));
       setSecondsLeft(left);
       if (left === 0) {
+        clearPendingLink();
+        setWaitedLong(false);
         setPhase((current) => (current === "pending" ? "expired" : current));
       }
     };
@@ -110,6 +183,15 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [expiresAt, phase]);
+
+  // A phone that never confirms would leave "waiting" on screen with nothing to
+  // do about it. After a short window, say what actually helps — and re-arm the
+  // window whenever a new ticket is minted.
+  useEffect(() => {
+    if (phase !== "pending") return;
+    const id = setTimeout(() => setWaitedLong(true), slowHintMs);
+    return () => clearTimeout(id);
+  }, [phase, slowHintMs, ticket]);
 
   // The phone does the work; the panel polls until it answers.
   useEffect(() => {
@@ -124,6 +206,8 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
         const next: BugReportLinkStatus = await telegramLinkStatus(ticket);
         if (!active) return;
         if (next.state === "linked") {
+          clearPendingLink();
+          setWaitedLong(false);
           setLinked({
             username: next.username,
             display_name: next.display_name,
@@ -189,6 +273,8 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       setError(describeError(cause, t("profile.bugreport.telegramError")));
       return;
     }
+    clearPendingLink();
+    setWaitedLong(false);
     setPhase("idle");
     setTicket(null);
     setTelegramUrl(null);
@@ -286,6 +372,11 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
             <p role="status" className="text-small text-muted">
               {t("profile.bugreport.telegramWaiting")}
             </p>
+            {waitedLong && (
+              <p className="text-small text-muted" data-testid="bugreport-telegram-slow">
+                {t("profile.bugreport.telegramWaitingSlow")}
+              </p>
+            )}
             <div className="flex flex-col gap-1">
               <label className="flex items-start gap-2 text-small text-primary">
                 <input

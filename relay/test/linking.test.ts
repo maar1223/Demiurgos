@@ -8,7 +8,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { readIdentity, readIdentityByAccount, type KvLike } from "../src/identity.ts";
+import {
+  isBlockedInstall,
+  readIdentity,
+  readIdentityByAccount,
+  readIdentityByInstallToken,
+  type KvLike,
+} from "../src/identity.ts";
 import {
   LINK_START_MAX_PER_HOUR,
   LinkError,
@@ -158,6 +164,73 @@ test("redeem binds the identity and the poll hands over the token exactly once",
   const second = await linkStatus(kv, ticket, later(3));
   assert.equal(second.state, "linked");
   assert.equal(second.state === "linked" ? second.install_token : "x", null);
+});
+
+test("the token is minted at handover, never stored in the ticket", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, T0);
+  await redeemTicket(kv, ticket, telegram(), later(1));
+
+  // A reader of the ticket record between redemption and the poll must not find
+  // a usable credential: the token does not exist yet.
+  const stored = JSON.parse(kv.map.get(`ticket:${ticket}`)!) as Record<string, unknown>;
+  assert.equal(stored.install_token, null);
+
+  const handed = await linkStatus(kv, ticket, later(2));
+  assert.equal(handed.state, "linked");
+  const token = handed.state === "linked" ? handed.install_token : null;
+  assert.ok(typeof token === "string" && token.length === 64);
+
+  // Handing it over does not write it back: the store keeps a digest only.
+  const after = JSON.parse(kv.map.get(`ticket:${ticket}`)!) as Record<string, unknown>;
+  assert.equal(after.install_token, null);
+  const lookups = [...kv.map.keys()].filter((key) => key.startsWith("link_token:"));
+  assert.equal(lookups.length, 1);
+  assert.equal(kv.map.get(lookups[0])!.includes(token!), false);
+  assert.equal(lookups[0].includes(token!), false);
+  assert.ok(kv.map.has(`identity:token:1234567890`));
+});
+
+test("a legacy ticket hands its plaintext token over once and clears it", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, T0);
+  await redeemTicket(kv, ticket, telegram(), later(1));
+
+  // A record written by the deployed version, which minted the token at
+  // redemption. Deploying the fix must not strand that link.
+  const legacyToken = "a".repeat(64);
+  const legacy = JSON.parse(kv.map.get(`ticket:${ticket}`)!) as Record<string, unknown>;
+  delete legacy.token_issued;
+  legacy.install_token = legacyToken;
+  kv.map.set(`ticket:${ticket}`, JSON.stringify(legacy));
+
+  const first = await linkStatus(kv, ticket, later(2));
+  assert.equal(first.state === "linked" ? first.install_token : null, legacyToken);
+  assert.equal(kv.map.get(`ticket:${ticket}`)!.includes(legacyToken), false);
+  const after = JSON.parse(kv.map.get(`ticket:${ticket}`)!) as Record<string, unknown>;
+  assert.equal(after.install_token, null);
+  assert.equal(after.token_issued, true);
+  assert.equal(
+    (await readIdentityByInstallToken(kv, legacyToken))?.telegram_user_id,
+    "1234567890",
+  );
+
+  const second = await linkStatus(kv, ticket, later(3));
+  assert.equal(second.state === "linked" ? second.install_token : "x", null);
+});
+
+test("a handed-over token stops resolving and is blocked by revoke", async () => {
+  const kv = new MemoryKv();
+  const { ticket } = await startLink(kv, { account_key: "acct_abc123" }, T0);
+  await redeemTicket(kv, ticket, telegram(), later(1));
+  const status = await linkStatus(kv, ticket, later(2));
+  const token = status.state === "linked" ? (status.install_token ?? "") : "";
+  assert.notEqual(await readIdentityByInstallToken(kv, token), null);
+
+  assert.equal(await revokeLink(kv, "acct_abc123"), true);
+
+  assert.equal(await readIdentityByInstallToken(kv, token), null);
+  assert.equal(await isBlockedInstall(kv, token), true);
 });
 
 test("permissions can be granted separately at start", async () => {

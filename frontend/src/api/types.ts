@@ -278,7 +278,7 @@ export interface BugReportLinkPermissions {
   notify_releases: boolean;
 }
 
-/** POST /api/bugreport/link/status — the ticket's state. The one-time
+/** POST /api/bugreport/link/ticket — the ticket's state. The one-time
  *  `install_token` is kept server-side and never appears here (S15). */
 export type BugReportLinkStatus =
   | { state: "pending"; expires_at: string | null }
@@ -288,6 +288,19 @@ export type BugReportLinkStatus =
       username: string | null;
       display_name: string | null;
       permissions: BugReportLinkPermissions;
+    };
+
+/** GET /api/bugreport/link — whether this install is still linked. Read from
+ *  the relay's identity store, so it survives a reload (S10). Carries no ticket
+ *  and no signing token. */
+export type BugReportLinkState =
+  | { state: "unlinked"; telegram_url: string | null }
+  | {
+      state: "linked";
+      username: string | null;
+      display_name: string | null;
+      permissions: BugReportLinkPermissions;
+      telegram_url: string | null;
     };
 
 /** GET /api/bugreport/releases — a released version and the report ids it fixed.

@@ -52,6 +52,12 @@ export interface PublishableReport {
    * delivery path must state it, and the compiler refuses a report that forgot.
    */
   attribution: Attribution;
+  /**
+   * The optional anonymous install label, e.g. `instalación a3f9 · 3 reportes`.
+   * Never a name and never the raw id: the relay keeps only its digest. Null
+   * when the reporter turned the pseudonym off or sent nothing usable.
+   */
+  pseudonym?: string | null;
 }
 
 function truncate(text: string, max: number): string {
@@ -94,6 +100,7 @@ export function summaryText(report: PublishableReport, reportId?: string): strin
     platform === "" ? null : `🖥️ ${platform}`,
     context === "" ? null : `🧭 ${context}`,
     report.attribution.line,
+    report.pseudonym ? `🆔 ${report.pseudonym}` : null,
   ].filter((line): line is string => line !== null);
   const body = report.description.trim() === "" ? "(sin descripción)" : report.description;
   const footer = reportId === undefined ? [] : ["", `🆔 ${reportId}`];
@@ -115,6 +122,9 @@ export function bundleText(report: PublishableReport, reportId: string): string 
     // document shape it had before, not gain a line saying "nothing here".
     ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${report.attribution.line}`,
+    // Omitted when the reporter kept the pseudonym off, so the bundle keeps the
+    // shape it had before this option existed.
+    ...(report.pseudonym ? [`Install: ${report.pseudonym}`] : []),
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
     "Description:",

@@ -211,7 +211,7 @@ export const messages = {
       "Correo o identificador para responder (opcional)",
     "profile.bugreport.telegramTitle": "Telegram",
     "profile.bugreport.telegramIntro":
-      "Vincula tu cuenta para que el informe llegue firmado y para recibir aviso cuando se arregle lo que reportaste.",
+      "Opcional. Vincula tu cuenta para que el informe llegue firmado y para avisarte aquí cuando se arregle lo que reportaste.",
     "profile.bugreport.telegramConnect": "Conectar Telegram",
     "profile.bugreport.telegramStarting": "Generando enlace…",
     "profile.bugreport.telegramScan":
@@ -224,7 +224,10 @@ export const messages = {
     "profile.bugreport.telegramCopyCode": "Copiar código",
     "profile.bugreport.telegramCopied": "Código copiado",
     "profile.bugreport.telegramExpiresIn": "Caduca en {time}",
-    "profile.bugreport.telegramWaiting": "Esperando confirmación en Telegram…",
+    "profile.bugreport.telegramWaiting":
+      "Esperando confirmación en Telegram… suele tardar menos de 30 segundos.",
+    "profile.bugreport.telegramWaitingSlow":
+      "Si ya escaneaste el código y no pasa nada, pulsa «Generar de nuevo» y escanea el nuevo: el anterior sigue caducando solo.",
     "profile.bugreport.telegramExpired": "El enlace caducó.",
     "profile.bugreport.telegramRegenerate": "Generar de nuevo",
     "profile.bugreport.telegramPermReport":
@@ -238,6 +241,10 @@ export const messages = {
     "profile.bugreport.attachmentsTitle": "Capturas (opcional)",
     "profile.bugreport.attachmentsHint":
       "Hasta 2 imágenes de 5 MB. Se envían como archivos, sin recomprimir; nada sale sin que lo veas.",
+    "profile.bugreport.pseudonymLabel":
+      "Incluir un identificador anónimo de esta instalación",
+    "profile.bugreport.pseudonymHint":
+      "Opcional. Permite reconocer tus informes y ver cuántos fallos encontraste, sin saber quién eres: no lleva tu nombre, tu cuenta ni tu contacto. Si lo desactivas, el informe se envía igual.",
     "profile.bugreport.addScreenshot": "Añadir captura",
     "profile.bugreport.removeScreenshot": "Quitar captura",
     "profile.bugreport.attachmentLimit": "Puedes adjuntar como máximo 2 capturas.",
@@ -1199,6 +1206,8 @@ export const messages = {
     "error.provider.auth_rejected": "El proveedor rechazó la clave API.",
     "error.provider.connection_rejected": "El proveedor rechazó la solicitud de conexión.",
     "error.bugreport.not_allowlisted": "El informe contiene campos no permitidos.",
+    "error.bugreport.link_already_linked":
+      "Esta cuenta ya está vinculada a otra cuenta de Telegram. Desconéctala desde la instalación original.",
     "error.bugreport.too_large": "El informe supera el tamaño máximo permitido.",
     "error.bugreport.rate_limited": "Se enviaron demasiados informes. Inténtalo más tarde.",
     "error.bugreport.invalid_attachment":
@@ -2315,7 +2324,7 @@ export const messages = {
       "Email or handle for a reply (optional)",
     "profile.bugreport.telegramTitle": "Telegram",
     "profile.bugreport.telegramIntro":
-      "Link your account so the report arrives signed and so you hear when something you reported is fixed.",
+      "Optional. Link your account so the report arrives signed and so we can tell you here when something you reported is fixed.",
     "profile.bugreport.telegramConnect": "Connect Telegram",
     "profile.bugreport.telegramStarting": "Generating link…",
     "profile.bugreport.telegramScan":
@@ -2328,7 +2337,10 @@ export const messages = {
     "profile.bugreport.telegramCopyCode": "Copy code",
     "profile.bugreport.telegramCopied": "Code copied",
     "profile.bugreport.telegramExpiresIn": "Expires in {time}",
-    "profile.bugreport.telegramWaiting": "Waiting for confirmation in Telegram…",
+    "profile.bugreport.telegramWaiting":
+      "Waiting for confirmation in Telegram… it usually takes under 30 seconds.",
+    "profile.bugreport.telegramWaitingSlow":
+      "If you already scanned and nothing happens, press \"Generate again\" and scan the new code; the old one keeps expiring on its own.",
     "profile.bugreport.telegramExpired": "The link expired.",
     "profile.bugreport.telegramRegenerate": "Generate again",
     "profile.bugreport.telegramPermReport":
@@ -2342,6 +2354,10 @@ export const messages = {
     "profile.bugreport.attachmentsTitle": "Screenshots (optional)",
     "profile.bugreport.attachmentsHint":
       "Up to 2 images of 5 MB. Sent as files, never recompressed; nothing leaves until you have seen it.",
+    "profile.bugreport.pseudonymLabel":
+      "Include an anonymous identifier for this install",
+    "profile.bugreport.pseudonymHint":
+      "Optional. It lets your reports be recognised and shows how many bugs you found, without knowing who you are: no name, no account, no contact. Turning it off changes nothing about delivery.",
     "profile.bugreport.addScreenshot": "Add screenshot",
     "profile.bugreport.removeScreenshot": "Remove screenshot",
     "profile.bugreport.attachmentLimit": "You can attach at most 2 screenshots.",
@@ -3289,6 +3305,8 @@ export const messages = {
     "error.provider.auth_rejected": "The provider rejected the API key.",
     "error.provider.connection_rejected": "The provider rejected the connection request.",
     "error.bugreport.not_allowlisted": "The report contains fields that are not allowed.",
+    "error.bugreport.link_already_linked":
+      "This account is already linked to another Telegram account. Disconnect it from the original install.",
     "error.bugreport.too_large": "The report exceeds the maximum allowed size.",
     "error.bugreport.rate_limited": "Too many reports were sent. Try again later.",
     "error.bugreport.invalid_attachment":

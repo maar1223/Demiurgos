@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { ReportSection } from "@/components/organisms/ReportSection";
@@ -86,6 +86,50 @@ describe("submitBugReport — attachments travel as multipart", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("submitBugReport — the pseudonym is stated, never implied", () => {
+  async function submitWith(pseudonym?: boolean) {
+    const { submitBugReport: realSubmit } = await vi.importActual<
+      typeof import("@/api/bugReports")
+    >("@/api/bugReports");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ ok: true, delivery_id: "d-ps" }),
+      headers: new Headers(),
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    try {
+      const payload = {
+        app_version: "0.2.0",
+        platform: {
+          os: "Linux",
+          os_version: "6.8.0",
+          arch: "x86_64",
+          python_version: "3.11.9",
+        },
+        description: "boom",
+        logs: "line",
+      };
+      if (pseudonym === undefined) {
+        await realSubmit(payload);
+      } else {
+        await realSubmit(payload, [], pseudonym);
+      }
+      const headers = (fetchMock.mock.calls[0][1] as RequestInit)
+        .headers as Record<string, string>;
+      return headers;
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
+  it("sends 1 by default and 0 when the reporter turned it off", async () => {
+    expect((await submitWith())["x-bugreport-pseudonym"]).toBe("1");
+    expect((await submitWith(false))["x-bugreport-pseudonym"]).toBe("0");
   });
 });
 
@@ -234,6 +278,42 @@ describe("ReportSection — preview gate, submit and strict fallback (S2b)", () 
 
     expect(submit).toBeDisabled();
     expect(screen.queryAllByTestId("bugreport-attachment")).toHaveLength(0);
+  });
+
+  it("sends the anonymous pseudonym by default and honours turning it off", async () => {
+    localStorage.clear();
+    const user = await renderReady();
+
+    const toggle = screen.getByTestId("bugreport-pseudonym-toggle");
+    expect(toggle).toBeChecked();
+    // The optionality is stated, not implied (S21).
+    expect(
+      screen.getByText(tEs("profile.bugreport.pseudonymHint")),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-ps1" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    expect((submitBugReport as Mock).mock.calls[0][2]).toBe(true);
+  });
+
+  it("remembers turning the pseudonym off across a remount", async () => {
+    localStorage.clear();
+    const user = await renderReady();
+
+    await user.click(screen.getByTestId("bugreport-pseudonym-toggle"));
+    expect(screen.getByTestId("bugreport-pseudonym-toggle")).not.toBeChecked();
+    expect(localStorage.getItem("demiurgos.bugreport.pseudonym")).toBe("0");
+
+    cleanup();
+    render(<ReportSection />);
+    expect(await screen.findByTestId("bugreport-pseudonym-toggle")).not.toBeChecked();
   });
 
   it("remembers the delivery id so a later release can be matched", async () => {

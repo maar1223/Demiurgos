@@ -10,7 +10,11 @@ import {
   type BugReportSubmitPayload,
 } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
-import { rememberSubmittedReport } from "@/lib/bugReportHistory";
+import {
+  readPseudonymPreference,
+  rememberSubmittedReport,
+  writePseudonymPreference,
+} from "@/lib/bugReportHistory";
 import { getErrorMessage } from "@/lib/utils";
 
 /** Resolve a localized message for a caught error, falling back when the
@@ -121,6 +125,14 @@ export function ReportSection() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
 
+  // The anonymous install pseudonym is OPTIONAL (S20/S21), on by default and
+  // remembered locally so the choice survives a reload.
+  const [pseudonym, setPseudonym] = useState(readPseudonymPreference);
+  const togglePseudonym = useCallback((on: boolean) => {
+    setPseudonym(on);
+    writePseudonymPreference(on);
+  }, []);
+
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -223,7 +235,7 @@ export function ReportSection() {
     setFallbackError(null);
     setCopied(false);
     try {
-      const result = await submitBugReport(payload, attachments);
+      const result = await submitBugReport(payload, attachments, pseudonym);
       // Keep the id locally: a later release is matched against it (S12).
       rememberSubmittedReport({
         id: result.delivery_id,
@@ -246,7 +258,7 @@ export function ReportSection() {
     } finally {
       setSubmitting(false);
     }
-  }, [attachments, buildPayload, bundle, previewed, submitting, t]);
+  }, [attachments, buildPayload, bundle, previewed, pseudonym, submitting, t]);
 
   const copyFallback = useCallback(async () => {
     if (!fallback || !navigator.clipboard) {
@@ -446,6 +458,25 @@ export function ReportSection() {
                 {attachmentError}
               </p>
             )}
+          </div>
+
+          <div
+            className="mt-4 rounded-lg border border-edge bg-surface p-3"
+            data-testid="bugreport-pseudonym"
+          >
+            <label className="flex items-start gap-2 text-small text-primary">
+              <input
+                type="checkbox"
+                checked={pseudonym}
+                onChange={(event) => togglePseudonym(event.target.checked)}
+                className="mt-1"
+                data-testid="bugreport-pseudonym-toggle"
+              />
+              {t("profile.bugreport.pseudonymLabel")}
+            </label>
+            <p className="mt-1 text-small text-muted">
+              {t("profile.bugreport.pseudonymHint")}
+            </p>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
