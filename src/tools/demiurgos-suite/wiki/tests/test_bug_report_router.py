@@ -1271,3 +1271,57 @@ def test_exactly_five_mb_is_accepted_and_one_more_refused() -> None:
 
     assert over.status_code == 413
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Released fixes (S12) — the in-app notice needs no person→report mapping
+# ---------------------------------------------------------------------------
+
+
+def test_releases_are_proxied_from_the_relay() -> None:
+    captured: list = []
+
+    def _send(url, payload, headers=None, attachments=None):
+        captured.append({"url": url, "headers": dict(headers or {})})
+        return 200, {
+            "ok": True,
+            "releases": [
+                {"version": "v0.5.0", "report_ids": ["abc-123"], "at": "2026-10-25T00:00:00Z"}
+            ],
+        }
+
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_send,
+        relay_key="shared",
+        local_state=None,
+    )
+
+    resp = TestClient(app).get("/api/bugreport/releases")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["releases"][0]["version"] == "v0.5.0"
+    assert captured[0]["url"].endswith("/releases")
+    assert captured[0]["headers"]["x-relay-key"] == "shared"
+
+
+def test_releases_require_a_principal() -> None:
+    app = _make_app(
+        authed=False,
+        relay_url="http://relay.test",
+        relay_post=_capture([]),
+        relay_key="k",
+    )
+
+    resp = TestClient(app).get("/api/bugreport/releases")
+
+    assert resp.status_code == 401
+
+
+def test_releases_fail_closed_without_the_relay_key() -> None:
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))
+
+    resp = TestClient(app).get("/api/bugreport/releases")
+
+    assert resp.status_code == 502
+    assert resp.json()["code"] == "bugreport.relay_unavailable"

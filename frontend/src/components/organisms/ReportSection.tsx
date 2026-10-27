@@ -10,6 +10,7 @@ import {
   type BugReportSubmitPayload,
 } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { rememberSubmittedReport } from "@/lib/bugReportHistory";
 import { getErrorMessage } from "@/lib/utils";
 
 /** Resolve a localized message for a caught error, falling back when the
@@ -222,7 +223,13 @@ export function ReportSection() {
     setFallbackError(null);
     setCopied(false);
     try {
-      await submitBugReport(payload, attachments);
+      const result = await submitBugReport(payload, attachments);
+      // Keep the id locally: a later release is matched against it (S12).
+      rememberSubmittedReport({
+        id: result.delivery_id,
+        at: new Date().toISOString(),
+        app_version: bundle?.app_version ?? "",
+      });
       setSubmitted(true);
     } catch (cause: unknown) {
       setSubmitError(describeError(cause, t("profile.bugreport.submitError")));
@@ -239,7 +246,7 @@ export function ReportSection() {
     } finally {
       setSubmitting(false);
     }
-  }, [attachments, buildPayload, previewed, submitting, t]);
+  }, [attachments, buildPayload, bundle, previewed, submitting, t]);
 
   const copyFallback = useCallback(async () => {
     if (!fallback || !navigator.clipboard) {

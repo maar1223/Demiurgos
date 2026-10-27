@@ -6,11 +6,17 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { getAppConfig } from "@/api/config";
 import { getUpdateStatus, setUpdateChannel, applyUpdate } from "@/api/updates";
+import { getBugReportReleases } from "@/api/bugReports";
 import { getAuthStatus, logoutSession } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
 import { ApiError, type UpdateChannel, type UpdateStatus } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { cn, getErrorMessage } from "@/lib/utils";
+import {
+  matchReleasedReports,
+  readSubmittedReports,
+  type FixedReport,
+} from "@/lib/bugReportHistory";
 
 /** Selectable channels in display order. The wire value doubles as the label
  *  key suffix; "Estable" is the server-owned fresh-install default. */
@@ -51,6 +57,9 @@ export function UpdateSection() {
   // metadata (`GET /api/config.app_version`). This is NOT the update check:
   // the check stays manual-only (spec: no background/polling request).
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // Reports this install sent that a released version fixed (S12). The list is
+  // matched locally, so the relay never learns who reported what.
+  const [fixedReports, setFixedReports] = useState<FixedReport[]>([]);
   // The server owns the default channel ("Estable" on a fresh install). The
   // selector starts from that documented default and mirrors whatever the last
   // status read reported.
@@ -67,6 +76,26 @@ export function UpdateSection() {
   const [applying, setApplying] = useState(false);
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   const applyTimerRef = useRef<number | null>(null);
+
+  // Released fixes: one read on mount, matching the ids this install kept.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const { releases } = await getBugReportReleases();
+        if (active) {
+          setFixedReports(matchReleasedReports(readSubmittedReports(), releases));
+        }
+      } catch {
+        // The notice is an extra, never a blocker: a relay hiccup leaves the
+        // panel working and simply shows nothing.
+        if (active) setFixedReports([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Render-time version: one read of the app's own metadata on mount (spec
   // "Read-only frontend update panel" renders the current version). It never
@@ -225,6 +254,27 @@ export function UpdateSection() {
           </dd>
         </div>
       </dl>
+
+      {fixedReports.length > 0 && (
+        <div
+          className="mt-4 rounded-lg border border-edge bg-surface p-3"
+          data-testid="updates-fixed-reports"
+        >
+          <p className="text-small font-medium text-primary">
+            {t("profile.updates.fixedTitle")}
+          </p>
+          <ul className="mt-1 flex flex-col gap-1 text-small text-muted">
+            {fixedReports.map((report) => (
+              <li key={report.id} data-testid="updates-fixed-report">
+                {t("profile.updates.fixedIn", {
+                  id: report.id.slice(0, 8),
+                  version: report.version,
+                })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-4">
         <span className="text-small text-muted" id="profile-updates-channel-label">

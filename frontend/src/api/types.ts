@@ -290,6 +290,14 @@ export type BugReportLinkStatus =
       permissions: BugReportLinkPermissions;
     };
 
+/** GET /api/bugreport/releases — a released version and the report ids it fixed.
+ *  Public and anonymous: no reporter, no contact. The app matches its own ids. */
+export interface BugReportRelease {
+  version: string;
+  report_ids: string[];
+  at: string;
+}
+
 /** POST /api/bugreport/fallback — the strict copy-paste fallback: a
  *  privacy-scrubbed issue body plus the `maar1223/Demiurgos` issue form. */
 export interface BugReportFallback {

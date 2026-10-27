@@ -174,6 +174,9 @@ export const messages = {
     "profile.updates.channelError": "No se pudo cambiar el canal.",
     "profile.updates.advisoryUnavailable":
       "No se pudo consultar el canal. Intenta de nuevo más tarde.",
+    "profile.updates.fixedTitle": "Reportes arreglados",
+    "profile.updates.fixedIn":
+      "Tu informe {id} se arregló en la versión {version}.",
     "profile.updates.available": "Hay una actualización disponible: {version}",
     "profile.updates.upToDate": "Estás al día.",
     "profile.updates.apply": "Instalar y reiniciar",
@@ -2275,6 +2278,9 @@ export const messages = {
     "profile.updates.channelError": "Could not change the channel.",
     "profile.updates.advisoryUnavailable":
       "Could not reach the channel. Try again later.",
+    "profile.updates.fixedTitle": "Fixed reports",
+    "profile.updates.fixedIn":
+      "Your report {id} was fixed in version {version}.",
     "profile.updates.available": "An update is available: {version}",
     "profile.updates.upToDate": "You're up to date.",
     "profile.updates.apply": "Install and restart",

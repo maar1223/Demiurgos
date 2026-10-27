@@ -236,6 +236,25 @@ describe("ReportSection — preview gate, submit and strict fallback (S2b)", () 
     expect(screen.queryAllByTestId("bugreport-attachment")).toHaveLength(0);
   });
 
+  it("remembers the delivery id so a later release can be matched", async () => {
+    localStorage.clear();
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "delivery-77" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    const stored = JSON.parse(
+      localStorage.getItem("demiurgos.bugreport.reports") ?? "[]",
+    ) as Array<{ id: string }>;
+    expect(stored[0].id).toBe("delivery-77");
+  });
+
   it("sends no attachments when none were chosen", async () => {
     const user = await renderReady();
 

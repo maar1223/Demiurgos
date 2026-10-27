@@ -141,6 +141,8 @@ All three are `POST` so a ticket never travels in a URL or a Worker log.
 | `POST /link/start` | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
 | `POST /link/status` | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
 | `POST /link/revoke` | `{account_key}` | `{ok, revoked}` |
+| `POST /release` | `{version, report_ids[]}` (shared key) | `{ok, version, report_ids, releases}` |
+| `POST /releases` | `{}` (shared key) | `{ok, releases[]}` |
 | `POST /telegram/webhook` | Telegram update | `{ok: true}` |
 
 Behaviour worth knowing:
@@ -153,6 +155,35 @@ Behaviour worth knowing:
 - Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
+
+## Released fixes
+
+A report often ends later than it starts: the bug is fixed in some version, and
+the person who reported it deserves to know. The relay keeps a small, **public
+and anonymous** list of releases:
+
+```json
+[{ "version": "v0.5.0", "report_ids": ["…"], "at": "2026-10-25T…" }]
+```
+
+Nothing about a reporter is stored — no person, no contact, no link. The app
+keeps the ids of the reports it sent and matches them locally, which is what
+lets `Perfil → Actualizaciones` say "your report was fixed in v0.5.0" without a
+Telegram link.
+
+Recording a release is one call, guarded by the same shared key as the identity
+routes:
+
+```bash
+curl -X POST "$RELAY/release"   -H "x-relay-key: $RELAY_KEY" -H 'content-type: application/json'   -d '{"version":"v0.5.0","report_ids":["<id>","<id>"]}'
+```
+
+Every report's topic summary ends with `🆔 <id>`, so the ids to list are exactly
+the ones you can read in the group. Calling it again for the same version
+corrects that entry instead of duplicating it.
+
+The Telegram DM is deliberately **not** implemented: it would require mapping a
+report to a person, and the in-app notice covers the need without that cost.
 
 ## Who sent it (attribution)
 
