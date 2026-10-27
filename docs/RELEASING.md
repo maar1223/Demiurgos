@@ -27,16 +27,18 @@ Alfa" y **no se usa todavía**.
 
 El canal **no se elige a mano**: lo decide el nombre.
 
-- **Sin** `beta` en el nombre → **Estable** (**Recomendado**): para todos.
-- **Con** `beta` en el nombre → **Beta** (**Anticipado**): opt-in, para testers.
+- **Sin** `beta` en el nombre → canal **Recomendado** (valor interno `Estable`): para todos.
+- **Con** `beta` en el nombre → canal **Anticipado** (valor interno `Beta`): opt-in, para testers.
 
 La palabra `beta` es el interruptor. La pantalla de actualizaciones muestra los
-canales como **Estable** y **Beta**.
+canales con los nombres visibles **Recomendado** y **Anticipado**; el valor que
+la app guarda sigue siendo `Estable`/`Beta`, así que el nombre visible nunca se
+persiste ni viaja por la API.
 
 ## Betas
 
 Primero `0.3.0-beta.1`, después `0.3.0-beta.2`, y así. Cuando la beta está bien,
-publicas `0.3.0` (el mismo número, sin `beta`) y va a **Estable**.
+publicas `0.3.0` (el mismo número, sin `beta`) y va al canal **Recomendado**.
 
 ## Cómo se publica
 
@@ -47,7 +49,7 @@ git push origin v0.2.0
 
 Al empujar el tag, el robot arma, firma y sube la versión, y acomoda el canal.
 Si el chequeo automático falla, **no se publica** (y una beta nunca pisa el canal
-Estable). El comportamiento vive en `.github/workflows/release.yml`.
+**Recomendado**). El comportamiento vive en `.github/workflows/release.yml`.
 
 ## Reglas de oro
 
@@ -56,7 +58,7 @@ Estable). El comportamiento vive en `.github/workflows/release.yml`.
 - **Nunca** borres ni muevas un tag.
 - Publicar es **público**: requiere **pedido explícito del Owner**.
 - Se publica **solo desde el código a entregar** (la rama principal, `master`).
-- El robot **rebota** (falla) una beta que intente caer en Estable.
+- El robot **rebota** (falla) una beta que intente caer en el canal **Recomendado**.
 
 ## Quién lo hace
 
