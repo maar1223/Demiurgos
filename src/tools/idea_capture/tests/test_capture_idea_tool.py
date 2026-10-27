@@ -318,6 +318,51 @@ def test_confirm_false_parks_without_autosave(monkeypatch):
             runtime.close()
 
 
+def test_park_from_tool_thread_sends_once_on_gateway_loop(monkeypatch):
+    """Regression: the loop-less park path must not send the keyboard twice.
+
+    Live failure (2026-10-25 22:03): the tool handler runs on a gateway worker
+    thread with no running loop, the prompt was executed with ``asyncio.run``
+    on a FOREIGN loop, PTB delivered the message and then raised ("bound to a
+    different event loop"), and the raw-Bot-API fallback sent a second,
+    identical Guardar/Descartar keyboard. The prompt must be scheduled on the
+    stashed gateway loop (one send) and a failure must never re-send.
+    """
+    plugin = _load_plugin()
+    sent: list[str] = []
+    fallbacks: list[str] = []
+
+    class FlakyAdapter:
+        async def send_capture_prompt(self, *, chat_id, capture_id, thread_id=None):
+            sent.append(capture_id)  # delivered...
+            raise RuntimeError("bound to a different event loop")  # ...then fails
+
+    loop = asyncio.new_event_loop()
+    thread = __import__("threading").Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        plugin._gateway_loop = loop
+        monkeypatch.setattr(
+            plugin, "_send_capture_prompt_sync_fallback",
+            lambda source, capture_id, text: fallbacks.append(capture_id),
+        )
+        source = types.SimpleNamespace(chat_id="7", thread_id=None)
+
+        plugin._schedule_capture_prompt(FlakyAdapter(), source, "cid-1")
+
+        deadline = time.time() + 2.0
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)  # let any (wrong) fallback fire before asserting
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert sent == ["cid-1"], "the prompt must be sent exactly once"
+    assert fallbacks == [], "a failed async send must never re-send the fallback"
+
+
 def test_park_schedules_keyboard_via_active_gateway(monkeypatch):
     """2.x: the park branch schedules the real send_capture_prompt coroutine.
 
@@ -360,20 +405,21 @@ def test_park_schedules_keyboard_via_active_gateway(monkeypatch):
 
 
 def test_park_sends_keyboard_without_running_loop(monkeypatch):
-    """Bug fix: a loop-less (sync) tool handler still sends the keyboard.
+    """Bug fix: a loop-less (sync) tool handler still notifies the user — ONCE.
 
     The tool handler runs on a gateway worker thread with NO running event
-    loop, so the old ``asyncio.create_task`` raised "no running event loop"
-    and the Guardar/Descartar keyboard never reached the user (only a
-    warning, plus a leaked un-awaited coroutine). The fix must send the
-    prompt from a background thread's own loop: the keyboard really goes out,
-    no coroutine is left un-awaited, and the turn is never blocked.
+    loop and, when the gateway loop was never stashed, there is no safe loop
+    to schedule the adapter send on. The raw-Bot-API fallback then delivers
+    the keyboard prompt exactly once. The adapter must NOT be attempted first:
+    the live failure sent through a foreign loop, raised afterwards, and the
+    fallback sent a SECOND identical keyboard. No coroutine may leak.
     """
     with tempfile.TemporaryDirectory() as directory:
         handler, runtime = _handler(Path(directory))
         plugin = _setup_tool(monkeypatch)
         plugin._handler = handler
         sent = []
+        fallbacks = []
 
         class FakeAdapter:
             async def send_capture_prompt(self, *, chat_id, capture_id, thread_id=None):
@@ -384,6 +430,11 @@ def test_park_sends_keyboard_without_running_loop(monkeypatch):
                 return FakeAdapter()
 
         plugin._active_gateway = FakeGateway()
+        plugin._gateway_loop = None  # no gateway loop known in this process
+        monkeypatch.setattr(
+            plugin, "_send_capture_prompt_sync_fallback",
+            lambda source, capture_id, text: fallbacks.append(capture_id),
+        )
         try:
             # Plain sync call, NO asyncio.run: exactly the loop-less worker
             # thread the gateway uses for sync tool handlers.
@@ -396,15 +447,9 @@ def test_park_sends_keyboard_without_running_loop(monkeypatch):
             record = runtime.store.get(result["capture_id"])
             assert record.state is CaptureState.AWAITING_CONFIRM
 
-            # The background thread must deliver the keyboard prompt.
-            deadline = time.monotonic() + 5.0
-            while not sent and time.monotonic() < deadline:
-                time.sleep(0.02)
-            assert sent, "no-loop park must still send the keyboard prompt"
-            chat_id, capture_id, thread_id = sent[0]
-            assert chat_id == "7"  # session chat
-            assert capture_id == result["capture_id"]
-            assert thread_id is None
+            assert fallbacks == [result["capture_id"]], \
+                "the loop-less park branch must notify through the single fallback"
+            assert sent == [], "the adapter must never run on a foreign loop"
 
             # No coroutine may leak un-awaited (the live-test RuntimeWarning).
             unawaited = [w for w in caught
@@ -472,3 +517,68 @@ def test_different_material_parks_two_captures(monkeypatch):
                 CaptureState.AWAITING_CONFIRM
         finally:
             runtime.close()
+
+def test_hook_stashes_the_running_gateway_loop():
+    """The intake hook must remember the loop its PROMPT scheduling depends on.
+
+    Deleting the ``_remember_gateway_loop()`` call in ``capture_intake_hook``
+    used to keep the whole capture suite green while every live keyboard fell
+    back to the raw API (or, before the fix, double-sent). This pins the wiring.
+    """
+    plugin = _load_plugin()
+    plugin._handler = None
+    plugin._gateway_loop = None
+
+    async def _run():
+        plugin.capture_intake_hook(event=None, gateway=None, session_store=None)
+        assert plugin._gateway_loop is asyncio.get_running_loop()
+
+    asyncio.run(_run())
+
+
+def test_off_loop_hook_leaves_no_gateway_loop():
+    plugin = _load_plugin()
+    plugin._handler = None
+    plugin._gateway_loop = None
+
+    plugin.capture_intake_hook(event=None, gateway=None, session_store=None)
+
+    assert plugin._gateway_loop is None
+
+
+def test_closed_loop_race_falls_back_once_and_never_raises(monkeypatch):
+    """TOCTOU: the gateway loop can stop after the is_running() check.
+
+    ``run_coroutine_threadsafe`` then raises; the prompt must fall back exactly
+    once and must not leak an un-awaited coroutine.
+    """
+    plugin = _load_plugin()
+    fallbacks: list[str] = []
+
+    class FakeLoop:
+        def is_running(self):
+            return True
+
+    class Adapter:
+        async def send_capture_prompt(self, **kwargs):  # pragma: no cover
+            raise AssertionError("the adapter must not run without a live loop")
+
+    plugin._gateway_loop = FakeLoop()
+    monkeypatch.setattr(
+        asyncio, "run_coroutine_threadsafe",
+        lambda coro, loop: (_ for _ in ()).throw(RuntimeError("Event loop is closed")),
+    )
+    monkeypatch.setattr(
+        plugin, "_send_capture_prompt_sync_fallback",
+        lambda source, capture_id, text: fallbacks.append(capture_id),
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        plugin._schedule_capture_prompt(
+            Adapter(), types.SimpleNamespace(chat_id="7", thread_id=None), "cid-race")
+        gc.collect()
+
+    assert fallbacks == ["cid-race"]
+    unawaited = [w for w in caught if "never awaited" in str(w.message)]
+    assert unawaited == [], f"leaked coroutine warnings: {unawaited}"

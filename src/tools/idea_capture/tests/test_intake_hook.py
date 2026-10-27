@@ -192,7 +192,7 @@ def test_authorized_text_captured_and_prompt_scheduled():
             assert len(adapter.sent) == 1
             chat_id, text, kwargs = adapter.sent[0]
             assert chat_id == "7"
-            assert text == "Idea capturada (id=`%s`). Elegí una acción:" % record.capture_id
+            assert text == "Idea capturada (id=`%s`). Elige una acción:" % record.capture_id
             assert kwargs == {"metadata": None}
         finally:
             runtime.close()

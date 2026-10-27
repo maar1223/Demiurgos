@@ -981,6 +981,35 @@ describe("IdeaCapturePanel — verificación de conexión (probe)", () => {
     );
   });
 
+  it("probes on mount when a token is already stored and turns the badge green", async () => {
+    // Regression: a stored token used to render "requires connection" forever
+    // because the probe only ran after an explicit save/discover/authorize.
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    mocked.testTelegramConnection.mockResolvedValue({
+      state: "configured",
+      has_token: true,
+      tested_at: "2026-10-10T12:00:00+00:00",
+      error_code: "",
+    });
+    const { onStatus } = renderWithStatus();
+
+    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.configured"),
+        variant: "success",
+      }),
+    );
+  });
+
+  it("never probes on mount when no token is stored", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: false }));
+    renderWithStatus();
+
+    await screen.findByRole("heading", { name: tEs("ideaCapture.connectTitle") });
+    expect(mocked.testTelegramConnection).not.toHaveBeenCalled();
+  });
+
   it("surfaces a probe error as an error badge", async () => {
     mocked.setIdeaCaptureToken.mockResolvedValue({ has_token: true });
     mocked.testTelegramConnection.mockResolvedValue({
@@ -1055,9 +1084,11 @@ describe("IdeaCapturePanel — verificación de conexión (probe)", () => {
     renderPanel(makeAuth());
     await goToStep(user, 1);
 
+    // Drop the mount probe so this only proves the discovery trigger.
+    mocked.testTelegramConnection.mockClear();
     await user.click(screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }));
 
-    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalled());
+    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalledTimes(1));
   });
 
   it("fires the probe after a private chat is authorized", async () => {

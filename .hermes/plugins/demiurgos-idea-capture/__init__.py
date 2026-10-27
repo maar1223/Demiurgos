@@ -122,13 +122,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import inspect
 import json
 import logging
 import os
 import sys
 import tempfile
-import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -249,6 +247,12 @@ _MEDIA_STASH: dict[tuple[str, str], dict] = {}
 # pre-registration behavior is unchanged.
 _CAPTURE_MODE: str | None = None
 
+# Gateway event loop stashed by the first intake-hook invocation. The
+# synchronous capture_idea tool handler runs on a gateway worker thread
+# with no running loop; it schedules the Guardar/Descartar prompt HERE so
+# the PTB client stays on its own loop (see _schedule_capture_prompt).
+_gateway_loop: asyncio.AbstractEventLoop | None = None
+
 # One-shot guidance rule injected via pre_llm_call for the authorized binding
 # (R-4). Kept on the module so tests can assert on the exact text. Two-way
 # decision (Opción A, S-5.1): idea/worldbuilding/lore/character seed ->
@@ -265,13 +269,13 @@ _CAPTURE_GUIDANCE = (
 
 # Update-idea guidance appended to the same pre_llm_call context (R-7). The
 # tool must ONLY be invoked after the user explicitly approves the final
-# version of the idea (e.g. "listo, actualizá"), never speculatively.
+# version of the idea (e.g. a plain "listo, actualiza"), never speculatively.
 _UPDATE_IDEA_GUIDANCE = (
     "When the user wants to improve or edit an existing idea: "
     "1) Use `ideas_read(slug)` to read the current version. "
     "2) Collaborate in conversation — propose improvements, discuss changes. "
     "3) ONLY call `update_idea` after the user explicitly approves the final "
-    "version (e.g. 'listo, actualizá', 'go ahead', 'save it'). "
+    "version (e.g. 'listo, actualiza', 'go ahead', 'save it'). "
     "Never call `update_idea` without explicit user approval."
 )
 
@@ -319,6 +323,17 @@ def _build_guidance_context() -> str:
         if lang
         else "Always respond in Demiurgos' configured language."
     )
+    # REGLAS_LENGUAJE.md: Spanish is ALWAYS neutral — zero voseo, zero
+    # regionalisms. The capture surface shipped without this rule and the
+    # assistant answered in Rioplatense Spanish ("tell me more"), so the
+    # register is pinned here for the capture binding instead of left to the
+    # model's default.
+    if str(lang).lower().startswith("es"):
+        lang_instr += (
+            " Write in strict neutral Spanish: no voseo and no regionalisms "
+            "(use 'tú' forms such as 'elige', 'cuéntame', 'envía'), never "
+            "Rioplatense phrasing."
+        )
     return f"{_CAPTURE_GUIDANCE} {_UPDATE_IDEA_GUIDANCE} {lang_instr}"
 
 _CAPTURE_IDEA_SCHEMA = {
@@ -372,7 +387,7 @@ _UPDATE_IDEA_SCHEMA = {
     "description": (
         "Update an existing idea, creating a new version. ONLY call after "
         "explicit user approval of the final version (e.g. 'listo, "
-        "actualizá'). Returns {slug, version, previous_version, archived_at}."
+        "actualiza'). Returns {slug, version, previous_version, archived_at}."
     ),
     "parameters": {
         "type": "object",
@@ -702,6 +717,10 @@ def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | No
     # message and the first one wins (stable reference for the process).
     if _active_gateway is None and gateway is not None:
         _active_gateway = gateway
+    # The tool handler runs on a gateway worker thread with no loop; stash the
+    # gateway loop here (the hook runs on it) so prompts never run PTB on a
+    # foreign loop.
+    _remember_gateway_loop()
     handler = _handler
     source = getattr(event, "source", None)
     if handler is None or source is None:
@@ -782,74 +801,77 @@ def _schedule_capture_prompt(adapter, source, capture_id: str) -> None:
     plain-text ``send`` when the active adapter predates the subclass (e.g.
     the platform override is not yet in effect).
 
-    Bug fix (live-test): the park path (``capture_idea`` — the only path since
-    Opción A) runs in a SYNCHRONOUS tool handler on a gateway worker thread
-    with no running event loop, so ``asyncio.create_task`` raised
-    "no running event loop" and the keyboard was never sent (only a warning;
-    the coroutine was left un-awaited). The running loop is now resolved
-    BEFORE the coroutine is created, so nothing leaks when no loop exists;
-    without a loop the send runs in its own event loop on a background thread
-    (fire-and-forget) so the user still gets the keyboard, and if even that
-    fails a synchronous raw-Bot-API send guarantees the user is notified.
+    The park path (``capture_idea`` — the only path since Opción A) runs in a
+    SYNCHRONOUS tool handler on a gateway worker thread with no running loop,
+    so the coroutine is scheduled on the gateway loop stashed by the intake
+    hook (``asyncio.run_coroutine_threadsafe``). Running the send in a fresh
+    throwaway loop is forbidden: the PTB client is bound to the gateway loop,
+    and the live failure was the message going out and then raising "bound to
+    a different event loop", after which the raw-API fallback sent a SECOND
+    identical keyboard. A failed async send is logged, never re-sent; the raw
+    fallback is used only when no live gateway loop is known at all.
     Always returns ``None``; never raises.
     """
     kwargs = {"chat_id": str(source.chat_id), "capture_id": capture_id}
     if getattr(source, "thread_id", None):
         kwargs["thread_id"] = source.thread_id
-    send_prompt = getattr(adapter, "send_capture_prompt", None)
+    text = f"Idea capturada (id=`{capture_id}`). Elige una acción:"
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop: loop-less worker thread (sync tool handler). Run
-        # the send in its own event loop on a daemon background thread so the
-        # Guardar/Descartar keyboard still goes out without blocking the turn.
-        _run_capture_prompt_off_loop(adapter, source, capture_id, kwargs)
-        return
-    if callable(send_prompt):
-        loop.create_task(send_prompt(**kwargs))
-    else:
-        text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
-        metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
-        loop.create_task(adapter.send(str(source.chat_id), text, metadata=metadata))
-
-
-def _run_capture_prompt_off_loop(adapter, source, capture_id: str, kwargs: dict) -> None:
-    """Fire-and-forget the capture prompt from a loop-less worker thread.
-
-    The park branch of ``capture_idea`` runs in a synchronous tool handler
-    dispatched via ``loop.run_in_executor`` (gateway worker thread), where
-    ``asyncio.create_task`` cannot schedule. The prompt is instead run in its
-    own event loop on a daemon background thread — never blocking the turn —
-    and the coroutine is created and awaited INSIDE that loop, so nothing
-    leaks un-awaited. If the adapter send fails (e.g. the PTB client is bound
-    to the gateway loop and rejects a foreign loop), a synchronous raw-Bot-API
-    send still notifies the user. Never raises.
-    """
-    text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
-
-    def _runner() -> None:
-        try:
-            send_prompt = getattr(adapter, "send_capture_prompt", None)
-            if callable(send_prompt):
-                result = send_prompt(**kwargs)
-            else:
-                metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
-                result = adapter.send(str(source.chat_id), text, metadata=metadata)
-            if inspect.isawaitable(result):
-                asyncio.run(result)
-        except Exception as exc:  # noqa: BLE001 — degraded path must still notify
-            log.warning("idea-capture prompt thread failed for %s: %s", capture_id, exc)
+        loop = _gateway_loop if _gateway_loop is not None and _gateway_loop.is_running() else None
+        coroutine = _send_capture_prompt(adapter, source, capture_id, kwargs, text)
+        if loop is None:
+            # No live gateway loop to schedule on: ONE raw-API send, no
+            # adapter attempt, so an uncertain failure can never double-send.
+            coroutine.close()
             _send_capture_prompt_sync_fallback(source, capture_id, text)
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except RuntimeError as exc:
+            # TOCTOU: the loop stopped between the is_running() check and the
+            # schedule. Close the coroutine (no "never awaited" leak) and fall
+            # back exactly once.
+            log.warning("idea-capture prompt loop unusable for %s: %s", capture_id, exc)
+            coroutine.close()
+            _send_capture_prompt_sync_fallback(source, capture_id, text)
+            return
+        future.add_done_callback(lambda done: _log_prompt_failure(done, capture_id))
+        return
+    task = loop.create_task(_send_capture_prompt(adapter, source, capture_id, kwargs, text))
+    task.add_done_callback(lambda done: _log_prompt_failure(done, capture_id))
 
+
+async def _send_capture_prompt(adapter, source, capture_id: str, kwargs: dict, text: str) -> None:
+    """Send the Guardar/Descartar prompt through the live adapter (one send)."""
+    send_prompt = getattr(adapter, "send_capture_prompt", None)
+    if callable(send_prompt):
+        await send_prompt(**kwargs)
+        return
+    metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
+    await adapter.send(str(source.chat_id), text, metadata=metadata)
+
+
+def _log_prompt_failure(done, capture_id: str) -> None:
+    """Log a scheduled prompt failure; never re-send (no duplicate keyboards)."""
     try:
-        threading.Thread(
-            target=_runner,
-            name=f"idea-capture-prompt-{capture_id}",
-            daemon=True,
-        ).start()
-    except Exception as exc:  # noqa: BLE001 — thread start failure still notifies
-        log.warning("idea-capture prompt thread start failed for %s: %s", capture_id, exc)
-        _send_capture_prompt_sync_fallback(source, capture_id, text)
+        exc = done.exception()
+    except Exception:  # noqa: BLE001 — cancelled or already consumed
+        return
+    if exc is not None:
+        log.warning("idea-capture prompt send failed for %s: %s", capture_id, exc)
+
+
+def _remember_gateway_loop() -> None:
+    """Stash the gateway loop for loop-less tool handlers (first hook wins)."""
+    global _gateway_loop
+    if _gateway_loop is not None and _gateway_loop.is_running():
+        return
+    try:
+        _gateway_loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover — hook called off-loop
+        pass
 
 
 _TELEGRAM_BOT_API = "https://api.telegram.org"

@@ -423,7 +423,7 @@ def handle_confirmation_command(runtime: IdeaCaptureRuntime, text: str) -> str:
     """Parse /save, /world <world>, /cancel against a capture id -> reply text."""
     parts = text.strip().split()
     if len(parts) < 2:
-        return "Usá `/save <id>`, `/world <id> <mundo>`, o `/cancel <id>`."
+        return "Usa `/save <id>`, `/world <id> <mundo>`, o `/cancel <id>`."
     command, capture_id = parts[0], parts[1]
     try:
         if command == "/save":
@@ -496,9 +496,9 @@ def _handle_callback_query(runtime: IdeaCaptureRuntime, transport: TelegramTrans
             transport.answer_callback_query(query_id, "No hay mundos disponibles.")
             replies.append("No hay mundos disponibles.")
             return
-        text = "Elegí el mundo para esta idea:"
+        text = "Elige el mundo para esta idea:"
         transport.send_message(chat_id, text, reply_markup=reply_markup)
-        transport.answer_callback_query(query_id, "Elegí un mundo.")
+        transport.answer_callback_query(query_id, "Elige un mundo.")
         replies.append(text)
         return
 
@@ -550,8 +550,8 @@ def poll_once(runtime: IdeaCaptureRuntime, transport: TelegramTransport,
             replies.append(transport.send_message(
                 chat_id,
                 f"📥 Idea capturada (id=`{receipt.capture_id}`).\n"
-                "Usá `/save <id>`, `/world <id> <mundo>`, o `/cancel <id>` "
-                "si preferís comandos.",
+                "Usa `/save <id>`, `/world <id> <mundo>`, o `/cancel <id>` "
+                "si prefieres comandos.",
                 reply_markup=build_capture_keyboard(receipt.capture_id),
             ))
         except UnauthorizedUpdate:

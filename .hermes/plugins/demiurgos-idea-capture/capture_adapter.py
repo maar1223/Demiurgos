@@ -227,7 +227,7 @@ class CaptureTelegramAdapter(TelegramAdapter):
         (R-7); the fictional ``send_interaction_message`` is never used.
         """
         markup = self._build_markup(build_capture_keyboard(capture_id))
-        text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
+        text = f"Idea capturada (id=`{capture_id}`). Elige una acción:"
         kwargs = {"chat_id": chat_id, "text": text, "reply_markup": markup}
         if thread_id:
             kwargs["message_thread_id"] = thread_id
