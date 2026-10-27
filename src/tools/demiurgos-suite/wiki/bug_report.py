@@ -413,17 +413,39 @@ def create_bug_report_router(
     def _relay_sender() -> Callable[[str, dict, dict], Tuple[int, dict]]:
         return relay_post if relay_post is not None else _default_relay_post
 
-    def _link_call(path: str, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-        """Call one relay identity route with the shared key."""
-        if not relay_url or not relay_key:
+    def _link_call(
+        path: str,
+        payload: Dict[str, Any],
+        headers: Dict[str, str] | None = None,
+    ) -> Tuple[int, Dict[str, Any]]:
+        """Call one relay identity route.
+
+        No shared key: a released install cannot carry one (S19). The routes that
+        need proof receive the ``install_token`` this install already holds, and
+        the rest are bounded per IP on the relay side.
+        """
+        if not relay_url:
             raise problem("bugreport.relay_unavailable")
         try:
             status, data = _relay_sender()(
-                relay_url.rstrip("/") + path, payload, {"x-relay-key": relay_key}, []
+                relay_url.rstrip("/") + path, payload, dict(headers or {}), []
             )
         except Exception:  # noqa: BLE001 - network/config failure fails closed
             raise problem("bugreport.relay_unavailable")
         return int(status), data if isinstance(data, dict) else {}
+
+    def _install_id() -> str | None:
+        """The stable anonymous install id, minted once (S20)."""
+        if local_state is None:
+            return None
+        try:
+            return bugreport_identity.install_id(local_state())
+        except Exception:  # noqa: BLE001 - no pseudonym is better than a 500
+            return None
+
+    def _wants_pseudonym(request: Request) -> bool:
+        value = (request.headers.get("x-bugreport-pseudonym") or "").strip()
+        return value == "1"
 
     def _raise_link_failure(status: int, data: Dict[str, Any]) -> None:
         """Map a relay identity failure onto a stable backend code."""
@@ -436,6 +458,7 @@ def create_bug_report_router(
     def _deliver(
         bundle: Dict[str, Any],
         attachments: List[Tuple[str, bytes, str]] | None = None,
+        pseudonym: bool = False,
     ) -> Dict[str, Any]:
         """Forward the validated bundle to the relay; fail closed on any failure.
 
@@ -467,6 +490,10 @@ def create_bug_report_router(
         token = _current_install_token()
         if token:
             headers["x-install-token"] = token
+        if pseudonym:
+            install = _install_id()
+            if install is not None:
+                headers["x-install-id"] = install
         try:
             status, data = _relay_sender()(relay_url, payload, headers, attachments or [])
         except Exception:  # noqa: BLE001 - network/config failure fails closed
@@ -627,7 +654,11 @@ def create_bug_report_router(
             except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
                 raise problem("bugreport.not_allowlisted")
         bundle = _validate_and_cap(body)
-        return _deliver(bundle, attachments)
+        return _deliver(
+            bundle,
+            attachments,
+            pseudonym=_wants_pseudonym(request),
+        )
 
     def _link_body_status() -> None:
         raise problem("bugreport.not_allowlisted")
@@ -746,8 +777,13 @@ def create_bug_report_router(
         signing token or the numeric Telegram id.
         """
         _guard(request)
-        account = _stable_account_key()
-        status, data = _link_call("/link/state", {"account_key": account})
+        token = _current_install_token()
+        # Without the token the relay issued at the handover there is nothing to
+        # ask: the install is not linked. No account key travels (S19).
+        if token is None:
+            telegram_url = "https://t.me/%s" % bot_username if bot_username else None
+            return {"state": "unlinked", "telegram_url": telegram_url}
+        status, data = _link_call("/link/state", {}, {"x-install-token": token})
         if not (200 <= status < 300) or data.get("ok") is not True:
             _raise_link_failure(status, data)
 
@@ -790,8 +826,12 @@ def create_bug_report_router(
     async def link_revoke(request: Request) -> Dict[str, Any]:
         """Unlink this install: the relay drops the binding and blocks the token."""
         _guard(request)
-        account = _stable_account_key()
-        status, data = _link_call("/link/revoke", {"account_key": account})
+        token = _current_install_token()
+        # Nothing stored, nothing to revoke; the call stays idempotent and does
+        # not touch the relay.
+        if token is None:
+            return {"revoked": False}
+        status, data = _link_call("/link/revoke", {}, {"x-install-token": token})
         if not (200 <= status < 300) or data.get("ok") is not True:
             _raise_link_failure(status, data)
         _clear_install_token()

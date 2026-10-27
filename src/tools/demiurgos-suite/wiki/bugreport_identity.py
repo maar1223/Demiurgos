@@ -85,6 +85,25 @@ def account_key(
     return fresh
 
 
+def install_id(local_state: LocalState) -> str:
+    """The stable, anonymous install id, minted once and persisted (S20).
+
+    Independent of the vault: the pseudonym is not an account name, so an
+    install with the vault on still gets one. It is what the relay hashes to
+    label reports ("instalación a3f9 · 3 reportes") without learning anything
+    about the person.
+    """
+    persisted = _existing_slot(local_state).get("install_id")
+    if isinstance(persisted, str) and _INSTALL_ID.match(persisted):
+        return persisted
+
+    fresh = INSTALL_ID_PREFIX + secrets.token_hex(12)
+    snapshot = local_state.snapshot()
+    _slot(snapshot)["install_id"] = fresh
+    local_state.atomic_commit(snapshot)
+    return fresh
+
+
 def read_install_token(local_state: LocalState) -> str | None:
     """The stored report-signing token, or ``None`` when it is absent/invalid."""
     token = _existing_slot(local_state).get("install_token")
@@ -111,6 +130,7 @@ def clear_install_token(local_state: LocalState) -> None:
 
 __all__ = [
     "INSTALL_ID_PREFIX",
+    "install_id",
     "account_key",
     "clear_install_token",
     "read_install_token",

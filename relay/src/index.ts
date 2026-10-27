@@ -43,8 +43,13 @@
  */
 
 import { admitCounter } from "./counters.ts";
-import { admitReport, rememberReport, secondsUntilUtcMidnight } from "./abuse.ts";
-import { isBlockedInstall, readIdentityByAccount } from "./identity.ts";
+import {
+  admitReport,
+  installDigest,
+  rememberReport,
+  secondsUntilUtcMidnight,
+} from "./abuse.ts";
+import { isBlockedInstall, readIdentityByInstallToken } from "./identity.ts";
 import {
   LinkError,
   linkStatus,
@@ -389,6 +394,7 @@ function buildBody(
   report: Report,
   attribution: Attribution,
   attachmentCount = 0,
+  pseudonym: string | null = null,
 ): string {
   const platform = Object.entries(report.platform)
     .map(([key, value]) => `${key}=${value}`)
@@ -403,6 +409,7 @@ function buildBody(
     `Platform: ${platform || "(none)"}`,
     ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${attribution.line}`,
+    ...(pseudonym === null ? [] : [`Install: ${pseudonym}`]),
     `Contact: ${report.contact ?? "(not provided)"}`,
     // The email channel carries text only; a dropped attachment is stated, so
     // nobody believes a screenshot arrived when it did not.
@@ -428,6 +435,7 @@ async function sendViaProvider(
   report: Report,
   attribution: Attribution,
   attachmentCount = 0,
+  pseudonym: string | null = null,
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
@@ -444,7 +452,7 @@ async function sendViaProvider(
         sender: { email: env.SENDER_FROM },
         to: [{ email: env.OWNER_INBOX }],
         subject: buildSubject(report),
-        textContent: buildBody(report, attribution, attachmentCount),
+        textContent: buildBody(report, attribution, attachmentCount, pseudonym),
       }),
       signal: controller.signal,
     });
@@ -473,21 +481,40 @@ async function sendViaProvider(
 /** Identity routes. All POST: a ticket must never travel in a URL or a log. */
 const LINK_PATHS = new Set(["/link/start", "/link/status", "/link/state", "/link/revoke"]);
 
+/** Ticket mints one IP may attempt per hour (on top of 3/hour per account). */
+const LINK_START_IP_MAX = 10;
+
 /**
- * Identity endpoints. The caller must present the shared `x-relay-key`: an
- * unauthenticated caller could otherwise mint a ticket for somebody else's
- * account key and bind an attacker-controlled Telegram account to it.
+ * Ticket polls one IP may make per hour. The panel polls every 2 s while a
+ * ticket is live (about 300 per ticket), so this bounds a brute-force search
+ * without ever throttling a real scan.
+ */
+const LINK_POLL_IP_MAX = 1200;
+
+const LINK_IP_WINDOW_SECONDS = 3600;
+
+/**
+ * Identity endpoints for the CLIENT (S19).
+ *
+ * No shared key: a released install cannot carry one, and `RELAY_KEY` would then
+ * let anyone mint tickets or revoke somebody else's link. Each route instead
+ * uses the credential that install already holds:
+ *
+ *   - `/link/start` and `/link/status` are open, bounded per IP — the ticket is
+ *     random, single-use and short-lived, so it is its own bearer.
+ *   - `/link/state` and `/link/revoke` require the `x-install-token` the relay
+ *     issued at the handover, so an install can only read or revoke its own
+ *     link. A guessed account key reveals nothing.
+ *
+ * The administrative side (`/release`) keeps `x-relay-key`.
  */
 async function handleLink(
   request: Request,
   env: Env,
   path: string,
 ): Promise<Response> {
-  if (!env.LINKS || !env.RELAY_KEY) {
+  if (!env.LINKS) {
     return fail(500, "relay.not_configured");
-  }
-  if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
-    return fail(401, "relay.unauthorized");
   }
   if (request.method !== "POST") {
     return fail(405, "relay.method_not_allowed");
@@ -505,6 +532,10 @@ async function handleLink(
 
   try {
     if (path === "/link/start") {
+      const limited = await ipBudget(env, request, "linkstart", LINK_START_IP_MAX);
+      if (limited !== null) {
+        return limited;
+      }
       if (typeof body.account_key !== "string") {
         return fail(400, "link.invalid_account");
       }
@@ -538,6 +569,10 @@ async function handleLink(
     }
 
     if (path === "/link/status") {
+      const limited = await ipBudget(env, request, "linkpoll", LINK_POLL_IP_MAX);
+      if (limited !== null) {
+        return limited;
+      }
       if (typeof body.ticket !== "string") {
         return fail(400, "link.ticket_invalid");
       }
@@ -545,15 +580,18 @@ async function handleLink(
       return jsonResponse({ ok: true, ...status }, 200);
     }
 
+    // The self-service half: possession of the install token is the proof, so
+    // no account key travels and no handle can be read by asking.
+    const presented = (request.headers.get("x-install-token") ?? "").trim();
+    if (presented.length === 0) {
+      return fail(401, "relay.unauthorized");
+    }
+    const identity = await readIdentityByInstallToken(env.LINKS, presented);
+
     if (path === "/link/state") {
-      if (typeof body.account_key !== "string") {
-        return fail(400, "link.invalid_account");
-      }
-      // The app's "am I still linked?" read. Only what the connected state
-      // renders leaves the store: the account key, the numeric Telegram id and
-      // the bot bookkeeping stay here, and no signing credential is ever
-      // returned (the install token was spent once, at redemption).
-      const identity = await readIdentityByAccount(env.LINKS, body.account_key);
+      // Only what the connected state renders leaves the store: never the
+      // account key, the numeric Telegram id, the bot bookkeeping or a
+      // credential (the install token was spent once, at redemption).
       if (identity === null) {
         return jsonResponse({ ok: true, state: "unlinked" }, 200);
       }
@@ -571,10 +609,10 @@ async function handleLink(
       );
     }
 
-    if (typeof body.account_key !== "string") {
-      return fail(400, "link.invalid_account");
-    }
-    const revoked = await revokeLink(env.LINKS, body.account_key);
+    // An unknown or revoked token revokes nothing and says so; that keeps the
+    // call idempotent without disclosing whether the account key exists.
+    const revoked =
+      identity === null ? false : await revokeLink(env.LINKS, identity.account_key);
     return jsonResponse({ ok: true, revoked }, 200);
   } catch (error) {
     if (error instanceof LinkError) {
@@ -585,27 +623,55 @@ async function handleLink(
 }
 
 /**
+ * Per-IP budget for the routes that cannot require a credential. A counter
+ * backend that fails REFUSES the call: the same fail-closed posture as reports.
+ */
+async function ipBudget(
+  env: Env,
+  request: Request,
+  prefix: string,
+  max: number,
+): Promise<Response | null> {
+  try {
+    const allowed = await admitCounter(
+      env.RATE_LIMIT,
+      `${prefix}:ip:${clientIp(request)}`,
+      LINK_IP_WINDOW_SECONDS,
+      max,
+    );
+    return allowed ? null : fail(429, "link.rate_limited");
+  } catch {
+    return fail(503, "relay.rate_limit_unavailable");
+  }
+}
+
+/**
  * Release records: "version X fixed reports A, B" (S12).
  *
- * Guarded by the same shared key as the identity routes, and POST for both
- * directions so one guard and one call shape cover every back-office route.
- * Nothing personal is stored: the app matches its own report ids against this
- * public list, which is what keeps the in-app notice free of a person→report
- * mapping.
+ * Reading the list is PUBLIC on purpose: it carries versions and report ids,
+ * never a reporter, and every install needs it to show "this was fixed" without
+ * linking anything (S19). Writing it still needs the shared `x-relay-key`.
+ * Nothing personal is stored, which is what keeps the in-app notice free of a
+ * person→report mapping.
  */
 async function handleRelease(
   request: Request,
   env: Env,
   path: string,
 ): Promise<Response> {
-  if (!env.LINKS || !env.RELAY_KEY) {
+  if (!env.LINKS) {
     return fail(500, "relay.not_configured");
-  }
-  if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
-    return fail(401, "relay.unauthorized");
   }
   if (request.method !== "POST") {
     return fail(405, "relay.method_not_allowed");
+  }
+  if (path === "/release") {
+    if (!env.RELAY_KEY) {
+      return fail(500, "relay.not_configured");
+    }
+    if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
+      return fail(401, "relay.unauthorized");
+    }
   }
 
   if (path === "/releases") {
@@ -703,6 +769,38 @@ async function rememberDeliveredReport(
     }
   }
   console.error("dedup.write_failed", deliveryId);
+}
+
+/** The pseudonym shape the backend mints (`install_` + 24 lowercase hex). */
+const INSTALL_ID = /^install_[0-9a-f]{24}$/;
+
+interface ReporterLabel {
+  /** What the group shows: a short digest prefix plus the accepted count. */
+  label: string;
+  /** The count INCLUDING the report being published now. */
+  count: number;
+  /** KV key of the cumulative counter, written only after a delivery. */
+  key: string;
+}
+
+/**
+ * Label for the optional install pseudonym, counting the current report (S20).
+ *
+ * The counter is cumulative and has no TTL: it is how the Owner sees who is
+ * finding the most bugs without knowing who they are. Only the digest is
+ * stored, and a forged id would have to guess a 96-bit value.
+ */
+async function readReporterLabel(
+  kv: KVNamespace,
+  installId: string,
+): Promise<ReporterLabel> {
+  const digest = await installDigest(installId);
+  const key = `reporter:${digest}`;
+  const raw = await kv.get(key);
+  const previous = raw !== null && /^[0-9]{1,9}$/.test(raw) ? Number(raw) : 0;
+  const count = previous + 1;
+  const noun = count === 1 ? "reporte" : "reportes";
+  return { label: `instalación ${digest.slice(0, 4)} · ${count} ${noun}`, count, key };
 }
 
 export default {
@@ -841,6 +939,20 @@ export default {
       }
     }
 
+    // The optional install pseudonym (S20). Cosmetic and never a credential: a
+    // store hiccup drops the line instead of the report, and the counter is only
+    // written once the report actually reached its sink.
+    const installId = (request.headers.get("x-install-id") ?? "").trim();
+    let reporter: ReporterLabel | null = null;
+    if (INSTALL_ID.test(installId)) {
+      try {
+        reporter = await readReporterLabel(env.RATE_LIMIT, installId);
+      } catch {
+        reporter = null;
+      }
+    }
+    const pseudonym = reporter === null ? null : reporter.label;
+
     let deliveryId: string;
     try {
       if (telegramSink && env.TELEGRAM_CHAT_ID) {
@@ -850,7 +962,7 @@ export default {
             TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
             TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
           },
-          { ...report, attribution },
+          { ...report, attribution, pseudonym },
           deliveryId,
           body.attachments,
         );
@@ -860,6 +972,7 @@ export default {
           report,
           attribution,
           body.attachments.length,
+          pseudonym,
         );
       }
     } catch (error) {
@@ -867,6 +980,14 @@ export default {
         return fail(error.status, error.code);
       }
       return fail(502, "relay.delivery_failed");
+    }
+
+    if (reporter !== null) {
+      try {
+        await env.RATE_LIMIT.put(reporter.key, String(reporter.count));
+      } catch {
+        console.error("reporter.count_failed");
+      }
     }
 
     // Only a delivered report is remembered: a failed one must be retryable.

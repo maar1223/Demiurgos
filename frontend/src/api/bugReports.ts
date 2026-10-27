@@ -49,6 +49,7 @@ export function assembleBugReport(): Promise<BugReportBundle> {
 export function submitBugReport(
   payload: BugReportSubmitPayload,
   attachments: File[] = [],
+  pseudonym = true,
 ): Promise<BugReportSubmitResult> {
   const body =
     attachments.length === 0
@@ -67,6 +68,9 @@ export function submitBugReport(
       method: "POST",
       credentials: "same-origin",
       body,
+      // Stated explicitly so the backend never has to guess: the anonymous
+      // install pseudonym is optional (S20) and off means no header at all.
+      headers: { "x-bugreport-pseudonym": pseudonym ? "1" : "0" },
       timeout: 30_000,
     },
   );

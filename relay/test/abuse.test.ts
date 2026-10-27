@@ -121,11 +121,14 @@ function env(kv: KvLike, overrides: Record<string, unknown> = {}) {
 
 function post(
   payload: unknown = REPORT,
-  options: { token?: string; ip?: string } = {},
+  options: { token?: string; ip?: string; installId?: string } = {},
 ): Request {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token !== undefined) {
     headers["x-install-token"] = options.token;
+  }
+  if (options.installId !== undefined) {
+    headers["x-install-id"] = options.installId;
   }
   headers["CF-Connecting-IP"] = options.ip ?? "203.0.113.7";
   return new Request("https://relay.example/", {
@@ -138,7 +141,12 @@ function post(
 async function submit(
   kv: KvLike,
   payload: unknown = REPORT,
-  options: { token?: string; ip?: string; env?: Record<string, unknown> } = {},
+  options: {
+    token?: string;
+    ip?: string;
+    installId?: string;
+    env?: Record<string, unknown>;
+  } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await worker.fetch(
     post(payload, options),
@@ -185,6 +193,69 @@ test("a different report is published even within the same window", async () => 
     assert.notEqual(second.body.delivery_id, first.body.delivery_id);
     assert.equal(second.body.deduped, undefined);
     assert.equal(telegram.calls.length, 6);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("an install pseudonym labels the report and counts the accepted ones", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"ab".repeat(12)}`;
+  const telegram = stubTelegram();
+  try {
+    const first = await submit(kv, { ...REPORT, description: "primer fallo" }, { installId });
+    assert.equal(first.status, 200);
+    const second = await submit(kv, { ...REPORT, description: "segundo fallo" }, { installId });
+    assert.equal(second.status, 200);
+
+    const summaries = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json));
+    assert.match(summaries[0] ?? "", /instalación [0-9a-f]{4} · 1 reporte/);
+    assert.match(summaries[1] ?? "", /instalación [0-9a-f]{4} · 2 reportes/);
+
+    // Only the digest is stored: neither the key nor the value carries the id.
+    for (const [key, value] of kv.map) {
+      assert.equal(key.includes(installId), false);
+      assert.equal(value.includes(installId), false);
+    }
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("a deduped report does not inflate the pseudonym count", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"cd".repeat(12)}`;
+  const telegram = stubTelegram();
+  try {
+    assert.equal((await submit(kv, REPORT, { installId })).status, 200);
+    const duplicate = await submit(kv, REPORT, { installId });
+    assert.equal(duplicate.body.deduped, true);
+    await submit(kv, { ...REPORT, description: "otro fallo" }, { installId });
+
+    const summaries = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json));
+    // Two publications, and the second one counts two — not three.
+    assert.equal(summaries.length, 2);
+    assert.match(summaries[1] ?? "", /· 2 reportes/);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("an unusable install id is ignored, never published", async () => {
+  const kv = new MemoryKv();
+  const telegram = stubTelegram();
+  try {
+    for (const installId of ["install_ZZZ", "install_" + "a".repeat(23), "x".repeat(80)]) {
+      const result = await submit(kv, { ...REPORT, description: `fallo ${installId}` }, { installId });
+      assert.equal(result.status, 200);
+    }
+    for (const call of telegram.calls) {
+      assert.equal(JSON.stringify(call.json).includes("instalación"), false);
+    }
   } finally {
     telegram.restore();
   }

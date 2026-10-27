@@ -828,6 +828,42 @@ def test_submit_sends_the_stored_token_as_a_header_only(tmp_path: Path) -> None:
     assert token not in json.dumps(captured[0]["payload"])
 
 
+def test_the_pseudonym_header_is_forwarded_only_when_asked(tmp_path: Path) -> None:
+    """S20: the browser states the preference; absence means off."""
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_capture(captured),
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+    client = TestClient(app)
+
+    assert client.post("/api/bugreport/submit", json=_valid_payload()).status_code == 200
+    assert "x-install-id" not in captured[0]["headers"]
+
+    asked = client.post(
+        "/api/bugreport/submit",
+        json=_valid_payload(description="otro fallo distinto"),
+        headers={"x-bugreport-pseudonym": "1"},
+    )
+    assert asked.status_code == 200, asked.text
+    sent = captured[1]["headers"]["x-install-id"]
+    assert sent.startswith("install_") and len(sent) == len("install_") + 24
+
+    # Stable across reports: the same install keeps one id.
+    client.post(
+        "/api/bugreport/submit",
+        json=_valid_payload(description="un tercer fallo"),
+        headers={"x-bugreport-pseudonym": "1"},
+    )
+    assert captured[2]["headers"]["x-install-id"] == sent
+    assert sent not in asked.text
+
+
 def test_without_a_token_no_header_is_sent() -> None:
     captured: list = []
     app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
@@ -883,7 +919,8 @@ def test_link_start_forwards_the_stable_key_never_the_browser_one(tmp_path: Path
     assert body["telegram_url"] == "https://t.me/ReportesDemiurgosBot?start=ABC123"
     call = captured[0]
     assert call["url"].endswith("/link/start")
-    assert call["headers"]["x-relay-key"] == "shared-key"
+    # A released install cannot carry the shared secret (S19): none is sent.
+    assert "x-relay-key" not in call["headers"]
     assert call["payload"]["account_key"].startswith("install_")
     assert call["payload"]["report_identity"] is False
     assert "notify_releases" not in call["payload"]
@@ -981,12 +1018,11 @@ def test_link_revoke_clears_the_stored_token(tmp_path: Path) -> None:
     assert read_install_token(state) is None
 
 
-def test_linking_fails_closed_without_the_relay_key(tmp_path: Path) -> None:
+def test_linking_fails_closed_without_a_relay_url(tmp_path: Path) -> None:
     from local_state import LocalState
 
     state = LocalState(tmp_path / "state.json")
     app = _make_app(
-        relay_url="http://relay.test",
         relay_post=_capture([]),
         local_state=lambda: state,
         vault_active=lambda: False,
@@ -1018,11 +1054,14 @@ def test_link_status_expired_does_not_store_anything(tmp_path: Path) -> None:
     assert read_install_token(state) is None
 
 
-def test_link_state_reports_the_stored_link_without_a_token(tmp_path: Path) -> None:
-    """The panel reads the link from the relay, not from a local flag (S10)."""
+def test_link_state_uses_the_install_token_and_never_an_account_key(tmp_path: Path) -> None:
+    """The panel reads its own link, proving it with the token (S10, S19)."""
+    from bugreport_identity import store_install_token
     from local_state import LocalState
 
+    token = "ab" * 32
     state = LocalState(tmp_path / "state.json")
+    store_install_token(state, token)
     captured: list = []
     app = _make_app(
         relay_url="http://relay.test",
@@ -1035,10 +1074,8 @@ def test_link_state_reports_the_stored_link_without_a_token(tmp_path: Path) -> N
                         "ok": True,
                         "state": "linked",
                         "identity": {
-                            "telegram_user_id": "42",
                             "username": "brook",
                             "display_name": "Brook",
-                            "account_key": "install_secret",
                             "permissions": {
                                 "report_identity": True,
                                 "notify_releases": False,
@@ -1048,7 +1085,6 @@ def test_link_state_reports_the_stored_link_without_a_token(tmp_path: Path) -> N
                 )
             },
         ),
-        relay_key="shared-key",
         bot_username="ReportesDemiurgosBot",
         local_state=lambda: state,
         vault_active=lambda: False,
@@ -1064,11 +1100,76 @@ def test_link_state_reports_the_stored_link_without_a_token(tmp_path: Path) -> N
     assert body["telegram_url"] == "https://t.me/ReportesDemiurgosBot"
     call = captured[0]
     assert call["url"].endswith("/link/state")
-    assert call["headers"]["x-relay-key"] == "shared-key"
-    # The stable key is resolved server-side, never taken from the browser.
-    assert call["payload"]["account_key"].startswith("install_")
-    assert "42" not in json.dumps(body)
-    assert "install_secret" not in resp.text
+    # The token is the proof; no account key and no shared secret travel.
+    assert call["headers"]["x-install-token"] == token
+    assert "x-relay-key" not in call["headers"]
+    assert call["payload"] == {}
+    assert token not in resp.text
+
+
+def test_link_state_without_a_token_is_unlinked_and_calls_nothing(tmp_path: Path) -> None:
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(captured, {}),
+        bot_username="b",
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).get("/api/bugreport/link")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"state": "unlinked", "telegram_url": "https://t.me/b"}
+    assert captured == []
+
+
+def test_link_revoke_uses_the_token_and_clears_it(tmp_path: Path) -> None:
+    from bugreport_identity import read_install_token, store_install_token
+    from local_state import LocalState
+
+    token = "cd" * 32
+    state = LocalState(tmp_path / "state.json")
+    store_install_token(state, token)
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            captured, {"/link/revoke": lambda _p: (200, {"ok": True, "revoked": True})}
+        ),
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/revoke", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"revoked": True}
+    assert captured[0]["headers"]["x-install-token"] == token
+    assert captured[0]["payload"] == {}
+    assert read_install_token(state) is None
+
+
+def test_link_revoke_without_a_token_is_idempotent(tmp_path: Path) -> None:
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    captured: list = []
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(captured, {}),
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/revoke", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"revoked": False}
+    assert captured == []
 
 
 def test_link_state_reports_unlinked(tmp_path: Path) -> None:
@@ -1416,7 +1517,8 @@ def test_releases_are_proxied_from_the_relay() -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json()["releases"][0]["version"] == "v0.5.0"
     assert captured[0]["url"].endswith("/releases")
-    assert captured[0]["headers"]["x-relay-key"] == "shared"
+    # Reading the public list needs no secret at all (S19).
+    assert "x-relay-key" not in captured[0]["headers"]
 
 
 def test_releases_require_a_principal() -> None:
@@ -1432,8 +1534,8 @@ def test_releases_require_a_principal() -> None:
     assert resp.status_code == 401
 
 
-def test_releases_fail_closed_without_the_relay_key() -> None:
-    app = _make_app(relay_url="http://relay.test", relay_post=_capture([]))
+def test_releases_fail_closed_without_a_relay_url() -> None:
+    app = _make_app(relay_post=_capture([]))
 
     resp = TestClient(app).get("/api/bugreport/releases")
 

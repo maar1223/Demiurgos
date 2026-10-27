@@ -13,6 +13,9 @@
 
 const STORAGE_KEY = "demiurgos.bugreport.reports";
 
+/** Where the optional install pseudonym preference lives (S20). */
+const PSEUDONYM_KEY = "demiurgos.bugreport.pseudonym";
+
 /** Keep the list bounded; nobody matches against ancient reports. */
 const MAX_REPORTS = 50;
 
@@ -92,4 +95,28 @@ export function matchReleasedReports(
     }
   }
   return fixed;
+}
+
+/**
+ * Whether the anonymous install pseudonym travels with a report.
+ *
+ * On by default: it costs the reporter nothing and it is what lets the Owner
+ * see who is finding the most bugs. Stated explicitly in the panel, and off
+ * means the backend sends no header at all.
+ */
+export function readPseudonymPreference(): boolean {
+  try {
+    return localStorage.getItem(PSEUDONYM_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+/** Remember the choice; a blocked store keeps it for this session only. */
+export function writePseudonymPreference(on: boolean): void {
+  try {
+    localStorage.setItem(PSEUDONYM_KEY, on ? "1" : "0");
+  } catch {
+    // Best effort: losing the preference must never break the panel.
+  }
 }

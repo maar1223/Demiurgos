@@ -211,7 +211,7 @@ export const messages = {
       "Correo o identificador para responder (opcional)",
     "profile.bugreport.telegramTitle": "Telegram",
     "profile.bugreport.telegramIntro":
-      "Vincula tu cuenta para que el informe llegue firmado y para recibir aviso cuando se arregle lo que reportaste.",
+      "Opcional. Vincula tu cuenta para que el informe llegue firmado y para avisarte aquí cuando se arregle lo que reportaste.",
     "profile.bugreport.telegramConnect": "Conectar Telegram",
     "profile.bugreport.telegramStarting": "Generando enlace…",
     "profile.bugreport.telegramScan":
@@ -238,6 +238,10 @@ export const messages = {
     "profile.bugreport.attachmentsTitle": "Capturas (opcional)",
     "profile.bugreport.attachmentsHint":
       "Hasta 2 imágenes de 5 MB. Se envían como archivos, sin recomprimir; nada sale sin que lo veas.",
+    "profile.bugreport.pseudonymLabel":
+      "Incluir un identificador anónimo de esta instalación",
+    "profile.bugreport.pseudonymHint":
+      "Opcional. Permite reconocer tus informes y ver cuántos fallos encontraste, sin saber quién eres: no lleva tu nombre, tu cuenta ni tu contacto. Si lo desactivas, el informe se envía igual.",
     "profile.bugreport.addScreenshot": "Añadir captura",
     "profile.bugreport.removeScreenshot": "Quitar captura",
     "profile.bugreport.attachmentLimit": "Puedes adjuntar como máximo 2 capturas.",
@@ -2315,7 +2319,7 @@ export const messages = {
       "Email or handle for a reply (optional)",
     "profile.bugreport.telegramTitle": "Telegram",
     "profile.bugreport.telegramIntro":
-      "Link your account so the report arrives signed and so you hear when something you reported is fixed.",
+      "Optional. Link your account so the report arrives signed and so we can tell you here when something you reported is fixed.",
     "profile.bugreport.telegramConnect": "Connect Telegram",
     "profile.bugreport.telegramStarting": "Generating link…",
     "profile.bugreport.telegramScan":
@@ -2342,6 +2346,10 @@ export const messages = {
     "profile.bugreport.attachmentsTitle": "Screenshots (optional)",
     "profile.bugreport.attachmentsHint":
       "Up to 2 images of 5 MB. Sent as files, never recompressed; nothing leaves until you have seen it.",
+    "profile.bugreport.pseudonymLabel":
+      "Include an anonymous identifier for this install",
+    "profile.bugreport.pseudonymHint":
+      "Optional. It lets your reports be recognised and shows how many bugs you found, without knowing who you are: no name, no account, no contact. Turning it off changes nothing about delivery.",
     "profile.bugreport.addScreenshot": "Add screenshot",
     "profile.bugreport.removeScreenshot": "Remove screenshot",
     "profile.bugreport.attachmentLimit": "You can attach at most 2 screenshots.",

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   matchReleasedReports,
+  readPseudonymPreference,
   readSubmittedReports,
   rememberSubmittedReport,
+  writePseudonymPreference,
   type ReleasedVersion,
 } from "@/lib/bugReportHistory";
 
@@ -73,5 +75,36 @@ describe("bug report history — what this install sent (S12)", () => {
     expect(matchReleasedReports([report("mine-1")], [release("v1", ["otro"])])).toEqual(
       [],
     );
+  });
+});
+
+describe("pseudonym preference — optional and remembered (S20)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("is on when nothing was chosen", () => {
+    expect(readPseudonymPreference()).toBe(true);
+  });
+
+  it("remembers turning it off", () => {
+    writePseudonymPreference(false);
+    expect(readPseudonymPreference()).toBe(false);
+    expect(localStorage.getItem("demiurgos.bugreport.pseudonym")).toBe("0");
+
+    writePseudonymPreference(true);
+    expect(readPseudonymPreference()).toBe(true);
+  });
+
+  it("survives an unreadable store by falling back to on", () => {
+    const original = localStorage.getItem;
+    localStorage.getItem = () => {
+      throw new Error("blocked");
+    };
+    try {
+      expect(readPseudonymPreference()).toBe(true);
+    } finally {
+      localStorage.getItem = original;
+    }
   });
 });

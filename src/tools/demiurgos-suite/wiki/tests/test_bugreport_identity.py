@@ -25,6 +25,7 @@ if str(_WIKI) not in sys.path:
 from bugreport_identity import (  # noqa: E402
     account_key,
     clear_install_token,
+    install_id,
     read_install_token,
     store_install_token,
 )
@@ -74,6 +75,32 @@ def test_the_vault_without_an_account_still_falls_back_to_the_install_id(
     key = account_key(state, vault_active=True)
 
     assert key.startswith("install_")
+
+
+def test_the_pseudonym_id_is_minted_once_even_with_the_vault_on(tmp_path: Path) -> None:
+    """S20: the anonymous install id is independent of the account anchor."""
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+
+    first = install_id(state)
+    second = install_id(state)
+
+    assert first == second
+    assert first.startswith("install_")
+    assert len(first) == len("install_") + 24
+
+    # With the vault on, the ACCOUNT anchor is the username while the pseudonym
+    # stays this install's own anonymous id.
+    snapshot = state.snapshot()
+    snapshot.setdefault("capabilities", {})["account"] = {
+        "username": "ana",
+        "password_hash": None,
+        "words_hash": "hash",
+    }
+    state.atomic_commit(snapshot)
+    assert account_key(state, vault_active=True) == "ana"
+    assert install_id(state) == first
 
 
 def test_the_token_round_trips_and_clears(tmp_path: Path) -> None:

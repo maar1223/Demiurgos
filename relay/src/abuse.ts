@@ -85,6 +85,18 @@ export async function reportFingerprint(
   );
 }
 
+/**
+ * Stable digest of the optional install pseudonym (S20).
+ *
+ * The raw `install_id` is never stored: only this digest, which is what the
+ * group label is derived from. A pseudonym is a ranking aid, never a
+ * credential — presenting one grants nothing, and the ceilings above still
+ * apply.
+ */
+export async function installDigest(installId: string): Promise<string> {
+  return sha256Hex(installId);
+}
+
 /** The delivery id of the report this fingerprint already produced, if any. */
 export async function readRecentReport(
   kv: KvLike,

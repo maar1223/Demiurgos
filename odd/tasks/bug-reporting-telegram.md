@@ -63,6 +63,19 @@ A configuration value is never presented as Telegram verification.
 
 **S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`). A bare `/start` still gets one canned answer pointing to the app, because Telegram's own START button sends exactly that and silence there reads as a broken bot; it interprets nothing and handles no free text.
 
+### T6 — Distribution and optional identity
+
+**S19 — A user's install never holds a shared secret.** Every flow a normal user needs must work with credentials that install already has: the `ticket` (random, single-use, 10 min) for the poll, and the `install_token` (64 hex, minted at handover, stored server-side) for reading its own link state and revoking it. Consequences:
+- `POST /link/start` and `POST /link/status` are open, bounded per IP (and per account for minting) instead of key-guarded.
+- `POST /link/state` and `POST /link/revoke` authenticate with `x-install-token`; without one they fail closed. No route returns a handle for an `account_key` somebody merely guessed.
+- `GET /releases` is a public read (version + report ids, no reporter); `POST /release` keeps the shared `x-relay-key`.
+- `DEMIURGOS_BUGREPORT_RELAY_KEY` is therefore **not required by the app**; it stays a release-tooling secret.
+- Rationale: `RELAY_KEY` cannot ship in a public installer (anyone could mint tickets and revoke other people's links), and without it the link flow and the "fixed" notice were Owner-only.
+
+**S20 — Anonymous per-install pseudonym, optional.** Each install has a stable `install_id` (`install_<24 hex>`, minted once, persisted in the local state). When the reporter keeps the pseudonym on (default on, persisted locally, disableable in the panel), the backend sends it as `x-install-id`; the relay stores only its sha256 and shows a short label with the reporter's accepted count (`🆔 instalación a3f9 · 3 reportes`) in the summary and the bundle. Never the raw id, never a name, never the contact. It is a **ranking aid, not a credential**: presenting one grants nothing, and the abuse ceilings are unchanged. Off means no header and no label — the report still travels.
+
+**S21 — Optional means visible.** The report panel states, in both catalogues, that (a) linking Telegram is optional and what it buys — the report arrives signed and the app can tell you when what you reported is fixed — and (b) the anonymous install identifier is optional, what it carries (nothing personal) and that turning it off changes nothing about delivery.
+
 ## Tasks
 
 ### T0 — Base (cancelled)
@@ -98,6 +111,10 @@ A configuration value is never presented as Telegram verification.
 - [x] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Commit recorded in L32.
 - [x] T16 — Close the known gaps recorded at the end of the feature: the panel reads the link from the relay instead of forgetting it on reload (`S10`, `S11`), the dedup write is retried once and never fails an already-delivered report (`S13`), and the cross-account dedup answer is pinned as intended behaviour (`S13`). Evidence in L36.
 - [x] T17 — Close the two remaining inherited gaps: the signing token is minted at the handover instead of sitting in clear in the ticket record (`S15`, `S7`, `S13`), and the two `test_gateway_hooks` cells that failed only in a full-suite order now state their precondition instead of inheriting it. Evidence in L37.
+- [x] T18 — Relay + backend: the client's routes stop needing the shared key. `/link/start` and `/link/status` open with per-IP bounds; `/link/state` and `/link/revoke` authenticate with `x-install-token`; `/releases` public, `/release` stays keyed. Backend drops the key requirement and sends the token where needed (`S19`).
+- [x] T19 — Anonymous pseudonym: stable `install_id`, optional per report, `x-install-id` header, relay stores only the digest and renders `🆔 instalación <label> · N reportes` (`S20`).
+- [x] T20 — Frontend: optionality stated for Telegram (signed report + "we tell you when it is fixed") and for the pseudonym (toggle, default on, nothing personal), in both catalogues (`S21`).
+- [ ] T21 — Checks: relay/backend/frontend suites, `relay/README.md`, feature log with Risk lines, independent verification of the auth change.
 
 ## Log
 
@@ -369,6 +386,16 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - **Recorded, not hidden:** gap 7's "remember the link after reload" reads `GET /api/bugreport/link`, which calls the relay's `/link/state`. That route is **not deployed yet** (the Worker serves `e4f35c4f`, which answers `relay.not_found`), so until the relay is redeployed a reload still offers "Conectar". Re-linking is idempotent and mints a fresh token, so nothing breaks; the deploy is the Owner's call.
 - **Runners:** backend router **54**, full frontend suite **1564** over 127 files, `tsc --noEmit` clean, `npm run build` OK with the new path in the bundle.
 - `Risk: none — the backend path rename has exactly one consumer (our SPA) updated in the same commit, and the old path was already unreachable (it answered 400).`
+
+**L39 — Identity that any install can use, and an optional pseudonym (2026-10-26).** T18–T20.
+- **The problem this fixes.** Every route a normal install needed was guarded by `RELAY_KEY`, a secret that cannot ship in a public installer. So linking Telegram, the signed report and the "fixed" notice existed only on the Owner's machine. Not a user step — our plumbing.
+- **S19 — client routes hold no shared secret.** `POST /link/start` and `POST /link/status` are open and bounded per IP (10 mints and 1200 polls per hour, fail-closed counter); the ticket is its own bearer (random, single-use, 10 min). `POST /link/state` and `POST /link/revoke` require `x-install-token`, the credential the relay issued at handover, and never accept an `account_key` — a guessed key reveals and revokes nothing. `POST /releases` becomes a public read (version + report ids, never a reporter) so every install shows "this was fixed" without linking; `POST /release` keeps `x-relay-key`. Consequence: the app no longer reads `DEMIURGOS_BUGREPORT_RELAY_KEY` at all; the key stays a release-tooling secret.
+- **S20 — optional anonymous pseudonym.** `bugreport_identity.install_id()` mints `install_<24 hex>` once and persists it independently of the vault. The panel sends `x-bugreport-pseudonym: 1|0` (default on, remembered locally); the backend forwards `x-install-id` only when on; the relay stores only its sha256 and renders `🆔 instalación a3f9 · N reportes` in the summary and the bundle. The counter (`reporter:<digest>`) is cumulative, written only after a delivery, and counts a deduped submit zero times. A forged id would have to guess 96 bits, and the ceilings are unchanged: it is a ranking aid, not a credential.
+- **S21 — the UI says so.** Telegram's intro now opens with "Opcional" and states the two things it buys: a signed report and being told here when it is fixed. The report panel has a pseudonym checkbox with the full explanation (nothing personal, delivery unchanged when off), in both catalogues.
+- **Tests, RED observed first where behaviour changed:** relay +4 (`routes.test.ts` rewritten to the new auth — client routes open, state/revoke token-only, state exposes no account key; plus the per-IP mint budget) and +3 `abuse.test.ts` (label and count, deduped submit does not inflate, unusable id ignored and raw id never stored); release tests split into "write needs the key, read does not"; backend +2 link-state/token tests and +2 revoke tests, the start/fail-closed/releases cells updated to the keyless contract, +1 submit forwarding test, +1 identity test (pseudonym independent of the vault); frontend +3 (toggle default and off, preference survives a remount, header `1`/`0`) and +2 history tests.
+- **Runners:** relay **138** + typecheck; backend router **58** + identity **6**; frontend **1570** over 127 files, `tsc --noEmit` clean, `npm run build` OK.
+- **Deploy order matters now:** the Worker in production still demands `x-relay-key` on the link routes, so the new keyless calls would be refused by it. The relay must be deployed **before** the app that ships this, or both together.
+- `Risk: item 2 (security) — the auth model of the identity routes changed. Mitigations: ticket/token as bearers, per-IP bounds failing closed, no route reads or revokes by account key, admin writes still keyed, and no new personal data stored.`
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
