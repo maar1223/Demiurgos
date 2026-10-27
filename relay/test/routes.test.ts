@@ -471,36 +471,73 @@ test("the open link routes fail CLOSED when the counter store errors", async () 
   }
 });
 
-test("a bound account is not relinked by whoever guesses its key", async () => {
+test("binding a guessed account key neither locks out nor erases the owner", async () => {
   const kv = new MemoryKv();
   const env = makeEnv(kv);
-  const token = await linkedToken(kv, env, "acct_bound01");
+  const ownerToken = await linkedToken(kv, env, "acct_bound01");
 
-  // No token: refused before a ticket exists.
-  const anonymous = await worker.fetch(
+  // The owner keeps the ability to mint again: token loss must not lock anybody
+  // out of linking (S19).
+  const again = await worker.fetch(
     call("/link/start", { account_key: "acct_bound01" }, { key: null }),
     env,
     {} as never,
   );
-  assert.equal(anonymous.status, 409);
-  assert.deepEqual(await anonymous.json(), { ok: false, code: "link.already_linked" });
+  assert.equal(again.status, 200);
 
-  // Somebody else's token is not proof either.
-  const foreignToken = await linkedToken(kv, env, "acct_bound02", "2234567890", "other");
-  const foreign = await worker.fetch(
-    call("/link/start", { account_key: "acct_bound01" }, { token: foreignToken }),
+  // A second Telegram claims the same account key: the pointer moves, but the
+  // owner's identity and token survive, so their reports stay signed.
+  const intruderToken = await linkedToken(kv, env, "acct_bound01", "2234567890", "other");
+  const ownerState = await worker.fetch(
+    call("/link/state", {}, { token: ownerToken }),
     env,
     {} as never,
   );
-  assert.equal(foreign.status, 409);
+  const ownerBody = (await ownerState.json()) as Record<string, unknown>;
+  assert.equal(ownerBody.state, "linked");
+  assert.equal((ownerBody.identity as Record<string, unknown>).username, "brook");
 
-  // The install that owns the link can still relink and change permissions.
-  const own = await worker.fetch(
-    call("/link/start", { account_key: "acct_bound01", notify_releases: false }, { token }),
+  // Revoking with the owner's token revokes the owner, never the intruder's.
+  const ownerRevoke = await worker.fetch(
+    call("/link/revoke", {}, { token: ownerToken }),
     env,
     {} as never,
   );
-  assert.equal(own.status, 200);
+  assert.deepEqual(await ownerRevoke.json(), { ok: true, revoked: true });
+  const intruderState = await worker.fetch(
+    call("/link/state", {}, { token: intruderToken }),
+    env,
+    {} as never,
+  );
+  assert.equal(((await intruderState.json()) as Record<string, unknown>).state, "linked");
+});
+
+test("operator reset clears a stuck binding, and needs the shared key", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+  await linkedToken(kv, env, "acct_stuck01");
+
+  const refused = await worker.fetch(
+    call("/link/reset", { account_key: "acct_stuck01" }, { key: null }),
+    env,
+    {} as never,
+  );
+  assert.equal(refused.status, 401);
+
+  const reset = await worker.fetch(
+    call("/link/reset", { account_key: "acct_stuck01" }),
+    env,
+    {} as never,
+  );
+  assert.equal(reset.status, 200);
+  assert.deepEqual(await reset.json(), { ok: true, revoked: true });
+
+  const id = await worker.fetch(
+    call("/link/start", { account_key: "acct_stuck01" }, { key: null }),
+    env,
+    {} as never,
+  );
+  assert.equal(id.status, 200);
 });
 
 test("a valid install token ignores a foreign account key", async () => {

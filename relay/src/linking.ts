@@ -413,17 +413,36 @@ export async function linkStatus(
  * outstanding ticket: otherwise a ticket photographed before the revoke would
  * still re-link the account for the rest of its TTL.
  */
-export async function revokeLink(kv: KvLike, accountKey: string): Promise<boolean> {
+export async function revokeLink(
+  kv: KvLike,
+  accountKey: string,
+  telegramUserId?: string,
+): Promise<boolean> {
   const pendingTicket = await kv.get(pendingKey(accountKey));
   if (pendingTicket !== null) {
     await kv.delete(ticketKey(pendingTicket));
   }
   await kv.delete(pendingKey(accountKey));
 
-  const identity = await readIdentityByAccount(kv, accountKey);
+  // Revoking with a credential must never follow the account pointer: a newer
+  // binding may own it now, and this call is about ONE identity.
+  const identity =
+    telegramUserId === undefined
+      ? await readIdentityByAccount(kv, accountKey)
+      : await readIdentity(kv, telegramUserId);
   if (identity === null) {
     return false;
   }
-  await revokeIdentity(kv, identity.telegram_user_id);
-  return true;
+  return revokeIdentity(kv, identity.telegram_user_id);
+}
+
+/**
+ * Operator recovery (S19): clear whatever binding an account key still has.
+ *
+ * Guarded by the shared key and never exposed to the app. It exists for the one
+ * case the client cannot fix itself: a link whose install lost its token.
+ */
+export async function resetLink(kv: KvLike, accountKey: string): Promise<boolean> {
+  const identity = await readIdentityByAccount(kv, accountKey);
+  return revokeLink(kv, accountKey, identity?.telegram_user_id);
 }

@@ -142,6 +142,7 @@ install cannot carry a shared secret, the client routes do **not** use
 | `POST /link/status` | the `ticket` itself (random, single-use, 10 min) | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
 | `POST /link/state` | `x-install-token` | `{}` | `{ok, state: linked\|unlinked, identity?}` |
 | `POST /link/revoke` | `x-install-token` | `{}` | `{ok, revoked}` |
+| `POST /link/reset` | `x-relay-key` (operator only) | `{account_key}` | `{ok, revoked}` |
 | `POST /release` | `x-relay-key` | `{version, report_ids[]}` | `{ok, version, report_ids, releases}` |
 | `POST /releases` | open (public read) | `{}` | `{ok, releases[]}` |
 | `POST /telegram/webhook` | Telegram secret header | Telegram update | `{ok: true}` |
@@ -151,6 +152,13 @@ holding it could mint tickets for another account or revoke somebody's link — 
 the routes a user's install needs are bounded per IP instead, and the
 self-service half proves possession of the install token. Guessing an account
 key reveals nothing, because no route accepts one for reading or revoking.
+
+Claiming an account key that is already bound moves the pointer but **never
+erases the existing identity or its token**: a guessed key cannot take somebody's
+signature away, and an install that lost its token is never locked out of
+linking again. The only case the client cannot fix itself — a link whose install
+no longer holds the token — is what `POST /link/reset` is for, behind the shared
+key.
 
 Behaviour worth knowing:
 

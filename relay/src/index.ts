@@ -57,6 +57,7 @@ import {
 import {
   LinkError,
   linkStatus,
+  resetLink,
   revokeLink,
   startLink,
   type StartLinkRequest,
@@ -483,7 +484,13 @@ async function sendViaProvider(
 }
 
 /** Identity routes. All POST: a ticket must never travel in a URL or a log. */
-const LINK_PATHS = new Set(["/link/start", "/link/status", "/link/state", "/link/revoke"]);
+const LINK_PATHS = new Set([
+  "/link/start",
+  "/link/status",
+  "/link/state",
+  "/link/revoke",
+  "/link/reset",
+]);
 
 /** Ticket mints one IP may attempt per hour (on top of 3/hour per account). */
 const LINK_START_IP_MAX = 10;
@@ -543,22 +550,10 @@ async function handleLink(
       if (typeof body.account_key !== "string") {
         return fail(400, "link.invalid_account");
       }
-      // An existing link is never replaced by whoever guesses the account key:
-      // rebinding requires the install token the current binding issued. Without
-      // this, knowing a username would be enough to unbind somebody and take
-      // their signature away. The legitimate install holds that token, so
-      // relinking and changing permissions keep working.
-      const bound = await readIdentityByAccount(env.LINKS, body.account_key);
-      if (bound !== null) {
-        const presentedToken = (request.headers.get("x-install-token") ?? "").trim();
-        const holder =
-          presentedToken.length === 0
-            ? null
-            : await readIdentityByInstallToken(env.LINKS, presentedToken);
-        if (holder === null || holder.telegram_user_id !== bound.telegram_user_id) {
-          return fail(409, "link.already_linked");
-        }
-      }
+      // A pending ticket may always be minted: an install that lost its token
+      // must not be locked out of linking again. Takeover is contained in
+       // writeIdentity — a second account claiming this key moves the pointer but
+      // never erases the existing identity or its token (S19).
       // An omitted flag stays omitted. Coercing it to `true` here would make a
       // reused ticket silently re-enable a permission the account had turned off.
       for (const flag of ["report_identity", "notify_releases"] as const) {
@@ -600,6 +595,20 @@ async function handleLink(
       return jsonResponse({ ok: true, ...status }, 200);
     }
 
+    if (path === "/link/reset") {
+      if (!env.RELAY_KEY) {
+        return fail(500, "relay.not_configured");
+      }
+      if ((request.headers.get("x-relay-key") ?? "") !== env.RELAY_KEY) {
+        return fail(401, "relay.unauthorized");
+      }
+      if (typeof body.account_key !== "string") {
+        return fail(400, "link.invalid_account");
+      }
+      const reset = await resetLink(env.LINKS, body.account_key);
+      return jsonResponse({ ok: true, revoked: reset }, 200);
+    }
+
     // The self-service half: possession of the install token is the proof, so
     // no account key travels and no handle can be read by asking.
     const presented = (request.headers.get("x-install-token") ?? "").trim();
@@ -630,9 +639,13 @@ async function handleLink(
     }
 
     // An unknown or revoked token revokes nothing and says so; that keeps the
-    // call idempotent without disclosing whether the account key exists.
+    // call idempotent without disclosing whether the account key exists. The
+    // revoked identity is the one the token owns, never whatever the account
+    // pointer happens to name now.
     const revoked =
-      identity === null ? false : await revokeLink(env.LINKS, identity.account_key);
+      identity === null
+        ? false
+        : await revokeLink(env.LINKS, identity.account_key, identity.telegram_user_id);
     return jsonResponse({ ok: true, revoked }, 200);
   } catch (error) {
     if (error instanceof LinkError) {
