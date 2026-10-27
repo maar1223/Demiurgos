@@ -36,20 +36,14 @@
 #                             line; '#' comments and blank lines allowed)
 #   --no-default-allowlist    drop the built-in allowlist
 #
-#   The built-in allowlist covers ONLY:
-#     * the scanner's own files — they contain the rule definitions by
-#       design, so they necessarily match some patterns;
-#     * obviously-fake test fixtures — placeholder values only, never real
-#       credentials and never real author data;
-#     * test harnesses that deliberately reference the patterns as
-#       functional predicates (PATH scrubbing) or negative assertions;
-#     * the two personal Google-Sheets tools (dev_diary.py, sync-ideas.py) —
-#       their only residual match is the required Sheets API parameter name
-#       `spreadsheetId=`; the real sheet ids are read from environment
-#       variables, never committed.
-#   No entry hides a real credential or a real author path: baseline
-#   violations must surface in tree/CI scans until their owning slice cleans
-#   them up.
+#   The built-in allow-list lives in scripts/payload_scan_allowlist.txt —
+#   SINGLE SOURCE OF TRUTH, shared with the Windows release gate
+#   (scripts/payload_audit.ps1). It is NOT duplicated here: two independent
+#   copies once drifted and the Windows gate rejected the shipped scanner's
+#   own rule literals while this port stayed green. What may be listed there,
+#   and why, is documented in that file's header. No entry hides a real
+#   credential or a real author path: baseline violations must surface in
+#   tree/CI scans until their owning slice cleans them up.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -82,42 +76,12 @@ while IFS=$'\t' read -r _name _pattern; do
 done <<< "$RULES_SRC"
 
 # ---------------------------------------------------------------------------
-# Built-in allowlist — documented above: scanner self-files + fake fixtures.
+# Built-in allow-list — path defined here, CONTENT lives in the shared file:
+# scripts/payload_scan_allowlist.txt (single source of truth, read by
+# scripts/payload_audit.ps1 too). See that file's header for what may be
+# listed and why.
 # ---------------------------------------------------------------------------
-DEFAULT_ALLOWLIST=(
-    # Scanner self-files: contain the rule definitions by design.
-    scripts/secret_scan.sh
-    scripts/payload_audit.sh
-    scripts/payload_audit.ps1
-    .gitleaks.toml
-    # The bug-report content scanner + its tests: they carry the SAME deny
-    # patterns as this script (parity-locked by test) and their report-specific
-    # rules (local paths, usernames, hostnames) necessarily match some literals;
-    # no real credential or author path is hidden by these entries.
-    src/tools/demiurgos-suite/wiki/content_scan.py
-    src/tools/demiurgos-suite/wiki/tests/test_content_scan.py
-    # Obvious test fixtures only (fake values for the secret-scan suite).
-    src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py
-    # Pre-existing frontend fixtures with placeholder paths/ids.
-    frontend/src/__tests__/BackupSection.test.tsx
-    frontend/src/__tests__/MethodologyLibrary.test.tsx
-    # Test harnesses that deliberately reference the patterns:
-    #   test_launcher_boot_smoke.py — scrubs /home/ paths from PATH so the
-    #     hermetic boot never touches the real home directory (functional).
-    #   test_launcher_portable.py   — negative assertions: "H:\"/"C:\Users"
-    #     must NOT appear in the shipped launchers.
-    #   test_launcher_boot_rollback.py — same /home/ PATH scrub as the boot
-    #     smoke; rollback harness fixtures (app/<version> stubs).
-    src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
-    src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
-    src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_rollback.py
-    # Personal author tooling (Google Sheets): the ONLY residual match is the
-    # required Sheets API parameter name `spreadsheetId=`; the real sheet ids
-    # are read from env vars (DEMIURGOS_DEV_DIARY_SHEET_ID / GOOGLE_SHEETS_ID),
-    # never committed. No real value is hidden by this entry.
-    src/tools/dev_diary.py
-    src/tools/sync-ideas.py
-)
+DEFAULT_ALLOWLIST_FILE="$SCRIPT_DIR/payload_scan_allowlist.txt"
 
 usage() {
     cat <<'USAGE'
@@ -168,7 +132,17 @@ done
 
 ALLOWLIST=()
 if [ "$USE_DEFAULT_ALLOWLIST" -eq 1 ]; then
-    ALLOWLIST=("${DEFAULT_ALLOWLIST[@]}")
+    if [ ! -r "$DEFAULT_ALLOWLIST_FILE" ]; then
+        echo "secret_scan: cannot read the default allow-list: $DEFAULT_ALLOWLIST_FILE" >&2
+        exit 2
+    fi
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _line="${_line%$'\r'}"   # CRLF checkouts must not poison the entries
+        case "$_line" in
+            "" | \#*) continue ;;
+        esac
+        ALLOWLIST+=("$_line")
+    done < "$DEFAULT_ALLOWLIST_FILE"
 fi
 for _af in "${ALLOWLIST_FILES[@]}"; do
     if [ ! -r "$_af" ]; then
