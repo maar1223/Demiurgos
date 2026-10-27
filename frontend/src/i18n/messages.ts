@@ -206,6 +206,32 @@ export const messages = {
     "profile.bugreport.contactLabel": "Contacto (opcional)",
     "profile.bugreport.contactPlaceholder":
       "Correo o identificador para responder (opcional)",
+    "profile.bugreport.telegramTitle": "Telegram",
+    "profile.bugreport.telegramIntro":
+      "Vincula tu cuenta para que el informe llegue firmado y para recibir aviso cuando se arregle lo que reportaste.",
+    "profile.bugreport.telegramConnect": "Conectar Telegram",
+    "profile.bugreport.telegramStarting": "Generando enlace…",
+    "profile.bugreport.telegramScan":
+      "Escanea el código con tu teléfono o abre el enlace desde él.",
+    "profile.bugreport.telegramOpenLink": "Abrir en Telegram",
+    "profile.bugreport.telegramOpenTelegram": "Abrir el chat del bot",
+    "profile.bugreport.telegramNoLink":
+      "El enlace no está disponible; escribe el código en el bot.",
+    "profile.bugreport.telegramCodeLabel": "Código",
+    "profile.bugreport.telegramCopyCode": "Copiar código",
+    "profile.bugreport.telegramCopied": "Código copiado",
+    "profile.bugreport.telegramExpiresIn": "Caduca en {time}",
+    "profile.bugreport.telegramWaiting": "Esperando confirmación en Telegram…",
+    "profile.bugreport.telegramExpired": "El enlace caducó.",
+    "profile.bugreport.telegramRegenerate": "Generar de nuevo",
+    "profile.bugreport.telegramPermReport":
+      "Firmar mis informes con mi cuenta de Telegram",
+    "profile.bugreport.telegramPermReleases":
+      "Avisarme cuando se arregle algo que reporté",
+    "profile.bugreport.telegramConnected": "Conectado como {user}",
+    "profile.bugreport.telegramConnectedAnon": "Conectado",
+    "profile.bugreport.telegramDisconnect": "Desconectar",
+    "profile.bugreport.telegramError": "No se pudo iniciar la vinculación.",
     "profile.bugreport.attachmentsTitle": "Capturas (opcional)",
     "profile.bugreport.attachmentsHint":
       "Hasta 2 imágenes de 5 MB. Se envían como archivos, sin recomprimir; nada sale sin que lo veas.",
@@ -2281,6 +2307,32 @@ export const messages = {
     "profile.bugreport.contactLabel": "Contact (optional)",
     "profile.bugreport.contactPlaceholder":
       "Email or handle for a reply (optional)",
+    "profile.bugreport.telegramTitle": "Telegram",
+    "profile.bugreport.telegramIntro":
+      "Link your account so the report arrives signed and so you hear when something you reported is fixed.",
+    "profile.bugreport.telegramConnect": "Connect Telegram",
+    "profile.bugreport.telegramStarting": "Generating link…",
+    "profile.bugreport.telegramScan":
+      "Scan the code with your phone, or open the link from it.",
+    "profile.bugreport.telegramOpenLink": "Open in Telegram",
+    "profile.bugreport.telegramOpenTelegram": "Open the bot chat",
+    "profile.bugreport.telegramNoLink":
+      "The link is unavailable; type the code into the bot.",
+    "profile.bugreport.telegramCodeLabel": "Code",
+    "profile.bugreport.telegramCopyCode": "Copy code",
+    "profile.bugreport.telegramCopied": "Code copied",
+    "profile.bugreport.telegramExpiresIn": "Expires in {time}",
+    "profile.bugreport.telegramWaiting": "Waiting for confirmation in Telegram…",
+    "profile.bugreport.telegramExpired": "The link expired.",
+    "profile.bugreport.telegramRegenerate": "Generate again",
+    "profile.bugreport.telegramPermReport":
+      "Sign my reports with my Telegram account",
+    "profile.bugreport.telegramPermReleases":
+      "Tell me when something I reported is fixed",
+    "profile.bugreport.telegramConnected": "Connected as {user}",
+    "profile.bugreport.telegramConnectedAnon": "Connected",
+    "profile.bugreport.telegramDisconnect": "Disconnect",
+    "profile.bugreport.telegramError": "The link could not be started.",
     "profile.bugreport.attachmentsTitle": "Screenshots (optional)",
     "profile.bugreport.attachmentsHint":
       "Up to 2 images of 5 MB. Sent as files, never recompressed; nothing leaves until you have seen it.",

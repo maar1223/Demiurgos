@@ -261,6 +261,35 @@ export interface BugReportSubmitResult {
   delivery_id: string;
 }
 
+/** POST /api/bugreport/link/start — a one-time linking ticket. The backend
+ *  proxies it with the shared relay key, so the browser never sees the relay nor
+ *  the stable account key it is bound to. `telegram_url` is null when the bot
+ *  handle is not configured; the ticket can still be typed into the bot. */
+export interface BugReportLinkTicket {
+  ticket: string;
+  expires_at: string | null;
+  reused: boolean;
+  telegram_url: string | null;
+}
+
+/** Which permissions the linked account granted, granted separately (S11). */
+export interface BugReportLinkPermissions {
+  report_identity: boolean;
+  notify_releases: boolean;
+}
+
+/** POST /api/bugreport/link/status — the ticket's state. The one-time
+ *  `install_token` is kept server-side and never appears here (S15). */
+export type BugReportLinkStatus =
+  | { state: "pending"; expires_at: string | null }
+  | { state: "expired" }
+  | {
+      state: "linked";
+      username: string | null;
+      display_name: string | null;
+      permissions: BugReportLinkPermissions;
+    };
+
 /** POST /api/bugreport/fallback — the strict copy-paste fallback: a
  *  privacy-scrubbed issue body plus the `maar1223/Demiurgos` issue form. */
 export interface BugReportFallback {

@@ -86,8 +86,8 @@ A configuration value is never presented as Telegram verification.
 - [x] T7a — Backend: `schema: 2` with `context`, the `x-install-token` header, the stable `account_key` (vault username or persisted `install_id`) and the `/link/start|status|revoke` proxies; scrubbing unchanged (`S4`, `S7`, `S10`, `S15`). Commit recorded in L26.
 - [x] T7b — Attachments transport: `multipart/form-data` with the bundle in a `report` part and up to two 5 MB images as `attachments` file parts, backend → relay → group, delivered as documents (`S5`, `S15`). Commit recorded in L28. The picker itself is T8.
 - [x] T8 — Frontend: screenshot picker, thumbnails in the preview, capped at 2 × 5 MB. (`S3`, `S5`). Commit recorded in L30.
-- [ ] T9 — Frontend: linking modal — QR (`qrcode`), deep link, copy code, countdown, regenerate, 2 s polling, auto-close. (`S8`, `S9`)
-- [ ] T10 — Frontend: success screen with the optional `Abrir Telegram` action and the two separate permissions. (`S11`)
+- [x] T9 — Frontend: linking panel — QR (`qrcode`, SVG, white card, 4-module quiet zone, never inverted), deep link, copy code, countdown, regenerate, 2 s polling, auto-close. (`S8`, `S9`). Commit recorded in L31.
+- [x] T10 — Frontend: connected state with the `Abrir Telegram` action, the two permissions shown separately and a disconnect action. (`S11`). Commit recorded in L31.
 - [ ] T11 — Frontend: `Perfil → Actualizaciones` shows fixed reports, keyed by local `report_id`. (`S12`)
 
 ### T4 — Follow-up and close
@@ -290,6 +290,16 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Tests: 7 new panel cases (thumbnail + re-lock, screenshots listed in the preview and passed to submit, removal re-locks, none chosen sends `[]`, the 2-file cap, an oversized and a non-image refusal), one `submitBugReport` multipart case, two `apiFetch` header cases. Frontend **1535 passed** (124 files); `tsc --noEmit` clean.
 - `Risk: none — no high-risk item. The shared `apiFetch` change is conditional (FormData only) and the JSON path is pinned by a test; the rest is a panel and its copy.`
 - One unrequested change caught by `git show --stat` after committing: the rewritten `client.test.ts` had been normalised from CRLF to LF, turning a 34-line addition into a 380-line churn. Restored in `98852ea4`; the net diff against the previous commit is now exactly the two added tests.
+
+**L31 — T9+T10 evidence (2026-10-25).** The linking surface exists and the deployed bot copy finally points at something real.
+- **Placement, decided here:** the reporter block lives in `Perfil → Reporte de errores`, because that is exactly what the already-deployed bot says (`abre Demiurgos en Perfil, entra en Reporte de errores y pulsa Conectar Telegram`). L10 expected the existing Telegram card in `ConfigurationCenter`; the live user-facing copy is the stronger signal, and a button nobody is told about is a dead end. The owner-facing bot-token card is untouched.
+- `@/components/atoms/QrCode.tsx`: SVG rendered client-side with `qrcode` (new dependency), **4-module quiet zone**, fixed black-on-white (never inverted), white card behind it, and only `https://t.me/...` payloads — native cameras do not open `tg://`.
+- `@/components/organisms/TelegramLinkPanel.tsx`: mint → QR + deep link + code + copy + countdown → poll every 2 s → connected. Polling **stops** at expiry in both directions (the relay's `expired` and the local countdown reaching zero), so a dead ticket is never hammered. `pollIntervalMs` is injectable; production uses 2 s.
+- **S11:** the two permissions are separate checkboxes while pending, and stating one re-mints with it explicitly (the relay applies an explicit flag on a reused ticket). The connected state shows both as `✓`/`✕`, so nobody has to guess what they granted.
+- **T10:** connected state names the handle (`Conectado como @brook`, or the display name, or a plain "Conectado"), offers `Abrir el chat del bot` and `Desconectar` (which calls `/link/revoke` and forgets the ticket).
+- **Known gap, recorded:** there is no "am I already linked?" read, so a linked install sees the connect button again after a reload; relinking is idempotent, and a read route would need a relay query by account key (follow-up, not this task).
+- Tests: `TelegramLinkPanel.test.tsx` (7 — mint/QR/link/countdown, poll-to-linked with each permission, expiry stops polling, copy code, separate permission re-mint, disconnect, failed start). Frontend **1542 passed** (125 files); `tsc --noEmit` clean.
+- `Risk: item 5 (a new dependency, `qrcode` + its types).` No other high-risk item: the panel is UI, and the backend routes it calls were verified in T7a.
 
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.

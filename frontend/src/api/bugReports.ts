@@ -3,6 +3,8 @@ import { API_BASE_URL } from "@/lib/constants";
 import type {
   BugReportBundle,
   BugReportFallback,
+  BugReportLinkStatus,
+  BugReportLinkTicket,
   BugReportSubmitPayload,
   BugReportSubmitResult,
 } from "@/api/types";
@@ -80,4 +82,60 @@ export function fallbackBody(
     body: JSON.stringify(payload),
     timeout: 10_000,
   });
+}
+/** Flags the panel states when minting a ticket. Omitted means "leave as is". */
+export interface BugReportLinkFlags {
+  report_identity?: boolean;
+  notify_releases?: boolean;
+}
+
+/**
+ * POST /api/bugreport/link/start — mint (or reuse) the linking ticket.
+ *
+ * The backend resolves the stable account key server-side and proxies the relay
+ * with the shared key, so the browser never talks to the relay. Reopening the
+ * panel reuses a live ticket instead of burning the three-per-hour allowance.
+ */
+export function startTelegramLink(
+  flags: BugReportLinkFlags = {},
+): Promise<BugReportLinkTicket> {
+  return apiFetch<BugReportLinkTicket>(
+    `${API_BASE_URL}/api/bugreport/link/start`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify(flags),
+      timeout: 15_000,
+    },
+  );
+}
+
+/** POST /api/bugreport/link/status — poll the ticket. On completion the backend
+ *  stores the signing token; this answer never carries it. */
+export function telegramLinkStatus(
+  ticket: string,
+): Promise<BugReportLinkStatus> {
+  return apiFetch<BugReportLinkStatus>(
+    `${API_BASE_URL}/api/bugreport/link/status`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ ticket }),
+      timeout: 10_000,
+    },
+  );
+}
+
+/** POST /api/bugreport/link/revoke — unlink this install. The relay drops the
+ *  binding and blocks the dead credential; the backend forgets the token. */
+export function revokeTelegramLink(): Promise<{ revoked: boolean }> {
+  return apiFetch<{ revoked: boolean }>(
+    `${API_BASE_URL}/api/bugreport/link/revoke`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({}),
+      timeout: 15_000,
+    },
+  );
 }
