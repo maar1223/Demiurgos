@@ -15,6 +15,19 @@
 import type { Attribution } from "./attribution.ts";
 
 const TELEGRAM_API = "https://api.telegram.org";
+
+/** Screenshot attachments ride the same document path, capped by the client. */
+export const ATTACHMENTS_MAX = 2;
+export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+export const ATTACHMENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const ATTACHMENT_NAME_MAX = 64;
+
+/** One user-chosen screenshot, already validated by the caller. */
+export interface ReportAttachment {
+  name: string;
+  type: string;
+  bytes: ArrayBuffer;
+}
 const REQUEST_TIMEOUT_MS = 10000;
 const TOPIC_NAME_MAX = 128;
 const SUMMARY_MAX = 3800;
@@ -32,6 +45,8 @@ export interface PublishableReport {
   description: string;
   contact: string | null;
   logs: string | null;
+  /** Where in the app it happened; empty when the client sent none. */
+  context: Record<string, string>;
   /**
    * Who sent it and how that was established. Required on purpose: every
    * delivery path must state it, and the compiler refuses a report that forgot.
@@ -57,14 +72,21 @@ export function topicName(report: PublishableReport): string {
   return truncate(`BUG · v${version} · ${who}`, TOPIC_NAME_MAX);
 }
 
-/** The message shown in the topic: what fits, with the rest in the document. */
-export function summaryText(report: PublishableReport): string {
-  const platform = Object.entries(report.platform)
+/** `key=value` pairs in their original order, or an empty string. */
+function pairs(values: Record<string, string>): string {
+  return Object.entries(values)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
+}
+
+/** The message shown in the topic: what fits, with the rest in the document. */
+export function summaryText(report: PublishableReport): string {
+  const platform = pairs(report.platform);
+  const context = pairs(report.context);
   const header = [
     `🐞 v${report.app_version === "" ? "unknown" : report.app_version}`,
     platform === "" ? null : `🖥️ ${platform}`,
+    context === "" ? null : `🧭 ${context}`,
     report.attribution.line,
   ].filter((line): line is string => line !== null);
   const body = report.description.trim() === "" ? "(sin descripción)" : report.description;
@@ -73,15 +95,17 @@ export function summaryText(report: PublishableReport): string {
 
 /** The complete report, delivered as a document so nothing is truncated. */
 export function bundleText(report: PublishableReport, reportId: string): string {
-  const platform = Object.entries(report.platform)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(" ");
+  const platform = pairs(report.platform);
+  const context = pairs(report.context);
   return [
     "Demiurgos bug report",
     "",
     `Report id: ${reportId}`,
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    // Omitted when there is no context: a schema-1 report must keep the exact
+    // document shape it had before, not gain a line saying "nothing here".
+    ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${report.attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
@@ -119,6 +143,91 @@ async function callTelegram(
     return typeof result === "object" && result !== null
       ? (result as Record<string, unknown>)
       : {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The real image type, read from the bytes.
+ *
+ * A declared content type is a client claim: a renamed HTML file would pass it
+ * and reach the group as a document. The magic bytes are what the file actually
+ * is, so they decide — and a mismatch is corrected rather than trusted.
+ */
+export function sniffImageType(bytes: ArrayBuffer): string | null {
+  const view = new Uint8Array(bytes);
+  if (
+    view.length >= 8 &&
+    view[0] === 0x89 && view[1] === 0x50 && view[2] === 0x4e && view[3] === 0x47 &&
+    view[4] === 0x0d && view[5] === 0x0a && view[6] === 0x1a && view[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (view.length >= 3 && view[0] === 0xff && view[1] === 0xd8 && view[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    view.length >= 12 &&
+    view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46 &&
+    view[8] === 0x57 && view[9] === 0x45 && view[10] === 0x42 && view[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+/** A filename safe to hand to Telegram: no paths, no control characters. */
+export function attachmentName(raw: string, index: number, type: string): string {
+  const base = raw.split(/[\\/]/).pop() ?? "";
+  // Control characters AND the invisible ones that reorder text on screen: a
+  // filename must render exactly as it reads.
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base
+    .replace(
+      /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g,
+      "",
+    )
+    .trim();
+  const name = cleaned.length === 0 ? "" : cleaned.slice(0, ATTACHMENT_NAME_MAX);
+  if (name.length > 0) {
+    return name;
+  }
+  const extension = type === "image/jpeg" ? "jpg" : (type.split("/").pop() || "png");
+  return `screenshot-${index + 1}.${extension}`;
+}
+
+/** Send one screenshot as a DOCUMENT, never as a photo: no recompression. */
+async function sendAttachment(
+  env: PublicationEnv,
+  reportId: string,
+  index: number,
+  attachment: ReportAttachment,
+  threadId: number | null,
+  fetchImpl: typeof fetch,
+): Promise<void> {
+  const body = new FormData();
+  body.set("chat_id", env.TELEGRAM_CHAT_ID);
+  if (threadId !== null) {
+    body.set("message_thread_id", String(threadId));
+  }
+  body.set("caption", truncate(`Captura ${index + 1} · ${reportId}`, 1024));
+  body.set(
+    "document",
+    new Blob([attachment.bytes], { type: attachment.type }),
+    attachment.name,
+  );
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(
+      `${TELEGRAM_API}/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`,
+      { method: "POST", body, signal: controller.signal },
+    );
+    if (!response.ok) {
+      throw new Error("telegram.sendDocument.rejected");
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -170,6 +279,7 @@ export async function publishReport(
   env: PublicationEnv,
   report: PublishableReport,
   reportId: string,
+  attachments: ReportAttachment[] = [],
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ threadId: number | null }> {
   let threadId: number | null = null;
@@ -196,6 +306,10 @@ export async function publishReport(
     message.message_thread_id = threadId;
   }
   await callTelegram(env, "sendMessage", message, fetchImpl);
+
+  for (const [index, attachment] of attachments.entries()) {
+    await sendAttachment(env, reportId, index, attachment, threadId, fetchImpl);
+  }
 
   await sendBundle(
     env,

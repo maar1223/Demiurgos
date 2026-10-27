@@ -10,9 +10,11 @@
  *   - unlinked reporters: the per-IP and global-daily ceilings in `index.ts`,
  *   - a revoked install: blocked by its dead credential, in `identity.ts`.
  *
- * The dedup key is a digest of `description + platform + logs` — never the
- * contact or the version — so re-submitting the same failure after adding a
- * contact or upgrading the app still never opens a second topic.
+ * The dedup key is a digest of `description + platform + logs + the attached
+ * screenshots` — never the contact or the version — so re-submitting the same
+ * failure after adding a contact or upgrading the app still never opens a second
+ * topic, while re-submitting it *with a screenshot you had forgotten* is treated
+ * as new: a second report that silently dropped the image would be a lie.
  *
  * KV is eventually consistent, so two identical reports racing each other can
  * both be published. These are best-effort bounds for the Alpha volume, and the
@@ -48,6 +50,12 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** SHA-256 of raw bytes, as lowercase hex. */
+async function sha256Bytes(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function dedupKey(fingerprint: string): string {
   return `dedup:${fingerprint}`;
 }
@@ -56,15 +64,23 @@ function dedupKey(fingerprint: string): string {
  * A stable digest of the failure itself. Platform keys are sorted, so a client
  * that serializes them in another order does not look like a new report.
  */
-export async function reportFingerprint(report: Fingerprintable): Promise<string> {
+export async function reportFingerprint(
+  report: Fingerprintable,
+  attachments: ArrayBuffer[] = [],
+): Promise<string> {
   const platform = Object.keys(report.platform)
     .sort()
     .map((key) => [key, report.platform[key]]);
+  const attachmentDigests: string[] = [];
+  for (const bytes of attachments) {
+    attachmentDigests.push(await sha256Bytes(bytes));
+  }
   return sha256Hex(
     JSON.stringify({
       description: report.description,
       platform,
       logs: report.logs,
+      attachments: attachmentDigests,
     }),
   );
 }
@@ -126,8 +142,9 @@ export async function admitReport(
   report: Fingerprintable,
   accountKey: string | null,
   now: Date,
+  attachments: ArrayBuffer[] = [],
 ): Promise<Admission> {
-  const fingerprint = await reportFingerprint(report);
+  const fingerprint = await reportFingerprint(report, attachments);
 
   const seen = await readRecentReport(kv, fingerprint);
   if (seen !== null) {

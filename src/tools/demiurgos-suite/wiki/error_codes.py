@@ -81,6 +81,12 @@ REGISTRY: dict[str, ErrorSpec] = {
         "bugreport.relay_unavailable", 502, "Bug-report relay is unavailable"),
     "bugreport.delivery_failed": ErrorSpec(
         "bugreport.delivery_failed", 502, "Bug-report delivery failed"),
+    "bugreport.storage_unavailable": ErrorSpec(
+        "bugreport.storage_unavailable", 500, "Local report state is unavailable"),
+    "bugreport.invalid_attachment": ErrorSpec(
+        "bugreport.invalid_attachment", 400, "Invalid bug-report attachment"),
+    "bugreport.link_incomplete": ErrorSpec(
+        "bugreport.link_incomplete", 409, "Telegram link is incomplete; link again"),
     # Chat document attachments (chat-attachments T2). The UI localizes these
     # through ``error.attachment.*``; ``detail`` stays a stable English fallback.
     "attachment.unsupported_type": ErrorSpec(

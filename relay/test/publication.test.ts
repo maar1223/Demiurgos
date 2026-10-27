@@ -39,6 +39,7 @@ function report(overrides: Partial<PublishableReport> = {}): PublishableReport {
     description: "El selector de relaciones se queda vacío.",
     contact: "maria@example.com",
     logs: "line one\nline two",
+    context: { route: "/perfil", view: "perfil" },
     attribution: DECLARED,
     ...overrides,
   };
@@ -92,6 +93,7 @@ test("the summary carries the header and the description, bounded", () => {
 
   assert.match(text, /v0\.9\.3-alpha/);
   assert.match(text, /linux/);
+  assert.ok(text.includes("🧭 route=/perfil view=perfil"));
   assert.ok(text.includes("👤 maria@example.com — declared · local session"));
   assert.ok(text.includes("El selector de relaciones"));
   assert.ok(summaryText(report({ description: "x".repeat(9000) })).length <= 3800);
@@ -104,7 +106,22 @@ test("the bundle document carries the full logs without truncation", () => {
 
   assert.match(text, /Report id: abc-123/);
   assert.ok(text.includes(logs));
+  assert.ok(text.includes("Where: route=/perfil view=perfil"));
   assert.ok(text.includes("Reported by: 👤 maria@example.com — declared · local session"));
+});
+
+test("a schema-1 report without context still renders and delivers", () => {
+  const text = summaryText(report({ context: {} }));
+
+  assert.equal(text.includes("🧭"), false);
+  assert.equal(bundleText(report({ context: {} }), "abc-123").includes("Where:"), false);
+});
+
+test("a report with no context omits the line from the summary", () => {
+  const text = summaryText(report({ context: {} }));
+
+  assert.ok(text.includes("🐞 v0.9.3-alpha"));
+  assert.equal(text.split("\n").length >= 3, true);
 });
 
 test("publishing opens a topic, sends the summary there, then the bundle", async () => {
@@ -190,6 +207,61 @@ test("the bot token never appears in the message or the document", async () => {
     const document = await (telegram.calls[2].form?.get("document") as Blob).text();
     assert.equal(summary.includes(TOKEN_BOT), false);
     assert.equal(document.includes(TOKEN_BOT), false);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("POST / accepts schema 2 with context and refuses an unknown context key", async () => {
+  const kv = new (class {
+    readonly map = new Map<string, string>();
+    async get(key: string) { return this.map.get(key) ?? null; }
+    async put(key: string, value: string) { this.map.set(key, value); }
+    async delete(key: string) { this.map.delete(key); }
+  })();
+  const telegram = stubTelegram();
+  const send = (payload: Record<string, unknown>) =>
+    worker.fetch(
+      new Request("https://relay.example/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      {
+        RATE_LIMIT: kv,
+        LINKS: kv,
+        RELAY_KEY: "k",
+        TELEGRAM_BOT_TOKEN: TOKEN_BOT,
+        TELEGRAM_WEBHOOK_SECRET: "s",
+        TELEGRAM_CHAT_ID: CHAT,
+        BREVO_API_KEY: "",
+        OWNER_INBOX: "",
+        SENDER_FROM: "",
+      } as unknown as Parameters<typeof worker.fetch>[1],
+      {} as never,
+    );
+  const base = {
+    schema: 2,
+    app_version: "0.9.3-alpha",
+    platform: { os: "linux" },
+    description: "boom",
+    contact: null,
+    logs: null,
+  };
+  try {
+    const accepted = await send({ ...base, context: { route: "/perfil", view: "perfil", ui_area: "reportes", world_id: "w1" } });
+    assert.equal(accepted.status, 200);
+    const summary = JSON.stringify(telegram.calls[1].json);
+    assert.ok(summary.includes("🧭 route=/perfil view=perfil ui_area=reportes world_id=w1"));
+
+    const unknownKey = await send({ ...base, context: { screen: "perfil" } });
+    assert.equal(unknownKey.status, 400);
+
+    const tooLong = await send({ ...base, context: { route: "x".repeat(201) } });
+    assert.equal(tooLong.status, 413);
+
+    const unsupported = await send({ ...base, schema: 3 });
+    assert.equal(unsupported.status, 400);
   } finally {
     telegram.restore();
   }

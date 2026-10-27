@@ -53,7 +53,15 @@ import {
   type StartLinkRequest,
 } from "./linking.ts";
 import { handleTelegramUpdate } from "./telegram.ts";
-import { publishReport } from "./publication.ts";
+import {
+  ATTACHMENTS_MAX,
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENT_TYPES,
+  attachmentName,
+  publishReport,
+  sniffImageType,
+  type ReportAttachment,
+} from "./publication.ts";
 import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
@@ -100,8 +108,15 @@ export interface Env {
   OWNER_TELEGRAM_USER_IDS?: string;
 }
 
-/** Wire contract version, must match `_RELAY_SCHEMA` in `bug_report.py`. */
-const RELAY_SCHEMA = 1;
+/**
+ * Wire contract versions this relay understands, newest first.
+ *
+ * 2 adds the `context` block (where in the app the bug happened). Both are
+ * accepted so a backend that still speaks 1 keeps delivering while the relay is
+ * rolled out ahead of it: a version mismatch here would drop reports, and a
+ * dropped report is worse than a report without context.
+ */
+const RELAY_SCHEMAS = new Set([1, 2]);
 
 /** The only top-level keys the contract allows. */
 const ALLOWED_FIELDS = new Set([
@@ -111,6 +126,7 @@ const ALLOWED_FIELDS = new Set([
   "description",
   "contact",
   "logs",
+  "context",
 ]);
 
 /** The only platform facts the contract allows. */
@@ -121,11 +137,15 @@ const ALLOWED_PLATFORM_KEYS = new Set([
   "python_version",
 ]);
 
+/** Where in the app a report came from (schema 2). */
+const ALLOWED_CONTEXT_KEYS = new Set(["route", "view", "ui_area", "world_id"]);
+
 // Size caps — kept identical to the backend caps in `bug_report.py` so the
 // relay is never the weaker link in the validation chain.
 const DESCRIPTION_MAX_CHARS = 4000;
 const CONTACT_MAX_CHARS = 200;
 const LOGS_MAX_CHARS = 65536;
+const CONTEXT_VALUE_MAX_CHARS = 200;
 const PAYLOAD_MAX_BYTES = 98304;
 
 // Abuse bounds. KV is eventually consistent, not atomic, so these are
@@ -144,6 +164,8 @@ interface Report {
   description: string;
   contact: string | null;
   logs: string | null;
+  /** Where in the app it happened; empty on a schema-1 client. */
+  context: Record<string, string>;
 }
 
 /** Internal error carrying the HTTP status and non-secret relay code. */
@@ -203,7 +225,7 @@ function validateReport(raw: unknown): Report {
       throw new RelayError(400, "relay.invalid_payload");
     }
   }
-  if (raw.schema !== RELAY_SCHEMA) {
+  if (typeof raw.schema !== "number" || !RELAY_SCHEMAS.has(raw.schema)) {
     throw new RelayError(400, "relay.unsupported_schema");
   }
 
@@ -223,6 +245,23 @@ function validateReport(raw: unknown): Report {
       throw new RelayError(400, "relay.invalid_payload");
     }
     platform[key] = value;
+  }
+
+  const contextRaw = raw.context ?? {};
+  if (!isPlainObject(contextRaw)) {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  const context: Record<string, string> = {};
+  for (const [key, value] of Object.entries(contextRaw)) {
+    if (!ALLOWED_CONTEXT_KEYS.has(key) || typeof value !== "string") {
+      throw new RelayError(400, "relay.invalid_payload");
+    }
+    if (value.length > CONTEXT_VALUE_MAX_CHARS) {
+      throw new RelayError(413, "relay.too_large");
+    }
+    if (value.trim().length > 0) {
+      context[key] = value;
+    }
   }
 
   const contact = normalizeOptional(raw.contact, "relay.invalid_payload");
@@ -245,9 +284,86 @@ function validateReport(raw: unknown): Report {
     app_version: appVersion,
     platform,
     description,
+    context,
     contact,
     logs,
   };
+}
+
+interface ParsedReportBody {
+  raw: unknown;
+  attachments: ReportAttachment[];
+}
+
+/**
+ * Read a report from either a JSON body (no attachments) or a multipart body
+ * carrying the JSON in a `report` part plus up to two screenshots.
+ *
+ * Attachments never travel inside the JSON: the bundle is size-capped at 98 KB,
+ * and base64 would both break that cap and make the report harder to audit. They
+ * are delivered as documents, never as photos, so Telegram does not recompress
+ * a screenshot into uselessness.
+ */
+async function readReportBody(request: Request): Promise<ParsedReportBody> {
+  const contentType = (request.headers.get("content-type") ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "multipart/form-data") {
+    return { raw: await request.json(), attachments: [] };
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  const report = form.get("report");
+  if (typeof report !== "string") {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(report);
+  } catch {
+    throw new RelayError(400, "relay.invalid_payload");
+  }
+
+  const entries = form.getAll("attachments");
+  // A part with an empty filename is parsed as a plain string: dropping it
+  // silently would accept a report whose attachment never arrives.
+  for (const entry of entries) {
+    if (typeof File === "undefined" || !(entry instanceof File)) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
+  }
+  const files = entries as File[];
+  if (files.length > ATTACHMENTS_MAX) {
+    throw new RelayError(413, "relay.too_large");
+  }
+
+  const attachments: ReportAttachment[] = [];
+  for (const [index, file] of files.entries()) {
+    if (file.size === 0) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      throw new RelayError(413, "relay.too_large");
+    }
+    const bytes = await file.arrayBuffer();
+    // The bytes decide the type, not the client's claim about it.
+    const type = sniffImageType(bytes);
+    if (type === null || !ATTACHMENT_TYPES.has(type)) {
+      throw new RelayError(400, "relay.invalid_attachment");
+    }
+    attachments.push({
+      name: attachmentName(file.name, index, type),
+      type,
+      bytes,
+    });
+  }
+  return { raw, attachments };
 }
 
 /** Best-effort client IP for the per-IP bucket. */
@@ -268,8 +384,15 @@ function buildSubject(report: Report): string {
   return `[Demiurgos] Bug report — ${version}`;
 }
 
-function buildBody(report: Report, attribution: Attribution): string {
+function buildBody(
+  report: Report,
+  attribution: Attribution,
+  attachmentCount = 0,
+): string {
   const platform = Object.entries(report.platform)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
+  const context = Object.entries(report.context)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
   return [
@@ -277,8 +400,14 @@ function buildBody(report: Report, attribution: Attribution): string {
     "",
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    ...(context === "" ? [] : [`Where: ${context}`]),
     `Reported by: ${attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
+    // The email channel carries text only; a dropped attachment is stated, so
+    // nobody believes a screenshot arrived when it did not.
+    ...(attachmentCount === 0
+      ? []
+      : [`Attachments: ${attachmentCount} (not delivered over email)`]),
     "",
     "Description:",
     report.description || "(empty)",
@@ -297,6 +426,7 @@ async function sendViaProvider(
   env: Env,
   report: Report,
   attribution: Attribution,
+  attachmentCount = 0,
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
@@ -313,7 +443,7 @@ async function sendViaProvider(
         sender: { email: env.SENDER_FROM },
         to: [{ email: env.OWNER_INBOX }],
         subject: buildSubject(report),
-        textContent: buildBody(report, attribution),
+        textContent: buildBody(report, attribution, attachmentCount),
       }),
       signal: controller.signal,
     });
@@ -493,12 +623,16 @@ export default {
       return fail(500, "relay.not_configured");
     }
 
-    let raw: unknown;
+    let body: ParsedReportBody;
     try {
-      raw = await request.json();
-    } catch {
+      body = await readReportBody(request);
+    } catch (error) {
+      if (error instanceof RelayError) {
+        return fail(error.status, error.code);
+      }
       return fail(400, "relay.invalid_payload");
     }
+    const raw = body.raw;
 
     let report: Report;
     try {
@@ -550,6 +684,7 @@ export default {
         report,
         attribution.identity?.account_key ?? null,
         now,
+        body.attachments.map((attachment) => attachment.bytes),
       );
     } catch {
       // Abuse control fails CLOSED, never open.
@@ -604,9 +739,15 @@ export default {
           },
           { ...report, attribution },
           deliveryId,
+          body.attachments,
         );
       } else {
-        deliveryId = await sendViaProvider(env, report, attribution);
+        deliveryId = await sendViaProvider(
+          env,
+          report,
+          attribution,
+          body.attachments.length,
+        );
       }
     } catch (error) {
       if (error instanceof RelayError) {

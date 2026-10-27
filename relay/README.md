@@ -14,12 +14,13 @@ the relay validates it, rate-limits it, and forwards it to the email provider.
 ```
 POST /   Content-Type: application/json
 {
-  "schema": 1,
+  "schema": 2,
   "app_version": "...",
   "platform": { "os": "...", "os_version": "...", "arch": "...", "python_version": "..." },
   "description": "...",
   "contact": "..." | null,
-  "logs": "..." | null
+  "logs": "..." | null,
+  "context": { "route": "...", "view": "...", "ui_area": "...", "world_id": "..." }
 }
 -> 200 { "ok": true,  "delivery_id": "...", "deduped"?: true }
 -> 4xx/5xx { "ok": false, "code": "<relay code>" }
@@ -30,9 +31,38 @@ hours and `delivery_id` is the original one; nothing new was posted. An optional
 `x-install-token` header carries the credential the app received when it linked
 its Telegram account; it is never part of the body.
 
+### Screenshots
+
+A report may carry up to **two screenshots**, 5 MB each. They are sent as
+`multipart/form-data`: the bundle travels in a `report` part (the same JSON as
+above) and each image is an `attachments` file part. Binaries never enter the
+JSON bundle — it is capped at 98 KB, and base64 would both break that cap and
+make the report harder to audit.
+
+```
+POST /   Content-Type: multipart/form-data
+  report       = <the JSON bundle>
+  attachments  = <image/png | image/jpeg | image/webp>   (at most two, 5 MB each)
+```
+
+Each image is published as a **document**, never as a photo: `sendPhoto`
+recompresses and destroys exactly the interface detail a screenshot exists to
+show. The order inside the topic is summary → screenshots → `report-<id>.txt`.
+A bad type, an empty file or an oversized image fails closed before any Telegram
+call. The **magic bytes** decide the type, not the client's claim: a renamed HTML
+file is refused, and a PNG declared as JPEG is published as a PNG. The filename is
+reduced to its basename so a path can never travel downstream. The email channel carries text only, and states how many attachments
+it could not deliver instead of pretending they arrived.
+
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for
 the wire shape. Field caps (`description` 4000, `contact` 200, `logs` 65536,
-total 98304 bytes) are identical on both sides.
+`context` 200 per value, total 98304 bytes) are identical on both sides.
+
+`context` (schema 2) says **where in the app** the bug happened, so the reporter
+never has to describe it. Both schema **1 and 2** are accepted: a backend without
+context keeps speaking the older contract, and a version mismatch here would drop
+reports — which is worse than a report without context. Unknown context keys are
+refused, so the block cannot become a smuggling channel.
 
 Relay codes are non-secret and never carry a credential:
 `relay.invalid_payload`, `relay.unsupported_schema`, `relay.too_large`,
