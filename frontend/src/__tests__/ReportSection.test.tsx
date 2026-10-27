@@ -128,7 +128,7 @@ describe("submitBugReport — the pseudonym is stated, never implied", () => {
   }
 
   it("sends 1 by default and 0 when the reporter turned it off", async () => {
-    expect((await submitWith())["x-bugreport-pseudonym"]).toBe("1");
+    expect((await submitWith())[ "x-bugreport-pseudonym"]).toBe("1");
     expect((await submitWith(false))["x-bugreport-pseudonym"]).toBe("0");
   });
 });
@@ -146,6 +146,9 @@ describe("ReportSection — Perfil → Reporte de errores (S2a skeleton)", () =>
     await waitFor(() =>
       expect(screen.getByTestId("bugreport-app-version")).toHaveTextContent("0.2.0"),
     );
+    // The frontend build stamp sits next to the backend version so a stale
+    // `dist` is visible at a glance. Under vitest the globals are absent.
+    expect(screen.getByTestId("bugreport-frontend-build")).toHaveTextContent("dev");
     // Allow-listed platform facts render as one summary line.
     expect(screen.getByTestId("bugreport-platform")).toHaveTextContent(
       "Linux 6.8.0 · x86_64 · Python 3.11.9",
@@ -161,6 +164,29 @@ describe("ReportSection — Perfil → Reporte de errores (S2a skeleton)", () =>
     expect(screen.getByTestId("bugreport-allow-list")).toHaveTextContent(
       "app_version, contact, description, logs, platform",
     );
+  });
+
+  it("shows the compiled build stamp and flags an uncommitted bundle", async () => {
+    (assembleBugReport as Mock).mockResolvedValue(baseBundle);
+    const stamped = globalThis as unknown as Record<string, unknown>;
+    stamped.__BUILD_SHA__ = "abc1234";
+    stamped.__BUILD_TIME__ = "2026-10-26T18:40:00.000Z";
+    stamped.__BUILD_DIRTY__ = true;
+    try {
+      render(<ReportSection />);
+      await waitFor(() =>
+        expect(screen.getByTestId("bugreport-frontend-build")).toHaveTextContent(
+          "abc1234",
+        ),
+      );
+      expect(screen.getByTestId("bugreport-frontend-build")).toHaveTextContent(
+        tEs("profile.bugreport.frontendBuildDirty"),
+      );
+    } finally {
+      delete stamped.__BUILD_SHA__;
+      delete stamped.__BUILD_TIME__;
+      delete stamped.__BUILD_DIRTY__;
+    }
   });
 
   it("renders the redaction count when logs were included but scrubbed", async () => {

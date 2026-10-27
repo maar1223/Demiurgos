@@ -514,10 +514,55 @@ export_product_hermes_home() {
     fi
 }
 
+# --- Stale frontend bundle guard (plan B) ----------------------------------
+# The API serves the prebuilt `frontend/dist`, which is gitignored: `vitest`
+# and `tsc` can be green while the served bundle lags behind `frontend/src`,
+# so a "look at the UI" check may target an older build. Compare mtimes and
+# warn before boot; `--build-if-stale` rebuilds instead of only warning.
+#
+# Portable by design: plain `find -newer` (GNU and BSD), no `-quit`, no GNU
+# `date -d`; the predicate takes explicit paths so it stays testable.
+frontend_dist_is_stale() {
+    local root="$1" dist="${2:-}" newer
+    [ -n "$dist" ] || dist="$root/frontend/dist"
+    [ -d "$root/frontend/src" ] || return 1
+    [ -f "$dist/index.html" ] || return 1
+    newer="$(find "$root/frontend/src" -type f -newer "$dist/index.html" -print 2>/dev/null || true)"
+    [ -n "$newer" ]
+}
+
+warn_if_frontend_dist_stale() {
+    frontend_dist_is_stale "$APP_ROOT" || return 0
+    printf 'WARNING: the served frontend is older than its source.\n' >&2
+    printf '  bundle: %s/frontend/dist\n' "$APP_ROOT" >&2
+    printf '  The UI does not include the latest frontend changes. Rebuild with\n' >&2
+    printf '  (cd "%s/frontend" && npm run build), or start with --build-if-stale.\n' "$APP_ROOT" >&2
+}
+
+build_frontend() {
+    if ! command -v npm >/dev/null 2>&1; then
+        printf 'npm not found; cannot rebuild the frontend.\n' >&2
+        return 1
+    fi
+    printf 'Rebuilding the frontend: dist was older than its source.\n' >&2
+    ( cd "$APP_ROOT/frontend" && npm run build )
+}
+
+maybe_build_frontend() {
+    [ "${BUILD_IF_STALE:-0}" = "1" ] || return 0
+    frontend_dist_is_stale "$APP_ROOT" || return 0
+    build_frontend
+}
+
 start_all() {
     ensure_runtime_dirs
     resolve_data_root
     load_data_root_env
+    # Stale-bundle guard (plan B): the API serves the prebuilt, gitignored
+    # frontend/dist, so a lagging bundle silently hides recent UI changes.
+    # --build-if-stale rebuilds first; a failed build aborts the boot.
+    maybe_build_frontend || return 1
+    warn_if_frontend_dist_stale
     # Layout-contract exports: the launcher is the SOLE exporter of
     # DEMIURGOS_FRONTEND_DIST (S1-6) and the bridge for the data-root .env
     # auth mode (S0-A); DEMIURGOS_ROOT stays for legacy Hermes reads (S2-3).
@@ -627,11 +672,21 @@ install_desktop() {
 }
 
 usage() {
-    printf 'Usage: %s {start|restart|stop|install}\n' "$0"
+    printf 'Usage: %s [--build-if-stale] {start|restart|stop|install}\n' "$0"
 }
 
+BUILD_IF_STALE=0
+
 main() {
-    local action="${1:-restart}"
+    local action="" arg
+    for arg in "$@"; do
+        case "$arg" in
+            --build-if-stale) BUILD_IF_STALE=1 ;;
+            start|restart|stop|install) action="$arg" ;;
+            *) usage >&2; return 2 ;;
+        esac
+    done
+    action="${action:-restart}"
     case "$action" in
         start) start_all; open_browser "http://127.0.0.1:$API_PORT"; show_status ;;
         # Restart does NOT reopen the browser: the already-open tab detects the
@@ -640,7 +695,6 @@ main() {
         restart) stop_all; start_all; show_status ;;
         stop) stop_all ;;
         install) install_desktop ;;
-        *) usage >&2; return 2 ;;
     esac
 }
 

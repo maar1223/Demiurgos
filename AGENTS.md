@@ -127,6 +127,27 @@ cd frontend && npm test -- --run     # run once (no watch)
 - **Python**: Tests must pass before committing backend changes
 - **No breaking changes**: Verify API contracts when modifying endpoints
 
+### Verifying UI changes (MANDATORY)
+
+The API serves the prebuilt `frontend/dist`, which is gitignored. `vitest` and
+`tsc` can be green while the served bundle is still the old one, so "check the
+UI" may silently look at an older build. Before asking the Owner to look at any
+frontend change:
+
+1. Build: `cd frontend && npm run build`
+2. Confirm the served asset is the new one:
+   `curl -s http://127.0.0.1:8000/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'`
+3. Ask for a forced reload (Ctrl/Cmd+Shift+R).
+
+Both identities are visible in `Perfil → Reporte de errores`: the backend
+version and the frontend build stamp (sha, build time, and "uncommitted" when
+the bundle was built from a dirty tree). A mismatch means the served UI is not
+the code under review.
+
+The launcher also warns at boot when `frontend/src` is newer than
+`frontend/dist`; `scripts/start-demiurgos.sh --build-if-stale` rebuilds before
+starting.
+
 ---
 
 ## Engram (MANDATORY)
