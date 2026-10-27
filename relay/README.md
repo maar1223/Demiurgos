@@ -96,6 +96,7 @@ All three are `POST` so a ticket never travels in a URL or a Worker log.
 | `POST /link/start` | `{account_key, report_identity?, notify_releases?}` | `{ok, ticket, expires_at, reused}` |
 | `POST /link/status` | `{ticket}` | `{ok, state: pending\|expired\|linked, identity?, install_token?}` |
 | `POST /link/revoke` | `{account_key}` | `{ok, revoked}` |
+| `POST /telegram/webhook` | Telegram update | `{ok: true}` |
 
 Behaviour worth knowing:
 
@@ -107,6 +108,56 @@ Behaviour worth knowing:
 - Redemption (`/start <ticket>`) is not an HTTP route: it is an internal
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
+
+## Publication into the triage group
+
+When `TELEGRAM_CHAT_ID` is set, a report is published into the Telegram group
+instead of being emailed. The email path stays available for a deployment
+without a chat id, and it is also the fallback channel for reporters who never
+link Telegram.
+
+One report becomes one **forum topic**, so the group stays readable and each bug
+keeps its thread:
+
+1. `createForumTopic` named `BUG · v<version> · <contact>`.
+2. `sendMessage` with a bounded summary (Telegram caps a message at 4096
+   characters; the summary is cut at 3800).
+3. `sendDocument` with `report-<id>.txt` holding the **complete** report —
+   description and up to 65536 characters of logs — because the message alone
+   could never carry them.
+
+Degradation is deliberate: a plain group, or a bot without the topic
+permission, still receives the report — without a thread. A failure to send the
+summary is a real delivery failure (`relay.delivery_failed`) and is reported as
+such, never swallowed.
+
+## Telegram webhook
+
+Telegram calls this route, so it authenticates with the secret **Telegram**
+echoes — `x-telegram-bot-api-secret-token`, the `secret_token` you pass to
+`setWebhook` — not with the backend key.
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://<worker-url>/telegram/webhook" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+The bot accepts exactly two commands and never free text (this is a one-way
+channel by decision):
+
+| Command | Effect |
+|---|---|
+| `/start` (no ticket) | Telegram's own START button sends this. Answers where to get the link instead of staying silent. |
+| `/start <ticket>` | Redeems the linking ticket, answers `Conectado. Te avisaré cuando arreglemos lo que reportes.` |
+| `/link/revoke` | Unlinks the account, erases the identity, confirms |
+
+Anything else is acknowledged with `200` and ignored, without an outbound call.
+
+**Handled failures answer `200`, not an error.** Telegram redelivers any
+non-2xx answer, so an expired or already-claimed ticket is answered with a short
+explanatory message instead. A non-2xx here would make Telegram replay the same
+update.
 
 New codes: `relay.unauthorized`, `relay.not_found`, `link.invalid_account`,
 `link.rate_limited`, `link.rate_limit_unavailable`, `link.ticket_invalid`,
@@ -144,6 +195,8 @@ npx wrangler secret put BREVO_API_KEY    # the provider key from step 2
 npx wrangler secret put OWNER_INBOX      # the fixed destination inbox
 npx wrangler secret put SENDER_FROM      # a verified sender on the domain from step 3
 npx wrangler secret put RELAY_KEY        # shared with the backend; guards the identity routes
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
 | Secret / binding | Purpose |
@@ -152,6 +205,8 @@ npx wrangler secret put RELAY_KEY        # shared with the backend; guards the i
 | `OWNER_INBOX` | Fixed inbox that receives every report. |
 | `SENDER_FROM` | Verified sender address for the outgoing email. |
 | `RELAY_KEY` | Shared secret the backend presents as `x-relay-key` on identity calls. |
+| `TELEGRAM_BOT_TOKEN` | Reports-bot token from @BotFather. |
+| `TELEGRAM_WEBHOOK_SECRET` | Value Telegram must echo on the webhook; set with `setWebhook`. |
 | `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters. |
 | `LINKS` (KV) | Linked Telegram identities and pending tickets. |
 

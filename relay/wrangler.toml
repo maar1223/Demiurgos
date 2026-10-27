@@ -11,29 +11,26 @@ main = "src/index.ts"
 compatibility_date = "2026-01-01"
 
 # Per-IP + global-daily rate-limit counters live in Workers KV.
-#
-# Create the namespace once, then paste the printed ids below:
-#   npx wrangler kv namespace create RATE_LIMIT
-#   npx wrangler kv namespace create RATE_LIMIT --preview
+# Preview namespaces are intentionally omitted: this Worker is deployed, never
+# run with `wrangler dev --remote`, so a second pair would sit unused.
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_NAMESPACE_ID"
+id = "80ad1cef42a742a39b32171f86b2e257"
 
 # Linked Telegram identities live in their OWN namespace, never in RATE_LIMIT:
 # they are personal data with no expiry (removed only by revoke), while the
 # counters above are disposable and TTL-bounded. Mixing them would eventually
 # let a TTL sweep erase a link.
 #
-#   npx wrangler kv namespace create LINKS
-#   npx wrangler kv namespace create LINKS --preview
 [[kv_namespaces]]
 binding = "LINKS"
-id = "REPLACE_WITH_LINKS_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_LINKS_KV_PREVIEW_NAMESPACE_ID"
+id = "b0b449790229426d89f14a75db716ca2"
 
 # Secrets are NOT set here. Provide them out-of-band (never committed):
 #   npx wrangler secret put BREVO_API_KEY
 #   npx wrangler secret put OWNER_INBOX
 #   npx wrangler secret put SENDER_FROM
 #   npx wrangler secret put RELAY_KEY        # shared with the backend; guards /link/*
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN       # the reports bot from @BotFather
+#   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET  # the same value passed to setWebhook
+#   npx wrangler secret put TELEGRAM_CHAT_ID         # the triage group id, e.g. -1001234567890

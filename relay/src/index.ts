@@ -44,6 +44,8 @@ import {
   startLink,
   type StartLinkRequest,
 } from "./linking.ts";
+import { handleTelegramUpdate } from "./telegram.ts";
+import { publishReport } from "./publication.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
@@ -61,6 +63,19 @@ export interface Env {
   OWNER_INBOX: string;
   /** Verified sender address, e.g. `reports@your-verified-domain` (secret). */
   SENDER_FROM: string;
+  /** Reports-bot token (Worker secret). Never logged or returned. */
+  TELEGRAM_BOT_TOKEN: string;
+  /**
+   * Triage group id (for example `-1001234567890`). When set, reports are
+   * published there instead of being emailed. Optional so the email-only
+   * deployment keeps working.
+   */
+  TELEGRAM_CHAT_ID?: string;
+  /**
+   * Value Telegram must echo in `x-telegram-bot-api-secret-token`, set with the
+   * webhook's `secret_token`. Without it anyone could post a forged update.
+   */
+  TELEGRAM_WEBHOOK_SECRET: string;
   /**
    * Shared secret the backend presents on every identity call (`x-relay-key`).
    * The relay never accepts an account key from an unauthenticated caller: that
@@ -405,6 +420,44 @@ async function handleLink(
   }
 }
 
+/**
+ * Telegram webhook. Authenticated by the secret header Telegram echoes, not by
+ * the backend key: the caller here is Telegram, not the app.
+ */
+async function handleWebhook(request: Request, env: Env): Promise<Response> {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET || !env.LINKS) {
+    return fail(500, "relay.not_configured");
+  }
+  if (
+    (request.headers.get("x-telegram-bot-api-secret-token") ?? "") !==
+    env.TELEGRAM_WEBHOOK_SECRET
+  ) {
+    return fail(401, "relay.unauthorized");
+  }
+  if (request.method !== "POST") {
+    return fail(405, "relay.method_not_allowed");
+  }
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return fail(400, "relay.invalid_payload");
+  }
+
+  try {
+    await handleTelegramUpdate(raw, {
+      TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+      TELEGRAM_WEBHOOK_SECRET: env.TELEGRAM_WEBHOOK_SECRET,
+      LINKS: env.LINKS,
+    });
+  } catch {
+    // A handled update must not be redelivered; the user simply sees no reply.
+    return jsonResponse({ ok: true }, 200);
+  }
+  return jsonResponse({ ok: true }, 200);
+}
+
 export default {
   async fetch(
     request: Request,
@@ -412,6 +465,9 @@ export default {
     _ctx: ExecutionContext,
   ): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/telegram/webhook") {
+      return handleWebhook(request, env);
+    }
     if (LINK_PATHS.has(url.pathname)) {
       return handleLink(request, env, url.pathname);
     }
@@ -422,8 +478,11 @@ export default {
       return fail(405, "relay.method_not_allowed");
     }
 
-    // Config fail-closed: a missing secret never reaches the provider.
-    if (!env.BREVO_API_KEY || !env.OWNER_INBOX || !env.SENDER_FROM) {
+    // Config fail-closed: neither sink is configured, so nothing could be
+    // delivered and the caller would see a success that never happened.
+    const telegramSink = Boolean(env.TELEGRAM_CHAT_ID && env.TELEGRAM_BOT_TOKEN);
+    const emailSink = Boolean(env.BREVO_API_KEY && env.OWNER_INBOX && env.SENDER_FROM);
+    if (!telegramSink && !emailSink) {
       return fail(500, "relay.not_configured");
     }
 
@@ -468,6 +527,18 @@ export default {
     }
 
     try {
+      if (telegramSink && env.TELEGRAM_CHAT_ID) {
+        const deliveryId = crypto.randomUUID();
+        await publishReport(
+          {
+            TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+            TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
+          },
+          report,
+          deliveryId,
+        );
+        return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
+      }
       const deliveryId = await sendViaProvider(env, report);
       return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
     } catch (error) {

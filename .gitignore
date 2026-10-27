@@ -166,3 +166,8 @@ config/backup.json
 
 # Agent memory export — must never be tracked (leaked-secrets remediation)
 engram-export.json
+
+# Wrangler local dev secrets and state (never commit)
+.dev.vars
+.dev.vars.*
+.wrangler/

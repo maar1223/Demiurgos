@@ -59,7 +59,9 @@ A configuration value is never presented as Telegram verification.
 
 **S16 — Distinct from the idea-bank bridge.** A bot cannot transfer delivery permission to another bot, so the idea-bank link cannot pre-authorize the reports bot. No bridge is built in this feature; the QR already removes the need to return to the PC.
 
-**S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`).
+**S18 — The relay URL ships with the release.** Every install must know where to deliver a report. Today `DEMIURGOS_BUGREPORT_RELAY_URL` only comes from the environment (`api_server.py:10142`), and with no value the submit fails closed into the copy-paste/GitHub-issue fallback. A released build must carry the relay URL as its default (installer/config), or no user's report can reach the group.
+
+**S17 — Out of scope.** (a) Migrating the idea bank to the shared identity store. (b) A one-tap bridge from the idea-bank bot to the reports bot — it would only ever fire for the Owner, since `TELEGRAM_ALLOWED_USERS` holds a single entry today. (c) Photo compression/re-encoding. (d) Automatic screen capture; screenshots are user-attached only. (e) Inbound free text on the reports bot — it is strictly one-way (Owner, D2: `unidireccional`). A bare `/start` still gets one canned answer pointing to the app, because Telegram's own START button sends exactly that and silence there reads as a broken bot; it interprets nothing and handles no free text.
 
 ## Tasks
 
@@ -71,11 +73,11 @@ A configuration value is never presented as Telegram verification.
 
 - [x] T1 — KV `LINKS` store: identity record shape, `started_bots`, permission flags (`S10`, `S11`). Same KV surface injected as `KvLike`, tested with `node --experimental-strip-types --test`. Commit `8bfb410d`; the anchor was renamed `principal_id` -> `account_key` in T2 after L12.
 - [x] T2 — `POST /link/start`, `POST /link/status`, `POST /link/revoke` behind the shared `x-relay-key`, with ticket TTL, pending-ticket reuse, idempotent redemption and the 3/hour ceiling; redemption is an internal function for the webhook, not a route (`S7`, `S9`, `S13`). Commit recorded in L13.
-- [ ] T3 — Telegram webhook: `/start <ticket>` redemption, `/link/revoke` command, webhook secret validation. (`S2`, `S7`)
+- [x] T3 — Telegram webhook: `/start <ticket>` redemption, `/link/revoke` command, webhook secret validation, free text ignored. (`S2`, `S7`, `S16`). Commit recorded in L17.
 
 ### T2 — Relay delivery
 
-- [ ] T4 — Group publication: `createForumTopic` per report, `sendDocument` for attachments, caption ≤ 1024 chars with the full text in the bundle document. (`S1`, `S5`)
+- [x] T4 — Group publication: `createForumTopic` per report, bounded summary message, `sendDocument` with the complete bundle as `report-<id>.txt`; degrades to a plain group message when topics are unavailable (`S1`, `S5`). Attachments ride the same document path in T7. Commit recorded in L18.
 - [ ] T5 — Attribution rendering for the three levels. (`S6`)
 - [ ] T6 — Dedup hash plus per-principal, per-IP and global ceilings, failing closed. (`S13`)
 
@@ -91,7 +93,8 @@ A configuration value is never presented as Telegram verification.
 
 - [ ] T12 — Relay: release DM to reporters of the fixed bugs only. (`S12`)
 - [ ] T13 — Tests across relay, backend and frontend; `relay/README.md`, i18n in both catalogues, `payload_manifest.json` regenerated. (`S13`, `S14`)
-- [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S17`)
+- [ ] T14 — Full checks per runner, `Risk:` line, delivery slice boundaries recorded. (`S1`–`S18`)
+- [ ] T15 — Ship the relay URL as a build default so any install delivers to the configured relay (`S18`). Touches the installer/config, not the relay.
 
 ## Log
 
@@ -165,3 +168,39 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Fix: the route now forwards a flag only when it is a boolean and leaves it `undefined` otherwise, and rejects a non-boolean flag with `400 relay.invalid_payload` instead of coercing it.
 - Regression tests added from the verifier's probes: vault usernames accepted / unusable keys refused at the HTTP entry path, omitted-flag reuse keeping the stored value, non-boolean flag rejected, HTTP revoke invalidating the ticket, omitted-flag merge at the function level, and the stored record carrying `account_key` with no `principal_id`.
 - `npm test` -> **36 passed, 0 failed**; `npm run typecheck` -> clean.
+
+**L16 — T3 evidence (2026-10-25).**
+- `relay/src/telegram.ts` (new): `parseStartCommand` / `parseRevokeCommand`, `handleTelegramUpdate`, and a `sendMessage` that never throws and never echoes the token. Copy is Spanish, short sentences, matching the product's primary catalogue.
+- `relay/src/index.ts`: `POST /telegram/webhook`, authenticated by `x-telegram-bot-api-secret-token` (the `setWebhook` `secret_token`), **not** by `x-relay-key` — the caller is Telegram, not the backend. Missing `TELEGRAM_BOT_TOKEN` or `TELEGRAM_WEBHOOK_SECRET` fails closed with `relay.not_configured`.
+- **A handled failure answers 200, not an error.** Telegram redelivers any non-2xx, so an expired or already-claimed ticket is answered with a short message instead of an error status; otherwise the same update would replay forever.
+- One-way enforced (D2): free text and non-message updates return 200 and make **no outbound call**, which also removes the cheapest spam lever.
+- Reliability: a redemption that throws `LinkError` still writes a user-facing message, and an unexpected throw is swallowed into a 200 so Telegram does not retry.
+- Tests: `relay/test/webhook.test.ts` (10) with the global `fetch` stubbed — auth (missing/wrong secret), fail-closed config, live ticket, repeated `/start`, expired ticket, ticket claimed by another account, `/link/revoke` with and without a link, free text ignored, and the token/secret never appearing in a response. One test initially failed because the test passed a user id where the webhook secret belonged; the source was correct.
+- `npm test` -> **47 passed, 0 failed**; `npm run typecheck` -> clean.
+
+**L17 — T4 evidence (2026-10-25).**
+- `relay/src/publication.ts` (new): `topicName`, `summaryText`, `bundleText`, and `publishReport` (topic → summary message → `.txt` document).
+- Why a document: a Telegram message caps at 4096 characters and the logs alone reach 65536, so the summary is truncated at 3800 and the complete report travels as `report-<id>.txt`. That also gives S5's "document, never `sendPhoto`" a home before user attachments arrive.
+- Degradation: a plain group or a missing topic permission still receives the report, without a thread. A failed **summary** is a real delivery failure (`relay.delivery_failed`), never swallowed.
+- Sink selection in `index.ts`: `TELEGRAM_CHAT_ID` + `TELEGRAM_BOT_TOKEN` selects Telegram; otherwise the existing Brevo path runs. Neither configured fails closed with `relay.not_configured` instead of answering success.
+- Tests: `relay/test/publication.test.ts` (9) — naming bounds, summary bounds, full logs preserved, the three-call sequence, degradation without topics, a failed summary rejecting, no token in message or document, and both sink-selection paths through `POST /`.
+- `npm test` -> **56 passed, 0 failed**; `npm run typecheck` -> clean; `wrangler deploy --dry-run` -> 30.51 KiB.
+
+**L18 — Correction after verification of T3+T4 (2026-10-25).** `gentle-ai-verify` returned **FAIL** on one requirement (11 of 12 met).
+- **Blocker:** the webhook guard rejected only `undefined` ids, so `chat.id` / `from.id` as `null`, `true`, `{}` or a float were stringified (`"null"`, `"true"`, `"[object Object]"`) and still produced an outbound `sendMessage` to a chat that does not exist. `redeemTicket` then failed on a non-numeric id and the failure was announced to that bogus chat.
+- Fix: ids are read as numbers only (`Number.isSafeInteger`) or strings, then validated — chat ids `^-?[1-9][0-9]{0,19}$`, user ids positive — before any work. A malformed id now returns silence with no outbound call.
+- Privacy bonus: no `identity:tg:<garbage>` can be created from a malformed update; the store already refused it, and now the request never reaches it.
+- Regression test added covering `null`, `true`, `{}`, negative, fractional and non-numeric ids for both fields, plus a `text` that is not a string.
+- `npm test` -> **57 passed, 0 failed**; `npm run typecheck` -> clean.
+- Everything else in the round met its requirement: publication order, the 65536-character log preserved, the topic/summary/caption bounds, degradation without topics, `delivery_failed` on a failed summary, both sink-selection paths, and no token in any output. Advisory noted, unchanged from baseline: a 65536-character **multibyte** log exceeds the pre-existing 98304-byte payload cap.
+
+**L19 — Where a report is visible, and the gap behind it (2026-10-25).** Verified while answering the Owner.
+- A report is visible **only in the Telegram triage group**: one forum topic per report, a summary message, and `report-<id>.txt` with the full bundle. There is no in-app list and no dashboard; the group is the inbox. In-app surfacing (T11) is the "your report was fixed" notice, not a report browser.
+- **Gap found:** the relay URL is read only from the environment (`api_server.py:10142`) with no default, and an unset value fails closed into the copy-paste/GitHub-issue fallback. Only this machine has the variable (added to `.env`). A released install would therefore never deliver to the group. Recorded as S18 and task T15.
+- Also not yet visible in the group: the verified signature (needs T5 + the linking path T7–T10) and dedup/limits (T6). Until then every report says `sin contacto` unless the reporter typed one.
+
+**L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
+- That behavior is correct but is a bad first impression, since pressing START is what every new user does.
+- Fix: a bare `/start` (optionally `@bot`) now answers one canned line pointing to `Perfil → Reporte de errores → Conectar Telegram`. It interprets nothing and still handles no free text, so D2 holds.
+- Also fixed while here: `sendMessage` now logs `telegram.send_failed` with the status (never a secret) instead of failing silently, which is what made this take a round-trip to diagnose.
+- Tests: 2 added (bare `/start` answered and links nothing; `@bot` form answered; `/help`, `/start algo con espacios` and plain text still silent). `npm test` -> **60 passed, 0 failed**.
