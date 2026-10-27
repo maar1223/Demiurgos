@@ -113,9 +113,13 @@ describe("ProfilePage — Actualizaciones section", () => {
     expect(
       within(panel).getByRole("button", { name: "Buscar actualizaciones" }),
     ).toBeInTheDocument();
-    // Channel selector is present (Estable/Beta) — no data loaded yet.
-    expect(within(panel).getByRole("radio", { name: "Estable" })).toBeInTheDocument();
-    expect(within(panel).getByRole("radio", { name: "Beta" })).toBeInTheDocument();
+    // Channel selector is present (Recomendado/Anticipado) — no data loaded yet.
+    expect(
+      within(panel).getByRole("radio", { name: "Recomendado" }),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole("radio", { name: "Anticipado" }),
+    ).toBeInTheDocument();
   });
 
   it("is selectable from another section", async () => {
