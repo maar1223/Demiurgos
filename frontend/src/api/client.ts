@@ -38,7 +38,8 @@ function parseErrorBody(body: unknown): {
 /**
  * Base fetch wrapper with timeout, JSON parsing, and typed error handling.
  *
- * - Adds `Content-Type: application/json` by default.
+ * - Adds `Content-Type: application/json` by default, except for a FormData
+ *   body, where the browser must set the multipart boundary itself.
  * - On HTTP errors (4xx/5xx), parses `{detail, code, params}` from FastAPI
  *   and throws `ApiError`.
  * - On network error, throws `ApiError(status: 0, code: "network.unreachable")`.
@@ -55,11 +56,15 @@ export async function apiFetch<T>(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
+    // A FormData body must keep the browser-generated multipart boundary: setting
+    // JSON here would corrupt the upload.
+    const isFormData =
+      typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
     const response = await fetch(url, {
       ...fetchOptions,
       signal: controller.signal,
       headers: {
-        "Content-Type": "application/json",
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...fetchOptions.headers,
       },
     });

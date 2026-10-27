@@ -32,6 +32,40 @@ describe("apiFetch", () => {
     expect(result).toEqual(data);
   });
 
+  it("keeps the boundary of a FormData body instead of setting JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ ok: true }),
+      headers: new Headers(),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    const body = new FormData();
+    body.set("report", "{}");
+
+    await apiFetch("/api/bugreport/submit", { method: "POST", body });
+
+    const sent = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = sent.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("still defaults to JSON for a plain string body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ ok: true }),
+      headers: new Headers(),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await apiFetch("/api/x", { method: "POST", body: JSON.stringify({ a: 1 }) });
+
+    const sent = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = sent.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
   it("throws ApiError on 400 with detail", async () => {
     globalThis.fetch = mockFetch({
       ok: false,

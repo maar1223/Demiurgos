@@ -46,6 +46,49 @@ const logsBundle: BugReportBundle = {
   },
 };
 
+describe("submitBugReport — attachments travel as multipart", () => {
+  it("puts the bundle in a report part and each image in its own part", async () => {
+    const { submitBugReport: realSubmit } = await vi.importActual<
+      typeof import("@/api/bugReports")
+    >("@/api/bugReports");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ ok: true, delivery_id: "d-9" }),
+      headers: new Headers(),
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    try {
+      const file = new File([new Uint8Array(8)], "captura.png", { type: "image/png" });
+      await realSubmit(
+        {
+          app_version: "0.2.0",
+          platform: {
+            os: "Linux",
+            os_version: "6.8.0",
+            arch: "x86_64",
+            python_version: "3.11.9",
+          },
+          description: "boom",
+          logs: "line",
+        },
+        [file],
+      );
+
+      const body = (fetchMock.mock.calls[0][1] as RequestInit).body;
+      expect(body).toBeInstanceOf(FormData);
+      const form = body as FormData;
+      expect(JSON.parse(String(form.get("report"))).description).toBe("boom");
+      const part = form.get("attachments");
+      expect(part).toBeInstanceOf(File);
+      expect((part as File).name).toBe("captura.png");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
+
 describe("ReportSection — Perfil → Reporte de errores (S2a skeleton)", () => {
   beforeEach(() => {
     (assembleBugReport as Mock).mockReset();
@@ -125,6 +168,123 @@ describe("ReportSection — preview gate, submit and strict fallback (S2b)", () 
     await screen.findByTestId("bugreport-app-version");
     return user;
   }
+
+  function image(name = "captura.png", type = "image/png", size = 1024): File {
+    return new File([new Uint8Array(size)], name, { type });
+  }
+
+  it("adds a screenshot, shows its thumbnail, and re-locks the gate", async () => {
+    const user = await renderReady();
+    const preview = screen.getByRole("button", {
+      name: tEs("profile.bugreport.preview"),
+    });
+    const submit = screen.getByRole("button", {
+      name: tEs("profile.bugreport.submit"),
+    });
+    await user.click(preview);
+    expect(submit).toBeEnabled();
+
+    await user.upload(screen.getByLabelText(tEs("profile.bugreport.addScreenshot")), image());
+
+    // New input invalidates the preview: nothing ships unseen.
+    expect(submit).toBeDisabled();
+    expect(screen.getAllByTestId("bugreport-attachment")).toHaveLength(1);
+    expect(screen.getByTestId("bugreport-attachment")).toHaveTextContent("captura.png");
+  });
+
+  it("lists the screenshots in the preview and sends them with the report", async () => {
+    const user = await renderReady();
+    const file = image("pantalla.png");
+
+    await user.upload(screen.getByLabelText(tEs("profile.bugreport.addScreenshot")), file);
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+
+    expect(screen.getByTestId("bugreport-preview-attachments")).toHaveTextContent(
+      tEs("profile.bugreport.previewAttachments", { count: 1 }),
+    );
+
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-7" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    const [, attachments] = (submitBugReport as Mock).mock.calls[0];
+    expect(attachments).toEqual([file]);
+  });
+
+  it("removing a screenshot re-locks the gate", async () => {
+    const user = await renderReady();
+
+    await user.upload(
+      screen.getByLabelText(tEs("profile.bugreport.addScreenshot")),
+      image(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    const submit = screen.getByRole("button", {
+      name: tEs("profile.bugreport.submit"),
+    });
+    expect(submit).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /Quitar captura/ }));
+
+    expect(submit).toBeDisabled();
+    expect(screen.queryAllByTestId("bugreport-attachment")).toHaveLength(0);
+  });
+
+  it("sends no attachments when none were chosen", async () => {
+    const user = await renderReady();
+
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.preview") }),
+    );
+    (submitBugReport as Mock).mockResolvedValue({ ok: true, delivery_id: "d-8" });
+    await user.click(
+      screen.getByRole("button", { name: tEs("profile.bugreport.submit") }),
+    );
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalledTimes(1));
+    expect((submitBugReport as Mock).mock.calls[0][1]).toEqual([]);
+  });
+
+  it("keeps at most two screenshots and says so", async () => {
+    const user = await renderReady();
+    const input = screen.getByLabelText(tEs("profile.bugreport.addScreenshot"));
+
+    await user.upload(input, [image("a.png"), image("b.png")]);
+    await user.upload(input, image("c.png"));
+
+    expect(screen.getAllByTestId("bugreport-attachment")).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      tEs("profile.bugreport.attachmentLimit"),
+    );
+  });
+
+  it("refuses an oversized or non-image screenshot locally", async () => {
+    // The picker filters by `accept`, but a desktop dialog can still hand a file
+    // over, so the panel re-checks and must say why it refused.
+    const user = userEvent.setup({ applyAccept: false });
+    (assembleBugReport as Mock).mockResolvedValue(baseBundle);
+    render(<ReportSection />);
+    await screen.findByTestId("bugreport-app-version");
+    const input = screen.getByLabelText(tEs("profile.bugreport.addScreenshot"));
+
+    await user.upload(input, image("grande.png", "image/png", 5 * 1024 * 1024 + 1));
+    expect(screen.queryAllByTestId("bugreport-attachment")).toHaveLength(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      tEs("profile.bugreport.attachmentTooLarge"),
+    );
+
+    await user.upload(input, image("notas.txt", "text/plain", 10));
+    expect(screen.queryAllByTestId("bugreport-attachment")).toHaveLength(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      tEs("profile.bugreport.attachmentType"),
+    );
+  });
 
   it("keeps submit disabled until the preview is rendered (mandatory gate)", async () => {
     const user = await renderReady();

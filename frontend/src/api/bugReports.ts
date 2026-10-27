@@ -30,21 +30,40 @@ export function assembleBugReport(): Promise<BugReportBundle> {
   });
 }
 
-/** POST /api/bugreport/submit — re-validated (allow-list + caps + rate
- *  limit), stateless relay delivery. Failures surface as `ApiError` with the
- *  stable codes `bugreport.not_allowlisted` / `bugreport.too_large` /
- *  `bugreport.rate_limited` / `bugreport.relay_unavailable` /
- *  `bugreport.delivery_failed`. */
+/**
+ * POST /api/bugreport/submit — re-validated (allow-list + caps + rate limit),
+ * stateless relay delivery. Failures surface as `ApiError` with the stable codes
+ * `bugreport.not_allowlisted` / `bugreport.too_large` /
+ * `bugreport.invalid_attachment` / `bugreport.rate_limited` /
+ * `bugreport.relay_unavailable` / `bugreport.delivery_failed`.
+ *
+ * With screenshots the request is `multipart/form-data` — the reviewed bundle in
+ * a `report` part and each image as an `attachments` part — because binaries must
+ * never ride inside the allow-listed JSON bundle or its size cap. Without them it
+ * stays a plain JSON POST.
+ */
 export function submitBugReport(
   payload: BugReportSubmitPayload,
+  attachments: File[] = [],
 ): Promise<BugReportSubmitResult> {
+  const body =
+    attachments.length === 0
+      ? JSON.stringify(payload)
+      : (() => {
+          const form = new FormData();
+          form.set("report", JSON.stringify(payload));
+          for (const file of attachments) {
+            form.append("attachments", file, file.name);
+          }
+          return form;
+        })();
   return apiFetch<BugReportSubmitResult>(
     `${API_BASE_URL}/api/bugreport/submit`,
     {
       method: "POST",
       credentials: "same-origin",
-      body: JSON.stringify(payload),
-      timeout: 15_000,
+      body,
+      timeout: 30_000,
     },
   );
 }

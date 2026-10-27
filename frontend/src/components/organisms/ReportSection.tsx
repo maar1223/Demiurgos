@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { assembleBugReport, fallbackBody, submitBugReport } from "@/api/bugReports";
@@ -18,6 +18,64 @@ function describeError(cause: unknown, fallback: string): string {
     return getErrorMessage(cause.status, cause.detail, cause.code, cause.params);
   }
   return fallback;
+}
+
+/** Screenshot bounds — the server re-enforces every one of them (S5). */
+const ATTACHMENTS_MAX = 2;
+const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const ATTACHMENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function describeBytes(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024);
+  return megabytes >= 1
+    ? `${megabytes.toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** One chosen screenshot: a thumbnail, its name and a remove action.
+ *
+ *  The object URL is created and revoked with the file, so a removed or
+ *  replaced image cannot keep its bytes alive. When the environment cannot mint
+ *  one (jsdom), the name is shown instead of a broken image.
+ */
+function AttachmentThumb({
+  file,
+  onRemove,
+  removeLabel,
+}: {
+  file: File;
+  onRemove: () => void;
+  removeLabel: string;
+}) {
+  const [url, setUrl] = useState("");
+
+  useEffect(() => {
+    if (typeof URL.createObjectURL !== "function") return;
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+
+  return (
+    <li
+      className="flex items-center gap-3 rounded-lg border border-edge bg-surface p-2"
+      data-testid="bugreport-attachment"
+    >
+      {url ? (
+        <img
+          src={url}
+          alt={file.name}
+          className="h-12 w-12 rounded object-cover"
+        />
+      ) : null}
+      <span className="min-w-0 flex-1 truncate text-small text-primary">
+        {file.name} · {describeBytes(file.size)}
+      </span>
+      <Button variant="secondary" onClick={onRemove} aria-label={`${removeLabel} ${file.name}`}>
+        ×
+      </Button>
+    </li>
+  );
 }
 
 const FIELD_INPUT_CLASS =
@@ -54,6 +112,12 @@ export function ReportSection() {
   // The mandatory gate: submit stays disabled until the exact bundle has been
   // shown at least once, and re-locks on every edit so nothing ships unseen.
   const [previewed, setPreviewed] = useState(false);
+
+  // Screenshots are chosen explicitly, never captured (§S5): adding or removing
+  // one re-locks the gate, because the image leaves only after it was seen.
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const attachmentInput = useRef<HTMLInputElement>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -109,6 +173,45 @@ export function ReportSection() {
   /** Any review edit invalidates the preview — the exact-shown guarantee. */
   const markEdited = useCallback(() => setPreviewed(false), []);
 
+  const addAttachments = useCallback(
+    (chosen: FileList | null) => {
+      if (chosen === null || chosen.length === 0) return;
+      setAttachmentError(null);
+      const next = [...attachments];
+      let error: string | null = null;
+      for (const file of Array.from(chosen)) {
+        if (next.length >= ATTACHMENTS_MAX) {
+          error = t("profile.bugreport.attachmentLimit");
+          break;
+        }
+        if (!ATTACHMENT_TYPES.has(file.type)) {
+          error = t("profile.bugreport.attachmentType");
+          continue;
+        }
+        if (file.size > ATTACHMENT_MAX_BYTES) {
+          error = t("profile.bugreport.attachmentTooLarge");
+          continue;
+        }
+        next.push(file);
+      }
+      setAttachmentError(error);
+      if (next.length !== attachments.length) {
+        setAttachments(next);
+        markEdited();
+      }
+    },
+    [attachments, markEdited, t],
+  );
+
+  const removeAttachment = useCallback(
+    (target: File) => {
+      setAttachments((current) => current.filter((file) => file !== target));
+      setAttachmentError(null);
+      markEdited();
+    },
+    [markEdited],
+  );
+
   const submit = useCallback(async () => {
     const payload = buildPayload();
     if (!payload || !previewed || submitting) return;
@@ -118,7 +221,7 @@ export function ReportSection() {
     setFallbackError(null);
     setCopied(false);
     try {
-      await submitBugReport(payload);
+      await submitBugReport(payload, attachments);
       setSubmitted(true);
     } catch (cause: unknown) {
       setSubmitError(describeError(cause, t("profile.bugreport.submitError")));
@@ -135,7 +238,7 @@ export function ReportSection() {
     } finally {
       setSubmitting(false);
     }
-  }, [buildPayload, previewed, submitting, t]);
+  }, [attachments, buildPayload, previewed, submitting, t]);
 
   const copyFallback = useCallback(async () => {
     if (!fallback || !navigator.clipboard) {
@@ -287,6 +390,54 @@ export function ReportSection() {
             )}
           </div>
 
+          <div className="mt-4 flex flex-col gap-2">
+            <p className="text-small font-medium text-primary">
+              {t("profile.bugreport.attachmentsTitle")}
+            </p>
+            <p className="text-small text-muted">
+              {t("profile.bugreport.attachmentsHint")}
+            </p>
+            <input
+              ref={attachmentInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              className="sr-only"
+              aria-label={t("profile.bugreport.addScreenshot")}
+              onChange={(event) => {
+                addAttachments(event.target.files);
+                event.target.value = "";
+              }}
+              data-testid="bugreport-attachment-input"
+            />
+            <div>
+              <Button
+                variant="secondary"
+                onClick={() => attachmentInput.current?.click()}
+                disabled={attachments.length >= ATTACHMENTS_MAX}
+              >
+                {t("profile.bugreport.addScreenshot")}
+              </Button>
+            </div>
+            {attachments.length > 0 && (
+              <ul className="flex flex-col gap-2">
+                {attachments.map((file) => (
+                  <AttachmentThumb
+                    key={`${file.name}-${file.size}-${file.lastModified}`}
+                    file={file}
+                    onRemove={() => removeAttachment(file)}
+                    removeLabel={t("profile.bugreport.removeScreenshot")}
+                  />
+                ))}
+              </ul>
+            )}
+            {attachmentError && (
+              <p role="alert" className="text-small text-status-error">
+                {attachmentError}
+              </p>
+            )}
+          </div>
+
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => setPreviewed(true)}>
               {t("profile.bugreport.preview")}
@@ -316,6 +467,22 @@ export function ReportSection() {
               <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-small text-primary">
                 {payloadPreview}
               </pre>
+              {attachments.length > 0 && (
+                <div className="mt-2" data-testid="bugreport-preview-attachments">
+                  <p className="text-small font-medium text-primary">
+                    {t("profile.bugreport.previewAttachments", {
+                      count: attachments.length,
+                    })}
+                  </p>
+                  <ul className="mt-1 flex flex-col gap-1 text-small text-muted">
+                    {attachments.map((file) => (
+                      <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                        {file.name} · {describeBytes(file.size)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
