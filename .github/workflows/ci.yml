@@ -427,3 +427,46 @@ jobs:
           ".venv/Scripts/python.exe" -m pytest \
             src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py -q \
             -k "powershell or m1"
+  payload-audit-parity:
+    # Bug guard (release-payload-audit-parity): the release packaging gate had
+    # TWO implementations, and only the POSIX one honoured the shared
+    # content-scan allow-list. The Windows cell therefore rejected the shipped
+    # content scanner's own rule literals (content_scan.py, author-path) while
+    # Linux/macOS stayed green, and because the packaging matrix deliberately
+    # runs only on push to master, review never saw it: every release package
+    # was red for weeks with a green PR gate. Here each cell runs the port it
+    # ships with, against the SAME fixture tree, on every pull request.
+    name: Payload audit parity (${{ matrix.cell }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cell: posix
+            venv_python: .venv/bin/python
+          - os: windows-latest
+            cell: windows
+            venv_python: .venv/Scripts/python.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv (pytest only, the fixture is stdlib)
+        shell: bash
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python "${{ matrix.venv_python }}" --only-binary=:all: pytest
+
+      - name: Run the payload-audit port parity cells
+        # The POSIX cells are skipped on Windows and the PowerShell cells are
+        # skipped elsewhere, so each cell exercises exactly its shipped port;
+        # both assert the same verdicts on the same fixture tree.
+        shell: bash
+        run: |
+          "${{ matrix.venv_python }}" -m pytest \
+            src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py \
+            -q -k "PayloadAuditPortParity"

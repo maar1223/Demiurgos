@@ -1,0 +1,68 @@
+# Shared content-scan allow-list - SINGLE SOURCE OF TRUTH for both release
+# gates. Consumed by scripts/secret_scan.sh (POSIX tree/CI scan and the
+# POSIX payload audit) and by scripts/payload_audit.ps1 (the Windows package
+# gate). Never duplicate this list in either script: the two ports once
+# carried separate notions of "allow-listed" and the Windows gate rejected the
+# shipped scanner's own rule literals while POSIX stayed green.
+#
+# Format: one repo-relative path per line. '#' starts a comment, blank lines
+# are ignored. A path is allow-listed when it EQUALS an entry or ENDS WITH
+# "/<entry>" (so absolute and root-relative paths match alike).
+#
+# What may be listed here - and nothing else:
+#   * the scanner's own files: they contain the rule definitions by design,
+#     so they necessarily match some patterns;
+#   * obviously-fake test fixtures: placeholder values only, never real
+#     credentials and never real author data;
+#   * test harnesses that deliberately reference the patterns as functional
+#     predicates (PATH scrubbing) or negative assertions;
+#   * the two personal Google-Sheets tools (dev_diary.py, sync-ideas.py):
+#     their only residual match is the required Sheets API parameter name
+#     for the spreadsheet id; the real ids are read from environment
+#     variables, never committed.
+#
+# No entry hides a real credential or a real author path: baseline violations
+# must surface in tree/CI scans until their owning slice cleans them up.
+#
+# This file itself must stay clean - it carries paths only, and even its
+# comments spell out rule names rather than rule literals, so it is NOT
+# listed below.
+
+# Scanner self-files: contain the rule definitions by design.
+scripts/secret_scan.sh
+scripts/payload_audit.sh
+scripts/payload_audit.ps1
+.gitleaks.toml
+
+# The bug-report content scanner + its tests: they carry the SAME deny
+# patterns as secret_scan.sh (parity-locked by test) and their report-specific
+# rules (local paths, usernames, hostnames) necessarily match some literals.
+src/tools/demiurgos-suite/wiki/content_scan.py
+src/tools/demiurgos-suite/wiki/tests/test_content_scan.py
+
+# Obvious test fixtures only (fake values for the secret-scan suite).
+src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py
+
+# Pre-existing frontend fixtures with placeholder paths/ids.
+frontend/src/__tests__/BackupSection.test.tsx
+frontend/src/__tests__/MethodologyLibrary.test.tsx
+
+# Test harnesses that deliberately reference the patterns:
+#   test_launcher_boot_smoke.py    - scrubs the POSIX home prefix from PATH so
+#                                    the hermetic boot never touches the real
+#                                    home directory (functional).
+#   test_launcher_portable.py      - negative assertions: the Windows
+#                                    user-profile and home prefixes must NOT
+#                                    appear in the shipped launchers.
+#   test_launcher_boot_rollback.py - same PATH scrub as the boot smoke;
+#                                    rollback harness fixtures.
+src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
+src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_rollback.py
+
+# Personal author tooling (Google Sheets): the ONLY residual match is the
+# required Sheets API parameter name for the spreadsheet id; the real ids are
+# read from env vars (DEMIURGOS_DEV_DIARY_SHEET_ID / GOOGLE_SHEETS_ID), never
+# committed. No real value is hidden by this entry.
+src/tools/dev_diary.py
+src/tools/sync-ideas.py

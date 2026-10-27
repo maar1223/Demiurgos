@@ -8,6 +8,13 @@
 # scripts/secret_scan.sh (the single source of truth on POSIX; the parity test
 # test_payload_audit.py asserts the rule and deny lists cannot diverge).
 #
+# Content-scan allow-list: BOTH ports read scripts/payload_scan_allowlist.txt
+# (the single source of truth - never a private copy here). It covers the
+# scanner's own files, which contain the rule definitions by design and would
+# otherwise self-detect: this port once scanned without it and rejected the
+# shipped content_scan.py on every Windows package, while POSIX stayed green.
+# A missing allow-list is a usage error (exit 2), never a blind scan.
+#
 # Explicit DENY additions (fail the audit wherever they appear):
 #   config/idea-capture.yaml  config/hermes-mcp-profile.yaml.example
 #   docs/MARCA.md  src/tools/dev_diary.py  engram-export.json
@@ -61,6 +68,9 @@ Usage: powershell.exe -NoProfile -File payload_audit.ps1 [-Root DIR] [-Manifest 
   -WalkFs              force a full filesystem walk
   -Help                show this help
 
+The content-scan allow-list is scripts/payload_scan_allowlist.txt (shared with
+scripts/secret_scan.sh; not overridable - one source of truth).
+
 Exit codes: 0 clean, 1 findings, 2 usage/manifest error.
 '@
     exit 0
@@ -112,6 +122,16 @@ function Test-DenyGlob([string]$rel) {
     return $false
 }
 
+function Test-ScanAllowed([string]$rel) {
+    # Content-scan exemption (scanner self-files, fake fixtures). Exact-or-
+    # suffix match, parity with secret_scan.sh _is_allowed. This NEVER
+    # bypasses the path checks: Test-Allowed / deny rules decide shipping.
+    foreach ($_entry in $scanAllowlist) {
+        if ($rel -eq $_entry -or $rel.EndsWith('/' + $_entry)) { return $true }
+    }
+    return $false
+}
+
 function Test-Allowed([string]$rel) {
     if ($payload -contains $rel) { return $true }
     foreach ($entry in $allowEntries) {
@@ -131,6 +151,7 @@ function Invoke-ContentScan([string]$root, [string[]]$allowed) {
             if ($rel.StartsWith($prefix)) { $skipped = $true; break }
         }
         if ($skipped) { continue }  # path-checked only (derived dist tree)
+        if (Test-ScanAllowed $rel) { continue }  # shared allow-list (see header)
         $file = Join-Path $root $rel
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
         foreach ($rule in $rules) {
@@ -175,6 +196,29 @@ if ($Allow) {
         if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
         $allowEntries += $trimmed
     }
+}
+
+# --- shared content-scan allow-list (single source of truth) -------------------
+# Read from THIS script's directory, never from -Root: the list describes repo
+# paths, and an audited stage must not be able to supply its own exemptions.
+$scanAllowlistPath = Join-Path $PSScriptRoot 'payload_scan_allowlist.txt'
+if (-not (Test-Path -LiteralPath $scanAllowlistPath -PathType Leaf)) {
+    Write-Host "payload_audit: cannot read the shared allow-list: $scanAllowlistPath" -ForegroundColor Red
+    exit 2
+}
+$scanAllowlist = @()
+try {
+    # -ErrorAction Stop + the try/catch: existence is not readability. An
+    # unreadable list must be a usage error (exit 2), never a silent abort
+    # with a different code.
+    foreach ($line in Get-Content -LiteralPath $scanAllowlistPath -ErrorAction Stop) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
+        $scanAllowlist += $trimmed
+    }
+} catch {
+    Write-Host "payload_audit: cannot read the shared allow-list: $scanAllowlistPath" -ForegroundColor Red
+    exit 2
 }
 
 # --- candidate enumeration -----------------------------------------------------

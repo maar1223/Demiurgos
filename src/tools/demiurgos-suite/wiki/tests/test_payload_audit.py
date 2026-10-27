@@ -707,3 +707,266 @@ class TestPayloadAuditPowerShellParity:
         assert "rel, $h.LineNumber, $rule.Name" in outputs[0], "scan hit shape must be path:line:rule"
         assert "rel, $reason" in outputs[1], "deny shape must be path:reason"
         assert "$h.Value" not in ps and "$h.Matches" not in ps, "no output may echo a matched value"
+
+# ---------------------------------------------------------------------------
+# Release-payload allow-list parity (release-payload-audit-parity).
+#
+# The Windows port reimplemented the content scan WITHOUT the allow-list the
+# POSIX path inherits from secret_scan.sh. The shipped content scanner carries
+# its own rule literals by design (/home/, C:\Users), so the Windows cell
+# flagged content_scan.py:48 and :73 (author-path) and the packaging gate went
+# red on every push to master since the scanner shipped — while the POSIX cell
+# stayed green. The allow-list now lives in ONE committed file that both ports
+# read, and both ports are executed against the same fixture here.
+# ---------------------------------------------------------------------------
+
+_SCANNER_SELF_FILE = "src/tools/demiurgos-suite/wiki/content_scan.py"
+_SHARED_ALLOWLIST = _REPO_ROOT / "scripts" / "payload_scan_allowlist.txt"
+
+def _ps_host() -> str | None:
+    """The PowerShell host to exercise: powershell.exe (PS 5.1) on Windows, pwsh elsewhere."""
+    if os.name == "nt":
+        return shutil.which("powershell") or shutil.which("pwsh")
+    return shutil.which("pwsh")
+
+
+#: The PowerShell runtime cells need a host, not an OS: the Windows package
+#: gate is the one that ships, and pwsh on a POSIX runner exercises the same
+#: script. Skipped only when no host exists at all.
+PS_HOST = pytest.mark.skipif(_ps_host() is None, reason="no PowerShell host on this runner")
+
+
+def _run_ps_audit(root: Path, manifest: Path, *extra: str) -> subprocess.CompletedProcess:
+    """Run the PowerShell audit against a fixture tree (manifest outside it)."""
+    host = _ps_host()
+    assert host, "no PowerShell host available"
+    argv = [host, "-NoProfile"]
+    if os.name == "nt":
+        argv += ["-ExecutionPolicy", "Bypass"]
+    argv += ["-File", str(_PAYLOAD_AUDIT_PS1), "-Root", str(root), "-Manifest", str(manifest)]
+    return subprocess.run(argv + list(extra), capture_output=True, text=True, timeout=120)
+
+
+def _scanner_self_tree(tmp_path: Path) -> tuple[Path, Path]:
+    """A stage holding only the shipped content scanner, allowed by manifest.
+
+    The scanner necessarily contains the deny-rule literals, so this tree is
+    the exact shape that broke the Windows cell: allow-list or red.
+    """
+    root = tmp_path / "stage"
+    target = root / _SCANNER_SELF_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_REPO_ROOT / _SCANNER_SELF_FILE, target)
+    manifest = tmp_path / "manifest.json"
+    _write_manifest(manifest, [_SCANNER_SELF_FILE])
+    return root, manifest
+
+
+def _planted_secret_tree(tmp_path: Path) -> tuple[Path, Path]:
+    """An allowed file carrying a fake key: both ports must report it identically."""
+    root = tmp_path / "stage"
+    _build_tree(root, {"app/main.py": FAKE_OPENAI_KEY + "\n"})
+    manifest = tmp_path / "manifest.json"
+    _write_manifest(manifest, ["app/main.py"])
+    return root, manifest
+
+
+def _copy_shipped_scripts(tmp_path: Path) -> Path:
+    """A private copy of scripts/, so a cell can hide or chmod the shared list."""
+    dest = tmp_path / "scripts"
+    shutil.copytree(_REPO_ROOT / "scripts", dest)
+    return dest
+
+
+def _run_sh_from(script: Path, root: Path, manifest: Path, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(script), "--root", str(root), "--manifest", str(manifest), *extra],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def _run_ps_from(script: Path, root: Path, manifest: Path, *extra: str) -> subprocess.CompletedProcess:
+    host = _ps_host()
+    assert host, "no PowerShell host available"
+    argv = [host, "-NoProfile"]
+    if os.name == "nt":
+        argv += ["-ExecutionPolicy", "Bypass"]
+    argv += ["-File", str(script), "-Root", str(root), "-Manifest", str(manifest)]
+    return subprocess.run(argv + list(extra), capture_output=True, text=True, timeout=120)
+
+
+class TestPayloadAuditPortParity:
+    """One allow-list source; both ports reach the same verdict on one fixture."""
+
+    def test_shared_allowlist_file_is_the_single_source(self):
+        assert _SHARED_ALLOWLIST.is_file(), "the shared allow-list file must exist"
+        entries = [
+            line.strip()
+            for line in _SHARED_ALLOWLIST.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        assert _SCANNER_SELF_FILE in entries, "the shipped content scanner must stay allow-listed"
+        assert "scripts/secret_scan.sh" in entries
+        # Both ports must READ that file; neither may keep a private copy.
+        assert "payload_scan_allowlist.txt" in _SECRET_SCAN.read_text(encoding="utf-8")
+        assert "payload_scan_allowlist.txt" in _PAYLOAD_AUDIT_PS1.read_text(encoding="ascii")
+        assert "DEFAULT_ALLOWLIST=(" not in _SECRET_SCAN.read_text(encoding="utf-8"), (
+            "the POSIX default allow-list must live in the shared file, not inline"
+        )
+
+    def test_powershell_port_consults_the_shared_allowlist(self):
+        ps = _PAYLOAD_AUDIT_PS1.read_text(encoding="ascii")
+        assert "Test-ScanAllowed" in ps, "the PS scan must consult the shared allow-list"
+        # exact-or-suffix matching, parity with secret_scan.sh _is_allowed
+        assert "EndsWith('/' + $_entry)" in ps
+        # the check runs INSIDE the scan loop, not after it
+        scan = ps[ps.index("function Invoke-ContentScan"):]
+        assert "Test-ScanAllowed" in scan, "allow-list must be applied per scanned file"
+
+    def test_scanner_self_file_really_carries_the_patterns(self):
+        """Guard the fixture: if the literals move, this cell stops proving anything."""
+        text = (_REPO_ROOT / _SCANNER_SELF_FILE).read_text(encoding="utf-8")
+        assert "/home/" in text and "C:\\\\Users" in text
+
+    @POSIX_RUNNER
+    def test_posix_port_ignores_scanner_self_patterns(self, tmp_path):
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_audit(root, manifest)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "content-scan" not in result.stdout
+
+    @PS_HOST
+    def test_powershell_port_ignores_scanner_self_patterns(self, tmp_path):
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_ps_audit(root, manifest)
+        assert result.returncode == 0, (
+            "the Windows payload gate must not flag the scanner's own rule literals; "
+            + result.stdout
+            + result.stderr
+        )
+        assert "content_scan.py:" not in result.stdout
+
+    @POSIX_RUNNER
+    def test_posix_port_flags_a_planted_secret(self, tmp_path):
+        root, manifest = _planted_secret_tree(tmp_path)
+        result = _run_audit(root, manifest)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert result.stdout.strip() == "app/main.py:1: openai-key"
+        assert FAKE_OPENAI_KEY not in result.stdout, "never echo the matched value"
+
+    @PS_HOST
+    def test_powershell_port_flags_a_planted_secret(self, tmp_path):
+        root, manifest = _planted_secret_tree(tmp_path)
+        result = _run_ps_audit(root, manifest)
+        assert result.returncode == 1, result.stdout + result.stderr
+        # The finding line is parity with the POSIX port on the same tree. The
+        # PS port also prints its summary to stdout (Write-Host) where POSIX
+        # uses stderr, so only the finding is compared verbatim.
+        hits = [l for l in result.stdout.splitlines() if l.startswith("app/main.py:")]
+        assert hits == ["app/main.py:1: openai-key"], result.stdout
+        assert FAKE_OPENAI_KEY not in result.stdout + result.stderr, "never echo the matched value"
+
+    @PS_HOST
+    def test_powershell_port_still_denies_an_unlisted_path(self, tmp_path):
+        """The allow-list must not turn the default-DENY gate permissive."""
+        root, manifest = _scanner_self_tree(tmp_path)
+        _build_tree(root, {"rogue.txt": "rogue\n"})
+        result = _run_ps_audit(root, manifest)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "deny: rogue.txt" in result.stdout
+
+    # --- fail-closed: the shared allow-list is a contract input ---------------
+    # A gate that cannot read its own allow-list must refuse to run (exit 2).
+    # It must never report "clean" on a tree it could not scan under the
+    # shared rules, and it must never abort with a different, ambiguous code.
+
+    @POSIX_RUNNER
+    def test_posix_audit_missing_allowlist_is_usage_error_with_no_targets(self, tmp_path):
+        scripts = _copy_shipped_scripts(tmp_path)
+        (scripts / "payload_scan_allowlist.txt").unlink()
+        root = tmp_path / "empty"
+        root.mkdir()
+        manifest = tmp_path / "manifest.json"
+        _write_manifest(manifest, [])
+        result = _run_sh_from(scripts / "payload_audit.sh", root, manifest)
+        assert result.returncode == 2, result.stdout + result.stderr
+
+    @POSIX_RUNNER
+    def test_posix_audit_missing_allowlist_is_usage_error_with_a_target(self, tmp_path):
+        scripts = _copy_shipped_scripts(tmp_path)
+        (scripts / "payload_scan_allowlist.txt").unlink()
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_sh_from(scripts / "payload_audit.sh", root, manifest)
+        assert result.returncode == 2, result.stdout + result.stderr
+
+    @PS_HOST
+    def test_powershell_audit_missing_allowlist_is_usage_error(self, tmp_path):
+        scripts = _copy_shipped_scripts(tmp_path)
+        (scripts / "payload_scan_allowlist.txt").unlink()
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_ps_from(scripts / "payload_audit.ps1", root, manifest)
+        assert result.returncode == 2, result.stdout + result.stderr
+
+    @PS_HOST
+    @pytest.mark.skipif(
+        not hasattr(os, "geteuid") or os.geteuid() == 0,
+        reason="root can read mode-000 files; the readability probe needs a normal user",
+    )
+    def test_powershell_audit_unreadable_allowlist_is_usage_error(self, tmp_path):
+        """Existence is not readability: an unreadable list exits 2, not 1."""
+        scripts = _copy_shipped_scripts(tmp_path)
+        (scripts / "payload_scan_allowlist.txt").chmod(0)
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_ps_from(scripts / "payload_audit.ps1", root, manifest)
+        assert result.returncode == 2, result.stdout + result.stderr
+
+    # --- the list is read from the scripts dir, never from the audited tree --
+    @POSIX_RUNNER
+    def test_posix_ignores_an_allowlist_in_the_audited_root(self, tmp_path):
+        """An audited stage must never be able to supply its own exemptions."""
+        root = tmp_path / "stage"
+        _build_tree(
+            root,
+            {"app/main.py": FAKE_OPENAI_KEY + "\n", "payload_scan_allowlist.txt": "app/main.py\n"},
+        )
+        manifest = tmp_path / "manifest.json"
+        _write_manifest(manifest, ["app/main.py"])
+        result = _run_audit(root, manifest)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "app/main.py:1: openai-key" in result.stdout
+
+    @PS_HOST
+    def test_powershell_ignores_an_allowlist_in_the_audited_root(self, tmp_path):
+        root = tmp_path / "stage"
+        _build_tree(
+            root,
+            {"app/main.py": FAKE_OPENAI_KEY + "\n", "payload_scan_allowlist.txt": "app/main.py\n"},
+        )
+        manifest = tmp_path / "manifest.json"
+        _write_manifest(manifest, ["app/main.py"])
+        result = _run_ps_audit(root, manifest)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "app/main.py:1: openai-key" in result.stdout
+
+    @POSIX_RUNNER
+    def test_posix_allowlist_tolerates_a_crlf_checkout(self, tmp_path):
+        """A CRLF checkout must not silently disable the shared list.
+
+        ``read`` keeps the carriage return, so every entry would stop matching
+        and the POSIX gate would reject the shipped scanner again.
+        """
+        scripts = _copy_shipped_scripts(tmp_path)
+        allowlist = scripts / "payload_scan_allowlist.txt"
+        allowlist.write_bytes(allowlist.read_bytes().replace(b"\n", b"\r\n"))
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_sh_from(scripts / "payload_audit.sh", root, manifest)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    @POSIX_RUNNER
+    def test_posix_no_default_allowlist_still_disables_the_shared_list(self, tmp_path):
+        root, manifest = _scanner_self_tree(tmp_path)
+        result = _run_audit(root, manifest, "--no-default-allowlist")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "content_scan.py:48: author-path" in result.stdout

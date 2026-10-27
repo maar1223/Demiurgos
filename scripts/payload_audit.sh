@@ -53,6 +53,7 @@ SECRET_SCAN="$SCRIPT_DIR/secret_scan.sh"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$ROOT/payload_manifest.json"
 ALLOWLIST_ARGS=()
+USE_DEFAULT_SCAN_ALLOWLIST=1
 ALLOW=()
 SCAN_SKIP=()
 ENUM="auto"
@@ -141,7 +142,10 @@ while [ $# -gt 0 ]; do
             shift
             ALLOWLIST_ARGS+=(--allowlist "$1")
             ;;
-        --no-default-allowlist) ALLOWLIST_ARGS+=(--no-default-allowlist) ;;
+        --no-default-allowlist)
+            ALLOWLIST_ARGS+=(--no-default-allowlist)
+            USE_DEFAULT_SCAN_ALLOWLIST=0
+            ;;
         --help|-h) usage ;;
         -*) usage ;;
         *) usage ;;
@@ -157,6 +161,17 @@ fi
 
 if [ ! -x "$SECRET_SCAN" ]; then
     echo "payload_audit: content-scan dependency not found/executable: $SECRET_SCAN" >&2
+    exit 2
+fi
+
+# The content-scan allow-list is a contract input, not an optimisation: both
+# release ports read scripts/payload_scan_allowlist.txt, and a missing or
+# unreadable file must fail the audit (exit 2) even when the stage happens to
+# contain nothing to scan. Without this the audit could report "clean" on a
+# tree it was never able to scan under the shared rules.
+if [ "$USE_DEFAULT_SCAN_ALLOWLIST" -eq 1 ] \
+    && [ ! -r "$SCRIPT_DIR/payload_scan_allowlist.txt" ]; then
+    echo "payload_audit: cannot read the shared allow-list: $SCRIPT_DIR/payload_scan_allowlist.txt" >&2
     exit 2
 fi
 
