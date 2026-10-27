@@ -379,7 +379,7 @@ def test_keyboard_rendered_with_ptb_markup(monkeypatch):
             asyncio.run(adapter.send_capture_prompt(
                 chat_id="7", capture_id=capture_id))
             assert sent["chat_id"] == "7"
-            assert f"Idea capturada (id=`{capture_id}`). Elegí una acción:" == sent["text"]
+            assert f"Idea capturada (id=`{capture_id}`). Elige una acción:" == sent["text"]
             markup = sent["reply_markup"]
             assert isinstance(markup, FakeInlineKeyboardMarkup)
             row = markup.inline_keyboard[0]

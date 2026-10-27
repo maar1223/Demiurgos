@@ -71,6 +71,13 @@ vi.mock("@/api/ideaCapture", () => ({
   clearIdeaCaptureToken: vi.fn(),
   discoverChatCandidates: vi.fn(),
   authorizeChat: vi.fn(),
+  // The panel probes the stored token on mount, so the surface must be complete.
+  testTelegramConnection: vi.fn().mockResolvedValue({
+    state: "configured",
+    has_token: true,
+    tested_at: null,
+    error_code: "",
+  }),
 }));
 
 vi.mock("@/api/worlds", () => ({

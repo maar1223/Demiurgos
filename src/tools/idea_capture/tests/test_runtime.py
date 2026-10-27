@@ -250,7 +250,7 @@ class ConfirmationCommandTests(unittest.TestCase):
 
     def test_commands_drive_the_confirmation_flow(self):
         receipt = self.runtime.handle_update(text_payload(1, text="idea"))
-        self.assertIn("Usá `/save", handle_confirmation_command(self.runtime, "hola"))
+        self.assertIn("Usa `/save", handle_confirmation_command(self.runtime, "hola"))
         self.assertIn("guardada", handle_confirmation_command(self.runtime, f"/save {receipt.capture_id}"))
         self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
 
@@ -458,12 +458,12 @@ class CallbackFlowTests(unittest.TestCase):
         self.assertEqual(len(transport.sent), 1)
         _chat_id, text = transport.sent[0]
         markup = transport.sent_markup[0]
-        self.assertIn("Elegí el mundo", text)
+        self.assertIn("Elige el mundo", text)
         worlds = {b["text"]: b["callback_data"]
                   for row in markup["inline_keyboard"] for b in row}
         self.assertEqual(sorted(worlds), ["nec", "vibrantes"])
         self.assertEqual(worlds["nec"], f"capture:{capture_id}:world:nec")
-        self.assertEqual(transport.answered, [("q-picker", "Elegí un mundo.")])
+        self.assertEqual(transport.answered, [("q-picker", "Elige un mundo.")])
         # The picker itself never mutates the capture.
         self.assertEqual(self.runtime.store.get(capture_id).state, CaptureState.RAW_PERSISTED)
 

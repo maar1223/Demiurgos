@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -204,6 +204,24 @@ export function IdeaCapturePanel({
       .finally(() => setVerifying(false));
   }, []);
 
+  // Auto-probe on mount. Without this the badge reported "requires connection"
+  // on every fresh page load even though the stored token was already proven:
+  // the probe only ran after a save/discover/authorize, so a reload threw that
+  // evidence away and the fallback label claimed the connection was missing.
+  // Probes once per stored-token presence (mount, or a later save); the
+  // explicit save/authorize paths keep their own probe for a token *replace*
+  // where `has_token` never changes.
+  const tokenWasPresent = useRef(false);
+  useEffect(() => {
+    if (!hasToken) {
+      tokenWasPresent.current = false;
+      return;
+    }
+    if (tokenWasPresent.current) return;
+    tokenWasPresent.current = true;
+    runProbe();
+  }, [hasToken, runProbe]);
+
   // Report the connection status to the shell as a row badge. Probe-driven
   // precedence: no token → warning; verifying → info; probe `configured` →
   // success; probe `error` → error; otherwise (`requires_connection`/none) →
@@ -234,6 +252,9 @@ export function IdeaCapturePanel({
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: true } : prev));
       setTokenMessage(t("ideaCapture.tokenSaved"));
+      // The explicit probe below owns this token-presence transition; mark it
+      // so the mount effect does not fire a second probe for the same save.
+      tokenWasPresent.current = true;
       // Probe the freshly stored token (fire-and-forget, fail-open).
       void runProbe();
     } catch (cause) {
@@ -258,6 +279,8 @@ export function IdeaCapturePanel({
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: false } : prev));
       setVerifyState(null);
+      // A later re-save is a fresh presence and must probe again.
+      tokenWasPresent.current = false;
       setTokenMessage(t("ideaCapture.tokenRemoved"));
     } catch (cause) {
       setTokenError(errorText(cause, t("ideaCapture.tokenRemoveError")));
