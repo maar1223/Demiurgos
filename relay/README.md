@@ -245,7 +245,7 @@ unusable for legitimate reports.
 | Linked principal | 5 per hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
 | Unlinked reporter | 5 per IP per 10 min, 200 per UTC day globally | `ip:<addr>`, `global:<date>` |
 | Linking tickets | 3 mints per hour per account (reuse is free) | `linkstart:<account_key>` |
-| Linking by IP | 10 mints and 1200 polls per hour | `linkstart:ip:<addr>`, `linkpoll:ip:<addr>` |
+| Linking by IP | 10 link-start calls and 1200 polls per hour (reuse counts) | `linkstart:ip:<addr>`, `linkpoll:ip:<addr>` |
 | Revoked install | Its dead token is refused for 30 days | `blocked:<sha256>` |
 
 Notes worth keeping:

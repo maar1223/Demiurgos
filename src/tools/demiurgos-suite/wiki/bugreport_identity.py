@@ -85,13 +85,29 @@ def account_key(
     return fresh
 
 
-def install_id(local_state: LocalState) -> str:
-    """The stable, anonymous install id, minted once and persisted (S20).
+def pseudonym_id(local_state: LocalState) -> str:
+    """The stable, anonymous pseudonym id, minted once and persisted (S20).
 
-    Independent of the vault: the pseudonym is not an account name, so an
-    install with the vault on still gets one. It is what the relay hashes to
-    label reports ("instalación a3f9 · 3 reportes") without learning anything
-    about the person.
+    Deliberately a SEPARATE value from ``install_id``: with the vault off that
+    one doubles as the account anchor, so reusing it would let the relay
+    correlate the pseudonym with the stored account key. This one exists only to
+    be hashed into the group label ("instalación a3f9 · 3 reportes").
+    """
+    persisted = _existing_slot(local_state).get("pseudonym_id")
+    if isinstance(persisted, str) and _INSTALL_ID.match(persisted):
+        return persisted
+
+    fresh = INSTALL_ID_PREFIX + secrets.token_hex(12)
+    snapshot = local_state.snapshot()
+    _slot(snapshot)["pseudonym_id"] = fresh
+    local_state.atomic_commit(snapshot)
+    return fresh
+
+
+def install_id(local_state: LocalState) -> str:
+    """The stable install id used as the account anchor when the vault is off.
+
+    Minted once and persisted; see ``pseudonym_id`` for the anonymous label.
     """
     persisted = _existing_slot(local_state).get("install_id")
     if isinstance(persisted, str) and _INSTALL_ID.match(persisted):
@@ -131,6 +147,7 @@ def clear_install_token(local_state: LocalState) -> None:
 __all__ = [
     "INSTALL_ID_PREFIX",
     "install_id",
+    "pseudonym_id",
     "account_key",
     "clear_install_token",
     "read_install_token",

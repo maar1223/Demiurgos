@@ -261,6 +261,36 @@ test("an unusable install id is ignored, never published", async () => {
   }
 });
 
+test("a failed report never increments the pseudonym count", async () => {
+  const kv = new MemoryKv();
+  const installId = `install_${"34".repeat(12)}`;
+
+  let telegram = stubTelegram("sendMessage");
+  try {
+    const failed = await submit(kv, { ...REPORT, description: "falla" }, { installId });
+    assert.equal(failed.status, 502);
+  } finally {
+    telegram.restore();
+  }
+  assert.equal(
+    [...kv.map.keys()].some((key) => key.startsWith("reporter:")),
+    false,
+  );
+
+  telegram = stubTelegram();
+  try {
+    const retry = await submit(kv, { ...REPORT, description: "reintento" }, { installId });
+    assert.equal(retry.status, 200);
+    const summary = telegram.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => JSON.stringify(call.json))[0];
+    // The retry is the first ACCEPTED report, not the second attempt.
+    assert.match(summary ?? "", /· 1 reporte/);
+  } finally {
+    telegram.restore();
+  }
+});
+
 test("the fingerprint ignores key order and an absent log", async () => {
   const a = await reportFingerprint({
     description: "boom",

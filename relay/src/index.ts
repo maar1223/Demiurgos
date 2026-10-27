@@ -49,7 +49,11 @@ import {
   rememberReport,
   secondsUntilUtcMidnight,
 } from "./abuse.ts";
-import { isBlockedInstall, readIdentityByInstallToken } from "./identity.ts";
+import {
+  isBlockedInstall,
+  readIdentityByAccount,
+  readIdentityByInstallToken,
+} from "./identity.ts";
 import {
   LinkError,
   linkStatus,
@@ -100,10 +104,10 @@ export interface Env {
    */
   TELEGRAM_WEBHOOK_SECRET: string;
   /**
-   * Shared secret the backend presents on every identity call (`x-relay-key`).
-   * The relay never accepts an account key from an unauthenticated caller: that
-   * would let anyone bind a Telegram account to somebody else's app. Missing
-   * value fails closed (`relay.not_configured`).
+   * Admin secret for `POST /release` (`x-relay-key`). The client routes do NOT
+   * use it: a released install cannot carry a secret (S19), so `/link/start` and
+   * `/link/status` are bounded per IP and `/link/state` and `/link/revoke` prove
+   * possession of the install token instead.
    */
   RELAY_KEY: string;
   /**
@@ -538,6 +542,22 @@ async function handleLink(
       }
       if (typeof body.account_key !== "string") {
         return fail(400, "link.invalid_account");
+      }
+      // An existing link is never replaced by whoever guesses the account key:
+      // rebinding requires the install token the current binding issued. Without
+      // this, knowing a username would be enough to unbind somebody and take
+      // their signature away. The legitimate install holds that token, so
+      // relinking and changing permissions keep working.
+      const bound = await readIdentityByAccount(env.LINKS, body.account_key);
+      if (bound !== null) {
+        const presentedToken = (request.headers.get("x-install-token") ?? "").trim();
+        const holder =
+          presentedToken.length === 0
+            ? null
+            : await readIdentityByInstallToken(env.LINKS, presentedToken);
+        if (holder === null || holder.telegram_user_id !== bound.telegram_user_id) {
+          return fail(409, "link.already_linked");
+        }
       }
       // An omitted flag stays omitted. Coercing it to `true` here would make a
       // reused ticket silently re-enable a permission the account had turned off.

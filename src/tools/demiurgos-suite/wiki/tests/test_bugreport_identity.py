@@ -26,6 +26,7 @@ from bugreport_identity import (  # noqa: E402
     account_key,
     clear_install_token,
     install_id,
+    pseudonym_id,
     read_install_token,
     store_install_token,
 )
@@ -77,21 +78,24 @@ def test_the_vault_without_an_account_still_falls_back_to_the_install_id(
     assert key.startswith("install_")
 
 
-def test_the_pseudonym_id_is_minted_once_even_with_the_vault_on(tmp_path: Path) -> None:
-    """S20: the anonymous install id is independent of the account anchor."""
+def test_the_pseudonym_id_is_stable_and_never_the_account_anchor(tmp_path: Path) -> None:
+    """S20: the anonymous label id is its own value, independent of the anchor."""
     from local_state import LocalState
 
     state = LocalState(tmp_path / "state.json")
 
-    first = install_id(state)
-    second = install_id(state)
-
-    assert first == second
+    first = pseudonym_id(state)
+    assert first == pseudonym_id(state)
     assert first.startswith("install_")
     assert len(first) == len("install_") + 24
 
-    # With the vault on, the ACCOUNT anchor is the username while the pseudonym
-    # stays this install's own anonymous id.
+    # Vault off: the account anchor is the install id. The pseudonym must not be
+    # that value, or the relay could correlate the label with the stored key.
+    anchor = account_key(state, vault_active=False)
+    assert anchor != first
+    assert install_id(state) == anchor
+
+    # Vault on: the anchor is the username and the pseudonym is still its own id.
     snapshot = state.snapshot()
     snapshot.setdefault("capabilities", {})["account"] = {
         "username": "ana",
@@ -100,7 +104,7 @@ def test_the_pseudonym_id_is_minted_once_even_with_the_vault_on(tmp_path: Path) 
     }
     state.atomic_commit(snapshot)
     assert account_key(state, vault_active=True) == "ana"
-    assert install_id(state) == first
+    assert pseudonym_id(state) == first
 
 
 def test_the_token_round_trips_and_clears(tmp_path: Path) -> None:

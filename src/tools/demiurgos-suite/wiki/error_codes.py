@@ -87,6 +87,9 @@ REGISTRY: dict[str, ErrorSpec] = {
         "bugreport.invalid_attachment", 400, "Invalid bug-report attachment"),
     "bugreport.link_incomplete": ErrorSpec(
         "bugreport.link_incomplete", 409, "Telegram link is incomplete; link again"),
+    "bugreport.link_already_linked": ErrorSpec(
+        "bugreport.link_already_linked", 409,
+        "This account is already linked to another Telegram account"),
     # Chat document attachments (chat-attachments T2). The UI localizes these
     # through ``error.attachment.*``; ``detail`` stays a stable English fallback.
     "attachment.unsupported_type": ErrorSpec(

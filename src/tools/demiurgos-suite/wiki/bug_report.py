@@ -12,10 +12,11 @@ This module ships four endpoints:
   ``multipart/form-data`` carrying the bundle in a ``report`` part plus up to
   two screenshots as ``attachments`` file parts (delivered as documents). The submit is
   STATELESS: nothing about the report, a copy or a derived record is persisted.
-* ``POST /api/bugreport/link/start|status|revoke`` — the Telegram linking
-  surface. These proxy the relay's ``/link/*`` routes with the shared
-  ``x-relay-key``, so the browser never talks to the relay and never sees the
-  ``install_token`` that signs later reports (S7, S15).
+* ``POST /api/bugreport/link/start|ticket|revoke`` and ``GET /api/bugreport/link``
+  — the Telegram linking surface. These proxy the relay's ``/link/*`` routes
+  without any shared secret (S19): the ticket and the ``install_token`` are the
+  credentials, so a released install needs no configuration and the browser
+  never sees the token that signs later reports (S7, S15).
 * ``POST /api/bugreport/fallback`` — the STRICT fallback: render the reviewed
   bundle as a copy-paste GitHub issue body, privacy-scrub it with
   :func:`content_scan.scrub_all` (BOTH the shared secret rules and the
@@ -435,11 +436,11 @@ def create_bug_report_router(
         return int(status), data if isinstance(data, dict) else {}
 
     def _install_id() -> str | None:
-        """The stable anonymous install id, minted once (S20)."""
+        """The stable anonymous pseudonym id, minted once (S20)."""
         if local_state is None:
             return None
         try:
-            return bugreport_identity.install_id(local_state())
+            return bugreport_identity.pseudonym_id(local_state())
         except Exception:  # noqa: BLE001 - no pseudonym is better than a 500
             return None
 
@@ -451,6 +452,10 @@ def create_bug_report_router(
         """Map a relay identity failure onto a stable backend code."""
         if status == 429:
             raise problem("bugreport.rate_limited")
+        if status == 409:
+            # The account is already bound to another Telegram account and this
+            # install could not prove it owns it.
+            raise problem("bugreport.link_already_linked")
         if status in (401, 403):
             raise problem("bugreport.relay_unavailable")
         raise problem("bugreport.delivery_failed")

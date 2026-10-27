@@ -98,9 +98,10 @@ export interface BugReportLinkFlags {
 /**
  * POST /api/bugreport/link/start — mint (or reuse) the linking ticket.
  *
- * The backend resolves the stable account key server-side and proxies the relay
- * with the shared key, so the browser never talks to the relay. Reopening the
- * panel reuses a live ticket instead of burning the three-per-hour allowance.
+ * The backend resolves the stable account key server-side and proxies the relay,
+ * so the browser never talks to the relay. No shared secret is involved: a
+ * released install cannot carry one (S19). Reopening the panel reuses a live
+ * ticket instead of burning the three-per-hour allowance.
  */
 export function startTelegramLink(
   flags: BugReportLinkFlags = {},

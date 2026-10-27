@@ -1203,6 +1203,8 @@ export const messages = {
     "error.provider.auth_rejected": "El proveedor rechazó la clave API.",
     "error.provider.connection_rejected": "El proveedor rechazó la solicitud de conexión.",
     "error.bugreport.not_allowlisted": "El informe contiene campos no permitidos.",
+    "error.bugreport.link_already_linked":
+      "Esta cuenta ya está vinculada a otra cuenta de Telegram. Desconéctala desde la instalación original.",
     "error.bugreport.too_large": "El informe supera el tamaño máximo permitido.",
     "error.bugreport.rate_limited": "Se enviaron demasiados informes. Inténtalo más tarde.",
     "error.bugreport.invalid_attachment":
@@ -3297,6 +3299,8 @@ export const messages = {
     "error.provider.auth_rejected": "The provider rejected the API key.",
     "error.provider.connection_rejected": "The provider rejected the connection request.",
     "error.bugreport.not_allowlisted": "The report contains fields that are not allowed.",
+    "error.bugreport.link_already_linked":
+      "This account is already linked to another Telegram account. Disconnect it from the original install.",
     "error.bugreport.too_large": "The report exceeds the maximum allowed size.",
     "error.bugreport.rate_limited": "Too many reports were sent. Try again later.",
     "error.bugreport.invalid_attachment":

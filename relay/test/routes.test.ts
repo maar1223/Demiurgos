@@ -68,6 +68,8 @@ async function linkedToken(
   kv: MemoryKv,
   env: Parameters<typeof worker.fetch>[1],
   accountKey: string,
+  telegramId = "1234567890",
+  username = "brook",
 ): Promise<string> {
   const started = await worker.fetch(
     call("/link/start", { account_key: accountKey }),
@@ -78,7 +80,7 @@ async function linkedToken(
   await redeemTicket(
     kv,
     ticket,
-    { id: "1234567890", username: "brook", displayName: "Brook" },
+    { id: telegramId, username, displayName: username },
     new Date(),
   );
   const polled = await worker.fetch(
@@ -441,4 +443,96 @@ test("state refuses a caller without a token and exposes no account key", async 
     Object.keys(body.identity as Record<string, unknown>).sort(),
     ["display_name", "permissions", "username"],
   );
+});
+
+test("the open link routes fail CLOSED when the counter store errors", async () => {
+  const kv = new MemoryKv();
+  const broken = {
+    get: async () => {
+      throw new Error("kv.down");
+    },
+    put: async () => {
+      throw new Error("kv.down");
+    },
+    delete: async () => undefined,
+  };
+  const env = makeEnv(kv, { RATE_LIMIT: broken });
+
+  for (const [path, body] of [
+    ["/link/start", { account_key: "acct_x" }],
+    ["/link/status", { ticket: "ABCD1234" }],
+  ] as const) {
+    const response = await worker.fetch(call(path, body, { key: null }), env, {} as never);
+    assert.equal(response.status, 503, path);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "relay.rate_limit_unavailable",
+    });
+  }
+});
+
+test("a bound account is not relinked by whoever guesses its key", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+  const token = await linkedToken(kv, env, "acct_bound01");
+
+  // No token: refused before a ticket exists.
+  const anonymous = await worker.fetch(
+    call("/link/start", { account_key: "acct_bound01" }, { key: null }),
+    env,
+    {} as never,
+  );
+  assert.equal(anonymous.status, 409);
+  assert.deepEqual(await anonymous.json(), { ok: false, code: "link.already_linked" });
+
+  // Somebody else's token is not proof either.
+  const foreignToken = await linkedToken(kv, env, "acct_bound02", "2234567890", "other");
+  const foreign = await worker.fetch(
+    call("/link/start", { account_key: "acct_bound01" }, { token: foreignToken }),
+    env,
+    {} as never,
+  );
+  assert.equal(foreign.status, 409);
+
+  // The install that owns the link can still relink and change permissions.
+  const own = await worker.fetch(
+    call("/link/start", { account_key: "acct_bound01", notify_releases: false }, { token }),
+    env,
+    {} as never,
+  );
+  assert.equal(own.status, 200);
+});
+
+test("a valid install token ignores a foreign account key", async () => {
+  const kv = new MemoryKv();
+  const env = makeEnv(kv);
+  const foreignToken = await linkedToken(kv, env, "acct_foreign", "2234567890", "other");
+  const mine = await linkedToken(kv, env, "acct_mine");
+
+  const state = await worker.fetch(
+    call("/link/state", { account_key: "acct_foreign" }, { token: mine }),
+    env,
+    {} as never,
+  );
+  const body = (await state.json()) as Record<string, unknown>;
+  assert.equal(body.state, "linked");
+  assert.equal((body.identity as Record<string, unknown>).username, "brook");
+  const raw = JSON.stringify(body);
+  for (const secret of [mine, "acct_mine", "acct_foreign", "1234567890"]) {
+    assert.equal(raw.includes(secret), false, secret);
+  }
+
+  // Revoking with my token revokes MY link, never the one named in the body.
+  const revoke = await worker.fetch(
+    call("/link/revoke", { account_key: "acct_foreign" }, { token: mine }),
+    env,
+    {} as never,
+  );
+  assert.deepEqual(await revoke.json(), { ok: true, revoked: true });
+  const untouched = await worker.fetch(
+    call("/link/state", {}, { token: foreignToken }),
+    env,
+    {} as never,
+  );
+  assert.equal(((await untouched.json()) as Record<string, unknown>).state, "linked");
 });

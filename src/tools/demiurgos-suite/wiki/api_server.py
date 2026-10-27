@@ -10140,9 +10140,10 @@ app.include_router(
         app_version=_app_version,
         install_root=_install_root(),
         relay_url=os.environ.get("DEMIURGOS_BUGREPORT_RELAY_URL", "").strip() or None,
-        # Identity routes need the shared relay key (server-side only) and the
-        # reports bot handle for the deep link. Both are operational config: a
-        # missing key fails the link closed without touching report delivery.
+        # The reports bot handle builds the deep link. `relay_key` is accepted
+        # for compatibility and no longer required: the identity routes use the
+        # ticket and the install token as bearers (S19), so a released install
+        # needs no shared secret.
         relay_key=os.environ.get("DEMIURGOS_BUGREPORT_RELAY_KEY", "").strip() or None,
         bot_username=os.environ.get("DEMIURGOS_BUGREPORT_BOT_USERNAME", "").strip()
         or None,

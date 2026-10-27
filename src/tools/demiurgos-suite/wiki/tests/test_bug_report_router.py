@@ -928,6 +928,26 @@ def test_link_start_forwards_the_stable_key_never_the_browser_one(tmp_path: Path
     assert body["ticket"] not in json.dumps(body).replace("ABC123", "")
 
 
+def test_link_start_maps_a_taken_account_to_its_own_code(tmp_path: Path) -> None:
+    """A bound account that this install cannot prove refuses with 409 (S19)."""
+    from local_state import LocalState
+
+    state = LocalState(tmp_path / "state.json")
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_link_relay(
+            [], {"/link/start": lambda _p: (409, {"ok": False, "code": "link.already_linked"})}
+        ),
+        local_state=lambda: state,
+        vault_active=lambda: False,
+    )
+
+    resp = TestClient(app).post("/api/bugreport/link/start", json={})
+
+    assert resp.status_code == 409
+    assert resp.json()["code"] == "bugreport.link_already_linked"
+
+
 def test_link_start_rejects_a_non_boolean_flag() -> None:
     app = _make_app(
         relay_url="http://relay.test",
