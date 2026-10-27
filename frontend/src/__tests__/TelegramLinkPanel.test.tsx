@@ -270,6 +270,48 @@ describe("TelegramLinkPanel — linking surface (S8–S11)", () => {
     expect(screen.getByTestId("bugreport-telegram-ticket")).toHaveTextContent(TICKET);
   });
 
+  it("resumes a live ticket after a reload instead of asking to scan again", async () => {
+    const expires = new Date(Date.now() + 5 * 60_000).toISOString();
+    localStorage.setItem(
+      "demiurgos.bugreport.linkTicket",
+      JSON.stringify({ ticket: TICKET, expires_at: expires, telegram_url: URL }),
+    );
+    (telegramLinkStatus as Mock).mockResolvedValue({
+      state: "linked",
+      username: "brook",
+      display_name: "Brook",
+      permissions: { report_identity: true, notify_releases: true },
+    });
+    renderPanel();
+
+    // The handover poll is what mints the token; losing it used to strand the
+    // link, so a reload must pick it back up.
+    await waitFor(() => expect(telegramLinkStatus).toHaveBeenCalledWith(TICKET));
+    await screen.findByText(
+      tEs("profile.bugreport.telegramConnected", { user: "@brook" }),
+    );
+    expect(localStorage.getItem("demiurgos.bugreport.linkTicket")).toBeNull();
+    expect(startTelegramLink).not.toHaveBeenCalled();
+  });
+
+  it("ignores an expired stored ticket", async () => {
+    localStorage.setItem(
+      "demiurgos.bugreport.linkTicket",
+      JSON.stringify({
+        ticket: TICKET,
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+        telegram_url: URL,
+      }),
+    );
+    renderPanel();
+
+    await waitFor(() => expect(telegramLinkState).toHaveBeenCalledTimes(1));
+    expect(telegramLinkStatus).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: tEs("profile.bugreport.telegramConnect") }),
+    ).toBeInTheDocument();
+  });
+
   it("reports a failed start instead of pretending a link exists", async () => {
     (startTelegramLink as Mock).mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();

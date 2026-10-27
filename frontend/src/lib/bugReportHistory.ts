@@ -16,6 +16,59 @@ const STORAGE_KEY = "demiurgos.bugreport.reports";
 /** Where the optional install pseudonym preference lives (S20). */
 const PSEUDONYM_KEY = "demiurgos.bugreport.pseudonym";
 
+/** A minted-but-not-yet-confirmed ticket, so a reload can resume the poll. */
+const PENDING_LINK_KEY = "demiurgos.bugreport.linkTicket";
+
+/** The one-time token is minted on the first poll after the phone confirms, so
+ *  losing that poll strands the link. Keeping the ticket locally lets the panel
+ *  pick the handover back up after a reload. */
+export interface PendingLink {
+  ticket: string;
+  expires_at: string | null;
+  telegram_url: string | null;
+}
+
+/** The stored ticket while it is still live; expired or unreadable -> null. */
+export function readPendingLink(): PendingLink | null {
+  try {
+    const raw = localStorage.getItem(PENDING_LINK_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.ticket !== "string" || record.ticket.length === 0) return null;
+    const expiresAt = typeof record.expires_at === "string" ? record.expires_at : null;
+    if (expiresAt !== null) {
+      const target = Date.parse(expiresAt);
+      if (Number.isNaN(target) || target <= Date.now()) return null;
+    }
+    return {
+      ticket: record.ticket,
+      expires_at: expiresAt,
+      telegram_url:
+        typeof record.telegram_url === "string" ? record.telegram_url : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writePendingLink(link: PendingLink): void {
+  try {
+    localStorage.setItem(PENDING_LINK_KEY, JSON.stringify(link));
+  } catch {
+    // A blocked store only costs the reload-resume, never the link itself.
+  }
+}
+
+export function clearPendingLink(): void {
+  try {
+    localStorage.removeItem(PENDING_LINK_KEY);
+  } catch {
+    // Best effort.
+  }
+}
+
 /** Keep the list bounded; nobody matches against ancient reports. */
 const MAX_REPORTS = 50;
 

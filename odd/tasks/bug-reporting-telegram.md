@@ -410,6 +410,13 @@ Consequence: T0 is cancelled, and the reporter-facing link UI belongs in the exi
 - Deployed `d4c91c07-2eee-41d2-b1af-0051a2bc9bee`. Runners: relay **143** + typecheck.
 - `Risk: item 2 (security) — the containment rule changed. A guessed account key can still move the account pointer (per-account counters follow it) but can no longer erase an identity, take a signature or block linking, and the operator retains a keyed reset.`
 
+**L41 — A reload between scanning and the poll stranded the link (2026-10-27).** The relay KV told the story exactly: ticket `3HTASDGQ`, created `00:41:27`, **consumed at `00:43:29` by the reporter's Telegram**, `token_issued: false`.
+- **Cause:** the token is minted on the first poll after redemption (L37). That poll never ran, because the page was reloaded/restarted around the scan, so the identity existed at the relay while the install held no credential — and with no token, `/link/state` can only answer `unlinked`. Nothing was broken in the relay; the handover window was lost.
+- **Fix, in the panel:** the minted ticket is persisted locally (`demiurgos.bugreport.linkTicket`, `{ticket, expires_at, telegram_url}`) and cleared on three occasions — linked, expired, disconnect. On mount, after the state read says unlinked, a still-live stored ticket resumes polling, so a reload picks the handover back up instead of asking for a second scan. An expired stored ticket is ignored.
+- Tests: two new cells (resume reaches "connected" and clears the stored ticket; an expired one is ignored and the Connect action stays), plus the corrected mount-read shape — the early `return` that skipped the resume is gone.
+- Runners: frontend **1572** over 127 files, `tsc --noEmit` clean, `dist` rebuilt (served asset `index-BiFvb-D5.js`).
+- `Risk: none — panel-local persistence of a short-lived ticket; it already travels in the QR, and it is cleared on every terminal state.`
+
 **L20 — The silence on a bare `/start` (2026-10-25).** First real test: the Owner opened the bot's chat and pressed Telegram's START button, and got nothing. The relay was healthy — `getMe` returned `ReportesDemiurgosBot`, `getWebhookInfo` had the right URL, `pending_update_count: 0` and no `last_error_message`, so the update was consumed with a 200. Telegram's START button sends `/start` **with no ticket**, and the handler ignored anything that was not `/start <ticket>`, exactly as designed.
 - That behavior is correct but is a bad first impression, since pressing START is what every new user does.
 - Fix: a bare `/start` (optionally `@bot`) now answers one canned line pointing to `Perfil → Reporte de errores → Conectar Telegram`. It interprets nothing and still handles no free text, so D2 holds.

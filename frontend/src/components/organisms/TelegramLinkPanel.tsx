@@ -15,6 +15,11 @@ import {
   type BugReportLinkStatus,
 } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import {
+  clearPendingLink,
+  readPendingLink,
+  writePendingLink,
+} from "@/lib/bugReportHistory";
 import { getErrorMessage } from "@/lib/utils";
 
 /** Resolve a localized message for a caught error, falling back when the thrown
@@ -84,6 +89,13 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
         setTelegramUrl(next.telegram_url);
         setExpiresAt(next.expires_at);
         setLinked(null);
+        // The token is minted on the first poll after the phone confirms, so a
+        // reload mid-flow must be able to resume this ticket.
+        writePendingLink({
+          ticket: next.ticket,
+          expires_at: next.expires_at,
+          telegram_url: next.telegram_url,
+        });
         setPhase("pending");
       } catch (cause: unknown) {
         setError(describeError(cause, t("profile.bugreport.telegramError")));
@@ -100,20 +112,33 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
     let active = true;
 
     const read = async () => {
+      let linkedNow = false;
       try {
         const next = await telegramLinkState();
-        if (!active || startedByUser.current || next.state !== "linked") return;
-        setLinked({
-          username: next.username,
-          display_name: next.display_name,
-          permissions: next.permissions,
-        });
-        setTelegramUrl(next.telegram_url);
-        // A click that already started a ticket must win over this read.
-        setPhase((current) => (current === "idle" ? "linked" : current));
+        if (active && !startedByUser.current && next.state === "linked") {
+          linkedNow = true;
+          setLinked({
+            username: next.username,
+            display_name: next.display_name,
+            permissions: next.permissions,
+          });
+          setTelegramUrl(next.telegram_url);
+          // A click that already started a ticket must win over this read.
+          setPhase((current) => (current === "idle" ? "linked" : current));
+        }
       } catch {
         // Offline or relay down: leaving the connect action in place is honest.
       }
+
+      // No link yet: a ticket minted before a reload is still live, so resume
+      // polling it instead of making the user scan a second QR.
+      if (!active || startedByUser.current || linkedNow) return;
+      const pending = readPendingLink();
+      if (pending === null) return;
+      setTicket(pending.ticket);
+      setTelegramUrl(pending.telegram_url);
+      setExpiresAt(pending.expires_at);
+      setPhase((current) => (current === "idle" ? "pending" : current));
     };
 
     void read();
@@ -138,6 +163,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       const left = Math.max(0, Math.ceil((target - Date.now()) / 1000));
       setSecondsLeft(left);
       if (left === 0) {
+        clearPendingLink();
         setPhase((current) => (current === "pending" ? "expired" : current));
       }
     };
@@ -159,6 +185,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
         const next: BugReportLinkStatus = await telegramLinkStatus(ticket);
         if (!active) return;
         if (next.state === "linked") {
+          clearPendingLink();
           setLinked({
             username: next.username,
             display_name: next.display_name,
@@ -224,6 +251,7 @@ export function TelegramLinkPanel({ pollIntervalMs = 2000 }: { pollIntervalMs?: 
       setError(describeError(cause, t("profile.bugreport.telegramError")));
       return;
     }
+    clearPendingLink();
     setPhase("idle");
     setTicket(null);
     setTelegramUrl(null);
