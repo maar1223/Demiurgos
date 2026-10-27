@@ -21,9 +21,14 @@ POST /   Content-Type: application/json
   "contact": "..." | null,
   "logs": "..." | null
 }
--> 200 { "ok": true,  "delivery_id": "..." }
+-> 200 { "ok": true,  "delivery_id": "...", "deduped"?: true }
 -> 4xx/5xx { "ok": false, "code": "<relay code>" }
 ```
+
+`deduped: true` means the same report was already published inside the last 24
+hours and `delivery_id` is the original one; nothing new was posted. An optional
+`x-install-token` header carries the credential the app received when it linked
+its Telegram account; it is never part of the body.
 
 The contract mirrors `bug_report.py::_deliver`, which is the source of truth for
 the wire shape. Field caps (`description` 4000, `contact` 200, `logs` 65536,
@@ -31,9 +36,9 @@ total 98304 bytes) are identical on both sides.
 
 Relay codes are non-secret and never carry a credential:
 `relay.invalid_payload`, `relay.unsupported_schema`, `relay.too_large`,
-`relay.rate_limited`, `relay.rate_limit_unavailable`, `relay.not_configured`,
-`relay.provider_unreachable`, `relay.provider_rejected`, `relay.delivery_failed`,
-`relay.method_not_allowed`.
+`relay.rate_limited`, `relay.rate_limit_unavailable`, `relay.report_blocked`,
+`relay.not_configured`, `relay.provider_unreachable`, `relay.provider_rejected`,
+`relay.delivery_failed`, `relay.method_not_allowed`.
 
 ## Identity store (Telegram linking)
 
@@ -43,8 +48,18 @@ is the only component that knows both sides, so the store lives here
 
 ```
 identity:tg:<telegram_user_id>      -> IdentityRecord (JSON)
-identity:acct:<account_key>   -> <telegram_user_id>            (pointer)
+identity:acct:<account_key>         -> <telegram_user_id>      (pointer)
+link_token:<sha256(install_token)>  -> <telegram_user_id>      (report signature)
+identity:token:<telegram_user_id>   -> <sha256(install_token)> (pointer)
+blocked:<sha256(install_token)>     -> "revoked"                 (30-day guard)
 ```
+
+Only the hash of the `install_token` is stored, and it is removed by a revoke.
+The revoked digest survives for 30 days so the unlinked client cannot keep
+reporting through the dead credential; relinking issues a new token that is not
+blocked.
+That is what lets a report prove who sent it without ever carrying a secret in
+its body.
 
 ```json
 {
@@ -109,6 +124,66 @@ Behaviour worth knowing:
   function the Telegram webhook calls, because a public redeem endpoint would
   let the app bind a Telegram account it does not control.
 
+## Who sent it (attribution)
+
+A report states how the reporter's identity was established, and a group message
+never blurs the three levels:
+
+| Rendered line | What it means |
+|---|---|
+| `👤 @user · verified by Telegram` | The relay resolved the link from the report's `x-install-token`. |
+| `👤 Name — declared · local session` | No link; the name is what the person typed. |
+| `👤 owner` | The linked Telegram id is listed in `OWNER_TELEGRAM_USER_IDS`. |
+
+Rules that keep it honest (`src/attribution.ts`):
+
+- The token travels in the **`x-install-token` header**, never in the body, so it
+  can never reach the group or a log. Unknown, replaced or malformed tokens fall
+  back to the declared level instead of failing the report; a revoked one is
+  refused with `403 relay.report_blocked`.
+- An **unbound** `LINKS` namespace means nothing can be verified, so the report
+  still travels as a declared one. A store that *fails* refuses the report with
+  `503 relay.rate_limit_unavailable` — the same fail-closed posture as the
+  counters, because the relay cannot prove the credential is still allowed.
+- A linked account only signs its reports while it holds `report_identity`.
+  Turning that permission off turns the report back into a declared one; the link
+  itself is untouched.
+- Configuration never impersonates verification: an id on the Owner list is only
+  labelled `owner` when the report presents a link that resolves to it. Without a
+  link the report stays declared.
+- A linked account is named by its Telegram handle, else its display name, else
+  its numeric id. A name is never invented.
+
+The email path carries the same line, as `Reported by:` in the body.
+
+## Abuse control (S13)
+
+A bot can post roughly 20 messages a minute to a group before Telegram answers
+429, so every bound is enforced here, before Telegram, or the channel becomes
+unusable for legitimate reports.
+
+| Layer | Bound | Storage |
+|---|---|---|
+| Dedup | Same `description + platform + logs` inside 24 h returns the first `delivery_id` and posts nothing. | `dedup:<sha256>` (24 h) |
+| Linked principal | 5 per hour, 20 per UTC day | `principal:hour:<account_key>`, `principal:day:<account_key>` |
+| Unlinked reporter | 5 per IP per 10 min, 200 per UTC day globally | `ip:<addr>`, `global:<date>` |
+| Linking tickets | 3 mints per hour per account (reuse is free) | `linkstart:<account_key>` |
+| Revoked install | Its dead token is refused for 30 days | `blocked:<sha256>` |
+
+Notes worth keeping:
+
+- Dedup runs **first**, so an accidental double submit neither opens a second
+  topic nor spends the reporter's allowance. Only a **delivered** report is
+  remembered, so a failed one stays retryable.
+- The fingerprint deliberately excludes the contact and the app version: adding a
+  contact or upgrading must not look like a new report.
+- A **refused attempt never extends the window it is being refused by**. The
+  window starts at the last accepted report, so a reporter who keeps retrying
+  cannot push it forward and lock themselves out for good.
+- Every counter failure is **fail-CLOSED**. KV is eventually consistent, so two
+  identical reports racing each other can both publish; these are best-effort
+  bounds for the Alpha volume, never the only line of defence.
+
 ## Publication into the triage group
 
 When `TELEGRAM_CHAT_ID` is set, a report is published into the Telegram group
@@ -119,10 +194,14 @@ link Telegram.
 One report becomes one **forum topic**, so the group stays readable and each bug
 keeps its thread:
 
-1. `createForumTopic` named `BUG · v<version> · <contact>`.
+1. `createForumTopic` named `BUG · v<version> · <level> · <who>`. The level
+   leads (`verified by Telegram`, `declared · local session`, `owner`,
+   `sin contacto`) so truncation can never cut it and a typed `@handle` can
+   never produce the topic of a verified account.
 2. `sendMessage` with a bounded summary (Telegram caps a message at 4096
    characters; the summary is cut at 3800).
-3. `sendDocument` with `report-<id>.txt` holding the **complete** report —
+3. `sendDocument` with `report-<id>.txt` (its caption carries the same level)
+   holding the **complete** report —
    description and up to 65536 characters of logs — because the message alone
    could never carry them.
 
@@ -205,6 +284,7 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 | `OWNER_INBOX` | Fixed inbox that receives every report. |
 | `SENDER_FROM` | Verified sender address for the outgoing email. |
 | `RELAY_KEY` | Shared secret the backend presents as `x-relay-key` on identity calls. |
+| `OWNER_TELEGRAM_USER_IDS` (optional var) | Comma- or space-separated Telegram user ids labelled `owner`. Never shipped as a secret. |
 | `TELEGRAM_BOT_TOKEN` | Reports-bot token from @BotFather. |
 | `TELEGRAM_WEBHOOK_SECRET` | Value Telegram must echo on the webhook; set with `setWebhook`. |
 | `RATE_LIMIT` (KV) | Per-IP + global-daily rate-limit counters. |

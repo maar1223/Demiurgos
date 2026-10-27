@@ -22,6 +22,12 @@
  *   -> 200 { "ok": true,  "delivery_id": "..." }
  *   -> 4xx/5xx { "ok": false, "code": "<relay code>" }
  *
+ * An optional `x-install-token` header carries the credential the app received
+ * when it linked its Telegram account. It is a header on purpose: the token
+ * never enters the bundle, so it can never be published to the group or reach a
+ * log. Its only job is letting the relay establish who is reporting, instead of
+ * trusting a caller-supplied claim.
+ *
  * Fail-closed: any validation, configuration, rate-limit or provider error
  * returns `{ "ok": false, "code": ... }` with a non-secret message. No
  * credential, token, or upstream response body is ever echoed to the caller.
@@ -36,7 +42,9 @@
  * the backend's own per-principal limit and the provider's free-tier cap.
  */
 
-import { bumpCounter } from "./counters.ts";
+import { admitCounter } from "./counters.ts";
+import { admitReport, rememberReport, secondsUntilUtcMidnight } from "./abuse.ts";
+import { isBlockedInstall } from "./identity.ts";
 import {
   LinkError,
   linkStatus,
@@ -46,6 +54,7 @@ import {
 } from "./linking.ts";
 import { handleTelegramUpdate } from "./telegram.ts";
 import { publishReport } from "./publication.ts";
+import { ownerTelegramIds, resolveAttribution, type Attribution } from "./attribution.ts";
 
 /** Server-side bindings and secrets. Values are configured, never committed. */
 export interface Env {
@@ -83,6 +92,12 @@ export interface Env {
    * value fails closed (`relay.not_configured`).
    */
   RELAY_KEY: string;
+  /**
+   * Comma- or space-separated Telegram user ids of the Owner (optional). A
+   * linked account on this list is labelled `owner`; an unlinked one never is,
+   * because configuration must never be presented as verification.
+   */
+  OWNER_TELEGRAM_USER_IDS?: string;
 }
 
 /** Wire contract version, must match `_RELAY_SCHEMA` in `bug_report.py`. */
@@ -248,25 +263,12 @@ function utcDayKey(now: Date): string {
   return `global:${now.toISOString().slice(0, 10)}`;
 }
 
-function secondsUntilUtcMidnight(now: Date): number {
-  const next = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + 1,
-    0,
-    0,
-    0,
-    0,
-  );
-  return (next - now.getTime()) / 1000;
-}
-
 function buildSubject(report: Report): string {
   const version = report.app_version || "unknown";
   return `[Demiurgos] Bug report — ${version}`;
 }
 
-function buildBody(report: Report): string {
+function buildBody(report: Report, attribution: Attribution): string {
   const platform = Object.entries(report.platform)
     .map(([key, value]) => `${key}=${value}`)
     .join(" ");
@@ -275,6 +277,7 @@ function buildBody(report: Report): string {
     "",
     `App version: ${report.app_version || "(unknown)"}`,
     `Platform: ${platform || "(none)"}`,
+    `Reported by: ${attribution.line}`,
     `Contact: ${report.contact ?? "(not provided)"}`,
     "",
     "Description:",
@@ -290,7 +293,11 @@ function buildBody(report: Report): string {
  * code on timeout, network failure, or a non-2xx provider response. The
  * provider response body is never propagated to the caller.
  */
-async function sendViaProvider(env: Env, report: Report): Promise<string> {
+async function sendViaProvider(
+  env: Env,
+  report: Report,
+  attribution: Attribution,
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   let response: Response;
@@ -306,7 +313,7 @@ async function sendViaProvider(env: Env, report: Report): Promise<string> {
         sender: { email: env.SENDER_FROM },
         to: [{ email: env.OWNER_INBOX }],
         subject: buildSubject(report),
-        textContent: buildBody(report),
+        textContent: buildBody(report, attribution),
       }),
       signal: controller.signal,
     });
@@ -504,48 +511,117 @@ export default {
     }
 
     const now = new Date();
+    const installToken = (request.headers.get("x-install-token") ?? "").trim();
+
+    // A revoked install must not keep reporting through the credential the
+    // revoke just killed; only callers presenting a credential are checked, so
+    // an unbound namespace never blocks the anonymous fallback path.
+    //
+    // A store that *fails* is refused, not assumed clean: the same fail-closed
+    // posture as the counters. S14's copy-paste/GitHub fallback is what keeps a
+    // reporter unblocked when the relay cannot answer.
+    let attribution: Attribution;
     try {
-      const perIp = await bumpCounter(
-        env.RATE_LIMIT,
-        `ip:${clientIp(request)}`,
-        PER_IP_WINDOW_SECONDS,
-      );
-      if (perIp > PER_IP_MAX) {
-        return fail(429, "relay.rate_limited");
+      if (installToken.length > 0 && env.LINKS) {
+        if (await isBlockedInstall(env.LINKS, installToken)) {
+          return fail(403, "relay.report_blocked");
+        }
       }
-      const daily = await bumpCounter(
-        env.RATE_LIMIT,
-        utcDayKey(now),
-        secondsUntilUtcMidnight(now),
+
+      // Who is reporting is resolved here, from a credential the relay issued —
+      // never from a claim in the body. A missing, unknown or revoked token
+      // simply falls back to what the reporter typed.
+      attribution = await resolveAttribution(
+        env.LINKS,
+        installToken.length === 0 ? null : installToken,
+        report.contact,
+        ownerTelegramIds(env.OWNER_TELEGRAM_USER_IDS),
       );
-      if (daily > GLOBAL_DAILY_MAX) {
-        return fail(429, "relay.rate_limited");
-      }
     } catch {
-      // A rate-limit backend failure must fail CLOSED, never open.
       return fail(503, "relay.rate_limit_unavailable");
     }
 
+    // Dedup first: an accidental double submit must not spend the reporter's
+    // allowance, and it must not open a second topic for the same failure.
+    let admission: Awaited<ReturnType<typeof admitReport>>;
+    try {
+      admission = await admitReport(
+        env.RATE_LIMIT,
+        report,
+        attribution.identity?.account_key ?? null,
+        now,
+      );
+    } catch {
+      // Abuse control fails CLOSED, never open.
+      return fail(503, "relay.rate_limit_unavailable");
+    }
+    if (admission.verdict === "duplicate") {
+      return jsonResponse(
+        { ok: true, delivery_id: admission.deliveryId, deduped: true },
+        200,
+      );
+    }
+    if (admission.verdict === "limited") {
+      return fail(429, admission.code);
+    }
+
+    // Linked principals are bounded by their own buckets — including the ones
+    // that declined to sign, since declining a signature is not a way out of the
+    // bounds. Anonymous reporters keep the per-IP and global-daily ceilings.
+    if (attribution.identity === null) {
+      try {
+        const perIp = await admitCounter(
+          env.RATE_LIMIT,
+          `ip:${clientIp(request)}`,
+          PER_IP_WINDOW_SECONDS,
+          PER_IP_MAX,
+        );
+        if (!perIp) {
+          return fail(429, "relay.rate_limited");
+        }
+        const daily = await admitCounter(
+          env.RATE_LIMIT,
+          utcDayKey(now),
+          secondsUntilUtcMidnight(now),
+          GLOBAL_DAILY_MAX,
+        );
+        if (!daily) {
+          return fail(429, "relay.rate_limited");
+        }
+      } catch {
+        return fail(503, "relay.rate_limit_unavailable");
+      }
+    }
+
+    let deliveryId: string;
     try {
       if (telegramSink && env.TELEGRAM_CHAT_ID) {
-        const deliveryId = crypto.randomUUID();
+        deliveryId = crypto.randomUUID();
         await publishReport(
           {
             TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
             TELEGRAM_CHAT_ID: env.TELEGRAM_CHAT_ID,
           },
-          report,
+          { ...report, attribution },
           deliveryId,
         );
-        return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
+      } else {
+        deliveryId = await sendViaProvider(env, report, attribution);
       }
-      const deliveryId = await sendViaProvider(env, report);
-      return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
     } catch (error) {
       if (error instanceof RelayError) {
         return fail(error.status, error.code);
       }
       return fail(502, "relay.delivery_failed");
     }
+
+    // Only a delivered report is remembered: a failed one must be retryable.
+    try {
+      await rememberReport(env.RATE_LIMIT, admission.fingerprint, deliveryId);
+    } catch {
+      console.error("dedup.write_failed");
+    }
+
+    return jsonResponse({ ok: true, delivery_id: deliveryId }, 200);
   },
 } satisfies ExportedHandler<Env>;

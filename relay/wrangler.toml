@@ -34,3 +34,9 @@ id = "b0b449790229426d89f14a75db716ca2"
 #   npx wrangler secret put TELEGRAM_BOT_TOKEN       # the reports bot from @BotFather
 #   npx wrangler secret put TELEGRAM_WEBHOOK_SECRET  # the same value passed to setWebhook
 #   npx wrangler secret put TELEGRAM_CHAT_ID         # the triage group id, e.g. -1001234567890
+
+# Optional, and NOT a secret: the Owner's Telegram user id(s), comma or space
+# separated. A linked account on this list is labelled `owner` in the group; an
+# unlinked one never is. Set it as a plain variable, for example:
+#   [vars]
+#   OWNER_TELEGRAM_USER_IDS = "1234567890"

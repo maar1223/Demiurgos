@@ -14,9 +14,23 @@ import {
   topicName,
   type PublishableReport,
 } from "../src/publication.ts";
+import type { Attribution } from "../src/attribution.ts";
+import {
+  recordInstallToken,
+  writeIdentity,
+  type KvLike,
+} from "../src/identity.ts";
 
-const TOKEN = "123456:fake-bot-token";
+const TOKEN_BOT = "123456:fake-bot-token";
 const CHAT = "-1001234567890";
+
+const DECLARED: Attribution = {
+  level: "declared",
+  line: "👤 maria@example.com — declared · local session",
+  tag: "declared · local session",
+  label: "maria@example.com",
+  identity: null,
+};
 
 function report(overrides: Partial<PublishableReport> = {}): PublishableReport {
   return {
@@ -25,6 +39,7 @@ function report(overrides: Partial<PublishableReport> = {}): PublishableReport {
     description: "El selector de relaciones se queda vacío.",
     contact: "maria@example.com",
     logs: "line one\nline two",
+    attribution: DECLARED,
     ...overrides,
   };
 }
@@ -68,7 +83,7 @@ function stubTelegram(fail: string | null = null): {
 test("the topic name is bounded and names the version and reporter", () => {
   const name = topicName(report());
 
-  assert.match(name, /^BUG · v0\.9\.3-alpha · maria@example\.com$/);
+  assert.equal(name, "BUG · v0.9.3-alpha · declared · local session · maria@example.com");
   assert.ok(topicName(report({ contact: "x".repeat(400) })).length <= 128);
 });
 
@@ -77,7 +92,7 @@ test("the summary carries the header and the description, bounded", () => {
 
   assert.match(text, /v0\.9\.3-alpha/);
   assert.match(text, /linux/);
-  assert.match(text, /maria@example\.com/);
+  assert.ok(text.includes("👤 maria@example.com — declared · local session"));
   assert.ok(text.includes("El selector de relaciones"));
   assert.ok(summaryText(report({ description: "x".repeat(9000) })).length <= 3800);
 });
@@ -89,13 +104,14 @@ test("the bundle document carries the full logs without truncation", () => {
 
   assert.match(text, /Report id: abc-123/);
   assert.ok(text.includes(logs));
+  assert.ok(text.includes("Reported by: 👤 maria@example.com — declared · local session"));
 });
 
 test("publishing opens a topic, sends the summary there, then the bundle", async () => {
   const telegram = stubTelegram();
   try {
     const result = await publishReport(
-      { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT },
+      { TELEGRAM_BOT_TOKEN: TOKEN_BOT, TELEGRAM_CHAT_ID: CHAT },
       report(),
       "abc-123",
     );
@@ -127,7 +143,7 @@ test("a group without forum topics still receives the report", async () => {
   const telegram = stubTelegram("createForumTopic");
   try {
     const result = await publishReport(
-      { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT },
+      { TELEGRAM_BOT_TOKEN: TOKEN_BOT, TELEGRAM_CHAT_ID: CHAT },
       report(),
       "abc-123",
     );
@@ -150,7 +166,7 @@ test("a failed summary throws, so the caller reports a real failure", async () =
     await assert.rejects(
       () =>
         publishReport(
-          { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT },
+          { TELEGRAM_BOT_TOKEN: TOKEN_BOT, TELEGRAM_CHAT_ID: CHAT },
           report(),
           "abc-123",
         ),
@@ -165,15 +181,15 @@ test("the bot token never appears in the message or the document", async () => {
   const telegram = stubTelegram();
   try {
     await publishReport(
-      { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT },
+      { TELEGRAM_BOT_TOKEN: TOKEN_BOT, TELEGRAM_CHAT_ID: CHAT },
       report(),
       "abc-123",
     );
 
     const summary = JSON.stringify(telegram.calls[1].json);
     const document = await (telegram.calls[2].form?.get("document") as Blob).text();
-    assert.equal(summary.includes(TOKEN), false);
-    assert.equal(document.includes(TOKEN), false);
+    assert.equal(summary.includes(TOKEN_BOT), false);
+    assert.equal(document.includes(TOKEN_BOT), false);
   } finally {
     telegram.restore();
   }
@@ -205,7 +221,7 @@ test("POST / publishes to the group when a chat id is configured", async () => {
         RATE_LIMIT: kv,
         LINKS: kv,
         RELAY_KEY: "k",
-        TELEGRAM_BOT_TOKEN: TOKEN,
+        TELEGRAM_BOT_TOKEN: TOKEN_BOT,
         TELEGRAM_WEBHOOK_SECRET: "s",
         TELEGRAM_CHAT_ID: CHAT,
         BREVO_API_KEY: "",
@@ -257,4 +273,134 @@ test("POST / fails closed when neither sink is configured", async () => {
 
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { ok: false, code: "relay.not_configured" });
+});
+
+const TOKEN = "0123456789abcdef".repeat(4);
+
+class LinkKv implements KvLike {
+  readonly map = new Map<string, string>();
+
+  async get(key: string): Promise<string | null> {
+    return this.map.get(key) ?? null;
+  }
+
+  async put(key: string, value: string): Promise<void> {
+    this.map.set(key, value);
+  }
+
+  async delete(key: string): Promise<void> {
+    this.map.delete(key);
+  }
+}
+
+async function linkedKv(token = TOKEN): Promise<LinkKv> {
+  const kv = new LinkKv();
+  await writeIdentity(kv, {
+    telegram_user_id: "1234567890",
+    username: "brook",
+    display_name: "Brook",
+    account_key: "acct_abc123",
+    linked_at: "2026-10-25T12:00:00.000Z",
+    started_bots: { ideas: false, reports: true },
+    permissions: { report_identity: true, notify_releases: false },
+  });
+  await recordInstallToken(kv, token, "1234567890");
+  return kv;
+}
+
+function reportRequest(token: string | null): Request {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token !== null) {
+    headers["x-install-token"] = token;
+  }
+  return new Request("https://relay.example/", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      schema: 1,
+      app_version: "0.9.3-alpha",
+      platform: { os: "linux" },
+      description: "boom",
+      contact: null,
+      logs: null,
+    }),
+  });
+}
+
+function workerEnv(
+  kv: KvLike,
+  overrides: Record<string, unknown> = {},
+): Parameters<typeof worker.fetch>[1] {
+  return {
+    RATE_LIMIT: kv,
+    LINKS: kv,
+    RELAY_KEY: "k",
+    TELEGRAM_BOT_TOKEN: TOKEN_BOT,
+    TELEGRAM_WEBHOOK_SECRET: "s",
+    TELEGRAM_CHAT_ID: CHAT,
+    BREVO_API_KEY: "",
+    OWNER_INBOX: "",
+    SENDER_FROM: "",
+    ...overrides,
+  } as unknown as Parameters<typeof worker.fetch>[1];
+}
+
+test("POST / signs the report when the install token proves the link", async () => {
+  const kv = await linkedKv();
+  const telegram = stubTelegram();
+  try {
+    const response = await worker.fetch(reportRequest(TOKEN), workerEnv(kv), {} as never);
+
+    assert.equal(response.status, 200);
+    assert.equal(
+      telegram.calls[0].json?.name,
+      "BUG · v0.9.3-alpha · verified by Telegram · @brook",
+    );
+    const summary = JSON.stringify(telegram.calls[1].json);
+    assert.ok(summary.includes("👤 @brook · verified by Telegram"));
+    const document = await (telegram.calls[2].form?.get("document") as Blob).text();
+    assert.ok(document.includes("Reported by: 👤 @brook · verified by Telegram"));
+
+    assert.equal(summary.includes(TOKEN), false);
+    assert.equal(document.includes(TOKEN), false);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("POST / never trusts a token the relay did not hand over", async () => {
+  const kv = await linkedKv();
+  const telegram = stubTelegram();
+  try {
+    const response = await worker.fetch(
+      reportRequest("f".repeat(64)),
+      workerEnv(kv),
+      {} as never,
+    );
+
+    assert.equal(response.status, 200);
+    const summary = JSON.stringify(telegram.calls[1].json);
+    assert.ok(summary.includes("👤 sin contacto"));
+    assert.equal(summary.includes("verified by Telegram"), false);
+  } finally {
+    telegram.restore();
+  }
+});
+
+test("POST / labels a configured Owner id as owner, never as verification", async () => {
+  const kv = await linkedKv();
+  const telegram = stubTelegram();
+  try {
+    await worker.fetch(
+      reportRequest(TOKEN),
+      workerEnv(kv, { OWNER_TELEGRAM_USER_IDS: "42, 1234567890" }),
+      {} as never,
+    );
+
+    const summary = JSON.stringify(telegram.calls[1].json);
+    assert.ok(summary.includes("👤 owner"));
+    assert.equal(summary.includes("verified by Telegram"), false);
+  } finally {
+    telegram.restore();
+  }
 });
