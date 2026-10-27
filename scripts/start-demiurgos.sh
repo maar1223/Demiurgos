@@ -66,9 +66,12 @@ fi
 
 # Persistent logs under the install root (S2-6); runtime state (pid files) in
 # the per-user runtime dir from the layout contract — never hardcoded temp
-# paths that a reboot or a different filesystem would lose.
+# paths that a reboot or a different filesystem would lose. The fallback chain
+# matters under `set -u`: Git Bash on Windows and minimal containers export
+# neither XDG_RUNTIME_DIR nor TMPDIR, and reading `$TMPDIR` directly aborted
+# the whole script with "TMPDIR: unbound variable" before it did anything.
 LOG_DIR="$INSTALL_ROOT/logs"
-RUNTIME_BASE="${XDG_RUNTIME_DIR:-$TMPDIR}"
+RUNTIME_BASE="${XDG_RUNTIME_DIR:-${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/demiurgos/runtime}}"
 STATE_DIR="$RUNTIME_BASE/demiurgos-launcher"
 API_LOG="$LOG_DIR/demiurgos-api.log"
 GATEWAY_LOG="$LOG_DIR/demiurgos-gateway.log"
