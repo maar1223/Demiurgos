@@ -25,8 +25,11 @@
 #                            SAME filesystem -> Move-Item -> app\<version> ->
 #                            flip `current` JUNCTION (S0-C); failure leaves NO
 #                            runnable state
-#   7. data root             bootstrap-once pointer + .env seed (S0-A):
-#                            only when neither env nor pointer exists
+#   7. data root             explicit -DataRoot PATH (recorded in the
+#                            pointer) or, without it, bootstrap-once the
+#                            default <documents>\Demiurgos + .env seed; the
+#                            DEMIURGOS_DATA_ROOT override never writes the
+#                            pointer but always seeds .env (S0-A, step 4)
 #
 # The core NEVER runs a package manager other than the verified uv, NEVER
 # executes files from the payload (only the launcher the user starts runs),
@@ -38,7 +41,12 @@
 #   DEMIURGOS_URL_BASE   channel base (REQUIRED; https:// or file://)
 #   DEMIURGOS_VERSION    pin; default `latest`
 #   DEMIURGOS_HOME       install root; default %LOCALAPPDATA%\Demiurgos
-#   DEMIURGOS_DATA_ROOT  data root override (wins); default pointer/bootstrap
+#   DEMIURGOS_DATA_ROOT  data root override for this install (wins); it does
+#                        NOT write the pointer and says so. Use -DataRoot for a
+#                        choice that must survive the install.
+#   -DataRoot PATH       install-time choice of the content folder: recorded in
+#                        the pointer, folders and .env created there. A relative
+#                        path is normalized. The installer never prompts.
 #   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
 #                        pipeline bakes the real value at publish time)
 #   UV_VERSION           pinned uv version
@@ -66,6 +74,13 @@
 # mandatory/optional split stays as a safety net.
 # ---------------------------------------------------------------------------
 
+param(
+    # Install-time choice of the author-content folder (step 4). It PERSISTS:
+    # the value is written to the data-root pointer. DEMIURGOS_DATA_ROOT keeps
+    # its run-time meaning and leaves the pointer alone.
+    [string]$DataRoot
+)
+
 $ErrorActionPreference = "Stop"
 
 # --- defaults ---------------------------------------------------------------
@@ -79,6 +94,9 @@ $stagingRoot = Join-Path $installRoot ".staging"
 # (the same config dir the S2b launcher and data_root.py resolve).
 $configDir = Join-Path $env:APPDATA "demiurgos"
 $pointerFile = Join-Path $configDir "data-root.json"
+# A relative -DataRoot is normalized before anything is written: a relative
+# value in the pointer would resolve against whoever reads it later.
+$dataRootChoice = if ($DataRoot) { [System.IO.Path]::GetFullPath($DataRoot) } else { "" }
 # Single documented Windows floor (decision #3579). The closure proof (D3)
 # confirms the exact minimum Windows version for the wheels-only mandatory
 # closure; the floors preflight enforces exactly this constant and the fail
@@ -447,33 +465,17 @@ function Get-DocumentsDir {
     return $path
 }
 
-function Invoke-DataRootBootstrap {
-    if ($env:DEMIURGOS_DATA_ROOT) {
-        $script:dataRoot = $env:DEMIURGOS_DATA_ROOT
-        Write-Host "install-demiurgos: using DEMIURGOS_DATA_ROOT=$script:dataRoot (env override; pointer untouched)"
-        return
-    }
-    if (Test-Path -LiteralPath $pointerFile -PathType Leaf) {
-        try {
-            $record = Get-Content -LiteralPath $pointerFile -Raw | ConvertFrom-Json
-            if ($record.data_root) {
-                $script:dataRoot = [string]$record.data_root
-                Write-Host "install-demiurgos: preserving existing data-root pointer -> $script:dataRoot"
-                return
-            }
-        } catch {
-            Fail "data-root pointer $pointerFile is unreadable; refusing to guess"
-        }
-    }
-    # Bootstrap-once: pointer + .env seed, only when neither env nor pointer
-    # exists. Format is byte-compatible with data_root.py write_pointer
-    # (schema_version 1, json.dumps indent 2, trailing newline) so Python's
-    # read_pointer reads it back. UTF-8 without BOM: a Windows username may
-    # legally contain non-ASCII characters.
-    $script:dataRoot = Join-Path (Get-DocumentsDir) "Demiurgos"
+function New-ContentDirs {
     New-Item -ItemType Directory -Force -Path $configDir, $script:dataRoot,
         (Join-Path $script:dataRoot "mundos"), (Join-Path $script:dataRoot "ideas"),
         (Join-Path $script:dataRoot "data"), (Join-Path $script:dataRoot "config") | Out-Null
+}
+
+function Write-PointerRecord {
+    # Byte-compatible with data_root.py write_pointer (schema_version 1,
+    # json.dumps indent 2, trailing newline) so read_pointer reads it back.
+    # UTF-8 without BOM: a Windows username may contain non-ASCII characters.
+    New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $escaped = $script:dataRoot.Replace("\", "\\")
     $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $record = @"
@@ -487,7 +489,56 @@ function Invoke-DataRootBootstrap {
         $pointerFile, $record,
         (New-Object System.Text.UTF8Encoding($false))
     )
-    Write-Host "install-demiurgos: bootstrapped data root at $script:dataRoot"
+}
+
+function Get-PointerValue {
+    if (-not (Test-Path -LiteralPath $pointerFile -PathType Leaf)) { return "" }
+    try {
+        $record = Get-Content -LiteralPath $pointerFile -Raw | ConvertFrom-Json
+        if ($record.data_root) { return [string]$record.data_root }
+        return ""
+    } catch {
+        Fail "data-root pointer $pointerFile is unreadable; refusing to guess"
+    }
+}
+
+function Invoke-DataRootBootstrap {
+    # 1. Explicit install-time choice: it persists.
+    if ($dataRootChoice) {
+        $script:dataRoot = $dataRootChoice
+        New-ContentDirs
+        $previous = Get-PointerValue
+        if ($previous -and $previous -ne $script:dataRoot) {
+            Write-Host "install-demiurgos: reorienting the data root on explicit request: $previous -> $script:dataRoot"
+        }
+        Write-PointerRecord
+        Write-Host "install-demiurgos: the author content lives in $script:dataRoot"
+        Write-Host "install-demiurgos: recorded in $pointerFile; change it with -DataRoot or from the app"
+        Invoke-SeedEnvFile
+        return
+    }
+    # 2. Environment override for this install only: never touches the pointer.
+    if ($env:DEMIURGOS_DATA_ROOT) {
+        $script:dataRoot = $env:DEMIURGOS_DATA_ROOT
+        New-ContentDirs
+        Write-Host "install-demiurgos: using DEMIURGOS_DATA_ROOT=$script:dataRoot (override; the choice is NOT recorded)"
+        Write-Host "install-demiurgos: pass -DataRoot to record $script:dataRoot for every later start"
+        Invoke-SeedEnvFile
+        return
+    }
+    # 3. An existing pointer is preserved byte-for-byte.
+    $pointed = Get-PointerValue
+    if ($pointed) {
+        $script:dataRoot = $pointed
+        Write-Host "install-demiurgos: preserving existing data-root pointer -> $script:dataRoot"
+        return
+    }
+    # 4. Bootstrap-once the default <documents>\Demiurgos.
+    $script:dataRoot = Join-Path (Get-DocumentsDir) "Demiurgos"
+    New-ContentDirs
+    Write-PointerRecord
+    Write-Host "install-demiurgos: the author content lives in $script:dataRoot"
+    Write-Host "install-demiurgos: change it with -DataRoot or from the app"
     Invoke-SeedEnvFile
 }
 

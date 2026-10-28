@@ -27,8 +27,11 @@
 #                            SAME filesystem -> mv -> app/<version> ->
 #                            flip `current` symlink; failure leaves NO
 #                            runnable state
-#   7. data root             bootstrap-once pointer + .env seed (S0-A):
-#                            only when neither env nor pointer exists
+#   7. data root             explicit `--data-root PATH` (recorded in the
+#                            pointer) or, without it, bootstrap-once the
+#                            default <documents>/Demiurgos + .env seed; the
+#                            DEMIURGOS_DATA_ROOT override never writes the
+#                            pointer but always seeds .env (S0-A, step 4)
 #
 # The core NEVER runs a package manager other than the verified uv, NEVER
 # executes files from the payload (only the launcher the user starts runs),
@@ -38,7 +41,13 @@
 #   DEMIURGOS_URL_BASE   channel base (REQUIRED; https:// or file://)
 #   DEMIURGOS_VERSION    pin; default `latest`
 #   DEMIURGOS_HOME       install root; default ~/.demiurgos
-#   DEMIURGOS_DATA_ROOT  data root override (wins); default pointer/bootstrap
+#   DEMIURGOS_DATA_ROOT  data root override for this install (wins); it does
+#                        NOT write the pointer and says so. Use --data-root for
+#                        a choice that must survive the install.
+#   --data-root PATH     install-time choice of the content folder: recorded in
+#                        the pointer, folders and .env created there. A relative
+#                        path is normalized against the cwd. The installer never
+#                        prompts; an unknown argument fails with usage.
 #   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
 #                        pipeline bakes the real value at publish time)
 #   UV_VERSION           pinned uv version
@@ -123,6 +132,55 @@ fail() {
 warn() {
     printf 'install-demiurgos: warning: %s\n' "$1" >&2
 }
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: install-demiurgos.sh [--data-root PATH]
+
+  --data-root PATH   where the author's content lives (worlds, ideas,
+                     templates). The path is recorded in the data-root pointer,
+                     so every later start finds it. Defaults to
+                     <documents>/Demiurgos.
+
+The installer never asks questions: the flag is the install-time choice, and the
+app offers the same folder on first run.
+USAGE
+}
+
+# --- Install-time choice (step 4, S1-S3) ------------------------------------
+# `--data-root` is the explicit choice and it PERSISTS: it writes the pointer,
+# so a later start without any environment variable still finds the content.
+# `DEMIURGOS_DATA_ROOT` keeps its run-time meaning (S4): it wins for this
+# install and leaves the pointer alone, but the output says so out loud.
+DATA_ROOT_CHOICE=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --data-root)
+            [ "$#" -ge 2 ] || fail "--data-root needs a path"
+            DATA_ROOT_CHOICE="$2"
+            shift 2
+            ;;
+        --data-root=*)
+            DATA_ROOT_CHOICE="${1#--data-root=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage
+            fail "unknown argument: $1"
+            ;;
+    esac
+done
+[ -n "$DATA_ROOT_CHOICE" ] || true
+if [ -n "$DATA_ROOT_CHOICE" ]; then
+    case "$DATA_ROOT_CHOICE" in
+        /*) ;;
+        *) DATA_ROOT_CHOICE="$PWD/$DATA_ROOT_CHOICE" ;;
+    esac
+fi
 
 # --- OS / arch / libc ------------------------------------------------------
 
@@ -434,15 +492,59 @@ documents_dir() {
     esac
 }
 
+read_pointer_value() {
+    [ -r "$POINTER_FILE" ] || return 0
+    sed -n 's/.*"data_root"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$POINTER_FILE" | sed -n '1p'
+}
+
+# Byte-compatible with data_root.py (schema_version 1, indent 2, trailing
+# newline) so Python's read_pointer reads it back.
+write_pointer_record() {
+    mkdir -p "$CONFIG_DIR"
+    printf '{\n  "schema_version": 1,\n  "data_root": "%s",\n  "updated_at": "%s"\n}\n' \
+        "$DATA_ROOT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"
+}
+
+ensure_content_dirs() {
+    mkdir -p "$DATA_ROOT" "$DATA_ROOT/mundos" "$DATA_ROOT/ideas" \
+        "$DATA_ROOT/data" "$DATA_ROOT/config"
+}
+
 bootstrap_data_root() {
-    local pointed
-    if [ -n "${DEMIURGOS_DATA_ROOT:-}" ]; then
-        DATA_ROOT="$DEMIURGOS_DATA_ROOT"
-        printf 'install-demiurgos: using DEMIURGOS_DATA_ROOT=%s (env override; pointer untouched)\n' "$DATA_ROOT" >&2
+    local pointed=""
+
+    # 1. Explicit install-time choice: it persists.
+    if [ -n "$DATA_ROOT_CHOICE" ]; then
+        DATA_ROOT="$DATA_ROOT_CHOICE"
+        ensure_content_dirs
+        pointed="$(read_pointer_value)"
+        if [ -n "$pointed" ] && [ "$pointed" != "$DATA_ROOT" ]; then
+            printf 'install-demiurgos: reorienting the data root on explicit request: %s -> %s\n' \
+                "$pointed" "$DATA_ROOT" >&2
+        fi
+        write_pointer_record
+        printf 'install-demiurgos: the author content lives in %s\n' "$DATA_ROOT" >&2
+        printf 'install-demiurgos: recorded in %s; change it with --data-root or from the app\n' \
+            "$POINTER_FILE" >&2
+        seed_env_file
         return 0
     fi
+
+    # 2. Environment override for this install only: never touches the pointer.
+    if [ -n "${DEMIURGOS_DATA_ROOT:-}" ]; then
+        DATA_ROOT="$DEMIURGOS_DATA_ROOT"
+        ensure_content_dirs
+        printf 'install-demiurgos: using DEMIURGOS_DATA_ROOT=%s (override; the choice is NOT recorded)\n' \
+            "$DATA_ROOT" >&2
+        printf 'install-demiurgos: pass --data-root to record %s for every later start\n' \
+            "$DATA_ROOT" >&2
+        seed_env_file
+        return 0
+    fi
+
+    # 3. An existing pointer is preserved byte-for-byte.
     if [ -r "$POINTER_FILE" ]; then
-        pointed="$(sed -n 's/.*"data_root"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$POINTER_FILE" | sed -n '1p')"
+        pointed="$(read_pointer_value)"
         if [ -n "$pointed" ]; then
             DATA_ROOT="$pointed"
             printf 'install-demiurgos: preserving existing data-root pointer -> %s\n' "$DATA_ROOT" >&2
@@ -450,14 +552,13 @@ bootstrap_data_root() {
         fi
         fail "data-root pointer $POINTER_FILE is unreadable; refusing to guess"
     fi
-    # Bootstrap-once: pointer + .env seed, only when neither env nor pointer
-    # exists. Format is byte-compatible with data_root.py (schema_version 1,
-    # indent 2, trailing newline) so Python's read_pointer reads it back.
+
+    # 4. Bootstrap-once the default <documents>/Demiurgos.
     DATA_ROOT="$(documents_dir)/Demiurgos"
-    mkdir -p "$CONFIG_DIR" "$DATA_ROOT" "$DATA_ROOT/mundos" "$DATA_ROOT/ideas" "$DATA_ROOT/data" "$DATA_ROOT/config"
-    printf '{\n  "schema_version": 1,\n  "data_root": "%s",\n  "updated_at": "%s"\n}\n' \
-        "$DATA_ROOT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"
-    printf 'install-demiurgos: bootstrapped data root at %s\n' "$DATA_ROOT" >&2
+    ensure_content_dirs
+    write_pointer_record
+    printf 'install-demiurgos: the author content lives in %s\n' "$DATA_ROOT" >&2
+    printf 'install-demiurgos: change it with --data-root or from the app\n' >&2
     seed_env_file
 }
 
