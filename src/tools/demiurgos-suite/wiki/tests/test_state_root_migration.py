@@ -278,11 +278,19 @@ def test_evidence_directory_failure_does_not_raise_after_publish(tmp_path: Path)
 
 
 def test_non_utf8_source_entry_is_adopted(tmp_path: Path):
-    """A filename that is not valid UTF-8 must not crash the tree hash."""
+    """A filename that is not valid UTF-8 must not crash the tree hash.
+
+    Only filesystems that can REPRESENT such a name can exercise this: APFS
+    raises ``EILSEQ`` and Windows rejects the byte sequence, so the capability is
+    probed instead of assumed (a skip there is honest, not a silent pass).
+    """
     data_root, state_root = _roots(tmp_path)
     legacy = _seed_state(data_root)
     raw = os.fsencode(str(legacy)) + b"/odd-\xff-name"
-    handle = os.open(raw, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        handle = os.open(raw, os.O_CREAT | os.O_WRONLY, 0o600)
+    except (OSError, UnicodeError):
+        pytest.skip("this filesystem cannot store a non-UTF-8 file name")
     try:
         os.write(handle, b"x")
     finally:
