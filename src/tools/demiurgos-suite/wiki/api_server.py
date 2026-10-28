@@ -172,6 +172,7 @@ from account import (
 import emergency_key
 from onboarding import (
     commit_account_created as _commit_account_created,
+    commit_content_folder as _commit_content_folder,
     commit_step0 as _commit_step0,
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
@@ -878,6 +879,23 @@ def onboarding_step0(body: OnboardingStep0Request, request: Request):
     except ValueError as exc:
         raise problem("locale.invalid", detail=str(exc)) from exc
     registry.atomic_commit(next_state)
+    return _onboarding_status_from(registry.snapshot(), world_names=_world_names())
+
+
+@app.post("/api/onboarding/content-folder")
+def onboarding_content_folder(request: Request):
+    """Record the content-folder step (step 4). Gated ONLY when the vault is ON.
+
+    The folder itself lives in the data-root pointer (``POST /api/data-root``);
+    this only mirrors the step so the flow resumes at the world instead of
+    asking again. Nothing moves and no path is stored here.
+    """
+    if _vault_active():
+        principal = _resolve_principal(request)
+        if principal is None:
+            raise problem("auth.required")
+    registry = _local_state()
+    registry.atomic_commit(_commit_content_folder(registry.snapshot()))
     return _onboarding_status_from(registry.snapshot(), world_names=_world_names())
 
 

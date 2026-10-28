@@ -91,6 +91,25 @@ export const messages = {
       "Configuración inicial para dejar la instalación operativa. Puedes retomar cada capacidad después desde el Perfil.",
     "onboarding.loadError": "No se pudo consultar el estado de la instalación.",
     "onboarding.step1.title": "Paso 1: idioma, región y zona horaria",
+    "onboarding.folder.title": "Dónde viven tus mundos",
+    "onboarding.folder.intro":
+      "Esta es la carpeta donde Demiurgos guarda tus mundos, ideas y plantillas. Es tuya: puedes respaldarla con cualquier servicio y llevarla a otra máquina.",
+    "onboarding.folder.path": "Carpeta actual",
+    "onboarding.folder.unconfigured": "Sin configurar",
+    "onboarding.folder.worlds": "Mundos",
+    "onboarding.folder.free": "Espacio libre",
+    "onboarding.folder.pinnedByEnv":
+      "La carpeta está fijada por la variable DEMIURGOS_DATA_ROOT de esta instalación, así que no se puede cambiar desde aquí.",
+    "onboarding.folder.unusable":
+      "Esta carpeta no es una ubicación segura para tus mundos.",
+    "onboarding.folder.restartRequired":
+      "La carpeta quedó guardada. Reinicia Demiurgos para que la use: los mundos se crean en la carpeta que la aplicación tiene abierta.",
+    "onboarding.folder.restartAction": "Reiniciar Demiurgos",
+    "onboarding.folder.newPath": "Nueva carpeta (ruta completa)",
+    "onboarding.folder.newPathPlaceholder": "/home/tu-usuario/Documentos/MisMundos",
+    "onboarding.folder.save": "Guardar carpeta",
+    "onboarding.folder.accept": "Usar esta carpeta",
+    "onboarding.folder.change": "Cambiar carpeta",
     "onboarding.world.title": "Crea tu mundo",
     "onboarding.world.intro":
       "Se crea un árbol canónico en minúsculas (lore, personajes). El mundo es el último paso operativo para entrar al Taller de Mundo.",
@@ -2208,6 +2227,25 @@ export const messages = {
       "Initial setup to make the installation operational. You can resume each capability later from the Profile.",
     "onboarding.loadError": "Could not check the installation status.",
     "onboarding.step1.title": "Step 1: language, region, and time zone",
+    "onboarding.folder.title": "Where your worlds live",
+    "onboarding.folder.intro":
+      "This is the folder where Demiurgos keeps your worlds, ideas and templates. It is yours: back it up with any service and carry it to another machine.",
+    "onboarding.folder.path": "Current folder",
+    "onboarding.folder.unconfigured": "Not configured",
+    "onboarding.folder.worlds": "Worlds",
+    "onboarding.folder.free": "Free space",
+    "onboarding.folder.pinnedByEnv":
+      "The folder is fixed by this install's DEMIURGOS_DATA_ROOT variable, so it cannot be changed here.",
+    "onboarding.folder.unusable":
+      "This folder is not a safe location for your worlds.",
+    "onboarding.folder.restartRequired":
+      "The folder was saved. Restart Demiurgos so it uses it: worlds are created in the folder the app has open.",
+    "onboarding.folder.restartAction": "Restart Demiurgos",
+    "onboarding.folder.newPath": "New folder (full path)",
+    "onboarding.folder.newPathPlaceholder": "/home/you/Documents/MyWorlds",
+    "onboarding.folder.save": "Save folder",
+    "onboarding.folder.accept": "Use this folder",
+    "onboarding.folder.change": "Change folder",
     "onboarding.world.title": "Create your world",
     "onboarding.world.intro":
       "A canonical lowercase tree is created (lore, characters). The world is the last operational step to enter the World Workshop.",

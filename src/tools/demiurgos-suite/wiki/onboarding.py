@@ -30,6 +30,7 @@ from typing import Any, Mapping, Sequence
 STEP_ORDER: tuple[str, ...] = (
     "step0",
     "account",
+    "content_folder",
     "ai",
     "telegram",
     "world",
@@ -45,7 +46,9 @@ REMOTE_STEPS: frozenset[str] = frozenset({"ai", "telegram", "backup_handoff"})
 OPTIONAL_STEPS: frozenset[str] = frozenset({"ai", "telegram", "backup_handoff"})
 
 # Blocking local steps: step 0 (locale), the local account (R-AC-01), and the
-# world (last operational step, blocking only for the Taller de Mundo).
+# world (last operational step, blocking only for the Taller de Mundo). The
+# content-folder step (step 4) is deliberately NOT blocking: showing where the
+# content lives is a service, and creating a world settles the question.
 BLOCKING_STEPS: tuple[str, ...] = ("step0", "account", "world")
 
 
@@ -74,11 +77,22 @@ def status_from(
     step0_done = "step0" in completed
     account_done = "account" in completed
     world_exists = bool(world_names)
+    # A world already on disk answers the folder question implicitly: the author
+    # chose (even by accepting the default) before creating it. Without this an
+    # install that finished onboarding before step 4 existed would see the step
+    # as pending forever.
+    content_folder_done = "content_folder" in completed or world_exists
 
-    current_step = _current_step(completed, step0_done, account_done, world_exists)
+    current_step = _current_step(
+        completed, step0_done, account_done, content_folder_done, world_exists
+    )
     complete = step0_done and account_done and world_exists
 
-    pending = [s for s in STEP_ORDER if s not in completed]
+    pending = [
+        s
+        for s in STEP_ORDER
+        if s not in completed and not (s == "content_folder" and content_folder_done)
+    ]
     return {
         "completed": complete,
         "current_step": current_step,
@@ -93,12 +107,15 @@ def _current_step(
     completed: Sequence[str],
     step0_done: bool,
     account_done: bool,
+    content_folder_done: bool,
     world_exists: bool,
 ) -> str:
     if not step0_done:
         return "step0"
     if not account_done:
         return "account"
+    if not content_folder_done:
+        return "content_folder"
     if not world_exists:
         return "world"
     return "ready"
@@ -142,6 +159,25 @@ def commit_account_created(state: Mapping[str, Any]) -> dict[str, Any]:
     steps = list(onboarding.get("completed_steps", []))
     if "account" not in steps:
         steps.append("account")
+    onboarding["completed_steps"] = steps
+    onboarding["current_step"] = "content_folder"
+    onboarding["completed"] = False
+    next_state["onboarding"] = onboarding
+    return next_state
+
+
+def commit_content_folder(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Record the content-folder step (step 4): the author confirmed the folder.
+
+    No path is stored here on purpose — the data-root pointer is the single
+    source of truth (``data_root.write_pointer``). This only mirrors the step so
+    the registry resumes at the world instead of asking again.
+    """
+    next_state = deepcopy(dict(state))
+    onboarding = deepcopy(next_state.get("onboarding") or default_onboarding())
+    steps = list(onboarding.get("completed_steps", []))
+    if "content_folder" not in steps:
+        steps.append("content_folder")
     onboarding["completed_steps"] = steps
     onboarding["current_step"] = "world"
     onboarding["completed"] = False

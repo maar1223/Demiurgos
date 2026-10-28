@@ -326,6 +326,7 @@ export interface BugReportFallback {
 export type OnboardingStep =
   | "step0"
   | "account"
+  | "content_folder"
   | "ai"
   | "telegram"
   | "world"
