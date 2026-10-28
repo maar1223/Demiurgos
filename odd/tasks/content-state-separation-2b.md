@@ -42,8 +42,8 @@ Acceptance: the suite stays green with no `platformdirs` state dir touched.
 
 | ID | Specs | Route | Status |
 | --- | --- | --- | --- |
-| T1 | S1, S2, S11 | inline | pending |
-| T2 | S3, S7, S10 | inline | pending |
+| T1 | S1, S2, S11 | inline | done (c19a0789) |
+| T2 | S3, S7, S10 | inline | in progress |
 | T3 | S4, S5a, S5b | inline | pending |
 | T4 | S5c, S8, S9 | inline | pending |
 | T5 | S5, S6, S10 | inline | pending |
@@ -63,3 +63,7 @@ L4 — Two consequences found that the checkpoint did not name, both recorded as
 L5 — Route: inline. No writer trigger holds (the units are sequential, each depends on the previous, and no two edit disjoint surfaces in parallel); verification trigger fires (S6, item 1) → one independent verifier at the feature end, plus the parent spot check.
 
 L6 — Baseline: `4318 passed, 24 skipped` in 240 s with `.venv/bin/python -m pytest tests -q`. The system `python3` cannot collect 27 modules (`argon2` missing) — the venv is the runner.
+
+L7 — T1 closed (`c19a0789`): `state_paths.py` implements (ii) as a pure path decision (marker present → state root; no marker + a legacy artifact → legacy; otherwise state root; unconfigured content root → state root), `STATE_ARTIFACTS` gained `sessions.json` and `import-spool`, the `data_root` docstring now names the layer, and `conftest.py` exports a hermetic `DEMIURGOS_STATE_ROOT`. RED→GREEN evidence: `tests/test_state_paths.py` (14 cells) written first; `test_data_root_resolver` needed one honest update (its no-override default now goes through `environ={}`). Full suite after T1: 4332 passed, 24 skipped.
+
+L8 — T2 wiring: 13 runtime modules migrated (5 stores, recycle bin, migration evidence, locale registry, sessions registry, import spool, idea-capture DB + lock, graph MCP state path, the `idea_capture` package's two state paths and its CLI). Two test-hygiene consequences surfaced and were fixed rather than papered over: (1) `PROJECT_ROOT` sandboxing no longer isolates state, so `conftest.py` now gives every test its own state root AND drops the `api_server` singletons that captured a state path (`_LOCAL_STATE`, `_IMPORT_STORE`, `_BACKUP_ENGINE`, the five `_LazyBinding` stores); (2) the two `_lifespan` cells in `test_import_spool_gc` neutralize the acceptance-convergence thread, which used to outlive the test and write into the next test's state directory. `payload_manifest.json` regenerated (the payload now ships `state_paths.py` and `state_root_migration.py`, which nothing imported at runtime before). New `tests/test_state_consumer_wiring.py` (21 cells) pins every consumer, the content paths that must NOT move, and policy (ii) end to end through a live consumer. Full suite: 4353 passed, 24 skipped.

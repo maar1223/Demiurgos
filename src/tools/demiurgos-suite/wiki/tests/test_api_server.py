@@ -36,6 +36,7 @@ for _p in (str(_WIKI), str(_SUITE)):
         sys.path.insert(0, _p)
 
 import api_server  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 from assistant_activity import assess_hermes_capabilities  # noqa: E402
 import guided_session_store  # noqa: E402
 from guided_character_persistence import ReindexCoordinator, ReindexResult  # noqa: E402
@@ -6202,7 +6203,8 @@ def empty_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _state_path() -> Path:
-    return api_server.PROJECT_ROOT / "data" / "local-state.json"
+    # Machine state lives in the state directory (2b), not under PROJECT_ROOT.
+    return state_file("local-state.json")
 
 
 def _post_step0(client: TestClient, **overrides):
@@ -6566,8 +6568,7 @@ class TestMigrationApprovalEndpoint:
 
     def _evidence_file(self, transaction_id: str) -> Path:
         return (
-            api_server.PROJECT_ROOT / "data" / "migration-evidence"
-            / f"{transaction_id}.json"
+            state_file("migration-evidence") / f"{transaction_id}.json"
         )
 
     def test_migration_execute_fails_closed_without_principal(

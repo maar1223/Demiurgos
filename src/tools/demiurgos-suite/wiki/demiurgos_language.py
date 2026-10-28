@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from data_root import DataRootNotConfigured, resolve_data_root
 from local_state import LocalState
+from state_paths import resolve_state_dir
 
 ENV_NAME = "DEMIURGOS_LANGUAGE"
 DEFAULT_LANGUAGE = "es"
@@ -172,16 +173,14 @@ def read_dotenv_value(env_file: Path, name: str) -> str:
     return ""
 
 
-def _default_state_path() -> Path | None:
-    """The installation-wide local-state file, or None when no data root exists.
+def _default_state_path() -> Path:
+    """The installation-wide local-state file, resolved on every call.
 
-    Resolved lazily on every call (never at import time) and fails safe: a
-    missing/unconfigured data root simply means "no persisted locale".
+    Never resolved at import time. Machine state has a platform-defined home, so
+    this cannot fail for a missing content root: an installation with no
+    persisted locale simply has no file there yet.
     """
-    try:
-        return resolve_data_root() / "data" / "local-state.json"
-    except DataRootNotConfigured:
-        return None
+    return resolve_state_dir() / "local-state.json"
 
 
 def read_persisted_locale(*, state_path: Path | None = None) -> LocaleSettings | None:
@@ -193,7 +192,7 @@ def read_persisted_locale(*, state_path: Path | None = None) -> LocaleSettings |
     (fail-safe, same contract as :func:`resolve_ui_language`).
     """
     path = Path(state_path) if state_path is not None else _default_state_path()
-    if path is None or not path.is_file():
+    if not path.is_file():
         return None
     try:
         snapshot = LocalState(path).snapshot()

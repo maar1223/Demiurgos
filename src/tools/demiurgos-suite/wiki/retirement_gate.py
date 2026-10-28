@@ -27,7 +27,7 @@ for _p in (str(_WIKI), str(_SUITE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from data_root import resolve_data_root  # noqa: E402
+from state_paths import resolve_state_dir  # noqa: E402
 from local_state import LocalState  # noqa: E402
 from readiness import project_cards, probe_local_storage  # noqa: E402
 from wiki.world_authority import (WorldResultKind,  # noqa: E402
@@ -193,7 +193,7 @@ def evidence_dir() -> Path:
     ``create_migration_settings_router`` wiring in ``api_server``), so the gate
     reads it from the resolver while its code checks stay on ``PROJECT_ROOT``.
     """
-    return resolve_data_root() / "data" / "migration-evidence"
+    return resolve_state_dir() / "migration-evidence"
 
 
 def check_migration_rollback_evidence(project_root: Path) -> GateCheck:

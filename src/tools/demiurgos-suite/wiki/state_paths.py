@@ -63,8 +63,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-import data_root
-import state_root_migration
+try:  # imported as ``wiki.state_paths`` (package) …
+    from . import data_root, state_root_migration
+except ImportError:  # … or as a top-level module (the suite puts the wiki dir on sys.path)
+    import data_root
+    import state_root_migration
 
 #: Directory name under whichever base wins the decision (``data`` on both
 #: sides). Kept as an alias of the migration's name so a change lands in one place.

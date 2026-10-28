@@ -39,6 +39,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 
 log = logging.getLogger("demiurgos-idea-capture")
 
@@ -456,7 +457,7 @@ def validate_token(token: Any) -> str:
 #     POST /chats/authorize). Message content is never disclosed.
 # ---------------------------------------------------------------------------
 
-_OWNER_LOCK_REL = Path("data") / "idea-capture.sqlite3.lock"
+_OWNER_LOCK_NAME = "idea-capture.sqlite3.lock"
 _DISCOVER_MAX_UPDATES = 100
 _DISCOVER_MAX_CANDIDATES = 25
 _TELEGRAM_API = "https://api.telegram.org"
@@ -478,8 +479,12 @@ class TelegramDiscoveryError(RuntimeError):
 
 
 def owner_lock_path() -> Path:
-    """The exact lock file the serve entrypoint uses (runtime OwnershipLock)."""
-    return _repo_root() / _OWNER_LOCK_REL
+    """The exact lock file the serve entrypoint uses (runtime OwnershipLock).
+
+    Beside the capture database in the state directory, so the web discovery
+    path and the serve entrypoint observe the same owner lock.
+    """
+    return resolve_state_dir() / _OWNER_LOCK_NAME
 
 
 def _default_pid_alive(pid: int) -> bool:
@@ -764,7 +769,7 @@ _pending_runtimes_lock = threading.Lock()
 
 def _pending_state_path() -> Path:
     """SQLite state file shared with the Hermes idea-capture runtime."""
-    return _repo_root() / "data" / "idea-capture.sqlite3"
+    return resolve_state_dir() / "idea-capture.sqlite3"
 
 
 def _build_pending_runtime() -> Any:

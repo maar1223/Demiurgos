@@ -225,6 +225,7 @@ from contract_projection import project_contract_markdown
 from order_manifest import read_order, remove_from_order
 
 import data_root  # flat sibling module (data-root resolver, WU-2)
+import state_paths  # flat sibling module (state-directory layer, 2b)
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
@@ -309,7 +310,7 @@ async def _lifespan(app: FastAPI):
         try:
             counts = reap_dead_spools(
                 _import_store(),
-                _project_root() / "data" / "import-spool",
+                _spool_dir(),
                 gc_ttl_days(),
                 mundos_dir=_mundos_dir(),
             )
@@ -408,6 +409,10 @@ register_error_handlers(app)
 PROJECT_ROOT: Path | None = None
 MUNDOS_DIR: Path | None = None
 TRASH_ROOT: Path | None = None
+# Machine state (stores, recycle bin, evidence, session registry, spool). Same
+# lazy/patchable contract as the data-root names above: ``_state_dir()`` derives
+# it on every call so a patched value or a just-finished adoption always wins.
+STATE_DIR: Path | None = None
 # Prebuilt SPA dist dir (S1 static serving). Same lazy seam contract as the
 # data-root names above: ``_frontend_dist()`` reads the env override first,
 # then this patched attribute, then the dev-checkout default. The launcher is
@@ -448,6 +453,26 @@ def _project_root() -> Path:
     if PROJECT_ROOT is None:
         PROJECT_ROOT = data_root.resolve_data_root()
     return PROJECT_ROOT
+
+
+def _state_dir() -> Path:
+    """The machine-state directory, honouring the ``STATE_DIR`` patch seam.
+
+    Delegated to ``state_paths`` (policy (ii)) so the legacy/new decision lives
+    in one place; derived on every call so the boot-time adoption can flip it.
+    """
+    if STATE_DIR is not None:
+        return STATE_DIR
+    return state_paths.resolve_state_dir()
+
+
+def _spool_dir() -> Path:
+    """Transient import staging: machine state, never author content.
+
+    A half-written upload must not be synced to another machine, so the spool
+    lives beside the databases in the state directory.
+    """
+    return _state_dir() / "import-spool"
 
 
 def _mundos_dir() -> Path:
@@ -555,13 +580,13 @@ _LOCAL_STATE: LocalState | None = None
 def _local_state() -> LocalState:
     """Lazily-initialized authoritative local state registry (ONB-1.3).
 
-    Lives under ``<project>/data/local-state.json`` and is runtime-authoritative:
+    Lives in the state directory (``local-state.json``) and is runtime-authoritative:
     Engram is recovery/context only and never governs readiness. The registry
     never touches ``.demiurgos-estado.json`` (narrative arc state).
     """
     global _LOCAL_STATE
     if _LOCAL_STATE is None:
-        _LOCAL_STATE = LocalState(_project_root() / "data" / "local-state.json")
+        _LOCAL_STATE = LocalState(_state_dir() / "local-state.json")
     return _LOCAL_STATE
 
 
@@ -1070,7 +1095,7 @@ def _maybe_reap_spool() -> None:
     try:
         counts = reap_dead_spools(
             _import_store(),
-            _project_root() / "data" / "import-spool",
+            _spool_dir(),
             gc_ttl_days(),
             mundos_dir=_mundos_dir(),
         )
@@ -1438,7 +1463,7 @@ def _purge_world_associated_data(world_name: str) -> None:
         )
     else:
         try:
-            store = CaptureStore(_project_root() / "data" / "idea-capture.sqlite3")
+            store = CaptureStore(_state_dir() / "idea-capture.sqlite3")
             cleaned = store.delete_for_world(world_name)
             store.close()
             logger.info("World purge: cleaned %d idea-capture rows for '%s'", cleaned, world_name)
@@ -1705,10 +1730,10 @@ _local_session_lock = threading.Lock()
 def _sessions_file() -> Path:
     """Persisted session store path (R-AC-03): survives server restarts.
 
-    Lives alongside the other local state under ``<project>/data/``. Not
-    gitignored paths would leak tokens, so ``data/sessions.json`` is ignored.
+    Lives with the other machine state in the state directory, never in the
+    author's (possibly cloud-synced) content folder: it holds session hashes.
     """
-    return _project_root() / "data" / "sessions.json"
+    return _state_dir() / "sessions.json"
 
 
 def _load_persisted_sessions() -> None:
@@ -7168,8 +7193,8 @@ def _load_project_env(name: str) -> str:
 
 
 def _locale_state_path() -> Path:
-    """The runtime-authoritative local-state file for this project root."""
-    return _project_root() / "data" / "local-state.json"
+    """The runtime-authoritative local-state file in the state directory."""
+    return _state_dir() / "local-state.json"
 
 
 def _resolve_language(domain: str) -> str:
@@ -9405,7 +9430,7 @@ _IMPORT_STORE: ImportJobStore | None = None
 def _import_store() -> ImportJobStore:
     global _IMPORT_STORE
     if _IMPORT_STORE is None:
-        _IMPORT_STORE = ImportJobStore(_project_root() / "data" / "import-jobs.sqlite3")
+        _IMPORT_STORE = ImportJobStore(_state_dir() / "import-jobs.sqlite3")
     return _IMPORT_STORE
 
 
@@ -10045,7 +10070,7 @@ app.include_router(
     create_migration_settings_router(
         require_principal=lambda request: _resolve_principal(request),
         mundos_dir=lambda: _mundos_dir(),
-        evidence_dir=lambda: _project_root() / "data" / "migration-evidence",
+        evidence_dir=lambda: _state_dir() / "migration-evidence",
     ),
 )
 
@@ -10388,7 +10413,7 @@ app.include_router(
     create_import_router(
         require_principal=lambda request: _resolve_principal(request),
         mundos_dir=lambda: _mundos_dir(),
-        spool_dir=lambda: _project_root() / "data" / "import-spool",
+        spool_dir=lambda: _spool_dir(),
         store=_import_store,
         on_list=_maybe_reap_spool,
         enricher=_make_import_enricher(),
@@ -10411,9 +10436,9 @@ app.include_router(
         service=ImportService(
             store=_import_store(),
             mundos_dir=_mundos_dir(),
-            spool_dir=_project_root() / "data" / "import-spool",
+            spool_dir=_spool_dir(),
             read_file=lambda rel: (
-                (_project_root() / "data" / "import-spool" / rel).read_text(
+                (_spool_dir() / rel).read_text(
                     encoding="utf-8") if rel else ""),
             graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
             graph_reconcile_many=_reconcile_import_graph_many,

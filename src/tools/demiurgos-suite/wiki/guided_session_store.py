@@ -12,8 +12,8 @@ serialized again.
 
 Mechanism choice: stdlib ``sqlite3`` with a single file-backed database.
 ``db_path`` selects the location; when it is ``None`` the store resolves the
-durable repo-local default ``<repo>/data/guided-sessions.sqlite3`` (the same
-``data/`` convention as ``idea-capture.sqlite3``), so sessions survive a
+durable default ``<state dir>/guided-sessions.sqlite3`` (the same
+state-directory convention as ``idea-capture.sqlite3``), so sessions survive a
 restart without any environment override. ``db_path=":memory:"`` remains
 available explicitly for hermetic use. SQLite is the smallest
 repository-compatible local durable store: zero new dependencies, atomic row
@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 from guided_character_domain import (
     accept_proposal as domain_accept_proposal,
     apply_delta,
@@ -87,7 +87,7 @@ def default_db_path() -> Path:
     the store recovers across a restart without requiring the optional
     ``DEMIURGOS_GUIDED_SESSIONS_DB`` override while the suite stays hermetic.
     """
-    return resolve_data_root() / "data" / "guided-sessions.sqlite3"
+    return resolve_state_dir() / "guided-sessions.sqlite3"
 
 
 class GuidedSessionStore:

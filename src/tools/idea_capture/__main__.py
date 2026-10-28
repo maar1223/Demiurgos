@@ -41,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--world", default="", help="active world (or DEMIURGOS_WORLD)")
     serve.add_argument("--mundos", default="", help="mundos root (default <repo>/mundos)")
-    serve.add_argument("--state", default="", help="sqlite state path (default <repo>/data/idea-capture.sqlite3)")
+    serve.add_argument("--state", default="", help="sqlite state path (default <state dir>/idea-capture.sqlite3)")
     serve.add_argument("--hermes-health-url", default="",
                        help="optional Hermes gateway health probe before starting")
     return parser

@@ -105,6 +105,59 @@ def hermetic_state_root() -> Path:
         os.environ[_STATE_ENV_VAR] = _PREVIOUS_STATE_ENV
 
 
+#: Module-level api_server attributes that capture a state path on first use.
+_STATE_BOUND_ATTRS = ("_LOCAL_STATE", "_IMPORT_STORE", "_BACKUP_ENGINE")
+#: ``api_server._LazyBinding`` singletons that capture a state path on first use.
+_STATE_BOUND_BINDINGS = (
+    "_GUIDED_SESSIONS",
+    "_GUIDED_REINDEX",
+    "_CO_CREATION_SESSIONS",
+    "_CO_CREATION_MATERIALIZER",
+    "_CONVERSATION_MEMORY",
+)
+
+
+def _reset_state_bound_caches() -> None:
+    """Drop every cached object that captured the PREVIOUS test's state path.
+
+    The stores and the local-state registry are process-wide singletons built on
+    first use. Before the split they all pointed at one session-wide data root,
+    so a stale singleton was harmless; now each test resolves its own state
+    directory, and a singleton built by an earlier test would answer from that
+    test's throwaway tree. Modules are looked up in ``sys.modules`` so this
+    fixture never forces an import of the app while the suite is collecting.
+    """
+    api_server = sys.modules.get("api_server")
+    if api_server is not None:
+        for name in _STATE_BOUND_ATTRS:
+            if hasattr(api_server, name):
+                setattr(api_server, name, None)
+        for name in _STATE_BOUND_BINDINGS:
+            binding = getattr(api_server, name, None)
+            if getattr(binding, "_value", None) is not None:
+                binding._value = None
+    idea_capture_ui = sys.modules.get("idea_capture_ui")
+    if idea_capture_ui is not None:
+        idea_capture_ui._pending_runtimes.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """One throwaway state root PER TEST, overriding the session-wide one.
+
+    Machine state is no longer derived from the data root, so a test that
+    sandboxes ``PROJECT_ROOT`` to ``tmp_path`` would still share one state
+    directory with the whole session — and therefore leak accounts, sessions and
+    stores into its neighbours. Deriving the state root from ``tmp_path`` keeps
+    the isolation every one of those fixtures expects, without each test having
+    to know where state lives.
+    """
+    root = tmp_path / "state-root"
+    monkeypatch.setenv(_STATE_ENV_VAR, str(root))
+    _reset_state_bound_caches()
+    return root
+
+
 @pytest.fixture(scope="session", autouse=True)
 def hermetic_frontend_dist() -> Path:
     """The suite's frontend dist pointer: nonexistent, never the working tree's.

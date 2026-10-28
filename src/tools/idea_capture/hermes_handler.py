@@ -294,16 +294,17 @@ def build_audio_transcriber(
 
 
 def _default_locale_state_path() -> Path:
-    """Project local-state registry: ``<data root>/data/local-state.json``.
+    """Project local-state registry: ``<state dir>/local-state.json``.
 
-    Resolved through the shared data-root resolver (WU-3): the registry lives
-    with the author data, never with this module's checkout, so the wiki
-    locale reader and idea capture always agree on one file.
+    Resolved through the shared state layer (2b): the registry is machine state,
+    never author content, so the wiki locale reader and idea capture always
+    agree on one file — the legacy location while an adoption is pending, the
+    machine-local one afterwards.
     """
     _ensure_wiki_on_path()
-    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+    from state_paths import resolve_state_dir  # noqa: PLC0415 — needs the path above
 
-    return resolve_data_root() / "data" / "local-state.json"
+    return resolve_state_dir() / "local-state.json"
 
 
 def build_language_resolver(
@@ -339,17 +340,17 @@ def build_language_resolver(
 
 
 def _default_vision_cache_db_path() -> Path:
-    """Shared SHA-256 vision cache database: ``<data root>/data/import-jobs.sqlite3``.
+    """Shared SHA-256 vision cache database: ``<state dir>/import-jobs.sqlite3``.
 
     The wiki import router backs its vision content cache with the SAME file
     (``api_server._import_store``), so an image analyzed once — by an import
-    or by idea capture — is never analyzed twice. Both sides now resolve the
-    file through the data-root resolver (WU-3), so they cannot drift.
+    or by idea capture — is never analyzed twice. Both sides resolve it through
+    the state layer (2b), so they cannot drift.
     """
     _ensure_wiki_on_path()
-    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+    from state_paths import resolve_state_dir  # noqa: PLC0415 — needs the path above
 
-    return resolve_data_root() / "data" / "import-jobs.sqlite3"
+    return resolve_state_dir() / "import-jobs.sqlite3"
 
 
 def _build_thumbnail_generator() -> Callable[[bytes, int], bytes] | None:
@@ -731,7 +732,7 @@ class IdeaCaptureHandler:
         )
         self.runtime = runtime or IdeaCaptureRuntime(
             config=native_config,
-            state_path=state_path or self.repo_root / "data" / "idea-capture.sqlite3",
+            state_path=state_path or self._default_state_path(),
             mundos_root=self.mundos_root,
             active_world=world,
             global_ideas_root=self.repo_root / "ideas",
@@ -741,6 +742,13 @@ class IdeaCaptureHandler:
         # Capture always lands in the global Taller de Ideas, so no world is
         # required to enable the handler: authorized bindings are enough.
         self.enabled = bool(effective_policy.authorized_bindings)
+
+    def _default_state_path(self) -> Path:
+        """Capture database in the state directory (2b), never in the content root."""
+        _ensure_wiki_on_path()
+        from state_paths import resolve_state_dir  # noqa: PLC0415 — needs the path above
+
+        return resolve_state_dir() / "idea-capture.sqlite3"
 
     @property
     def policy(self):
