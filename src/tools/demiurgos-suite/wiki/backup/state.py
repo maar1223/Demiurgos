@@ -114,6 +114,51 @@ class BackupDestination:
         return replace(self, mode_hint=mode_hint)
 
 
+#: The refusal message for a destination that overlaps the content root. It
+#: names both paths, because "not usable" would hide what the author changed.
+DESTINATION_OVERLAP_MESSAGE = (
+    "the backup folder belongs outside the content root: {destination} "
+    "overlaps {content_root}"
+)
+
+#: The remedy the run outcome and the API surface carry with that refusal.
+DESTINATION_OVERLAP_REMEDY = (
+    "choose a folder outside your content folder: a backup stored inside the "
+    "folder it backs up is one copy and one failure"
+)
+
+#: The backup's own layout inside the destination folder. It is what the
+#: inventory would read as author content if the destination sat inside the
+#: content root, so the names matter to the refusal below.
+DESTINATION_LAYOUT_NAMES = ("current", "snapshots", "meta", "world-trash-index")
+
+
+def assert_destination_outside_content_root(
+    destination: BackupDestination | str | Path, data_root: Path
+) -> None:
+    """Refuse a destination that overlaps the content root, in any direction.
+
+    The inventory walks the content root and INCLUDES every top-level folder it
+    does not recognise (nothing of the author's is dropped silently), and
+    :data:`DESTINATION_LAYOUT_NAMES` is exactly such a folder. With the
+    destination equal to the content root — or inside it — every run would carry
+    the previous one and ``current/`` would copy itself: growth without a
+    ceiling. A destination that CONTAINS the content root is refused for the
+    mirror reason: the bookkeeping would land in the author's own folder and a
+    restore could swap members around their content.
+
+    Both paths are resolved, so a symlink to the same folder is caught too.
+    """
+    target = Path(getattr(destination, "path", destination)).expanduser().resolve()
+    root = Path(data_root).expanduser().resolve()
+    if target == root or target.is_relative_to(root) or root.is_relative_to(target):
+        raise BackupStateError(
+            DESTINATION_OVERLAP_MESSAGE.format(
+                destination=target, content_root=root
+            )
+        )
+
+
 def config_path(data_root: Path) -> Path:
     """``<data_root>/config/backup.json`` — the persisted destination record."""
     return Path(data_root) / BACKUP_CONFIG_RELPATH
@@ -151,6 +196,10 @@ def write_destination(
     Same discipline as the data-root pointer: an interrupted write leaves the
     previous complete record, never a partial one, and no temp residue.
     """
+    # The pair (content root, destination) is validated before anything is
+    # written: a record that would make the engine read its own output is never
+    # persisted, from any caller.
+    assert_destination_outside_content_root(destination, data_root)
     path = config_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     record = (

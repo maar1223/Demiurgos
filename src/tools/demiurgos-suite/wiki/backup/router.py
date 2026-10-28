@@ -55,6 +55,7 @@ from backup.restore import (
 )
 from backup.state import (
     BackupDestination,
+    BackupStateError,
     backup_state,
     destination_from_candidate,
     read_destination,
@@ -342,7 +343,11 @@ def create_backup_router(
         destination = destination_from_candidate(
             candidate, mode_hint=decision.capabilities.mode_hint
         )
-        persisted = write_destination(root, destination)
+        try:
+            persisted = write_destination(root, destination)
+        except BackupStateError as exc:
+            # An overlapping folder is a readable refusal, never a 500.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _status_payload(
             root,
             destination=persisted,

@@ -75,6 +75,8 @@ def _make_app(tmp_path: Path, *, require_principal=_principal, **seams) -> FastA
 
 
 def _make_root(tmp_path: Path) -> Path:
+    # The content root is a SIBLING of every destination below: the backup
+    # folder must live outside it (backup/state.py refuses the overlap).
     root = tmp_path / "data-root"
     for sub in ("mundos", "ideas", "data", "config"):
         (root / sub).mkdir(parents=True, exist_ok=True)
@@ -159,7 +161,7 @@ def test_live_status_payload_is_honest_end_to_end(tmp_path: Path) -> None:
     not on the shared builder.
     """
     root = _make_root(tmp_path)
-    destination = root / "sync-folder"
+    destination = tmp_path / "sync-folder"
     destination.mkdir()
     client = TestClient(_make_app(root))
 
@@ -207,7 +209,7 @@ def test_status_without_a_destination_is_honestly_pending(tmp_path: Path) -> Non
 
 def test_destination_persists_author_config_without_secrets(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
-    destination = root / "chosen"
+    destination = tmp_path / "chosen"
     destination.mkdir()
     response = TestClient(_make_app(root)).post(
         "/api/backup/destination", json={"path": str(destination)}
@@ -254,7 +256,7 @@ def test_rejected_folder_is_not_persisted(tmp_path: Path) -> None:
 def test_streaming_target_is_persisted_as_error_with_the_remedy(tmp_path: Path) -> None:
     """SC-SF-3.1 — selecting a verified streaming target blocks runs, shows the remedy."""
     root = _make_root(tmp_path)
-    destination = root / "streamed"
+    destination = tmp_path / "streamed"
     destination.mkdir()
     app = _make_app(root, evaluate=lambda path: _streaming_decision(path))
     client = TestClient(app)
@@ -290,7 +292,7 @@ def test_snapshots_lists_nothing_without_a_destination(tmp_path: Path) -> None:
 
 def test_snapshots_lists_what_the_run_published(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
-    destination = root / "chosen"
+    destination = tmp_path / "chosen"
     destination.mkdir()
     client = TestClient(_make_app(root))
     client.post("/api/backup/destination", json={"path": str(destination)})
@@ -301,7 +303,7 @@ def test_snapshots_lists_what_the_run_published(tmp_path: Path) -> None:
 
 def test_restore_requires_explicit_confirmation(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
-    destination = root / "chosen"
+    destination = tmp_path / "chosen"
     destination.mkdir()
     client = TestClient(_make_app(root))
     client.post("/api/backup/destination", json={"path": str(destination)})
@@ -314,7 +316,7 @@ def test_restore_requires_explicit_confirmation(tmp_path: Path) -> None:
 
 def test_restore_uses_the_injected_runner(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
-    destination = root / "chosen"
+    destination = tmp_path / "chosen"
     destination.mkdir()
     calls: list[dict] = []
 
@@ -339,7 +341,7 @@ def test_restore_uses_the_injected_runner(tmp_path: Path) -> None:
 
 def test_preview_uses_the_injected_runner(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
-    destination = root / "chosen"
+    destination = tmp_path / "chosen"
     destination.mkdir()
     client = TestClient(
         _make_app(root, preview=lambda transport, data_root, snapshot_id: {

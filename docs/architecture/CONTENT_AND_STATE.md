@@ -109,6 +109,15 @@ The backup is the one feature that spans both roots:
 - the inventory refuses state artifacts found under the content root's `data/`
   with the reason `excluded:state-root-artifact`: after an adoption that folder
   may still hold an inert copy, and it must never be uploaded as author content.
+- a destination that overlaps the content root is refused: equal to it, inside
+  it, or containing it. The check runs when the folder is chosen AND again when
+  a run starts, so a record written earlier (or edited by hand) cannot reach the
+  writer. The reason is the inventory's own rule: it includes every top-level
+  folder it does not recognise, and the backup's layout (`current/`,
+  `snapshots/`, `meta/`, `world-trash-index/`) is exactly such a folder — an
+  overlapping destination would carry each run into the next one, and `current/`
+  would copy itself. A backup stored inside the folder it backs up is also one
+  copy and one failure.
 
 ## Tests and seams
 
