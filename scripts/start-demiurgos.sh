@@ -99,9 +99,31 @@ DESKTOP_SOURCE="$APP_ROOT/desktop/Demiurgos.desktop"
 APPLICATIONS_DIR="$HOME/.local/share/applications"
 DESKTOP_DIR="$HOME/Desktop"
 
+# --- Default content root: the OS documents folder (step 3) ----------------
+# Author content belongs with the author's documents, not inside the install
+# root (where, on Windows, it would land inside the state root). The folder is
+# resolved through the OS contract and never hardcoded: freedesktop keeps the
+# localized path in user-dirs.dirs (~/Documentos, ~/Documenti, ...), so a
+# literal ~/Documents would create a second, English folder next to it. Pure
+# shell — no xdg-user-dir binary and no Python. Prints the folder only.
+documents_dir() {
+    local user_dirs="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" raw=""
+    if [ -r "$user_dirs" ]; then
+        raw="$(sed -n 's/^[[:space:]]*XDG_DOCUMENTS_DIR[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$user_dirs" 2>/dev/null | sed -n '1p')"
+    fi
+    case "$raw" in
+        '') printf '%s\n' "$HOME/Documents" ;;
+        '$HOME') printf '%s\n' "$HOME" ;;
+        '$HOME/'*) printf '%s\n' "$HOME/${raw#\$HOME/}" ;;
+        '${HOME}') printf '%s\n' "$HOME" ;;
+        '${HOME}/'*) printf '%s\n' "$HOME/${raw#\$\{HOME\}/}" ;;
+        *) printf '%s\n' "$raw" ;;
+    esac
+}
+
 # --- Data-root resolution (S2-3) -------------------------------------------
 # Order: existing env -> existing pointer (left intact) -> bootstrap-once the
-# default <install_root>/data. An existing pointer is never re-oriented.
+# default <documents>/Demiurgos. An existing pointer is never re-oriented.
 resolve_data_root() {
     local pointed=""
     if [ -n "${DEMIURGOS_DATA_ROOT:-}" ]; then
@@ -119,7 +141,7 @@ resolve_data_root() {
     fi
     # Bootstrap-once: write the byte-compatible pointer (data_root.py format)
     # so subsequent starts and the backend resolve the same root.
-    DATA_ROOT="$INSTALL_ROOT/data"
+    DATA_ROOT="$(documents_dir)/Demiurgos"
     mkdir -p "$DATA_ROOT" "$CONFIG_DIR"
     printf '{\n  "schema_version": 1,\n  "data_root": "%s",\n  "updated_at": "%s"\n}\n' \
         "$DATA_ROOT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"
