@@ -1060,7 +1060,10 @@ class TestPointerAndEnvSeed:
         assert result.returncode == 0, result.stdout + result.stderr
 
         data_root = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
-        assert data_root == (install_root / "data").resolve()
+        # Step 3 (S1): the bootstrap default is <documents>/Demiurgos — the
+        # hermetic HOME has no user-dirs.dirs, so the fallback folder wins.
+        assert data_root == (Path(env["HOME"]) / "Documents" / "Demiurgos").resolve()
+        assert not (install_root / "data").exists()
 
         env_file = data_root / ".env"
         content = env_file.read_text(encoding="utf-8")
@@ -1076,6 +1079,34 @@ class TestPointerAndEnvSeed:
         # Never shipped inside the payload: the seeded .env lives only in the
         # data root, not in the staged app tree.
         assert list((install_root / "app").rglob(".env")) == []
+
+    def test_bootstrap_follows_the_localized_documents_folder(self, tmp_path: Path):
+        """Step 3 (S2): a localized desktop's ~/Documentos wins over ~/Documents.
+
+        Hardcoding ~/Documents would create a second, English content root next
+        to the folder the user actually sees in their file manager.
+        """
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+        config = Path(env["XDG_CONFIG_HOME"])
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "user-dirs.dirs").write_text(
+            'XDG_DOCUMENTS_DIR="$HOME/Documentos"\n', encoding="utf-8"
+        )
+
+        result = _run_installer(env)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        home = Path(env["HOME"])
+        data_root = _read_pointer(config / "demiurgos")
+        assert data_root == (home / "Documentos" / "Demiurgos").resolve()
+        assert not (home / "Documents").exists()
+        assert not (install_root / "data").exists()
+        # S5: the same seed and the same folders, under the new root.
+        assert (data_root / ".env").is_file()
+        for folder in ("mundos", "ideas", "data", "config"):
+            assert (data_root / folder).is_dir()
 
     def test_existing_env_preserved_untouched(self, tmp_path: Path):
         """S0-A/S3-7: an existing data-root .env is preserved byte-for-byte."""
