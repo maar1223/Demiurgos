@@ -28,6 +28,9 @@ Acceptance: a fresh install's content root differs from the resolved state dir; 
 
 S8 — The contract docs stay true: `CONTENT_AND_STATE.md` (default table + Windows note) and `INSTALL_LAYOUT.md` (§1 data-root row, §2.4, §3). The CLI stack's pointer (`install.sh` → the checkout, `INSTALL_LAYOUT.md` §4) is deliberately out of scope.
 
+S10 — Owner decision (this session): a backup destination that overlaps the content root is refused — equal to it, inside it, or containing it — at selection time and again when a run starts. Quoted from the Owner: "vamos con la 1 segun tu recomendacion y luego continuamos".
+Acceptance: `write_destination` raises and persists nothing for all three shapes (symlinks resolved); `run_backup` refuses a persisted overlapping record with a remedy and publishes nothing (`meta/`, `snapshots/`, `current/`, `world-trash-index/` never appear inside the content root); the API answers 400 with a readable reason; a sibling folder is still accepted. The inventory-exclusion half of the original proposal is deliberately dropped: excluding the names `current`/`snapshots`/`meta` by name would also hide an author folder that legitimately carries one of them, and the refusal covers the same class.
+
 S9 — Verification: every unit runs its own focused tests; the whole suite must stay at or above the 2b baseline of 4375 passed / 24 skipped.
 Acceptance: `4375+ passed, 24 skipped` and the new cells green.
 
@@ -40,6 +43,7 @@ Acceptance: `4375+ passed, 24 skipped` and the new cells green.
 | T3 | POSIX installer: same default + folder creation, with the behavioral acceptance cell | S1, S3-S7 | inline | done (RED: 2 failed -> GREEN: 106 passed/5 skipped) | `5c0177c5` |
 | T4 | Windows installer: same default | S1, S3-S7 | inline | done (RED: 2 failed -> GREEN: 41 passed/5 skipped) | `e83541dd` |
 | T5 | Contract docs | S7, S8 | inline | done | `a0dc865f` |
+| T6 | Backup-destination overlap guard (`state.assert_destination_outside_content_root` + `write_destination` + `run_backup` + router 400) | S10 | inline | done (RED: 9 failed -> GREEN: 11 passed; 6 router fixtures moved) | `414b82d1` |
 | T3b | `test_install_auth_gated_write.py`: fixture moved to the new bootstrap default (found by the full suite) | S5 | inline | done (RED: 1 failed -> GREEN: 1 passed) | `4fad597e` |
 
 Risk lines: T1-T4 `Risk: item 3` (the data-root default is a documented layout contract consumed by installer, launcher, backend and docs; the existing behavioral pin is rewritten in the same unit) plus `item 6` on T1/T3, whose only regression net is the tests this unit ships. T5 `Risk: item 3` (contract document, no code).
@@ -66,3 +70,7 @@ L8 (T3b, uncovered by the full suite) — `test_install_auth_gated_write.py` mod
 L9 (closure) — Full suite from `src/tools/demiurgos-suite/wiki` with the repo `.venv`: **4384 passed, 24 skipped** (2b baseline 4375/24; +9 cells). `payload_audit.sh`: 832 deny findings / 0 content-scan hits, all pre-existing — no payload file was added, so `payload_manifest.json` is unchanged. `git status` clean except this document.
 
 Risk: item 3 (the data-root default is a documented, shared layout contract — installer, launcher, backend and docs all consume it) and item 6 on T1/T3 (their tests are the only regression net). No data was moved, copied or deleted; every pre-existing pointer stays byte-identical, so item 1 does not apply.
+
+L10 (T6, guard decided by the Owner after the review) — the guard lives in `backup/state.py` as a pure pair check (`assert_destination_outside_content_root`), called from `write_destination` (so no caller can persist an overlapping pair) and again from `run_backup` before any probe or write (so a record written earlier, or hand-edited, still cannot publish). The router maps `BackupStateError` to a 400 with the reason instead of a 500. Empirical evidence that motivated it, from a probe over the real inventory: a content root holding the destination layout reports `INCLUDED: ['meta', 'meta/manifest.json', ..., 'snapshots', 'snapshots/<id>/mundos/viejo.md']` with `EXCLUDED: []`. Test blast radius: six cells in `test_backup_router.py` modelled the destination inside the content root (`root / "chosen"`); they now use a sibling, which is what the contract requires. `Risk: item 3` (a new refusal on a public API payload, and a new refusal on the run path) + `item 6` (the tests are the only net).
+
+L11 (closure) — Full suite: **4395 passed, 24 skipped** (4384 before the guard, +11 cells). `Risk: item 3 + item 6` for T6, recorded in L10. Nothing on the Owner's machine changed: his pointer still resolves the content root to the checkout and his `config/backup.json` destination (`~/Documentos/Demiurgos`) stays accepted, because the two paths are siblings — the guard only fires when they overlap.
