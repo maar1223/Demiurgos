@@ -410,9 +410,14 @@ def test_state_root_never_reads_the_data_root_pointer(tmp_path: Path):
     assert resolved != pointed / "data"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX XDG fallback; Windows uses %LOCALAPPDATA%",
+)
 def test_state_root_falls_back_to_xdg_data_home_without_platformdirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """Absent platformdirs + non-blank ``$XDG_DATA_HOME`` (POSIX only)."""
     monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
     xdg = tmp_path / "xdg"
     monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
