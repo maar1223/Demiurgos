@@ -41,8 +41,8 @@ Acceptance: choosing such a folder shows the reason before the request is sent.
 | T0 | Installer: `--data-root`/`-DataRoot` persists the choice; env keeps its meaning and seeds `.env`; visible notice | S1-S5 | inline | done (RED: 5 failed -> GREEN: 5 passed; installer contract 113 passed/5 skipped) | `e01797eb` |
 | T1 | `GET /api/data-root` with disk facts | S6 | inline | done (14 cells; mutation check: each guard removal fails its own cells) | `c9d2bf0d` |
 | T2 | `POST /api/data-root` with the guards | S7, S8 | inline | done (same commit) | `c9d2bf0d` |
-| T3 | `content_folder` step in `STEP_ORDER` | S9 | inline | pending | — |
-| T4 | Frontend step: show, change, diagnose | S9, S10 | inline | pending | — |
+| T3 | `content_folder` step in `STEP_ORDER` | S9 | inline | done (RED: missing import -> 16 passed; 3 old flow pins updated) | `b55ef511` |
+| T4 | Frontend step: show, change, diagnose | S9, S10 | inline | S9 done, **S10 pending** (API refusal reaches the picker; no pre-warning yet) | `b55ef511` |
 
 Risk lines: T0 `Risk: item 1` (defines where persisted content lives) + `item 3` (the installer's documented env contract changes) · T2 `Risk: item 1` (moves the pointer, hides/loses reach to existing content if wrong) · T3 `Risk: item 3` (`STEP_ORDER` is shared with the frontend and with `status_from`) · T1/T4 `Risk: item 6`. Item 1 units get one independent verifier at the feature's end.
 
@@ -73,3 +73,13 @@ L7 (payload lesson, this cost a full-suite round) — `api_server.py` imports a 
 L8 (a saved choice needs a restart) — `_project_root()` caches into `PROJECT_ROOT` and every store is built from it, so rewriting the pointer cannot rebind the running process safely. POST therefore returns `restart_required` and GET reports `pending_restart` while the pointer and the folder in use disagree. The UI step (T4) must offer a restart, not a silent reload.
 
 L9 (closure so far) — Full suite: **4417 passed, 24 skipped** (4395 before this feature, +22 cells). `Risk` for T1/T2 as recorded above; T2 is `item 1` and still owes its independent verifier at the feature's end.
+
+L10 (T3) — `content_folder` enters `STEP_ORDER` between `account` and `world`, is NOT blocking, and is satisfied by an existing world (`content_folder_done = recorded or world_exists`). Three cells encoded the old flow (`current_step` world right after the account) and were updated in the same commit, not worked around. `commit_account_created` now writes `current_step = "content_folder"` so the persisted hint matches the derived flow.
+
+L11 (T4) — Component `ContentFolderStep` + `api/contentRoot.ts` + 15 catalogue keys (es/en). The step shows world count and free space from the API, offers the change form only when the environment does not pin the root, and after a change shows the restart panel instead of the continue button — because a world created before the restart would land in the folder the process booted with. A refusal from `POST /api/data-root` is shown as its own message.
+
+L12 (a guard I did not write, that caught me) — `frontend/src/i18n/__tests__/catalogueGuard.test.ts` rejects voseo in the Spanish catalogue: my first copy used "podés" and "Reiniciá". Rewritten to neutral Spanish ("puedes", "Reinicia", "desde aquí"). The frontend suite would have failed in CI otherwise.
+
+L13 (evidence) — Backend: **4423 passed, 24 skipped**. Frontend: 1583 tests in 128 files green, `tsc --noEmit` clean, `npm run build` OK (chunk-size warning pre-existing). The served `frontend/dist` was rebuilt, so the step can be seen with a forced reload.
+
+L14 (open) — S10 is only half done: the API's 400 arrives with a readable reason and the picker shows it, but the UI does not warn BEFORE sending. That pre-warning is the next unit; it needs the content root in the backup section, a path-overlap helper shared with the backend semantics, and its own cells.
