@@ -81,6 +81,17 @@ if (-not $hermesBin) {
 $configDir = Join-Path $env:APPDATA "demiurgos"
 $pointerFile = Join-Path $configDir "data-root.json"
 
+function Get-DocumentsDir {
+    # The OS documents folder (step 3), never a literal $env:USERPROFILE\Documents:
+    # the shell API follows a redirection (OneDrive Known Folder Move) and the
+    # user's localized folder name. Pure .NET, no extra module.
+    $path = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = Join-Path $env:USERPROFILE 'Documents'
+    }
+    return $path
+}
+
 function Resolve-DataRoot {
     # Order contract (S2-3): existing env -> existing pointer (left intact) ->
     # bootstrap-once <install_root>\data. An existing pointer is never
@@ -100,7 +111,7 @@ function Resolve-DataRoot {
     }
     # Bootstrap-once: write the byte-compatible pointer (data_root.py format)
     # so subsequent starts and the backend resolve the same root.
-    $root = Join-Path $installRoot "data"
+    $root = Join-Path (Get-DocumentsDir) "Demiurgos"
     New-Item -ItemType Directory -Force -Path $root, $configDir | Out-Null
     $record = @{
         schema_version = 1

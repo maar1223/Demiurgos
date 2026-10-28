@@ -50,6 +50,17 @@ $gatewayPort = if ($env:DEMIURGOS_GATEWAY_PORT) { [int]$env:DEMIURGOS_GATEWAY_PO
 $configDir = Join-Path $env:APPDATA "demiurgos"
 $pointerFile = Join-Path $configDir "data-root.json"
 
+function Get-DocumentsDir {
+    # The OS documents folder (step 3), never a literal $env:USERPROFILE\Documents:
+    # the shell API follows a redirection (OneDrive Known Folder Move) and the
+    # user's localized folder name. Pure .NET, no extra module.
+    $path = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = Join-Path $env:USERPROFILE 'Documents'
+    }
+    return $path
+}
+
 function Resolve-DataRoot {
     if ($env:DEMIURGOS_DATA_ROOT) {
         return $env:DEMIURGOS_DATA_ROOT
@@ -64,7 +75,7 @@ function Resolve-DataRoot {
             Write-Warning "Data-root pointer $pointerFile is unreadable; refusing to guess."
         }
     }
-    $root = Join-Path $installRoot "data"
+    $root = Join-Path (Get-DocumentsDir) "Demiurgos"
     New-Item -ItemType Directory -Force -Path $root, $configDir | Out-Null
     $record = @{
         schema_version = 1

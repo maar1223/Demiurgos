@@ -86,6 +86,21 @@ def test_portable_launcher_bootstraps_documents_not_the_install_root():
     assert 'DATA_ROOT="$(documents_dir)/Demiurgos"' in text
 
 
+def test_powershell_launchers_bootstrap_documents_not_the_install_root():
+    """Step 3 (S1/S2): the Windows bootstrap default is Documents\\Demiurgos.
+
+    ``[Environment]::GetFolderPath('MyDocuments')`` is the shell's own
+    resolution, so a OneDrive Known Folder Move or a localized folder is
+    followed; ``%USERPROFILE%\\Documents`` is only the last-resort fallback."""
+    for path in (PS_STACK, PS_API, PS_GATEWAY):
+        text = _text(path)
+        assert 'Join-Path $installRoot "data"' not in text
+        assert '$root = Join-Path (Get-DocumentsDir) "Demiurgos"' in text
+        assert "function Get-DocumentsDir" in text
+        assert "[Environment]::GetFolderPath('MyDocuments')" in text
+        assert "Join-Path $env:USERPROFILE 'Documents'" in text
+
+
 _POSIX_BASH = pytest.mark.skipif(
     os.name == "nt" or shutil.which("bash") is None,
     reason="POSIX-bash sourcing probe: on Windows a bare `bash` is the WSL stub",
