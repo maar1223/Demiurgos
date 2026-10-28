@@ -24,9 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-#: The data-root member that holds the operational SQLite databases (REQ-BE-2).
-#: The live layout is ``data/`` (``estado/`` does not exist): every durable store
-#: resolves ``resolve_data_root() / "data" / "<name>.sqlite3"``.
+#: The member that holds the operational SQLite databases (REQ-BE-2).
+#: The live layout is ``data/`` on BOTH sides of the content/state split: every
+#: durable store resolves ``resolve_state_dir()`` (2b), which is
+#: ``<base>/data`` whichever base policy (ii) selected. Callers therefore pass
+#: the matching BASE (``state_paths.resolve_state_base()``), not the content
+#: root, so the cut reads the live databases instead of an inert legacy copy.
 DATABASE_DIRNAME = "data"
 
 #: Every operational database carries this suffix (REQ-BE-1).

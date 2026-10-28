@@ -158,6 +158,7 @@ def run_backup(
     snapshot_id_source: Callable[[datetime], str] | None = None,
     policy: GfsPolicy = GFS_DAILY_7_WEEKLY_4_MONTHLY_6,
     protected: Sequence[str] = (),
+    state_base: Path | None = None,
 ) -> RunOutcome:
     """Run one backup: preconditions, transport, snapshot, retention, last-write.
 
@@ -165,6 +166,9 @@ def run_backup(
     destination is read from ``config/backup.json`` when not supplied, so the
     engine path (which only knows the data root) and the router path share this
     one function.
+
+    ``state_base`` overrides the base whose ``data/`` holds the live databases;
+    the snapshotter resolves it through the state layer by default (2b).
     """
     root = Path(data_root)
     moment_clock = clock or (lambda: datetime.now(timezone.utc))
@@ -210,6 +214,8 @@ def run_backup(
     snapshotter_kwargs: dict[str, Any] = {"clock": moment_clock}
     if snapshot_id_source is not None:
         snapshotter_kwargs["snapshot_id_source"] = snapshot_id_source
+    if state_base is not None:
+        snapshotter_kwargs["state_base"] = lambda: Path(state_base)
     snapshotter = BackupSnapshotter(transport, **snapshotter_kwargs)
     try:
         result = snapshotter.run(root)

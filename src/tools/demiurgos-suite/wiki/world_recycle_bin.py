@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 
 # Fallback seam: ``None`` means "resolve from the data root on use". Tests keep
 # replacing these attributes directly; the accessors below read them at call time.
@@ -39,8 +40,8 @@ RETENTION_DAYS = 30
 
 
 def default_world_trash_root() -> Path:
-    """``<data root>/data/world-trash`` (WU-2); never resolved at import time."""
-    return resolve_data_root() / "data" / "world-trash"
+    """``<state dir>/world-trash`` (2b); never resolved at import time."""
+    return resolve_state_dir() / "world-trash"
 
 
 def default_mundos_dir() -> Path:

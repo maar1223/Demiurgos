@@ -361,7 +361,9 @@ def test_pointer_moves_no_bytes(tmp_path: Path):
 def test_state_root_defaults_to_platformdirs_user_data_dir():
     if not data_root._HAS_PLATFORMDIRS:
         pytest.skip("platformdirs is not importable in this interpreter")
-    assert data_root.resolve_state_root() == Path(
+    # ``environ={}``: the suite exports a hermetic DEMIURGOS_STATE_ROOT, so the
+    # no-override default is asserted through the injection seam, not the env.
+    assert data_root.resolve_state_root(environ={}) == Path(
         data_root._platformdirs.user_data_dir(data_root.APP_NAME)
     )
 

@@ -52,6 +52,7 @@ for _p in (str(_WIKI), str(_SUITE)):
         sys.path.insert(0, _p)
 
 import api_server  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 
 USERNAME = "vault-user"
 PASSWORD = "correct horse battery staple"
@@ -953,7 +954,7 @@ def test_legacy_install_without_vault_slot_defaults_via_get(
     monkeypatch.delenv("DEMIURGOS_REAUTH_INTERVAL_D", raising=False)
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
     api_server._LOCAL_STATE = None
-    state_path = tmp_path / "data" / "local-state.json"
+    state_path = state_file("local-state.json")
     state_path.parent.mkdir(parents=True)
     state_path.write_text(json.dumps({
         "schema_version": 1,

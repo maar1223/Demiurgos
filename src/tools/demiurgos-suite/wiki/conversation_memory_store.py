@@ -7,8 +7,8 @@ prompt budget while keeping key context.
 
 Mechanism choice: stdlib ``sqlite3`` with a single file-backed database.
 ``db_path`` selects the location; when it is ``None`` the store resolves the
-durable repo-local default ``<repo>/data/conversation-memory.sqlite3`` (the
-same ``data/`` convention as ``guided-sessions.sqlite3``), so memory survives a
+durable default ``<state dir>/conversation-memory.sqlite3`` (the same
+state-directory convention as ``guided-sessions.sqlite3``), so memory survives a
 restart without any environment override. ``db_path=":memory:"`` remains
 available explicitly for hermetic use. A thread lock guards the single
 connection; ``check_same_thread=False`` lets the FastAPI thread pool and event
@@ -47,7 +47,7 @@ _VALID_ROLES = frozenset({"user", "assistant"})
 
 # SQLite's stdlib driver (Python 3.12+) executes one statement per call, so
 # the schema is a tuple of standalone DDL statements run in order.
-from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 
 _SCHEMA_STATEMENTS = (
     """
@@ -96,7 +96,7 @@ def default_db_path() -> Path:
     the suite can point ``DEMIURGOS_DATA_ROOT`` at a throwaway root instead of
     the repo ``data/`` directory.
     """
-    return resolve_data_root() / "data" / "conversation-memory.sqlite3"
+    return resolve_state_dir() / "conversation-memory.sqlite3"
 
 
 # --------------------------------------------------------------------------- #

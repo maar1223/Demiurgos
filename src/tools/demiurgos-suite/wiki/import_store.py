@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 from import_models import (  # noqa: F401
     Approval,
     ImportJob,
@@ -144,7 +144,7 @@ def default_db_path() -> Path:
     Resolved on every call — never at import time — so the suite can point
     ``DEMIURGOS_DATA_ROOT`` at a throwaway root instead of the repo ``data/``.
     """
-    return resolve_data_root() / "data" / "import-jobs.sqlite3"
+    return resolve_state_dir() / "import-jobs.sqlite3"
 
 
 def _json(obj: Any) -> str:

@@ -1476,18 +1476,21 @@ class TestPendingList:
         assert [c["capture_id"] for c in result["captures"]] == ["c-hash"]
         assert result["captures"][0]["slug"] == "slug-hash"
 
-    def test_pending_list_unconfigured_data_root_returns_error(self) -> None:
-        """An unconfigured data root degrades to the empty payload plus a
-        truthy error instead of raising DataRootNotConfigured (never raises)."""
+    def test_pending_list_state_dir_failure_returns_error(self) -> None:
+        """A state directory that cannot be resolved degrades to the empty
+        payload plus a truthy error (never raises).
+
+        The state layer has no "not configured" failure any more (machine state
+        has a platform home), so the honest degradation left is a filesystem
+        error while resolving the directory.
+        """
         from unittest.mock import patch
 
-        from wiki import data_root  # noqa: F811
         from wiki.graph_mcp_server import pending_list  # noqa: F811
 
-        boom = data_root.DataRootNotConfigured("no data root configured")
-
         with patch(
-            "wiki.graph_mcp_server.data_root.resolve_data_root", side_effect=boom
+            "wiki.graph_mcp_server.state_paths.resolve_state_dir",
+            side_effect=OSError("permission denied"),
         ):
             result = pending_list()
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "ba84a7b7",
+  "source_commit": "33043c56",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -132,6 +132,8 @@
     "src/tools/demiurgos-suite/wiki/skill_renderer.py",
     "src/tools/demiurgos-suite/wiki/skill_router.py",
     "src/tools/demiurgos-suite/wiki/skill_session_epochs.py",
+    "src/tools/demiurgos-suite/wiki/state_paths.py",
+    "src/tools/demiurgos-suite/wiki/state_root_migration.py",
     "src/tools/demiurgos-suite/wiki/system_control.py",
     "src/tools/demiurgos-suite/wiki/telegram_settings.py",
     "src/tools/demiurgos-suite/wiki/updater.py",
@@ -311,27 +313,27 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1433
+        "line": 1501
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 536
+        "line": 541
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 779
+        "line": 784
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 780
+        "line": 785
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 1131
+        "line": 1136
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
-        "line": 1147
+        "line": 1152
       }
     ],
     "sync_lore": [

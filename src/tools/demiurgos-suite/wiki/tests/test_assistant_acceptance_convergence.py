@@ -24,6 +24,7 @@ for _path in (str(_WIKI), str(_SUITE)):
         sys.path.insert(0, _path)
 
 import api_server  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 import assistant_settings  # noqa: E402
 
 _REVISION = 7
@@ -45,16 +46,16 @@ def _prepare(tmp_path: Path, monkeypatch, evidence, *, revision=_REVISION):
     monkeypatch.setattr(
         assistant_settings, "current_config_revision", lambda: revision
     )
-    data = tmp_path / "data"
-    data.mkdir()
+    state_path = state_file("local-state.json")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"schema_version": 1, "revision": 3}
     if evidence is not None:
         payload["assistant_acceptance"] = evidence
-    (data / "local-state.json").write_text(json.dumps(payload), encoding="utf-8")
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _state(tmp_path: Path) -> dict:
-    return json.loads((tmp_path / "data" / "local-state.json").read_text(encoding="utf-8"))
+    return json.loads(state_file("local-state.json").read_text(encoding="utf-8"))
 
 
 def _evidence(runtime: str = "saved-not-active", revision: int = _REVISION) -> dict:

@@ -52,7 +52,7 @@ if str(_PARENT_DIR) not in sys.path:
 from wiki.graph_indexer import EntityGraphIndex   # noqa: E402
 from wiki.mcp_adapter import GraphMCPAdapter      # noqa: E402
 from wiki.ideas_bank import IdeaNotFound, IdeasBank, InvalidIdea  # noqa: E402
-from wiki import data_root                         # noqa: E402
+from wiki import state_paths                      # noqa: E402
 
 from mcp.server.fastmcp import FastMCP             # noqa: E402
 
@@ -412,10 +412,10 @@ _PENDING_STATE = "AWAITING_CONFIRM"
 def _pending_state_path() -> Path:
     """Resolve the shared idea-capture SQLite path from the data root.
 
-    Uses the same resolver ``IdeasBank`` relies on in this process, so the MCP
-    server and the capture runtime agree on ``<data root>/data/...``.
+    Uses the same state layer the capture runtime uses in this process, so the
+    MCP server and the runtime agree on the shared state directory.
     """
-    return data_root.resolve_data_root() / "data" / "idea-capture.sqlite3"
+    return state_paths.resolve_state_dir() / "idea-capture.sqlite3"
 
 
 @mcp.tool()
@@ -448,7 +448,7 @@ def pending_list() -> dict:
         ).fetchall()
         captures = [dict(row) for row in rows]
         return {"captures": captures, "count": len(captures)}
-    except (data_root.DataRootNotConfigured, OSError, sqlite3.Error) as exc:
+    except (OSError, sqlite3.Error) as exc:
         return {"captures": [], "count": 0, "error": str(exc)}
     finally:
         if conn is not None:

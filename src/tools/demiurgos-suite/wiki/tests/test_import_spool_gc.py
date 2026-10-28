@@ -33,6 +33,7 @@ for _p in (str(_WIKI),):
 
 import import_spool_gc as gc  # noqa: E402
 from import_models import ImportJob, ImportJobState  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 
 
@@ -383,13 +384,19 @@ class TestStartupSweep:
 
         store = ImportJobStore(":memory:")
         store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=10))
-        spool = tmp_path / "data" / "import-spool"
+        spool = state_file("import-spool")
         (spool / "j1").mkdir(parents=True)
 
         monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(api_server, "_import_store", lambda: store)
         monkeypatch.setattr(api_server, "gc_enabled", lambda: True)
         monkeypatch.setattr(api_server, "gc_ttl_days", lambda: 7)
+        # This cell drives one startup sweep, not the acceptance convergence:
+        # the real convergence thread outlives the test and writes into the
+        # NEXT test's state directory.
+        monkeypatch.setattr(
+            api_server, "_converge_assistant_acceptance", lambda: False
+        )
 
         async def _run():
             async with api_server._lifespan(api_server.app):
@@ -410,6 +417,10 @@ class TestStartupSweep:
         monkeypatch.setattr(api_server, "gc_enabled", lambda: True)
         monkeypatch.setattr(api_server, "gc_ttl_days", lambda: 7)
         monkeypatch.setattr(api_server, "reap_dead_spools", _boom)
+        # See the note above: the real convergence thread would outlive the test.
+        monkeypatch.setattr(
+            api_server, "_converge_assistant_acceptance", lambda: False
+        )
 
         async def _run():
             async with api_server._lifespan(api_server.app):

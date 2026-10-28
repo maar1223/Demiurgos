@@ -48,10 +48,11 @@ stores, the world recycle bin and the migration evidence are opened with locks
 and WAL, and a cloud client syncing them between two machines corrupts them.
 The product already classifies that material as machine state
 (``backup.inventory`` excludes ``data/``), so :func:`resolve_state_root` names
-the separate, machine-local location for it. Nothing consumes that resolver yet:
-moving the stores over is a later step, and it must decide EXPLICITLY how an
-existing ``<data root>/data`` is adopted — the resolver never guesses from
-filesystem presence.
+the separate, machine-local location for it. This resolver stays a PURE two-step
+resolver: it never inspects the filesystem and never decides how an existing
+``<data root>/data`` is adopted. :mod:`state_paths` owns that decision (policy
+(ii): the legacy tree wins until the one-time adoption has completed) and is the
+module every state consumer calls.
 
 **Injection seams**: ``environ``, ``config_dir`` and ``state_dir`` are keyword
 arguments on the public functions, so tests are hermetic (``tmp_path`` plus a

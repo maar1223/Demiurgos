@@ -58,6 +58,7 @@ from backup.manifest import (  # noqa: E402
 from backup.snapshotter import BackupSnapshotter  # noqa: E402
 from backup.transport.base import SnapshotIncompleteError  # noqa: E402
 from backup.transport.folder import FolderTransport  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 
 OKF_DOCUMENT = "---\ntype: lore\ntitle: Rhyz\n---\n# Rhyz\n"
 
@@ -80,11 +81,20 @@ def _make_data_root(root: Path) -> Path:
     (root / "config" / "backup.json").write_text(
         json.dumps({"schema_version": 1}), encoding="utf-8"
     )
-    _write_database(root / "data" / "idea-capture.sqlite3")
+    # The live database is machine state (2b): the state directory holds it,
+    # and the content root's ``data/`` stays author-facing.
+    _write_database(_live_db())
     # An excluded member: never backed up, so restore must leave it in place.
     (root / ".git").mkdir()
     (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     return root
+
+
+def _live_db() -> Path:
+    """The live idea-capture database: machine state, in the state directory (2b)."""
+    path = state_file("idea-capture.sqlite3")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _write_database(path: Path, rows: int = 1) -> None:
@@ -564,11 +574,11 @@ def test_preview_reports_divergence_as_counts_and_examples(
     changes = {(example.path, example.change) for example in report.examples}
     assert ("ideas/new.md", "added") in changes
     assert ("ideas/note.md", "removed") in changes
-    # The live database and the edited ficha both differ from the snapshot; a
-    # ``sqlite`` entry reports as modified because the restore replaces it.
+    # The database is copied back separately, so it is NOT a content conflict;
+    # only the edited ficha differs from the snapshot.
     assert {
         example.path for example in report.examples if example.change == "modified"
-    } == {"mundos/ekkor/lore/Rhyz.md", "data/idea-capture.sqlite3"}
+    } == {"mundos/ekkor/lore/Rhyz.md"}
 
 
 def test_preview_caps_examples_and_reports_the_full_count(tmp_path: Path) -> None:
@@ -658,7 +668,7 @@ def test_restore_completes_and_the_root_equals_the_snapshot(
         encoding="utf-8"
     ) == OKF_DOCUMENT
     assert (root / "ideas" / "note.md").read_text(encoding="utf-8") == "idea\n"
-    assert _row_count(root / "data" / "idea-capture.sqlite3") == 1
+    assert _row_count(_live_db()) == 1
     assert result.databases == ("data/idea-capture.sqlite3",)
     assert result.config_files == ("config/backup.json",)
     assert set(result.swap.swapped) >= {"config", "data", "ideas", "mundos"}

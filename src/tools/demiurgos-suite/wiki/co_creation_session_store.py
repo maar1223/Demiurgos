@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from data_root import resolve_data_root
+from state_paths import resolve_state_dir
 from co_creation_protocol import (
     CoCreationMessage,
     CoCreationRequest,
@@ -132,7 +132,7 @@ def default_db_path() -> Path:
     the suite can point ``DEMIURGOS_DATA_ROOT`` at a throwaway root instead of
     the repo ``data/`` directory.
     """
-    return resolve_data_root() / "data" / "co-creation-sessions.sqlite3"
+    return resolve_state_dir() / "co-creation-sessions.sqlite3"
 
 
 class CoCreationSessionStore:

@@ -1,19 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Hermetic data root for the whole wiki suite (WU-2, portable-data-root-drive-backup).
+"""Hermetic data and state roots for the whole wiki suite (WU-2).
 
 Every migrated module resolves author data (``mundos``, ``ideas``, ``data``,
-``config``) through :func:`data_root.resolve_data_root`. Without a configured
-root that resolver fails loudly BY DESIGN, so the suite exports
-``DEMIURGOS_DATA_ROOT`` before any wiki module is imported: pytest loads this
-``conftest.py`` ahead of the test modules of this directory, so no module is
-ever collected against the developer's real data root or against a pointer in
-the real user config dir.
+``config``) through :func:`data_root.resolve_data_root` and machine state (the
+SQLite stores, the recycle bin, migration evidence, ``local-state.json``) through
+:func:`state_paths.resolve_state_dir`. Without a configured root the data
+resolver fails loudly BY DESIGN, so the suite exports ``DEMIURGOS_DATA_ROOT``
+before any wiki module is imported: pytest loads this ``conftest.py`` ahead of
+the test modules of this directory, so no module is ever collected against the
+developer's real data root or against a pointer in the real user config dir.
 
-The env override is exported at IMPORT time rather than inside the fixture
+``DEMIURGOS_STATE_ROOT`` is exported for the same reason: the state resolver
+never raises and defaults to the real ``platformdirs`` user data dir, so without
+the override a test that opens a store with no explicit ``db_path`` would write
+into the developer's real state directory. The state root is exported EMPTY (no
+``data/`` inside) so a fresh-install test sees exactly what a new installation
+sees.
+
+Both env overrides are exported at IMPORT time rather than inside a fixture
 because a few pre-existing module-level bindings resolve their default path
-while their module is imported (the durable session stores in
-``api_server``). The autouse session fixture owns the directory's lifetime and
-restores the previous environment when the session ends.
+while their module is imported (the durable session stores in ``api_server``).
+The autouse session fixtures own the directories' lifetime and restore the
+previous environment when the session ends.
 """
 
 from __future__ import annotations
@@ -46,6 +54,13 @@ for _sub in _SUBDIRS:
 _PREVIOUS_ENV = os.environ.get(_ENV_VAR)
 os.environ[_ENV_VAR] = str(_HERMETIC_ROOT)
 
+# State root isolation (2b): empty on purpose — no ``data/`` inside, so the
+# default state decision is exactly the one a fresh installation makes.
+_STATE_ENV_VAR = "DEMIURGOS_STATE_ROOT"
+_HERMETIC_STATE_ROOT = Path(tempfile.mkdtemp(prefix="demiurgos-test-state-root-"))
+_PREVIOUS_STATE_ENV = os.environ.get(_STATE_ENV_VAR)
+os.environ[_STATE_ENV_VAR] = str(_HERMETIC_STATE_ROOT)
+
 # S1 static serving isolation (S1-4): the working tree contains a gitignored
 # ``frontend/dist`` that would make the catch-all serve a stale bundle during
 # unrelated tests. Point ``DEMIURGOS_FRONTEND_DIST`` at a NONEXISTENT path so
@@ -71,6 +86,77 @@ def hermetic_data_root() -> Path:
         os.environ.pop(_ENV_VAR, None)
     else:
         os.environ[_ENV_VAR] = _PREVIOUS_ENV
+
+
+@pytest.fixture(scope="session", autouse=True)
+def hermetic_state_root() -> Path:
+    """The suite's state root: throwaway, empty, never the developer's.
+
+    Asserted rather than merely yielded, for the same reason as the data root:
+    a test that mutates the variable mid-session must fail loudly instead of
+    silently opening the developer's real machine-state directory.
+    """
+    assert os.environ.get(_STATE_ENV_VAR) == str(_HERMETIC_STATE_ROOT)
+    yield _HERMETIC_STATE_ROOT
+    shutil.rmtree(_HERMETIC_STATE_ROOT, ignore_errors=True)
+    if _PREVIOUS_STATE_ENV is None:
+        os.environ.pop(_STATE_ENV_VAR, None)
+    else:
+        os.environ[_STATE_ENV_VAR] = _PREVIOUS_STATE_ENV
+
+
+#: Module-level api_server attributes that capture a state path on first use.
+_STATE_BOUND_ATTRS = ("_LOCAL_STATE", "_IMPORT_STORE", "_BACKUP_ENGINE")
+#: ``api_server._LazyBinding`` singletons that capture a state path on first use.
+_STATE_BOUND_BINDINGS = (
+    "_IMPORT_SERVICE",
+    "_GUIDED_SESSIONS",
+    "_GUIDED_REINDEX",
+    "_CO_CREATION_SESSIONS",
+    "_CO_CREATION_MATERIALIZER",
+    "_CONVERSATION_MEMORY",
+)
+
+
+def _reset_state_bound_caches() -> None:
+    """Drop every cached object that captured the PREVIOUS test's state path.
+
+    The stores and the local-state registry are process-wide singletons built on
+    first use. Before the split they all pointed at one session-wide data root,
+    so a stale singleton was harmless; now each test resolves its own state
+    directory, and a singleton built by an earlier test would answer from that
+    test's throwaway tree. Modules are looked up in ``sys.modules`` so this
+    fixture never forces an import of the app while the suite is collecting.
+    """
+    api_server = sys.modules.get("api_server")
+    if api_server is not None:
+        for name in _STATE_BOUND_ATTRS:
+            if hasattr(api_server, name):
+                setattr(api_server, name, None)
+        for name in _STATE_BOUND_BINDINGS:
+            binding = getattr(api_server, name, None)
+            if getattr(binding, "_value", None) is not None:
+                binding._value = None
+    idea_capture_ui = sys.modules.get("idea_capture_ui")
+    if idea_capture_ui is not None:
+        idea_capture_ui._pending_runtimes.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """One throwaway state root PER TEST, overriding the session-wide one.
+
+    Machine state is no longer derived from the data root, so a test that
+    sandboxes ``PROJECT_ROOT`` to ``tmp_path`` would still share one state
+    directory with the whole session — and therefore leak accounts, sessions and
+    stores into its neighbours. Deriving the state root from ``tmp_path`` keeps
+    the isolation every one of those fixtures expects, without each test having
+    to know where state lives.
+    """
+    root = tmp_path / "state-root"
+    monkeypatch.setenv(_STATE_ENV_VAR, str(root))
+    _reset_state_bound_caches()
+    return root
 
 
 @pytest.fixture(scope="session", autouse=True)

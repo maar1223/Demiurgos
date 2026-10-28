@@ -4,7 +4,8 @@
 Why this exists
 ---------------
 Machine state (the SQLite stores, the world recycle bin, migration evidence,
-``local-state.json``) used to live at ``<data root>/data``, inside the folder the
+``local-state.json``, the auth-session registry and the import spool) used to
+live at ``<data root>/data``, inside the folder the
 author backs up with a cloud client. That folder is now meant to hold ONLY
 author content: a cloud client syncing live SQLite across two machines corrupts
 it, and ``backup.inventory`` already refuses that material. ``data_root``'s
@@ -62,15 +63,20 @@ COMPLETE_MARKER = ".adoption-complete"
 EVIDENCE_DIR = "migration-evidence"
 
 #: Any one of these under the source marks it as Demiurgos machine state. Without
-#: one, the source is not ours and is left alone.
+#: one, the source is not ours and is left alone. ``state_paths.resolve_state_dir``
+#: consults the SAME tuple, so the layer and the adoption always agree about
+#: whether a legacy tree still needs migrating.
 STATE_ARTIFACTS = (
     "idea-capture.sqlite3",
     "guided-sessions.sqlite3",
     "co-creation-sessions.sqlite3",
     "conversation-memory.sqlite3",
     "import-jobs.sqlite3",
+    "world-checkpoints.sqlite3",
     "local-state.json",
+    "sessions.json",
     "world-trash",
+    "import-spool",
     "migration-evidence",
 )
 

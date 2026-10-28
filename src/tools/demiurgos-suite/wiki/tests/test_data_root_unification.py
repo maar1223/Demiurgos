@@ -138,9 +138,14 @@ def test_plugin_handler_and_api_resolve_the_same_folder(tmp_path: Path,
     from import_store import default_db_path
     import api_server
 
-    # Handler: locale registry and the shared vision cache live under the root.
-    assert _default_locale_state_path() == resolved / "data" / "local-state.json"
-    assert _default_vision_cache_db_path() == resolved / "data" / "import-jobs.sqlite3"
+    # Handler: the locale registry and the shared vision cache are MACHINE
+    # STATE, so both resolve through the state layer — one content root, one
+    # state directory, and no state file left in the author's folder (2b).
+    from state_root_support import state_dir
+
+    assert _default_locale_state_path() == state_dir() / "local-state.json"
+    assert _default_vision_cache_db_path() == state_dir() / "import-jobs.sqlite3"
+    assert resolved / "data" / "local-state.json" != state_dir() / "local-state.json"
     # API: the wiki import store backs its vision cache with the SAME database.
     assert default_db_path() == _default_vision_cache_db_path()
     # API: the app derives its author-data paths from the same root. Reset the

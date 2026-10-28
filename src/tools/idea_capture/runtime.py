@@ -53,6 +53,11 @@ log = logging.getLogger(__name__)
 # cached — a cached root would leak one test's environment into the next.
 REPO_ROOT: Path | None = None
 
+# State seam (2b). Machine state (the shared capture database and its owner
+# lock) resolves through the state layer, never through the author content
+# folder. Same lazy contract as the data root: no import-time resolution.
+STATE_ROOT: Path | None = None
+
 
 def _ensure_wiki_on_path() -> None:
     """Make ``src/tools/demiurgos-suite/wiki`` importable for the resolver.
@@ -77,6 +82,16 @@ def _project_root() -> Path:
     from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
 
     return resolve_data_root()
+
+
+def _state_dir() -> Path:
+    """Machine-state directory; a ``STATE_ROOT`` patch always wins (2b)."""
+    if STATE_ROOT is not None:
+        return STATE_ROOT
+    _ensure_wiki_on_path()
+    from state_paths import resolve_state_dir  # noqa: PLC0415 — needs the path above
+
+    return resolve_state_dir()
 
 
 def _notify_backup_engine() -> None:
@@ -695,7 +710,7 @@ def run_serve(args) -> int:
         print(f"serve refuses to start: {mundos_root / world} does not exist", file=sys.stderr)
         return 2
 
-    lock_path = Path(args.state or _project_root() / "data" / "idea-capture.sqlite3")
+    lock_path = Path(args.state or _state_dir() / "idea-capture.sqlite3")
     state_path = lock_path
     lock_file = lock_path.with_suffix(".lock")
     health_check = None
