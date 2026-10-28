@@ -177,3 +177,33 @@ def test_a_fresh_install_never_writes_state_into_the_content_root(
 def test_every_migrated_artifact_is_a_known_state_artifact(name: str):
     """The layer's membership test and the adoption's list are the same tuple."""
     assert name in srm.STATE_ARTIFACTS
+
+
+def test_the_recycle_bin_still_resolves_its_CONTENT_defaults(monkeypatch, tmp_path):
+    """The split moved the trash, not the worlds: ``mundos/`` stays content.
+
+    A regression guard for the migration itself: the module keeps BOTH resolvers,
+    and the public default must answer from the content root.
+    """
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
+
+    assert world_recycle_bin.default_mundos_dir() == tmp_path / "mundos"
+    assert world_recycle_bin.default_world_trash_root() == state_file("world-trash")
+
+
+def test_a_restore_from_trash_works_without_an_explicit_mundos_dir(
+    monkeypatch, tmp_path
+):
+    """The standalone/public path (no API wiring) must not raise."""
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
+    world = tmp_path / "mundos" / "Avalon"
+    world.mkdir(parents=True)
+    (world / "a.md").write_text("x", encoding="utf-8")
+    trash = tmp_path / "trash"
+    world_recycle_bin.move_to_trash(
+        "Avalon", trash_root=trash, mundos_dir=tmp_path / "mundos"
+    )
+
+    world_recycle_bin.restore_from_trash("Avalon", trash_root=trash)
+
+    assert (tmp_path / "mundos" / "Avalon" / "a.md").is_file()

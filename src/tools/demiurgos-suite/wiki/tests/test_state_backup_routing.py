@@ -25,10 +25,19 @@ for _p in (str(_WIKI),):
 from backup import restore as R  # noqa: E402
 from backup.snapshotter import BackupSnapshotter  # noqa: E402
 from backup.transport.folder import FolderTransport  # noqa: E402
-from state_root_support import state_file  # noqa: E402
+import state_paths  # noqa: E402
+import state_root_migration as srm  # noqa: E402
+from state_root_support import state_dir, state_file  # noqa: E402
 
 DB_NAME = "idea-capture.sqlite3"
 MANIFEST_PATH = "data/idea-capture.sqlite3"
+
+
+def _mark_adopted() -> None:
+    """The state directory is the published adoption target (an upgraded install)."""
+    target = state_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    (target / srm.COMPLETE_MARKER).write_text("{}\n", encoding="utf-8")
 
 
 def _database(path: Path, rows: int) -> Path:
@@ -78,9 +87,11 @@ def _staged_db(destination: Path, snapshot_id: str) -> Path:
     return destination / "Demiurgos" / "snapshots" / snapshot_id / MANIFEST_PATH
 
 
-def test_the_cut_reads_the_live_database_not_the_inert_copy(tmp_path: Path):
+def test_the_cut_reads_the_live_database_not_the_inert_copy(tmp_path: Path, monkeypatch):
     root = _content_root(tmp_path, inert_rows=99)
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(root))
     live = _database(state_file(DB_NAME), 2)
+    _mark_adopted()
 
     transport, snapshot_id = _snapshot(root, tmp_path / "dest")
 
@@ -98,9 +109,13 @@ def test_the_cut_reads_the_live_database_not_the_inert_copy(tmp_path: Path):
     assert [entry.path for entry in manifest.entries].count(MANIFEST_PATH) == 1
 
 
-def test_the_restore_copies_the_database_back_to_the_state_base(tmp_path: Path):
+def test_the_restore_copies_the_database_back_to_the_state_base(
+    tmp_path: Path, monkeypatch
+):
     root = _content_root(tmp_path)
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(root))
     live = _database(state_file(DB_NAME), 1)
+    _mark_adopted()
     transport, snapshot_id = _snapshot(root, tmp_path / "dest")
     _database(live, 5)  # local drift after the snapshot
 
@@ -120,8 +135,12 @@ def test_the_restore_copies_the_database_back_to_the_state_base(tmp_path: Path):
     assert not (root / "data" / DB_NAME).exists()
 
 
-def test_an_absent_live_database_is_never_taken_from_the_inert_copy(tmp_path: Path):
+def test_an_absent_live_database_is_never_taken_from_the_inert_copy(
+    tmp_path: Path, monkeypatch
+):
     root = _content_root(tmp_path, inert_rows=42)
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(root))
+    _mark_adopted()
 
     _transport, snapshot_id = _snapshot(root, tmp_path / "dest")
 
@@ -199,3 +218,62 @@ def test_the_backup_run_forwards_the_state_base(tmp_path: Path):
     assert outcome.status in {runner.STATUS_OK, runner.STATUS_OK_WITH_WARNINGS}
     staged = _staged_db(destination, outcome.snapshot_id)
     assert _row_count(staged) == 4
+
+
+def test_a_fresh_install_restore_lands_in_the_state_base(tmp_path: Path, monkeypatch):
+    """S5c/S8 — the production path: restore onto a FRESH machine.
+
+    The swap deposits the snapshot's databases in the content root. The state
+    base must be decided BEFORE that, or policy (ii) reads the fresh tree as
+    legacy state, the copy-back writes into the content root and the split never
+    takes effect. A first boot may already have created the state directory
+    (``import-jobs.sqlite3``) without the adoption marker.
+    """
+    source = _content_root(tmp_path / "source", inert_rows=None)
+    transport, snapshot_id = _snapshot(source, tmp_path / "dest")
+
+    content = _content_root(tmp_path / "fresh", inert_rows=None)
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(content))
+    # What a real first boot leaves behind: a marker-less state directory.
+    _database(state_file("import-jobs.sqlite3"), 0)
+
+    result = R.restore_snapshot(
+        transport=transport,
+        data_root=content,
+        snapshot_id=snapshot_id,
+        reindex=lambda _root: None,
+        config_revalidator=lambda _root: (),
+    )
+
+    assert result.status == "ok"
+    # The pre-swap source had no live database, so the snapshot carries none;
+    # what matters is the routing decision itself, probed directly.
+    assert not (content / "data" / DB_NAME).exists()
+    assert state_paths.resolve_state_dir() == state_dir()
+    assert state_paths.resolve_state_base() == state_dir().parent
+
+
+def test_a_restore_of_a_snapshot_with_databases_lands_them_in_the_state_base(
+    tmp_path: Path, monkeypatch
+):
+    """Same production path, with a database in the snapshot."""
+    source = _content_root(tmp_path / "source", inert_rows=None)
+    _database(state_file(DB_NAME), 4)
+    transport, snapshot_id = _snapshot(source, tmp_path / "dest")
+
+    content = _content_root(tmp_path / "fresh", inert_rows=None)
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(content))
+    _database(state_file("import-jobs.sqlite3"), 0)
+    state_file(DB_NAME).unlink()
+
+    R.restore_snapshot(
+        transport=transport,
+        data_root=content,
+        snapshot_id=snapshot_id,
+        reindex=lambda _root: None,
+        config_revalidator=lambda _root: (),
+    )
+
+    assert _row_count(state_file(DB_NAME)) == 4
+    assert not (content / "data" / DB_NAME).exists()
+    assert state_paths.resolve_state_dir() == state_dir()

@@ -109,6 +109,7 @@ def hermetic_state_root() -> Path:
 _STATE_BOUND_ATTRS = ("_LOCAL_STATE", "_IMPORT_STORE", "_BACKUP_ENGINE")
 #: ``api_server._LazyBinding`` singletons that capture a state path on first use.
 _STATE_BOUND_BINDINGS = (
+    "_IMPORT_SERVICE",
     "_GUIDED_SESSIONS",
     "_GUIDED_REINDEX",
     "_CO_CREATION_SESSIONS",

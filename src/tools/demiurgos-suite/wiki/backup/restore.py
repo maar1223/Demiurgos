@@ -1361,14 +1361,23 @@ def restore_snapshot(
     Whole-root restore only: there is no partial-member mode, so the restored root
     equals the snapshot for every member the backup covers, and a member the
     exclusion table refuses is left untouched. The SQLite copy-back lands in the
-    STATE base (``state_base``, resolved by default), because that is where the
-    live databases are opened; the manifest keeps its ``data/<name>.sqlite3``
-    labels so nothing about the on-disk format changes. The seams (``rename``,
+    STATE base (``state_base``, resolved by default BEFORE the swap), because that
+    is where the live databases are opened; the manifest keeps its
+    ``data/<name>.sqlite3`` labels so nothing about the on-disk format changes. The seams (``rename``,
     ``reindex``, ``config_revalidator``, ``okf_validator``, ``engine``) let the
     suite simulate a mid-swap failure and stay hermetic; the defaults are the real
     implementations.
     """
     root = Path(data_root)
+    # Resolved BEFORE the swap, on purpose: the swap deposits the snapshot's
+    # ``data/`` member in the content root, and a state base resolved afterwards
+    # would see that fresh tree as "legacy state" and copy the databases right
+    # back into the content root — the split would never take effect.
+    state_target = (
+        Path(state_base)
+        if state_base is not None
+        else state_paths.resolve_state_base()
+    )
     run = run_id or uuid.uuid4().hex[:12]
     staging = staging_directory(root, run)
     _assert_same_volume(staging.parent, root)
@@ -1398,11 +1407,6 @@ def restore_snapshot(
     try:
         swap = swap_in_staged_tree(staging, root, run_id=run, rename=rename)
         swapped = swap.swapped
-        state_target = (
-            Path(state_base)
-            if state_base is not None
-            else state_paths.resolve_state_base()
-        )
         databases = restore_databases(
             root, payloads, state_base=state_target
         )
