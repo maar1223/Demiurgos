@@ -46,7 +46,7 @@ Acceptance: the suite stays green with no `platformdirs` state dir touched.
 | T2 | S3, S7, S10 | inline | done (46437e73) |
 | T3 | S4, S5a, S5b | inline | done |
 | T4 | S5c, S8, S9 | inline | done (33043c56) |
-| T5 | S5, S6, S10 | inline | pending verification |
+| T5 | S5, S6, S10 | inline | done (5155c817, verified) |
 
 ## Log
 
@@ -77,3 +77,8 @@ L10 — T4: the SQLite cut now reads the state base (`state_paths.resolve_state_
 `world-checkpoints.sqlite3` joined `STATE_ARTIFACTS`: it is one of the four databases the backup owns, so an old install's copy must be adopted or the cut can never find it. New `tests/test_state_backup_routing.py` (6 cells) plus updated inventory/restore/engine cells. Full suite: 4369 passed, 24 skipped.
 
 L11 — T5: `docs/architecture/CONTENT_AND_STATE.md` documents the two roots, the (ii) table, the adoption contract, the backup routing and the test seams; `INSTALL_LAYOUT.md` gained the state-root row and points at it; `payload_manifest.json` regenerated (line-numbered evidence refreshed). A portability finding was recorded rather than hidden: on Windows the bootstrap content root (`%LOCALAPPDATA%\Demiurgos\data`) IS the default state directory until step 3 moves the content root to `Documentos\Demiurgos`, so the split is inert there — safe (both sides equal, the adoption no-ops, nothing is copied) and pinned by two cells. Full suite: 4371 passed, 24 skipped.
+
+L12 — Independent verification (S6), then one bounded correction batch. The verifier reproduced the whole suite in a scratch copy: HEAD `4357 passed, 34 skipped, 4 failed` vs the baseline copy at `dc0340d7` `4304 passed, 34 skipped`, the SAME 4 failures being git-environment only (`_git_check_ignore` needs a real `.git`; the scratch copy uses a sentinel) — +53 passing, 0 lost. It found two blockers, neither visible to the suite:
+- **B1** `restore_snapshot` resolved the state base AFTER `swap_in_staged_tree`; on a fresh machine the snapshot's own `data/` member made policy (ii) read the content root as legacy state, so the copy-back wrote the live databases back into the content root and the split never took effect. Fixed in `f8be5ada` (resolve before the swap) with a DB-bearing regression cell that was observed RED before the fix.
+- **B2** `world_recycle_bin.default_mundos_dir()` raised `NameError` after its import was replaced; latent only because every HTTP caller passes `mundos_dir`. Fixed in the same commit, with two regression cells observed RED first.
+Advisories accepted as out of scope (all pre-existing at the baseline): the copy-back verifies integrity after writing, the UI owner-lock name differs from the runtime's, and the conftest omission of `_IMPORT_SERVICE` (that one WAS fixed in the same batch). Recheck limited to the two blockers: both resolved, no new blocker in the corrected paths. Full suite after the batch: 4375 passed, 24 skipped.
