@@ -45,8 +45,8 @@ Acceptance: the suite stays green with no `platformdirs` state dir touched.
 | T1 | S1, S2, S11 | inline | done (c19a0789) |
 | T2 | S3, S7, S10 | inline | done (46437e73) |
 | T3 | S4, S5a, S5b | inline | done |
-| T4 | S5c, S8, S9 | inline | done |
-| T5 | S5, S6, S10 | inline | in progress |
+| T4 | S5c, S8, S9 | inline | done (33043c56) |
+| T5 | S5, S6, S10 | inline | pending verification |
 
 ## Log
 
@@ -75,3 +75,5 @@ L10 — T4: the SQLite cut now reads the state base (`state_paths.resolve_state_
 - `preview_conflicts` no longer counts the `sqlite` entries as content conflicts (the databases have their own phase and their own base).
 - the member swap necessarily deposits the staged database in the content root, so `restore_snapshot` retires that copy after the copy-back; otherwise every restore would put live machine state back inside the author's folder.
 `world-checkpoints.sqlite3` joined `STATE_ARTIFACTS`: it is one of the four databases the backup owns, so an old install's copy must be adopted or the cut can never find it. New `tests/test_state_backup_routing.py` (6 cells) plus updated inventory/restore/engine cells. Full suite: 4369 passed, 24 skipped.
+
+L11 — T5: `docs/architecture/CONTENT_AND_STATE.md` documents the two roots, the (ii) table, the adoption contract, the backup routing and the test seams; `INSTALL_LAYOUT.md` gained the state-root row and points at it; `payload_manifest.json` regenerated (line-numbered evidence refreshed). A portability finding was recorded rather than hidden: on Windows the bootstrap content root (`%LOCALAPPDATA%\Demiurgos\data`) IS the default state directory until step 3 moves the content root to `Documentos\Demiurgos`, so the split is inert there — safe (both sides equal, the adoption no-ops, nothing is copied) and pinned by two cells. Full suite: 4371 passed, 24 skipped.

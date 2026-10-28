@@ -225,3 +225,41 @@ def test_the_base_honours_the_same_seams(tmp_path: Path):
     assert state_paths.resolve_state_base(
         environ=roots.environ, config_dir=roots.config
     ) == alternate
+
+
+def test_a_content_root_that_is_the_state_base_is_safe(tmp_path: Path):
+    """Windows today: the default install root IS the platform data dir.
+
+    Both sides then resolve to the same directory, so the split is inert until
+    the content root moves: the layer must return it (never invent a second
+    location) and the adoption must be a no-op — no copy, no marker, no damage.
+    """
+    shared = tmp_path / "Demiurgos"
+    legacy = shared / srm.STATE_DIR_NAME
+    legacy.mkdir(parents=True)
+    (legacy / "idea-capture.sqlite3").write_bytes(b"live")
+
+    resolved = state_paths.resolve_state_dir(
+        environ={"DEMIURGOS_DATA_ROOT": str(legacy)},
+        state_dir=shared,
+        config_dir=tmp_path / "config",
+    )
+
+    assert resolved == legacy
+    result = srm.adopt_existing_state(data_root=legacy, state_root=shared)
+    assert (result.adopted, result.reason) == (False, "already_present")
+    assert (legacy / "idea-capture.sqlite3").read_bytes() == b"live"
+    assert not (legacy / srm.COMPLETE_MARKER).exists()
+
+
+def test_a_content_root_named_like_the_state_root_is_still_one_tree(tmp_path: Path):
+    """Same shape as the case-insensitive Windows path, spelled identically."""
+    shared = tmp_path / "Demiurgos"
+    (shared / srm.STATE_DIR_NAME).mkdir(parents=True)
+    (shared / srm.STATE_DIR_NAME / "sessions.json").write_text("{}", encoding="utf-8")
+
+    assert state_paths.resolve_state_dir(
+        environ={"DEMIURGOS_DATA_ROOT": str(shared)},
+        state_dir=shared,
+        config_dir=tmp_path / "config",
+    ) == shared / srm.STATE_DIR_NAME

@@ -24,7 +24,13 @@
 | Logs (persistent) | `<install_root>/logs/` | `<install_root>\logs\` |
 | Runtime state (pid files) | `${XDG_RUNTIME_DIR:-$TMPDIR}/demiurgos-launcher` | `%LOCALAPPDATA%\Demiurgos\run` |
 | Data root | env `DEMIURGOS_DATA_ROOT` → pointer → bootstrap-once `~/.demiurgos/data` | env → pointer → `%LOCALAPPDATA%\Demiurgos\data` |
+| State root (machine-local) | env `DEMIURGOS_STATE_ROOT` → `$XDG_DATA_HOME/demiurgos` (else `~/.local/share/demiurgos`) | env → `%LOCALAPPDATA%\demiurgos` |
 | Data-root `.env` | `<data_root>/.env` (auth mode + locale; **never in payload**) | same |
+
+Author content and machine state live in DIFFERENT roots: the data root holds
+what the author backs up, the state root holds locks/WAL/SQLite that must stay on
+one machine. See [`CONTENT_AND_STATE.md`](CONTENT_AND_STATE.md) for the split,
+the one-time adoption and the backup routing.
 
 Where `<install_root>` is `$DEMIURGOS_HOME` when set, otherwise the platform
 default above; `<version>` is the installed `DEMIURGOS_VERSION` (e.g. `0.9.0`);
