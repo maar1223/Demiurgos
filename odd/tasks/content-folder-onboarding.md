@@ -38,9 +38,9 @@ Acceptance: choosing such a folder shows the reason before the request is sent.
 
 | ID | Task | Specs | Route | Status | Commit |
 |---|---|---|---|---|---|
-| T0 | Installer: `--data-root`/`-DataRoot` persists the choice; env keeps its meaning and seeds `.env`; visible notice | S1-S5 | inline | pending | — |
-| T1 | `GET /api/data-root` with disk facts | S6 | inline | pending | — |
-| T2 | `POST /api/data-root` with the guards | S7, S8 | inline | pending | — |
+| T0 | Installer: `--data-root`/`-DataRoot` persists the choice; env keeps its meaning and seeds `.env`; visible notice | S1-S5 | inline | done (RED: 5 failed -> GREEN: 5 passed; installer contract 113 passed/5 skipped) | `e01797eb` |
+| T1 | `GET /api/data-root` with disk facts | S6 | inline | done (14 cells; mutation check: each guard removal fails its own cells) | `c9d2bf0d` |
+| T2 | `POST /api/data-root` with the guards | S7, S8 | inline | done (same commit) | `c9d2bf0d` |
 | T3 | `content_folder` step in `STEP_ORDER` | S9 | inline | pending | — |
 | T4 | Frontend step: show, change, diagnose | S9, S10 | inline | pending | — |
 
@@ -63,3 +63,13 @@ carpeta elegida: vacía · puntero: NO · .env: NO · DEMIURGOS_AUTH_MODE: ausen
 Consequence: the choice did not survive the install, and any later start without the env var would bootstrap the Documents default and look at a different folder, silently. That is why S1 writes the pointer and S4 seeds `.env`.
 
 L4 (scope decision) — the branch stacks on `feat/content-state-separation-3` because PR #53 is open and T0 edits the same bootstrap function; a stacked PR keeps the diff reviewable. Push/PR stay the Owner's decision.
+
+L5 (T0, installer) — `--data-root`/`-DataRoot` are the install-time choice and they persist; the env keeps its run-time meaning, now creates the folders and seeds `.env`, and says out loud that it did not record the choice. Observed RED first (5 cells), then green; the whole `test_installer_contract.py` stayed green (113 passed / 5 skipped). No shellcheck on this host: `bash -n` plus the behavioural cells are the check, and the `.ps1` stays ASCII.
+
+L6 (T1/T2, API) — Tests were written after the module here, so no RED was observed; a mutation check replaced that proof: disabling the state-overlap guard fails the three `machine_state` cells and disabling the worlds guard fails `an_empty_folder_never_hides_existing_worlds`; restoring returns 14 green. Recorded rather than hidden.
+
+L7 (payload lesson, this cost a full-suite round) — `api_server.py` imports a new module, so the runtime payload must list it: 20 failures across the payload-boot, semantic-e2e, sync-lore and installer-boot suites were all `ModuleNotFoundError: content_root_router`. Fix: `scripts/derive_payload_manifest.py` (169 files, +1). Any new runtime module needs that regeneration before the suite can be believed.
+
+L8 (a saved choice needs a restart) — `_project_root()` caches into `PROJECT_ROOT` and every store is built from it, so rewriting the pointer cannot rebind the running process safely. POST therefore returns `restart_required` and GET reports `pending_restart` while the pointer and the folder in use disagree. The UI step (T4) must offer a restart, not a silent reload.
+
+L9 (closure so far) — Full suite: **4417 passed, 24 skipped** (4395 before this feature, +22 cells). `Risk` for T1/T2 as recorded above; T2 is `item 1` and still owes its independent verifier at the feature's end.
