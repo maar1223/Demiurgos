@@ -42,7 +42,7 @@ Acceptance: choosing such a folder shows the reason before the request is sent.
 | T1 | `GET /api/data-root` with disk facts | S6 | inline | done (14 cells; mutation check: each guard removal fails its own cells) | `c9d2bf0d` |
 | T2 | `POST /api/data-root` with the guards | S7, S8 | inline | done (same commit) | `c9d2bf0d` |
 | T3 | `content_folder` step in `STEP_ORDER` | S9 | inline | done (RED: missing import -> 16 passed; 3 old flow pins updated) | `b55ef511` |
-| T4 | Frontend step: show, change, diagnose | S9, S10 | inline | S9 done, **S10 pending** (API refusal reaches the picker; no pre-warning yet) | `b55ef511` |
+| T4 | Frontend step: show, change, diagnose | S9, S10 | inline | done | `b55ef511`, `37568d64` |
 
 Risk lines: T0 `Risk: item 1` (defines where persisted content lives) + `item 3` (the installer's documented env contract changes) · T2 `Risk: item 1` (moves the pointer, hides/loses reach to existing content if wrong) · T3 `Risk: item 3` (`STEP_ORDER` is shared with the frontend and with `status_from`) · T1/T4 `Risk: item 6`. Item 1 units get one independent verifier at the feature's end.
 
@@ -82,4 +82,6 @@ L12 (a guard I did not write, that caught me) — `frontend/src/i18n/__tests__/c
 
 L13 (evidence) — Backend: **4423 passed, 24 skipped**. Frontend: 1583 tests in 128 files green, `tsc --noEmit` clean, `npm run build` OK (chunk-size warning pre-existing). The served `frontend/dist` was rebuilt, so the step can be seen with a forced reload.
 
-L14 (open) — S10 is only half done: the API's 400 arrives with a readable reason and the picker shows it, but the UI does not warn BEFORE sending. That pre-warning is the next unit; it needs the content root in the backup section, a path-overlap helper shared with the backend semantics, and its own cells.
+L14 (S10, closed) — `lib/contentRootOverlap.ts` mirrors `backup/state.py`: equal, inside or containing, in both directions. The picker refuses locally before sending, and the card warns when an already-chosen destination overlaps (the case where the content folder moved after the destination was picked). 11 cells on the helper and 2 on the section; the mock's default content root is a sibling so the pre-check stays out of the way of the other 18 cells. One difference from the server, recorded on purpose: a Windows path compares case-insensitively and a POSIX one does not, and `C:\` keeps its separator because `C:` is not a folder that reads as itself.
+
+L15 (final verification) — Backend **4423 passed / 24 skipped**. Frontend **1596 tests in 129 files**, `tsc --noEmit` clean, `npm run build` OK. `frontend/dist` rebuilt, so the step and the backup warning are visible with a forced reload. Branch `feat/content-folder-onboarding`: 5 commits, stacked on the step-3 branch, not pushed — push/PR are the Owner's decision.
