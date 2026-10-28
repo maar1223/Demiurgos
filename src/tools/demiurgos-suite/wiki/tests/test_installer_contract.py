@@ -1197,6 +1197,29 @@ class TestWindowsNoPrivateCloneOrNpm:
         assert "C:" + "\\Users" not in text
 
 
+class TestWindowsDataRootDocumentsDefault:
+    """Step 3 (S1/S2): the .ps1 bootstrap default is <documents>\\Demiurgos.
+
+    Parity with the POSIX installer: the folder comes from the shell's own
+    resolution, so a OneDrive Known Folder Move or a localized name is
+    followed, and the four seeded folders move with it.
+    """
+
+    def test_ps1_bootstrap_uses_the_shell_documents_folder(self):
+        text = _text(PS_INSTALLER)
+        assert 'Join-Path $installRoot "data"' not in text
+        assert '$script:dataRoot = Join-Path (Get-DocumentsDir) "Demiurgos"' in text
+        assert "function Get-DocumentsDir" in text
+        assert "[Environment]::GetFolderPath('MyDocuments')" in text
+        assert "Join-Path $env:USERPROFILE 'Documents'" in text
+
+    def test_ps1_seeded_folders_hang_from_the_new_root(self):
+        text = _text(PS_INSTALLER)
+        for folder in ("mundos", "ideas", "data", "config"):
+            assert f'Join-Path $script:dataRoot "{folder}"' in text
+        assert 'Join-Path $installRoot "data"' not in text
+
+
 class TestWindowsWheelsOnlyHashLocked:
     def test_ps1_only_binary_all_present(self):
         assert "--only-binary=:all:" in _text(PS_INSTALLER)
