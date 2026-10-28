@@ -4,7 +4,8 @@
 The portable POSIX launcher (``scripts/start-demiurgos.sh``) resolves the data
 root in this order (INSTALL_LAYOUT.md §2.4): existing env
 ``DEMIURGOS_DATA_ROOT`` -> existing pointer (left intact) -> bootstrap-once
-the default ``<install_root>/data``. The forced ``export
+the default ``<documents>/Demiurgos`` (step 3; it was ``<install_root>/data``).
+The forced ``export
 DEMIURGOS_DATA_ROOT="$PROJECT_ROOT"`` of the old Linux launcher is gone.
 ``DEMIURGOS_ROOT`` stays for legacy Hermes reads, and
 ``DEMIURGOS_FRONTEND_DIST`` is exported by the launcher and by nothing else

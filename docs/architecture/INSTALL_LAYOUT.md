@@ -23,7 +23,7 @@
 | Launchers | `<current>/scripts/start-demiurgos.sh` | `<current>\scripts\start-demiurgos.ps1` |
 | Logs (persistent) | `<install_root>/logs/` | `<install_root>\logs\` |
 | Runtime state (pid files) | `${XDG_RUNTIME_DIR:-$TMPDIR}/demiurgos-launcher` | `%LOCALAPPDATA%\Demiurgos\run` |
-| Data root | env `DEMIURGOS_DATA_ROOT` → pointer → bootstrap-once `~/.demiurgos/data` | env → pointer → `%LOCALAPPDATA%\Demiurgos\data` |
+| Data root | env `DEMIURGOS_DATA_ROOT` → pointer → bootstrap-once the documents folder + `/Demiurgos` (`~/Documents/Demiurgos`; localized names followed) | env → pointer → `%USERPROFILE%\Documents\Demiurgos` (the shell's Documents folder) |
 | State root (machine-local) | env `DEMIURGOS_STATE_ROOT` → `$XDG_DATA_HOME/demiurgos` (else `~/.local/share/demiurgos`) | env → `%LOCALAPPDATA%\demiurgos` |
 | Data-root `.env` | `<data_root>/.env` (auth mode + locale; **never in payload**) | same |
 
@@ -56,7 +56,11 @@ default above; `<version>` is the installed `DEMIURGOS_VERSION` (e.g. `0.9.0`);
    clone is not the runtime app.
 4. **The data root is resolved in this order only**: existing env
    `DEMIURGOS_DATA_ROOT` → existing pointer file → bootstrap-once the default
-   `<install_root>/data`. An existing pointer is never silently re-oriented.
+   `<documents>/Demiurgos`. The documents folder is the OS's own — the XDG
+   `XDG_DOCUMENTS_DIR` on POSIX, `GetFolderPath('MyDocuments')` on Windows —
+   never a hardcoded `~/Documents`, because the folder name is localized and the
+   folder itself can be redirected. An existing pointer is never silently
+   re-oriented.
 5. **The data-root `.env` is seeded by the installer, exported by the
    launcher.** It contains non-secret install-time values
    (`DEMIURGOS_AUTH_MODE=local-dev`, `DEMIURGOS_LANGUAGE=<locale>`, optional

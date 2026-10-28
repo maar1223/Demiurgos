@@ -39,18 +39,25 @@ Default locations:
 
 | | POSIX | Windows |
 |---|---|---|
-| Content root | env → pointer → bootstrap-once `~/.demiurgos/data` | env → pointer → bootstrap-once `%LOCALAPPDATA%\Demiurgos\data` |
+| Content root | env → pointer → bootstrap-once the documents folder + `/Demiurgos` (`~/Documents/Demiurgos`; `~/Documentos/Demiurgos` on a localized desktop) | env → pointer → bootstrap-once `%USERPROFILE%\Documents\Demiurgos` (the shell's Documents folder) |
 | State base | `DEMIURGOS_STATE_ROOT` → `$XDG_DATA_HOME/demiurgos` (else `~/.local/share/demiurgos`) | `DEMIURGOS_STATE_ROOT` → `%LOCALAPPDATA%\demiurgos` |
 
 The state directory is always `<base>/data`, on both sides of the split.
 
-> **Windows note.** Until the content-root default moves to
-> `Documentos\Demiurgos`, the Windows bootstrap content root
-> (`%LOCALAPPDATA%\Demiurgos\data`) IS the default state directory. Both sides
-> then resolve to the same folder: the split is inert there (the adoption is a
-> no-op and every consumer keeps working exactly as before), and it becomes
-> effective as soon as the content root moves. No data is lost or copied in that
-> configuration.
+The documents folder is never hardcoded: POSIX reads `XDG_DOCUMENTS_DIR` from
+`user-dirs.dirs` (falling back to `~/Documents`) and Windows asks the shell
+(`[Environment]::GetFolderPath('MyDocuments')`, falling back to
+`%USERPROFILE%\Documents`). A localized folder name and a redirected one
+(OneDrive Known Folder Move) are both followed, so the content root is the
+folder the author actually sees.
+
+> **Windows note.** A pointer written before step 3 records
+> `%LOCALAPPDATA%\Demiurgos\data`, which IS the default state directory. Such an
+> install still resolves both sides to the same folder: the split is inert there
+> (the adoption is a no-op and every consumer works exactly as before), and no
+> data is lost or copied. It becomes effective when the pointer is re-oriented,
+> which this project never does silently. A **new** install bootstraps the
+> content root under Documents, so the split is effective from the first boot.
 
 ## Policy (ii): which directory wins
 
