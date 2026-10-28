@@ -1090,6 +1090,10 @@ export const messages = {
     "backup.error.loadConfig":
       "No se pudo cargar la configuración de respaldo",
     "backup.error.saveFolder": "No se pudo guardar la carpeta elegida",
+    "backup.error.overlapsContent":
+      "Esa carpeta se solapa con la carpeta de tu contenido. Una copia guardada dentro de lo que copia es una sola copia: elige una carpeta fuera de ella.",
+    "backup.warning.overlapsContent":
+      "La carpeta de copias se solapa con la carpeta de tu contenido, así que las copias van a fallar hasta que elijas otra.",
     "backup.error.run": "No se pudo ejecutar el respaldo",
     "backup.error.list": "No se pudieron listar las copias",
     "backup.error.preview": "No se pudo previsualizar la restauración",
@@ -3213,6 +3217,10 @@ export const messages = {
     "backup.error.loadStatus": "The backup status could not be loaded",
     "backup.error.loadConfig": "The backup configuration could not be loaded",
     "backup.error.saveFolder": "The chosen folder could not be saved",
+    "backup.error.overlapsContent":
+      "That folder overlaps the folder that holds your content. A backup stored inside what it backs up is a single copy: choose a folder outside it.",
+    "backup.warning.overlapsContent":
+      "The backup folder overlaps the folder that holds your content, so backups will fail until you choose another one.",
     "backup.error.run": "The backup could not be run",
     "backup.error.list": "The snapshots could not be listed",
     "backup.error.preview": "The restore could not be previewed",

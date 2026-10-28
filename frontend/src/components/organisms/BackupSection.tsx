@@ -22,7 +22,9 @@ import type {
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { getContentRoot } from "@/api/contentRoot";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { overlapsContentRoot } from "@/lib/contentRootOverlap";
 import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
@@ -192,6 +194,9 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The content root is read once, best effort: the backup card must never fail
+  // because the folder endpoint did.
+  const [contentRoot, setContentRoot] = useState<string | null>(null);
   // A 401 / `Autenticación requerida` is not a crash: it is a missing session
   // with a concrete next step, kept separate from the honest error path.
   const [sessionRequired, setSessionRequired] = useState(false);
@@ -261,9 +266,26 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
     };
   }, [loadStatus, loadRestoreStatus]);
 
+  useEffect(() => {
+    let alive = true;
+    getContentRoot()
+      .then((info) => alive && setContentRoot(info.path))
+      .catch(() => alive && setContentRoot(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const chooseFolder = async (path: string) => {
     const chosen = path.trim();
     if (!chosen) return;
+    // Say it before sending: the server refuses this pair, and a 400 would
+    // arrive as a surprise on a folder that looks perfectly fine.
+    if (overlapsContentRoot(chosen, contentRoot)) {
+      setNotice(null);
+      setError(t("backup.error.overlapsContent"));
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -454,6 +476,15 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               {status.destination.path}
             </dd>
           </div>
+          {overlapsContentRoot(status.destination.path, contentRoot) && (
+            <p
+              className="rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-small text-status-error"
+              role="alert"
+              data-testid="backup-overlap-warning"
+            >
+              {t("backup.warning.overlapsContent")}
+            </p>
+          )}
           <div>
             <dt className="text-small text-muted">{t("backup.provider")}</dt>
             <dd className="text-small text-primary">

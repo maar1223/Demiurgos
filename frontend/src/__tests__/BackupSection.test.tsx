@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Mock } from "vitest";
 import {
@@ -29,6 +29,7 @@ import type {
   BackupSnapshot,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
+import { getContentRoot } from "@/api/contentRoot";
 import { tEs } from "@/__tests__/i18nTestUtils";
 // Raw source of the organism under test — used by the honest-copy scan
 // (REQ-BUI-3) so a literal that no rendered state reaches is still caught.
@@ -50,6 +51,12 @@ vi.mock("@/api/backup", async (importOriginal) => {
     getBackupRestoreStatus: vi.fn(),
   };
 });
+
+vi.mock("@/api/contentRoot", () => ({
+  getContentRoot: vi.fn(),
+}));
+
+const contentRootMock = getContentRoot as Mock;
 
 const mocked = {
   getBackupStatus: getBackupStatus as Mock,
@@ -184,6 +191,11 @@ describe("BackupSection", () => {
       last_write: null,
     });
     mocked.getBackupSnapshots.mockResolvedValue({ snapshots: [] });
+    // The content root never overlaps the fixtures' backup folder unless a cell
+    // says so: a sibling, so the pre-check stays out of the way.
+    contentRootMock.mockResolvedValue({
+      path: "/home/author/Documentos/Demiurgos",
+    });
     mocked.setBackupDestination.mockResolvedValue(CHOSEN_STATUS);
     mocked.runBackupNow.mockResolvedValue(WRITTEN_STATUS);
     mocked.previewBackupRestore.mockResolvedValue(CLEAN_PREVIEW);
@@ -485,5 +497,39 @@ describe("BackupSection", () => {
     expect(backupWriteCopy(WRITTEN_STATUS)).toBe(
       "Escrito en /home/author/Demiurgos — 2026-09-17T10:05:00Z UTC",
     );
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Step 4 (S10) — the picker says the overlap BEFORE the request leaves
+// ---------------------------------------------------------------------------
+
+describe("BackupSection destination overlap", () => {
+  it("refuses a folder inside the content root without calling the API", async () => {
+    await renderSection(PENDING_STATUS);
+    await waitFor(() => expect(contentRootMock).toHaveBeenCalled());
+
+    await userEvent.type(
+      screen.getByLabelText(tEs("backup.picker.label")),
+      "/home/author/Documentos/Demiurgos/copias",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: tEs("backup.picker.use") }),
+    );
+
+    expect(mocked.setBackupDestination).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(tEs("backup.error.overlapsContent")),
+    ).toBeInTheDocument();
+  });
+
+  it("warns on the card when the chosen folder already overlaps", async () => {
+    contentRootMock.mockResolvedValue({ path: "/home/author" });
+    await renderSection(CHOSEN_STATUS);
+
+    expect(
+      await screen.findByTestId("backup-overlap-warning"),
+    ).toBeInTheDocument();
   });
 });
