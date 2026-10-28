@@ -166,6 +166,7 @@ def test_a_fresh_install_never_writes_state_into_the_content_root(
         "co-creation-sessions.sqlite3",
         "conversation-memory.sqlite3",
         "import-jobs.sqlite3",
+        "world-checkpoints.sqlite3",
         "local-state.json",
         "sessions.json",
         "world-trash",

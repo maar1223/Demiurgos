@@ -22,6 +22,7 @@ if str(_WIKI) not in sys.path:
 
 import backup.inventory as inventory_module  # noqa: E402
 from backup.inventory import (  # noqa: E402
+    STATE_ARTIFACT_NAMES,
     CaseCollisionError,
     build_inventory,
     classify_member,
@@ -159,8 +160,10 @@ def test_unruled_member_has_no_rule() -> None:
     assert classify_member("mystery-box") is None
 
 
-def test_ruled_subtree_is_included_and_sqlite_scope_is_narrow(tmp_path: Path) -> None:
-    """A ruled subtree is taken recursively; ``data/`` takes its databases too."""
+def test_ruled_subtree_is_included_and_state_artifacts_are_refused(
+    tmp_path: Path,
+) -> None:
+    """A ruled subtree is taken recursively; the databases are STATE, not content."""
     _make(tmp_path / "ideas" / "nota.md")
     _make(tmp_path / "data" / "idea-capture.sqlite3")
     _make(tmp_path / "data" / "methodology" / "library.json")
@@ -168,7 +171,11 @@ def test_ruled_subtree_is_included_and_sqlite_scope_is_narrow(tmp_path: Path) ->
     inventory = build_inventory(tmp_path)
 
     assert "ideas/nota.md" in inventory.included
-    assert "data/idea-capture.sqlite3" in inventory.included
+    # Since 2b the live database lives in the state directory; a copy left in
+    # the content root is inert state and must never be uploaded as content.
+    assert "data/idea-capture.sqlite3" not in inventory.included
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    assert recorded["data/idea-capture.sqlite3"] == "excluded:state-root-artifact"
     # ``data/methodology/`` is author content and is NOT a sqlite file, so a
     # narrow sqlite-only walk would have dropped it. It must survive.
     assert "data/methodology/library.json" in inventory.included
@@ -266,15 +273,14 @@ def _make(path: Path) -> None:
 def test_data_secrets_are_excluded_by_rule_and_the_databases_survive(
     tmp_path: Path,
 ) -> None:
-    """WARNING-2 fix: ``data/`` keeps its databases and refuses its secrets.
+    """``data/`` refuses its secrets AND the machine state a split left behind.
 
-    ``data/`` mixes the four databases the backup owns with auth/session
-    material, local machine state and lock files. The old ``estado`` rule never
-    matched, so ``data/`` was walked in full and ``data/sessions.json`` (auth
-    session hashes), ``data/local-state.json`` and ``data/idea-capture.lock``
-    were staged into the cloud-synced folder. Each is now refused BY RULE with a
-    recorded reason, while all four owned databases are still staged and the two
-    operational ones stay out.
+    ``data/`` used to mix the four databases the backup owns with auth/session
+    material, local machine state and lock files; since 2b the live artifacts
+    live in the state directory and anything of that class left in the content
+    root is INERT state, never author content — so every one of them is refused
+    BY RULE with a recorded reason. The four databases the backup still captures
+    are cut from the state directory by the snapshotter, not from here.
 
     NOTE for the archive phase: spec #3350 / design #3351 / tasks #3352 describe
     the stores as living in ``estado/``. The real layout is ``data/`` and this
@@ -307,10 +313,10 @@ def test_data_secrets_are_excluded_by_rule_and_the_databases_survive(
         assert secret in recorded, f"{secret} is not recorded as excluded"
         assert recorded[secret].strip(), f"{secret} has an empty exclusion reason"
 
-    for name in owned:
-        assert f"data/{name}.sqlite3" in inventory.included, f"{name} was lost"
-    for name in ("conversation-memory", "import-jobs"):
-        assert f"data/{name}.sqlite3" not in inventory.included
+    for name in owned + ("conversation-memory", "import-jobs"):
+        relative = f"data/{name}.sqlite3"
+        assert relative not in inventory.included, f"{name} leaked as content"
+        assert relative in recorded, f"{name} is not recorded as excluded"
 
     # Author content under data/ must survive the recursive walk.
     assert "data/methodology/library.json" in inventory.included
@@ -554,13 +560,14 @@ def test_user_data_survives_the_code_exclusions(tmp_path: Path) -> None:
     for relative in (
         "mundos/MyWorld/ficha.md",
         "ideas/nota.md",
-        "data/idea-capture.sqlite3",
         "data/methodology/library.json",
         "config/local.json",
         ".demiurgos-estado.json",
     ):
         assert relative in inventory.included, f"{relative} was dropped"
         assert relative in staged, f"{relative} was not staged"
+    # The database is machine state (2b): excluded, never uploaded as content.
+    assert "data/idea-capture.sqlite3" not in staged
 
 
 def test_top_level_code_exclusions_never_drop_same_named_world_content(
@@ -689,3 +696,14 @@ def test_git_tracked_tooling_never_triggers_a_dev_snapshot(tmp_path: Path) -> No
     recorded = {entry.path: entry.reason for entry in inventory.excluded}
     for top_level in ("odd", "tests", "relay", "payload_manifest.json"):
         assert recorded.get(top_level, "").strip(), f"{top_level} has no exclusion reason"
+
+
+def test_the_state_artifact_mirror_matches_the_migration_contract() -> None:
+    """The exclusion class and the adoption must agree on what state IS.
+
+    ``inventory`` cannot import the runtime wiring, so it mirrors the tuple; this
+    cell is the pin that keeps the mirror honest (2b).
+    """
+    from state_root_migration import STATE_ARTIFACTS
+
+    assert STATE_ARTIFACT_NAMES == STATE_ARTIFACTS

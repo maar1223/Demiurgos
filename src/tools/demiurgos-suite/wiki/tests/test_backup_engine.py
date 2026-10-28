@@ -40,6 +40,7 @@ from backup.transport.base import (  # noqa: E402
     TargetCapabilities,
 )
 from backup.transport.folder import FolderTransport  # noqa: E402
+from state_root_support import state_file  # noqa: E402
 
 #: A fixed, aware moment so ``created_at`` and the default id never drift.
 FIXED = datetime(2026, 9, 16, 12, 5, 30, tzinfo=timezone.utc)
@@ -263,13 +264,18 @@ def test_meta_is_written_after_the_payload(tmp_path: Path) -> None:
 def test_the_sqlite_cut_precedes_the_file_cut(tmp_path: Path) -> None:
     """REQ-BE-3/5: the DB cut runs first and the DB is never file-copied."""
     root = _data_root(tmp_path)
-    _database(root / "data" / "idea-capture.sqlite3", rows=5)
+    # The live database is machine state (2b): it lives in the state directory,
+    # and the cut reads it there whatever the content root holds.
+    live = state_file("idea-capture.sqlite3")
+    live.parent.mkdir(parents=True, exist_ok=True)
+    _database(live, rows=5)
+    _database(root / "data" / "idea-capture.sqlite3", rows=99)  # inert legacy copy
 
     result = _engine(FolderTransport(tmp_path / "dest")).run(root)
 
     assert result.stages == ("sqlite", "files", "current", "snapshot", "meta")
-    # The DB path belongs to the SQLite cut, so the file cut never staged the
-    # live file (a file-wise copy would also lose committed WAL rows).
+    # The DB path belongs to the SQLite cut, so the file cut never staged any
+    # copy of it (a file-wise copy would also lose committed WAL rows).
     assert "data/idea-capture.sqlite3" not in result.files.payload
     assert [record.name for record in result.databases.records] == ["idea-capture"]
     assert result.databases.records[0].integrity == "ok"

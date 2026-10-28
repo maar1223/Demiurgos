@@ -199,3 +199,29 @@ def test_the_pure_resolvers_keep_their_contract(tmp_path: Path):
     ) == roots.state
     with pytest.raises(data_root.DataRootNotConfigured):
         data_root.resolve_data_root(environ={}, config_dir=roots.config)
+
+
+def test_the_base_is_the_state_directorys_parent_in_both_branches(tmp_path: Path):
+    """Consumers that resolve their own layout (the SQLite cut) need the BASE."""
+    roots = Roots(tmp_path)
+    roots.seed_legacy("idea-capture.sqlite3")
+
+    assert state_paths.resolve_state_base(
+        environ=roots.environ, state_dir=roots.state, config_dir=roots.config
+    ) == roots.legacy.parent
+
+    roots.mark_adopted()
+
+    assert state_paths.resolve_state_base(
+        environ=roots.environ, state_dir=roots.state, config_dir=roots.config
+    ) == roots.current.parent
+
+
+def test_the_base_honours_the_same_seams(tmp_path: Path):
+    roots = Roots(tmp_path)
+    alternate = tmp_path / "alternate-state"
+    roots.environ["DEMIURGOS_STATE_ROOT"] = str(alternate)
+
+    assert state_paths.resolve_state_base(
+        environ=roots.environ, config_dir=roots.config
+    ) == alternate

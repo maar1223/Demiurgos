@@ -23,14 +23,15 @@ tables decide what is taken:
   the match is made HERE by rule — no call site special-cases a path
   (REQ-BE-1, SC-BE-1.3).
 
-**The ``data/`` folder mixes databases with secrets.** It holds the four
-databases the backup owns, the two it must not take, author content under
-``data/methodology/``, and operational material that must never leave the
-machine (``sessions.json`` auth session hashes, ``local-state.json`` local
-machine state, ``idea-capture.lock``). Because a narrow sqlite-only walk would
-drop the author content, the folder is walked recursively and the operational
-material is refused by a reasoned exclusion CLASS scoped to ``data/`` — each row
-matches a role, so an equivalent new file is caught by the same rule.
+**The ``data/`` folder holds author content plus whatever machine state an
+adoption left behind.** Since the content/state split (2b) the live databases,
+``local-state.json``, the session registry, the recycle bin and the import spool
+resolve outside the content root; the four databases the backup still captures
+are cut from the state directory, not from here. The folder is kept author-facing:
+``data/methodology/`` MUST be staged, so it is walked recursively, while the state
+artifacts — including the inert copy a one-time adoption leaves — are refused by
+a reasoned exclusion CLASS scoped to ``data/``. Each row matches a role, so an
+equivalent new file is caught by the same rule.
 
 Case-collision detection (WU-7b) lives here: :func:`detect_case_collisions`
 compares TOP-LEVEL members by their NFC + ``casefold()`` key, and
@@ -71,14 +72,14 @@ class SubtreeRule:
 #: Recognized members -> walk policy. This does NOT drive discovery or inclusion:
 #: a member absent here is still included by default (SC-BE-2.1).
 #:
-#: ``data/`` is the real operational member: the six SQLite stores resolve to
-#: ``<data root>/data/<name>.sqlite3`` (import_store, co_creation_session_store,
-#: guided_session_store, conversation_memory_store, world checkpoints,
-#: idea-capture), and ``data/methodology/`` is author content that MUST be
-#: staged. It is walked RECURSIVELY rather than sqlite-only, because a
-#: sqlite-only walk would silently drop ``data/methodology/``. The secrets that
-#: also live in this folder (auth sessions, local machine state, lock files) are
-#: refused by :data:`EXCLUSION_RULES` instead — see the ``data/`` exclusion class.
+#: ``data/`` is the author-facing member: since 2b the SQLite stores resolve to
+#: the machine-local state directory, and what stays here is author content —
+#: ``data/methodology/`` above all — plus the inert state copy a completed
+#: adoption leaves in place. It is walked RECURSIVELY rather than sqlite-only,
+#: because a sqlite-only walk would silently drop ``data/methodology/``. The
+#: state artifacts that may still appear here (databases, auth sessions, local
+#: machine state, locks, recycle bin, spool, migration evidence) are refused by
+#: :data:`EXCLUSION_RULES` — see the ``data/`` exclusion class.
 #:
 #: The former ``estado`` / ``taller`` rows named top-level members that do not
 #: exist on disk: the real layout puts every store under ``data/``. Those dead
@@ -120,6 +121,24 @@ class ExclusionRule:
     scope: str = "name"
     under: str = ""
 
+
+#: The machine-state artifacts, mirrored from ``state_root_migration.STATE_ARTIFACTS``.
+#: Anything with one of these names under ``data/`` is state, not author content,
+#: wherever it happens to be: the live copy lives in the state directory and the
+#: content root may hold the inert copy of a completed adoption.
+STATE_ARTIFACT_NAMES: tuple[str, ...] = (
+    "idea-capture.sqlite3",
+    "guided-sessions.sqlite3",
+    "co-creation-sessions.sqlite3",
+    "conversation-memory.sqlite3",
+    "import-jobs.sqlite3",
+    "world-checkpoints.sqlite3",
+    "local-state.json",
+    "sessions.json",
+    "world-trash",
+    "import-spool",
+    "migration-evidence",
+)
 
 #: The explicit exclusion table. Every match is surfaced on ``excluded[]`` with
 #: its reason, so the manifest is self-explaining and an exclusion can never
@@ -324,6 +343,21 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
         ".demiurgos-old-*",
         "excluded:backup-restore-park-dir",
         "name",
+    ),
+    # --- Machine state that may still sit in the content root (2b) ---------
+    # After the content/state split the live artifacts live in the state
+    # directory, and the content root's ``data/`` may still carry the inert copy
+    # a one-time adoption left (nothing ever deletes it). A snapshot must not
+    # treat that copy as author content: it would upload stale databases and
+    # duplicate the SQLite cut, which writes the live ones under the same
+    # manifest path. The names MIRROR ``state_root_migration.STATE_ARTIFACTS``
+    # because this module stays import-free of the runtime wiring; a test pins
+    # the two lists equal. Specific rows above keep their own reasons.
+    *(
+        ExclusionRule(
+            name, "excluded:state-root-artifact", "name_in_subtree", "data"
+        )
+        for name in STATE_ARTIFACT_NAMES
     ),
 )
 

@@ -59,6 +59,7 @@ from backup.manifest import (
     Totals,
 )
 from backup.sqlite_snapshot import snapshot_databases, staged_relative_path
+import state_paths  # flat sibling module (state-directory layer, 2b)
 from backup.transport.base import BackupTransport, PublishResult, TargetCapabilities
 
 #: The ``meta/`` documents this run owns; retention is WU-10.
@@ -123,8 +124,12 @@ class RunResult:
     snapshot: PublishResult
 
 
-def _cut_databases(data_root: Path) -> DatabaseCut:
+def _cut_databases(state_base: Path) -> DatabaseCut:
     """Capture the included databases with ``Connection.backup()``, FIRST.
+
+    ``state_base`` is the base whose ``data/`` holds the LIVE databases
+    (``state_paths.resolve_state_base()`` after the content/state split): the
+    content root's ``data/`` may still carry the inert copy an adoption left.
 
     Stages into a throwaway directory, then reads the staged bytes so the caller
     gets an in-memory payload. An included database with no live file is recorded
@@ -132,7 +137,7 @@ def _cut_databases(data_root: Path) -> DatabaseCut:
     """
     staging = Path(tempfile.mkdtemp(prefix="demiurgos-backup-sqlite-"))
     try:
-        captured = snapshot_databases(Path(data_root), staging)
+        captured = snapshot_databases(Path(state_base), staging)
         payload: dict[str, bytes] = {}
         entries: list[EntryRecord] = []
         records: list[SqliteRecord] = []
@@ -286,10 +291,14 @@ class BackupSnapshotter:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         snapshot_id_source: Callable[[datetime], str] = _default_snapshot_id,
+        state_base: Callable[[], Path] = state_paths.resolve_state_base,
     ) -> None:
         self._transport = transport
         self._clock = clock
         self._snapshot_id_source = snapshot_id_source
+        # Resolved per run, never at construction: the boot-time adoption decides
+        # which base holds the live databases (2b).
+        self._state_base = state_base
 
     def run(self, data_root: Path) -> RunResult:
         """Run one backup: SQLite FIRST, then files, publish, and meta LAST."""
@@ -303,7 +312,7 @@ class BackupSnapshotter:
         previous = _previous_entries(transport)
 
         stages: list[str] = ["sqlite"]
-        databases = _cut_databases(root)
+        databases = _cut_databases(Path(self._state_base()))
         inventory = build_inventory(root)
         stages.append("files")
         files = _cut_files(inventory, previous, databases)

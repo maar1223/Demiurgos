@@ -45,8 +45,8 @@ Acceptance: the suite stays green with no `platformdirs` state dir touched.
 | T1 | S1, S2, S11 | inline | done (c19a0789) |
 | T2 | S3, S7, S10 | inline | done (46437e73) |
 | T3 | S4, S5a, S5b | inline | done |
-| T4 | S5c, S8, S9 | inline | in progress |
-| T5 | S5, S6, S10 | inline | pending |
+| T4 | S5c, S8, S9 | inline | done |
+| T5 | S5, S6, S10 | inline | in progress |
 
 ## Log
 
@@ -69,3 +69,9 @@ L7 — T1 closed (`c19a0789`): `state_paths.py` implements (ii) as a pure path d
 L8 — T2 wiring: 13 runtime modules migrated (5 stores, recycle bin, migration evidence, locale registry, sessions registry, import spool, idea-capture DB + lock, graph MCP state path, the `idea_capture` package's two state paths and its CLI). Two test-hygiene consequences surfaced and were fixed rather than papered over: (1) `PROJECT_ROOT` sandboxing no longer isolates state, so `conftest.py` now gives every test its own state root AND drops the `api_server` singletons that captured a state path (`_LOCAL_STATE`, `_IMPORT_STORE`, `_BACKUP_ENGINE`, the five `_LazyBinding` stores); (2) the two `_lifespan` cells in `test_import_spool_gc` neutralize the acceptance-convergence thread, which used to outlive the test and write into the next test's state directory. `payload_manifest.json` regenerated (the payload now ships `state_paths.py` and `state_root_migration.py`, which nothing imported at runtime before). New `tests/test_state_consumer_wiring.py` (21 cells) pins every consumer, the content paths that must NOT move, and policy (ii) end to end through a live consumer. Full suite: 4353 passed, 24 skipped.
 
 L9 — T3: `_adopt_existing_state_once()` is the FIRST statement of `_lifespan`, before session restore, the spool sweep, skill materialization and the backup engine; it logs `adopted` at INFO and a failure at WARNING and never aborts the boot. One real defect surfaced while wiring it: `create_import_router` resolved its store at import time (`_store = ... else store()`), so the import store would have stayed bound to the PRE-adoption tree and jobs created in the upgrade session would vanish on the next restart. Fixed with `import_router._LazyStore` (resolves on first attribute access) plus a lazy `_IMPORT_SERVICE` built by `_import_service()`; the ~20 router call sites are untouched. New `tests/test_state_boot_adoption.py` (6 cells) drives the real lifespan: adoption-before-everything order, byte-identical adopted copy, the first boot reading the adopted registry, a second boot never re-adopting, a failed adoption booting from the legacy tree, and an empty content root writing no evidence. Full suite: 4359 passed, 24 skipped.
+
+L10 — T4: the SQLite cut now reads the state base (`state_paths.resolve_state_base()`, injectable per run) and the copy-back writes there, keeping the manifest's `data/<name>.sqlite3` labels, the transport gate and the integrity check. Three consequences were handled instead of left latent:
+- `backup.inventory` gained the `excluded:state-root-artifact` class (mirroring `STATE_ARTIFACTS`, pinned by a test) so the inert copy an adoption leaves is never uploaded as content and never duplicates the cut's manifest path.
+- `preview_conflicts` no longer counts the `sqlite` entries as content conflicts (the databases have their own phase and their own base).
+- the member swap necessarily deposits the staged database in the content root, so `restore_snapshot` retires that copy after the copy-back; otherwise every restore would put live machine state back inside the author's folder.
+`world-checkpoints.sqlite3` joined `STATE_ARTIFACTS`: it is one of the four databases the backup owns, so an old install's copy must be adopted or the cut can never find it. New `tests/test_state_backup_routing.py` (6 cells) plus updated inventory/restore/engine cells. Full suite: 4369 passed, 24 skipped.

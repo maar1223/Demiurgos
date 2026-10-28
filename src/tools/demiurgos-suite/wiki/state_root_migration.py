@@ -72,6 +72,7 @@ STATE_ARTIFACTS = (
     "co-creation-sessions.sqlite3",
     "conversation-memory.sqlite3",
     "import-jobs.sqlite3",
+    "world-checkpoints.sqlite3",
     "local-state.json",
     "sessions.json",
     "world-trash",

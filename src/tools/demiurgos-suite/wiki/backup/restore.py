@@ -73,6 +73,7 @@ from backup.manifest import (
 )
 from backup.snapshotter import LAST_WRITE_META_NAME, SNAPSHOT_MANIFEST_PATH
 from backup.sqlite_snapshot import INTEGRITY_OK
+import state_paths  # flat sibling module (state-directory layer, 2b)
 from backup.staging import is_temp_name
 from backup.transport.base import (
     BackupTransport,
@@ -797,15 +798,25 @@ def preview_conflicts(
     that forbid the swap: a type mismatch at a member boundary, and a top-level
     member the restore would delete because it is not inside a restored member.
 
-    A ``sqlite`` entry normally reports as ``modified``: the live database's
-    bytes differ from the ``backup()`` copy the snapshot carries (that copy is a
-    consistent cut, not a byte copy), and the restore does replace it.
+    The ``sqlite`` entries are NOT part of this comparison: the databases are cut
+    and copied back by their own phase, against the state base, so counting them
+    as content would report a machine-state file as "removed" (or "modified")
+    every time. ``validation.databases`` names them instead.
     """
     staged = Path(staged_dir)
     root = Path(data_root)
     staged_manifest = manifest or read_manifest(staged / SNAPSHOT_MANIFEST_PATH)
-    staged_entries = {entry.path: entry for entry in staged_manifest.entries}
-    current = _inventory_files(root)
+    database_paths = {record.path for record in staged_manifest.sqlite}
+    staged_entries = {
+        entry.path: entry
+        for entry in staged_manifest.entries
+        if entry.path not in database_paths
+    }
+    current = {
+        path: record
+        for path, record in _inventory_files(root).items()
+        if path not in database_paths
+    }
 
     added = sorted(set(current) - set(staged_entries))
     removed = sorted(set(staged_entries) - set(current))
@@ -1085,20 +1096,29 @@ def remove_sqlite_sidecars(database: Path) -> tuple[str, ...]:
 
 
 def restore_databases(
-    data_root: Path, payloads: Mapping[str, bytes]
+    data_root: Path,
+    payloads: Mapping[str, bytes],
+    *,
+    state_base: Path | None = None,
 ) -> tuple[str, ...]:
     """Copy the staged databases over the live ones and verify each (13.5).
+
+    ``state_base`` is the base whose ``data/`` holds the LIVE databases
+    (``state_paths.resolve_state_base()`` once the content/state split is in
+    effect); the payload keys keep the manifest's ``data/<name>.sqlite3`` shape,
+    so the same gate and containment proof apply against that base. Without it
+    the content root is used, which is the pre-split layout.
 
     Each file is written through a same-directory temp and ``os.replace``, after
     the stale ``-wal``/``-shm`` beside it are removed. The restored file must
     pass ``PRAGMA integrity_check`` or the restore aborts with the marker still in
     place — a corrupt database is never reported as restored.
     """
-    root = Path(data_root)
+    root = Path(state_base) if state_base is not None else Path(data_root)
     restored: list[str] = []
     for relative in sorted(payloads):
         # Defence in depth: the write path is gated with the transport's own
-        # rules and proved contained under the data root BEFORE anything is
+        # rules and proved contained under the TARGET base BEFORE anything is
         # written, so a payload keyed by an escaping path can never write outside.
         safe_relative = _gated_and_contained(root, relative)
         target = _contained_path(root, safe_relative)
@@ -1118,6 +1138,38 @@ def restore_databases(
             )
         restored.append(relative)
     return tuple(restored)
+
+
+def _retire_content_root_databases(
+    data_root: Path, payloads: Mapping[str, bytes], *, state_base: Path
+) -> tuple[str, ...]:
+    """Delete the copy the member swap deposited in the CONTENT root.
+
+    The snapshot stages every database at its manifest path (``data/<name>``), so
+    the whole-member swap necessarily lands one there. Once the content/state
+    split is in effect the authoritative copy is the one :func:`restore_databases`
+    just wrote into the state base, and leaving the other behind would put live
+    machine state back inside the author's (possibly cloud-synced) folder — the
+    exact thing the split exists to prevent. Nothing else is ever touched, and in
+    a single-root layout the two bases are equal and this is a no-op.
+    """
+    if Path(state_base).resolve() == Path(data_root).resolve():
+        return ()
+    root = Path(data_root)
+    retired: list[str] = []
+    for relative in sorted(payloads):
+        try:
+            safe_relative = _gated_and_contained(root, relative)
+        except Exception:  # noqa: BLE001 — a refused path was never written either
+            continue
+        target = _contained_path(root, safe_relative)
+        remove_sqlite_sidecars(target)
+        if not target.is_file():
+            continue
+        _unlink_quietly(target)
+        if not target.exists():
+            retired.append(relative)
+    return tuple(retired)
 
 
 def _entity_graph_index(mundos_path: Path) -> Any:
@@ -1302,12 +1354,16 @@ def restore_snapshot(
     config_revalidator: Callable[[Path], tuple[str, ...]] | None = None,
     okf_validator: Callable[[str], Any] | None = None,
     allow_blockers: bool = False,
+    state_base: Path | None = None,
 ) -> RestoreResult:
     """Restore the whole data root from one COMPLETE snapshot (13.1–13.6).
 
     Whole-root restore only: there is no partial-member mode, so the restored root
     equals the snapshot for every member the backup covers, and a member the
-    exclusion table refuses is left untouched. The seams (``rename``,
+    exclusion table refuses is left untouched. The SQLite copy-back lands in the
+    STATE base (``state_base``, resolved by default), because that is where the
+    live databases are opened; the manifest keeps its ``data/<name>.sqlite3``
+    labels so nothing about the on-disk format changes. The seams (``rename``,
     ``reindex``, ``config_revalidator``, ``okf_validator``, ``engine``) let the
     suite simulate a mid-swap failure and stay hermetic; the defaults are the real
     implementations.
@@ -1342,7 +1398,15 @@ def restore_snapshot(
     try:
         swap = swap_in_staged_tree(staging, root, run_id=run, rename=rename)
         swapped = swap.swapped
-        databases = restore_databases(root, payloads)
+        state_target = (
+            Path(state_base)
+            if state_base is not None
+            else state_paths.resolve_state_base()
+        )
+        databases = restore_databases(
+            root, payloads, state_base=state_target
+        )
+        _retire_content_root_databases(root, payloads, state_base=state_target)
         indexes = (reindex or rebuild_indexes)(root)
         config_files = (config_revalidator or revalidate_config_files)(root)
     except BaseException as exc:

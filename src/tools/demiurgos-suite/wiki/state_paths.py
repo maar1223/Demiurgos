@@ -105,6 +105,26 @@ def holds_state(legacy: Path) -> bool:
     )
 
 
+def resolve_state_base(
+    *,
+    environ: Mapping[str, str] | None = None,
+    state_dir: Path | None = None,
+    config_dir: Path | None = None,
+) -> Path:
+    """The BASE whose ``data/`` holds machine state — i.e. the state directory's parent.
+
+    Both bases the decision can pick put state under a ``data/`` member
+    (``<content root>/data`` while an adoption is pending, ``<state root>/data``
+    afterwards), so a consumer that resolves its own layout relative to a base
+    (the SQLite backup cut reads ``<base>/data/<name>.sqlite3``) needs this rather
+    than the directory itself. Same seams and same policy (ii) as
+    :func:`resolve_state_dir`.
+    """
+    return resolve_state_dir(
+        environ=environ, state_dir=state_dir, config_dir=config_dir
+    ).parent
+
+
 def resolve_state_dir(
     *,
     environ: Mapping[str, str] | None = None,
