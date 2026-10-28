@@ -9532,3 +9532,12 @@ def test_export_without_trigger_or_flow_keeps_the_old_manifest_shape(
     assert "trigger" not in manifest
     assert "guided_flow" not in manifest
     assert inspect_package(exported.content).ok
+
+
+def test_the_content_root_routes_are_mounted():
+    """Step 4: the app exposes the content root on /api/data-root (GET + POST)."""
+    import api_server
+
+    paths = api_server.app.openapi()["paths"]
+    assert "/api/data-root" in paths
+    assert set(paths["/api/data-root"]) == {"get", "post"}

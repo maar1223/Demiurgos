@@ -233,6 +233,7 @@ from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
 from backup.state import backup_state  # backup card dedicated contract (WU-14)
+from content_root_router import create_content_root_router  # /api/data-root (step 4)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -9592,6 +9593,17 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         data_root=lambda: _project_root(),
         engine=lambda: _backup_engine(),
+    ),
+)
+
+# Where the author's content lives (/api/data-root, step 4). Read it to show the
+# folder and the disk facts the picker needs; POST records a new pointer and says
+# a restart is required, because modules across the process cache the root they
+# booted with.
+app.include_router(
+    create_content_root_router(
+        require_principal=lambda request: _resolve_principal(request),
+        current_root=lambda: _project_root(),
     ),
 )
 
