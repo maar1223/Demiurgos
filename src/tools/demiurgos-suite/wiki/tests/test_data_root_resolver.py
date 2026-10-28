@@ -346,3 +346,113 @@ def test_pointer_moves_no_bytes(tmp_path: Path):
     # the pointer lives in the config dir, NOT under the data root
     assert not list(root.rglob(f"{data_root.POINTER_NAME}*"))
     assert data_root.pointer_path(cfg).is_file()
+
+
+# ---------------------------------------------------------------------------
+# State root (machine-local) — the other half of the sync boundary.
+#
+# Step 1 is deliberately resolver-only: no store consumes it yet, so nothing
+# changes behaviour. These cells pin the two properties that matter — machine
+# state has a platform home (never fails), and it can never be dragged inside
+# the author's (possibly cloud-synced) content root by the pointer.
+# ---------------------------------------------------------------------------
+
+
+def test_state_root_defaults_to_platformdirs_user_data_dir():
+    if not data_root._HAS_PLATFORMDIRS:
+        pytest.skip("platformdirs is not importable in this interpreter")
+    assert data_root.resolve_state_root() == Path(
+        data_root._platformdirs.user_data_dir(data_root.APP_NAME)
+    )
+
+
+def test_state_root_env_override_wins(tmp_path: Path):
+    override = tmp_path / "state"
+    resolved = data_root.resolve_state_root(
+        environ={data_root.ENV_STATE_ROOT: str(override)},
+        state_dir=tmp_path / "ignored",
+    )
+    assert resolved == override.resolve()
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_state_env_is_ignored(tmp_path: Path, blank: str):
+    injected = tmp_path / "injected"
+    assert (
+        data_root.resolve_state_root(
+            environ={data_root.ENV_STATE_ROOT: blank}, state_dir=injected
+        )
+        == injected
+    )
+
+
+def test_state_root_injection_seam(tmp_path: Path):
+    injected = tmp_path / "state"
+    assert data_root.resolve_state_root(environ={}, state_dir=injected) == injected
+
+
+def test_state_root_never_raises_without_a_data_root(tmp_path: Path):
+    """Machine state has a platform home: nothing to configure, nothing to fail."""
+    injected = tmp_path / "state"
+    assert data_root.resolve_state_root(environ={}, state_dir=injected) == injected
+
+
+def test_state_root_never_reads_the_data_root_pointer(tmp_path: Path):
+    """A configured data root must never drag machine state inside it."""
+    cfg = _config(tmp_path)
+    pointed = tmp_path / "pointed-root"
+    pointed.mkdir()
+    data_root.write_pointer(pointed, config_dir=cfg)
+    injected = tmp_path / "state"
+
+    resolved = data_root.resolve_state_root(environ={}, state_dir=injected)
+    assert resolved == injected
+    assert resolved != pointed / "data"
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX XDG fallback; Windows uses %LOCALAPPDATA%",
+)
+def test_state_root_falls_back_to_xdg_data_home_without_platformdirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Absent platformdirs + non-blank ``$XDG_DATA_HOME`` (POSIX only)."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    xdg = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+
+    assert data_root.resolve_state_root(environ={}) == xdg / data_root.APP_NAME
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX XDG/~/.local/share fallback; Windows uses %LOCALAPPDATA%",
+)
+@pytest.mark.parametrize("xdg_value", [None, "", "   "])
+def test_state_root_falls_back_to_home_share_without_xdg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, xdg_value: str | None
+):
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    if xdg_value is None:
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_DATA_HOME", xdg_value)
+
+    assert (
+        data_root.resolve_state_root(environ={})
+        == home / ".local" / "share" / data_root.APP_NAME
+    )
+
+
+def test_state_root_falls_back_to_localappdata_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    monkeypatch.setattr(data_root, "_is_windows", lambda: True)
+    local = tmp_path / "local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+    assert data_root.resolve_state_root(environ={}) == local / data_root.APP_NAME
