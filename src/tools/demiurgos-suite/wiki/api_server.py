@@ -226,6 +226,7 @@ from order_manifest import read_order, remove_from_order
 
 import data_root  # flat sibling module (data-root resolver, WU-2)
 import state_paths  # flat sibling module (state-directory layer, 2b)
+import state_root_migration  # the one-time <data root>/data adoption
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
@@ -288,6 +289,9 @@ def _backup_engine() -> BackupEngine:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     global _GATEWAY_KEY, _hermes_client
+    # FIRST, before any state consumer opens a store: adopt an existing
+    # ``<data root>/data`` so every later resolution sees the final location.
+    _adopt_existing_state_once()
     # Resolve the gateway key from the DATA root's .env when the environment does
     # not carry it (WU-2: an import-time read would resolve the data root while
     # this module is imported). The module-level adapter singleton captured the
@@ -464,6 +468,45 @@ def _state_dir() -> Path:
     if STATE_DIR is not None:
         return STATE_DIR
     return state_paths.resolve_state_dir()
+
+
+def _adopt_existing_state_once() -> None:
+    """Publish an existing ``<data root>/data`` into the state root, once per boot.
+
+    Policy (ii) makes the resolved state directory follow the adoption marker, so
+    this runs BEFORE anything opens a store: session restore, the spool sweep,
+    skill materialization and the backup engine all resolve their paths after
+    it. Nothing is ever deleted — the legacy tree stays in place, inert.
+
+    Failures never stop the boot: an adoption that could not be published leaves
+    the legacy tree in use, which is exactly the pre-split behaviour.
+    """
+    try:
+        content_root = _project_root()
+    except Exception as exc:  # noqa: BLE001 — an unconfigured root has nothing to adopt
+        logger.info("state adoption skipped: no content root (%s)", exc)
+        return
+    state_base = data_root.resolve_state_root()
+    try:
+        result = state_root_migration.adopt_existing_state(
+            data_root=content_root, state_root=state_base
+        )
+    except Exception as exc:  # noqa: BLE001 — never crash startup
+        logger.warning("state adoption raised; the legacy tree stays in use: %s", exc)
+        return
+    if result.reason == "adopted":
+        logger.info(
+            "state adopted into %s (%d files, transaction %s)",
+            result.target,
+            result.files,
+            result.transaction_id,
+        )
+    elif result.reason == "failed":
+        logger.warning(
+            "state adoption failed; the legacy tree stays in use: %s", result.detail
+        )
+    else:
+        logger.debug("state adoption: %s", result.reason)
 
 
 def _spool_dir() -> Path:
@@ -9423,7 +9466,9 @@ from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_spool_gc import gc_enabled, gc_guard_hours, gc_ttl_days, reap_dead_spools  # noqa: E402
 
-# Lazy world-importer store: reads the current data root so tests can relocate it.
+# Lazy world-importer store: reads the current state directory so tests can
+# relocate it, and so the boot-time adoption of an existing state tree is
+# published BEFORE the first store opens.
 _IMPORT_STORE: ImportJobStore | None = None
 
 
@@ -9432,6 +9477,25 @@ def _import_store() -> ImportJobStore:
     if _IMPORT_STORE is None:
         _IMPORT_STORE = ImportJobStore(_state_dir() / "import-jobs.sqlite3")
     return _IMPORT_STORE
+
+
+def _import_service() -> ImportService:
+    """The import lifecycle service, built on first use (post-adoption, 2b)."""
+    return ImportService(
+        store=_import_store(),
+        mundos_dir=_mundos_dir(),
+        spool_dir=_spool_dir(),
+        read_file=lambda rel: (
+            (_spool_dir() / rel).read_text(encoding="utf-8") if rel else ""
+        ),
+        graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
+        graph_reconcile_many=_reconcile_import_graph_many,
+        register_gallery=_register_import_gallery,
+        inter_doc_post_process=_run_inter_doc_post_process,
+    )
+
+
+_IMPORT_SERVICE: Any = _LazyBinding(_import_service)
 
 
 def _reconcile_import_graph(rel: str, mundo: str) -> None:
@@ -10426,25 +10490,11 @@ app.include_router(
             _get_graph(mundo)._resolve_link_candidates
             if _get_graph(mundo) else None
         ),
-        # NOTE (WU-2): ``store=_import_store`` and the service below are
-        # materialized while this module is imported, because
-        # ``import_router.create_import_router`` calls the store factory itself
-        # (``_store = ... else store()``). Deferring it would require rewriting
-        # that router's ~20 store call sites, which is outside this work unit.
-        # The suite is safe because ``tests/conftest.py`` exports a hermetic
-        # DEMIURGOS_DATA_ROOT before any test module is imported.
-        service=ImportService(
-            store=_import_store(),
-            mundos_dir=_mundos_dir(),
-            spool_dir=_spool_dir(),
-            read_file=lambda rel: (
-                (_spool_dir() / rel).read_text(
-                    encoding="utf-8") if rel else ""),
-            graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
-            graph_reconcile_many=_reconcile_import_graph_many,
-            register_gallery=_register_import_gallery,
-            inter_doc_post_process=_run_inter_doc_post_process,
-        ),
+        # Both the store (through ``_LazyStore`` inside the router) and this
+        # service are built on FIRST USE, never while this module is imported:
+        # the boot-time adoption publishes the state directory and a store built
+        # earlier would stay bound to the pre-adoption tree (2b).
+        service=_IMPORT_SERVICE,
     ),
 )
 

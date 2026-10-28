@@ -43,9 +43,9 @@ Acceptance: the suite stays green with no `platformdirs` state dir touched.
 | ID | Specs | Route | Status |
 | --- | --- | --- | --- |
 | T1 | S1, S2, S11 | inline | done (c19a0789) |
-| T2 | S3, S7, S10 | inline | in progress |
-| T3 | S4, S5a, S5b | inline | pending |
-| T4 | S5c, S8, S9 | inline | pending |
+| T2 | S3, S7, S10 | inline | done (46437e73) |
+| T3 | S4, S5a, S5b | inline | done |
+| T4 | S5c, S8, S9 | inline | in progress |
 | T5 | S5, S6, S10 | inline | pending |
 
 ## Log
@@ -67,3 +67,5 @@ L6 — Baseline: `4318 passed, 24 skipped` in 240 s with `.venv/bin/python -m py
 L7 — T1 closed (`c19a0789`): `state_paths.py` implements (ii) as a pure path decision (marker present → state root; no marker + a legacy artifact → legacy; otherwise state root; unconfigured content root → state root), `STATE_ARTIFACTS` gained `sessions.json` and `import-spool`, the `data_root` docstring now names the layer, and `conftest.py` exports a hermetic `DEMIURGOS_STATE_ROOT`. RED→GREEN evidence: `tests/test_state_paths.py` (14 cells) written first; `test_data_root_resolver` needed one honest update (its no-override default now goes through `environ={}`). Full suite after T1: 4332 passed, 24 skipped.
 
 L8 — T2 wiring: 13 runtime modules migrated (5 stores, recycle bin, migration evidence, locale registry, sessions registry, import spool, idea-capture DB + lock, graph MCP state path, the `idea_capture` package's two state paths and its CLI). Two test-hygiene consequences surfaced and were fixed rather than papered over: (1) `PROJECT_ROOT` sandboxing no longer isolates state, so `conftest.py` now gives every test its own state root AND drops the `api_server` singletons that captured a state path (`_LOCAL_STATE`, `_IMPORT_STORE`, `_BACKUP_ENGINE`, the five `_LazyBinding` stores); (2) the two `_lifespan` cells in `test_import_spool_gc` neutralize the acceptance-convergence thread, which used to outlive the test and write into the next test's state directory. `payload_manifest.json` regenerated (the payload now ships `state_paths.py` and `state_root_migration.py`, which nothing imported at runtime before). New `tests/test_state_consumer_wiring.py` (21 cells) pins every consumer, the content paths that must NOT move, and policy (ii) end to end through a live consumer. Full suite: 4353 passed, 24 skipped.
+
+L9 — T3: `_adopt_existing_state_once()` is the FIRST statement of `_lifespan`, before session restore, the spool sweep, skill materialization and the backup engine; it logs `adopted` at INFO and a failure at WARNING and never aborts the boot. One real defect surfaced while wiring it: `create_import_router` resolved its store at import time (`_store = ... else store()`), so the import store would have stayed bound to the PRE-adoption tree and jobs created in the upgrade session would vanish on the next restart. Fixed with `import_router._LazyStore` (resolves on first attribute access) plus a lazy `_IMPORT_SERVICE` built by `_import_service()`; the ~20 router call sites are untouched. New `tests/test_state_boot_adoption.py` (6 cells) drives the real lifespan: adoption-before-everything order, byte-identical adopted copy, the first boot reading the adopted registry, a second boot never re-adopting, a failed adoption booting from the legacy tree, and an empty content root writing no evidence. Full suite: 4359 passed, 24 skipped.

@@ -226,6 +226,26 @@ class DecisionsRequest(BaseModel):
     decisions: list[DecisionItem] = []
 
 
+class _LazyStore:
+    """Defer the store construction to its first use.
+
+    The store resolves the machine-state directory when it is constructed, and
+    the app may still have to publish a one-time adoption of an existing state
+    tree before the first store opens. Building it while this module is imported
+    would bind the whole router to the pre-adoption location. The proxy keeps
+    every call site in this module unchanged.
+    """
+
+    def __init__(self, factory: Callable[[], ImportJobStore]) -> None:
+        self._factory = factory
+        self._value: ImportJobStore | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        if self._value is None:
+            self._value = self._factory()
+        return getattr(self._value, name)
+
+
 def create_import_router(
     *,
     require_principal: Callable[[Request], Any],
@@ -249,7 +269,7 @@ def create_import_router(
     on_list: Callable[[], None] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
-    _store = store if isinstance(store, ImportJobStore) else store()
+    _store: Any = store if isinstance(store, ImportJobStore) else _LazyStore(store)
     _service = service
 
     def guard(request: Request) -> Any:
