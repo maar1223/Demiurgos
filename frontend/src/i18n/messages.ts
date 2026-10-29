@@ -1040,7 +1040,6 @@ export const messages = {
     "backup.folder": "Carpeta",
     "backup.provider": "Proveedor",
     "backup.origin": "Origen",
-    "backup.originValue": "{source} · confianza {confidence}",
     "backup.mode": "Modo",
     "backup.blocked.title":
       "La carpeta elegida es una ubicación en streaming o virtual.",
@@ -3194,7 +3193,6 @@ export const messages = {
     "backup.folder": "Folder",
     "backup.provider": "Provider",
     "backup.origin": "Origin",
-    "backup.originValue": "{source} · confidence {confidence}",
     "backup.mode": "Mode",
     "backup.blocked.title":
       "The chosen folder is a streaming or virtual location.",

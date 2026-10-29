@@ -501,16 +501,16 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               </dd>
             </div>
           )}
+          {/* The origin alone says how the folder was obtained ("chosen by
+              you", "detected via environment variable"). Repeating it as
+              "· heuristic confidence" was jargon that restated the same fact —
+              and "confidence" suggested a doubt about the folder that does not
+              exist. Confidence still matters where it distinguishes a VERIFIED
+              suggestion from a guessed one: the folder suggestions list. */}
           <div>
             <dt className="text-small text-muted">{t("backup.origin")}</dt>
             <dd className="text-small text-primary">
-              {t("backup.originValue", {
-                source: sourceLabel(status.destination.source, t),
-                confidence: confidenceLabel(
-                  status.destination.confidence,
-                  t,
-                ),
-              })}
+              {sourceLabel(status.destination.source, t)}
             </dd>
           </div>
           {/* The mode is a VERDICT on whether the folder is a real local copy.
