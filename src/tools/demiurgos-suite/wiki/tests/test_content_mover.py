@@ -265,3 +265,38 @@ def test_deleting_the_folder_in_use_is_refused(tmp_path: Path) -> None:
         delete_source(old, str(old), forbidden=[current])
     assert "overlaps" in str(failure.value)
     assert old.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Destination candidates: the web-native answer to "I cannot browse"
+# ---------------------------------------------------------------------------
+
+
+def test_candidates_offer_disks_home_and_siblings_but_never_the_current_root(
+    tmp_path: Path,
+) -> None:
+    """A list of places a destination usually is — never the folder being moved."""
+    from content_mover import destination_candidates
+
+    current = _content_root(tmp_path)
+    disk = tmp_path / "disco"
+    disk.mkdir()
+    (disk / "ya-hay.md").write_text("x\n", encoding="utf-8")  # not usable for a move
+    empties = tmp_path / "vacia"
+    empties.mkdir()
+
+    items = destination_candidates(
+        home=tmp_path,
+        mounts=f"/dev/sdb1 {disk} ext4 rw 0 0\nproc /proc proc rw 0 0\n",
+        current=current,
+        extra=[empties, current / "mundos"],
+    )
+
+    paths = [item["path"] for item in items]
+    assert str(disk.resolve()) in paths
+    assert str(empties.resolve()) in paths
+    assert str(current.resolve()) not in paths
+    assert str((current / "mundos").resolve()) not in paths
+    assert all(isinstance(item["free_bytes"], int) for item in items)
+    # The empty folder a move can use comes before one that already has content.
+    assert paths.index(str(empties.resolve())) < paths.index(str(disk.resolve()))

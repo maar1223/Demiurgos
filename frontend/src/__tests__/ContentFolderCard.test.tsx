@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import {
   cleanupOldContent,
+  getContentDestinations,
   commitContentFolderStep,
   getContentRoot,
   getLastContentMove,
@@ -23,6 +24,7 @@ vi.mock("@/api/contentRoot", () => ({
   cancelContentMove: vi.fn(),
   getLastContentMove: vi.fn(),
   cleanupOldContent: vi.fn(),
+  getContentDestinations: vi.fn(),
 }));
 
 vi.mock("@/api/wiki", async (importOriginal) => {
@@ -71,6 +73,7 @@ const mocked = {
   start: vi.mocked(startContentMove),
   lastMove: vi.mocked(getLastContentMove),
   cleanup: vi.mocked(cleanupOldContent),
+  destinations: vi.mocked(getContentDestinations),
   restart: vi.mocked(systemControlAction),
 };
 
@@ -78,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocked.get.mockResolvedValue(INFO);
   mocked.lastMove.mockResolvedValue({ last_move: null });
+  mocked.destinations.mockResolvedValue({ candidates: [], picker: true, native_dialog: false });
 });
 
 describe("ContentFolderCard — one action per state", () => {
@@ -170,6 +174,30 @@ describe("ContentFolderCard — moving", () => {
     // The fourth row of the table: the content is already there, so the honest
     // action is to use that folder instead of moving.
     expect(await screen.findByTestId("content-move-use-instead")).toBeInTheDocument();
+  });
+
+  it("fills the path from a clickable suggestion instead of typing it", async () => {
+    mocked.get.mockResolvedValue({ ...INFO, worlds: 3 });
+    mocked.destinations.mockResolvedValue({
+      candidates: [
+        { path: "/media/disco-externo", free_bytes: 1024, is_empty: true, writable: true },
+      ],
+      picker: true,
+      native_dialog: false,
+    });
+    render(<ContentFolderCard />);
+    await screen.findByTestId("content-card-path");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /mover el contenido|move the content/i }),
+    );
+    const suggestion = await screen.findByTestId("content-suggestion-empty");
+    await userEvent.click(suggestion);
+
+    expect(
+      screen.getByLabelText(/carpeta destino|destination folder/i),
+    ).toHaveValue("/media/disco-externo");
+    expect(mocked.start).not.toHaveBeenCalled();
   });
 
   it("never sends a destination that overlaps the content folder", async () => {

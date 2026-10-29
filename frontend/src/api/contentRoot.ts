@@ -122,3 +122,36 @@ export function cleanupOldContent(
     body: JSON.stringify({ confirm }),
   });
 }
+
+/** A suggested destination: a mounted disk, home, Documents or a sibling. */
+export interface ContentDestinationCandidate {
+  path: string;
+  free_bytes: number | null;
+  is_empty: boolean;
+  writable: boolean;
+}
+
+/** GET /api/data-root/candidates — clickable destinations for the picker. */
+export function getContentDestinations(): Promise<{
+  candidates: ContentDestinationCandidate[];
+  picker: boolean;
+  native_dialog: boolean;
+}> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/candidates`);
+}
+
+/**
+ * POST /api/data-root/pick-folder — the OS folder dialog, opened by the server.
+ *
+ * A browser cannot name a server folder; the server runs on the author's machine,
+ * so it opens the dialog itself. `cancelled` is a normal answer, not an error.
+ */
+export function pickFolder(
+  initial?: string | null,
+): Promise<{ cancelled: boolean; path: string | null }> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/pick-folder`, {
+    method: "POST",
+    body: JSON.stringify({ initial: initial ?? null }),
+    timeout: 300_000,
+  });
+}

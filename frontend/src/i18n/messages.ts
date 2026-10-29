@@ -1101,6 +1101,9 @@ export const messages = {
     "content.move.emptyOnly":
       "El destino tiene que ser una carpeta vacía. Si ya copiaste el contenido a mano, usa la opción de cambiar carpeta en lugar de mover.",
     "content.move.start": "Copiar y mover",
+    "content.suggestions.choose": "Elegir carpeta…",
+    "content.suggestions.label": "O elige una carpeta de esta lista:",
+    "content.suggestions.empty": "vacía",
     "content.move.progress": "Copiando {copied} de {total} archivos",
     "content.move.cancel": "Cancelar la copia",
     "content.move.done": "La copia está completa y verificada.",
@@ -3249,6 +3252,9 @@ export const messages = {
     "content.move.emptyOnly":
       "The destination must be an empty folder. If you already copied the content by hand, use the change-folder option instead of moving.",
     "content.move.start": "Copy and move",
+    "content.suggestions.choose": "Choose folder…",
+    "content.suggestions.label": "Or pick a folder from this list:",
+    "content.suggestions.empty": "empty",
     "content.move.progress": "Copying {copied} of {total} files",
     "content.move.cancel": "Cancel the copy",
     "content.move.done": "The copy is complete and verified.",

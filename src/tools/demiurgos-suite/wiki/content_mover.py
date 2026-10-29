@@ -385,3 +385,132 @@ def delete_source(
         )
     shutil.rmtree(source)
     return str(source)
+
+
+# ---------------------------------------------------------------------------
+# Destination candidates — the web-native answer to "I cannot browse the disk"
+# ---------------------------------------------------------------------------
+
+#: How many suggestions are useful before the list becomes noise.
+MAX_CANDIDATES = 12
+
+
+def _mount_roots(mounts: str) -> list[Path]:
+    """Real block-device mount points from ``/proc/mounts``-shaped text."""
+    roots: list[Path] = []
+    for line in mounts.splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        device, mount = fields[0], fields[1].replace("\\040", " ")
+        if not device.startswith("/dev/"):
+            continue
+        roots.append(Path(mount))
+    return roots
+
+
+def _default_mounts_text() -> str:
+    if os.name == "nt":
+        return ""
+    try:
+        return Path("/proc/mounts").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _documents_dir(home: Path) -> Path:
+    try:
+        import platformdirs  # optional dependency, same as data_root
+
+        return Path(platformdirs.user_documents_dir())
+    except Exception:  # noqa: BLE001 — a suggestion is never worth a failure
+        return home / "Documents"
+
+
+def _windows_drives() -> list[Path]:
+    import string
+
+    return [Path(f"{letter}:\\") for letter in string.ascii_uppercase if Path(f"{letter}:\\").exists()]
+
+
+def destination_candidates(
+    *,
+    home: Path | None = None,
+    mounts: str | None = None,
+    current: Path | None = None,
+    extra: Sequence[Path] = (),
+    max_items: int = MAX_CANDIDATES,
+) -> list[dict[str, object]]:
+    """Folders worth offering as a destination, best first.
+
+    The browser cannot browse the server's disk, so the honest equivalent is a
+    list of the places a destination usually is: real mounted disks, the home
+    folder, Documents, siblings of the current folder (and whatever the caller
+    adds). Every entry is a click, and the manual path stays as the fallback.
+    """
+    resolved_home = (
+        Path(home).expanduser()
+        if home is not None
+        else Path.home()
+    )
+    text = _default_mounts_text() if mounts is None else mounts
+
+    roots: list[Path] = []
+    if os.name == "nt" and mounts is None:
+        roots.extend(_windows_drives())
+    roots.extend(_mount_roots(text))
+    # The well-known mount roots are a production convenience; a caller that
+    # injects its own mounts text wants a deterministic list (tests, and any
+    # future caller that knows better than our guess).
+    scan_dirs = mounts is None
+    for base in (
+        [Path("/media"), Path("/mnt"), Path("/run/media")] if scan_dirs else []
+    ):
+        if base.is_dir():
+            try:
+                roots.extend(entry for entry in base.iterdir() if entry.is_dir())
+            except OSError:
+                continue
+    roots.extend([resolved_home, _documents_dir(resolved_home)])
+    if current is not None:
+        roots.append(Path(current).parent)
+    roots.extend(Path(path) for path in extra)
+
+    seen: set[str] = set()
+    candidates: list[dict[str, object]] = []
+    current_root = None if current is None else _absolute(current)
+    for root in roots:
+        try:
+            path = _absolute(root)
+        except OSError:
+            continue
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.is_dir():
+            continue
+        if current_root is not None and _overlaps(path, current_root):
+            continue
+        try:
+            empty = next(path.iterdir(), None) is None
+        except OSError:
+            continue
+        try:
+            free = shutil.disk_usage(path).free
+        except OSError:
+            free = None
+        candidates.append(
+            {"path": key, "free_bytes": free, "is_empty": empty, "writable": os.access(path, os.W_OK)}
+        )
+
+    # An empty, writable folder is what a move needs: those come first, then the
+    # ones with the most room.
+    candidates.sort(
+        key=lambda item: (
+            not (item["is_empty"] and item["writable"]),
+            -(item["free_bytes"] or 0),
+            str(item["path"]),
+        )
+    )
+    return candidates[:max_items]

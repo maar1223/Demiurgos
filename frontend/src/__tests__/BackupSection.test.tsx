@@ -69,6 +69,7 @@ vi.mock("@/api/contentRoot", () => ({
   cancelContentMove: vi.fn(),
   getLastContentMove: vi.fn(),
   cleanupOldContent: vi.fn(),
+  getContentDestinations: vi.fn(),
 }));
 
 const contentRootMock = getContentRoot as Mock;

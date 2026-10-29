@@ -14,6 +14,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { formatBytes } from "@/components/organisms/ContentFolderStep";
 import { overlapsContentRoot } from "@/lib/contentRootOverlap";
+import { FolderSuggestions } from "@/components/organisms/FolderSuggestions";
 
 /**
  * "Mover el contenido" — copy the author's content to another folder or disk.
@@ -169,6 +170,7 @@ export function MoveContentDialog({
             spellCheck={false}
             autoComplete="off"
           />
+          <FolderSuggestions onPick={setTarget} disabled={busy} />
           <p className="text-small text-muted">{t("content.move.emptyOnly")}</p>
           <div className="flex flex-wrap gap-3">
             <Button type="submit" variant="primary" disabled={busy || !target.trim()}>

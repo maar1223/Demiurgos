@@ -34,7 +34,8 @@ import data_root as resolver
 import state_paths
 from backup.state import BackupStateError, read_destination
 from backup.sync_folder import TargetDecision, evaluate_target
-from content_mover import MoveError
+import folder_dialog
+from content_mover import MoveError, destination_candidates
 from content_move_service import ContentMoveService
 
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
@@ -73,6 +74,12 @@ class MoveRequest(BaseModel):
     """``POST /api/data-root/move`` payload — the destination for the content."""
 
     target: str
+
+
+class PickFolderRequest(BaseModel):
+    """``POST /api/data-root/pick-folder`` payload — where the dialog starts."""
+
+    initial: str | None = None
 
 
 class CleanupRequest(BaseModel):
@@ -140,6 +147,7 @@ def create_content_root_router(
     classify: Callable[[Path], TargetDecision] | None = None,
     write: Callable[[Path], None] | None = None,
     move_service: ContentMoveService | None = None,
+    pick_folder: Callable[..., Path | None] | None = None,
 ) -> APIRouter:
     """Build the ``/api/data-root`` router.
 
@@ -324,6 +332,60 @@ def create_content_root_router(
         # Rewriting the same folder changes nothing: no restart to ask for.
         changed = root is None or target != root
         return {**_payload(), "restart_required": changed}
+
+    # -- candidates --------------------------------------------------------
+    @router.get("/candidates")
+    def get_destinations(request: Request) -> dict[str, Any]:
+        """Folders worth offering as a destination, best first.
+
+        A browser cannot browse the server's disk, so the honest equivalent is a
+        list of where a destination usually is: mounted disks, home, Documents
+        and siblings of the current folder. The manual path stays as fallback.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        blocked = _forbidden(root) if root is not None else []
+
+        def clashes(candidate: Path) -> bool:
+            path = _absolute(candidate)
+            return any(
+                path == other
+                or path.is_relative_to(other)
+                or other.is_relative_to(path)
+                for other in ( _absolute(item) for item in blocked )
+            )
+
+        items = destination_candidates(current=root)
+        kept = [item for item in items if not clashes(Path(str(item["path"])))]
+        return {
+            "candidates": kept,
+            "picker": True,
+            # The browser cannot browse the server's disk, but the SERVER can open
+            # the system dialog. Tell the UI whether that is possible here.
+            "native_dialog": folder_dialog.is_available(),
+        }
+
+    # -- native picker -----------------------------------------------------
+    @router.post("/pick-folder")
+    def pick_destination(body: PickFolderRequest, request: Request) -> dict[str, Any]:
+        """Open the OS folder dialog on this machine and return the choice.
+
+        A browser cannot name a server folder; the server is running where the
+        author sits, so it opens the dialog itself. ``cancelled`` is not an error,
+        and a host without a dialog answers 501 so the UI can fall back to the
+        suggestions list.
+        """
+        _guard(request)
+        picker = pick_folder or folder_dialog.pick_directory
+        try:
+            chosen = picker(initial=body.initial)
+        except folder_dialog.DialogUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except folder_dialog.DialogFailed as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        if chosen is None:
+            return {"cancelled": True, "path": None}
+        return {"cancelled": False, "path": str(chosen)}
 
     # -- move --------------------------------------------------------------
     @router.post("/move", status_code=202)

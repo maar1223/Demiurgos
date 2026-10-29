@@ -9624,5 +9624,7 @@ def test_the_content_root_routes_are_mounted():
         "/api/data-root/move/{job_id}/cancel",
         "/api/data-root/last-move",
         "/api/data-root/cleanup",
+        "/api/data-root/candidates",
+        "/api/data-root/pick-folder",
     ):
         assert route in paths, route

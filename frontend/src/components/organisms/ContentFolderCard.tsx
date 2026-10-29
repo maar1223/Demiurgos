@@ -9,6 +9,7 @@ import { formatBytes } from "@/components/organisms/ContentFolderStep";
 import { CleanupOldContent, MoveContentDialog } from "@/components/organisms/MoveContentDialog";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { contentActionFor } from "@/lib/contentFolderAction";
+import { FolderSuggestions } from "@/components/organisms/FolderSuggestions";
 
 /**
  * "Carpeta de tu contenido" — the settings home of what onboarding introduced.
@@ -149,6 +150,7 @@ export function ContentFolderCard({ onChanged }: { onChanged?: () => void }) {
               spellCheck={false}
               autoComplete="off"
             />
+            <FolderSuggestions onPick={setDraft} disabled={busy} />
             <div className="flex gap-3">
               <Button type="submit" variant="primary" disabled={busy || !draft.trim()}>
                 {t("onboarding.folder.save")}

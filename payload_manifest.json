@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "27e0127e",
+  "source_commit": "6972278e",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -80,6 +80,7 @@
     "src/tools/demiurgos-suite/wiki/docx_export.py",
     "src/tools/demiurgos-suite/wiki/emergency_key.py",
     "src/tools/demiurgos-suite/wiki/error_codes.py",
+    "src/tools/demiurgos-suite/wiki/folder_dialog.py",
     "src/tools/demiurgos-suite/wiki/graph_indexer.py",
     "src/tools/demiurgos-suite/wiki/graph_mcp_server.py",
     "src/tools/demiurgos-suite/wiki/graph_models.py",

@@ -224,6 +224,94 @@ def test_cleanup_never_deletes_the_folder_in_use(tmp_path: Path) -> None:
     assert moved_to.is_dir()
 
 
+def test_candidates_are_offered_and_never_include_the_backup_destination(
+    tmp_path: Path,
+) -> None:
+    root = _content_root(tmp_path)
+    backup = tmp_path / "copias"
+    backup.mkdir()
+    (root / "config" / "backup.json").write_text(
+        '{"schema_version": 1, "path": "%s", "provider": "folder", '
+        '"source": "user", "confidence": "heuristic", "mode_hint": "mirrored"}'
+        % backup,
+        encoding="utf-8",
+    )
+    client = _client(tmp_path, root, _service(tmp_path, []))
+
+    payload = client.get("/api/data-root/candidates").json()
+
+    assert payload["picker"] is True
+    paths = [item["path"] for item in payload["candidates"]]
+    assert str(backup.resolve()) not in paths
+    assert all("is_empty" in item for item in payload["candidates"])
+
+
+def test_the_native_dialog_answers_with_the_chosen_folder(tmp_path: Path) -> None:
+    root = _content_root(tmp_path)
+    picked = tmp_path / "elegida"
+    picked.mkdir()
+    app = FastAPI()
+    app.include_router(
+        create_content_root_router(
+            lambda request=None: "tester",
+            env={},
+            config_dir=tmp_path / "config" / "demiurgos",
+            state_dir=tmp_path / "state",
+            current_root=lambda: root,
+            pick_folder=lambda initial=None: picked,
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/data-root/pick-folder", json={"initial": str(tmp_path)})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"cancelled": False, "path": str(picked)}
+
+
+def test_cancelling_the_native_dialog_is_not_an_error(tmp_path: Path) -> None:
+    root = _content_root(tmp_path)
+    app = FastAPI()
+    app.include_router(
+        create_content_root_router(
+            lambda request=None: "tester",
+            env={},
+            config_dir=tmp_path / "config" / "demiurgos",
+            state_dir=tmp_path / "state",
+            current_root=lambda: root,
+            pick_folder=lambda initial=None: None,
+        )
+    )
+    response = TestClient(app).post("/api/data-root/pick-folder", json={})
+
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is True
+
+
+def test_a_host_without_a_dialog_answers_501(tmp_path: Path) -> None:
+    import folder_dialog
+
+    root = _content_root(tmp_path)
+
+    def unavailable(initial=None):
+        raise folder_dialog.DialogUnavailable("no native folder dialog is available")
+
+    app = FastAPI()
+    app.include_router(
+        create_content_root_router(
+            lambda request=None: "tester",
+            env={},
+            config_dir=tmp_path / "config" / "demiurgos",
+            state_dir=tmp_path / "state",
+            current_root=lambda: root,
+            pick_folder=unavailable,
+        )
+    )
+    response = TestClient(app).post("/api/data-root/pick-folder", json={})
+
+    assert response.status_code == 501
+
+
 def test_every_move_route_requires_a_principal(tmp_path: Path) -> None:
     root = _content_root(tmp_path)
     client = _client(tmp_path, root, _service(tmp_path, []), principal=False)
@@ -232,6 +320,8 @@ def test_every_move_route_requires_a_principal(tmp_path: Path) -> None:
     assert client.post("/api/data-root/move/x/cancel").status_code == 401
     assert client.get("/api/data-root/last-move").status_code == 401
     assert client.post("/api/data-root/cleanup", json={"confirm": ""}).status_code == 401
+    assert client.get("/api/data-root/candidates").status_code == 401
+    assert client.post("/api/data-root/pick-folder", json={}).status_code == 401
 
 
 # ---------------------------------------------------------------------------

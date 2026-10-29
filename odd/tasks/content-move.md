@@ -88,3 +88,9 @@ Advisories also fixed: a failed move no longer overwrites the record of a good o
 Advisories left open with the reason: `SameFileError` for a symlinked directory inside the content (the copy reports it), a failed `publish` leaves a complete tree in the target (no data loss, a retry is refused because the target is no longer empty), and the `source_commit` of the manifest stamps the parent commit.
 
 L10 (final) — Backend **4466 passed / 24 skipped**; frontend **1611 tests in 131 files**; `tsc --noEmit` clean; `npm run build` OK. The verifier's five regression cells were adopted as `tests/test_content_move_production.py` (six cells), and every one of them fails against the pre-fix code.
+
+L11 (the Owner found it while testing) — *"no puedo hacer click en ninguna parte para que me salga una ventana donde pueda escoger la ruta"*. He was right, and my first explanation was wrong: a browser cannot name a server folder, but the SERVER runs on his machine and can open the system dialog itself. The attachments/importer use `<input type="file">`, which uploads byte content — the opposite of naming a destination.
+
+Two layers now: `GET /api/data-root/candidates` (mounted disks, home, Documents, siblings of the current folder; each with free space and whether it is empty) and `POST /api/data-root/pick-folder` (runs `zenity`/`kdialog`/`qarma` on POSIX, a PowerShell `FolderBrowserDialog` on Windows, always a fixed argv, never a shell). A host without a dialog answers 501, the button disappears, and the suggestions plus the manual path stay; a dialog that exists but fails says so instead of looking like a dead click. `native_dialog` travels in the candidates payload so the UI never offers a button that cannot work.
+
+Verification: backend **4477 passed / 24 skipped**, frontend **1616 tests**, typecheck and build clean, `payload_manifest.json` at 172 files (`folder_dialog.py` enters the payload).
