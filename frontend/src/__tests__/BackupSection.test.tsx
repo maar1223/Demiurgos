@@ -308,6 +308,10 @@ describe("BackupSection", () => {
     expect(
       screen.queryByText(tEs("backup.provider.unknown")),
     ).not.toBeInTheDocument();
+    // The origin says who chose it; the confidence half said the same thing in
+    // jargon and is gone from this record.
+    expect(screen.getByText(tEs("backup.source.user"))).toBeInTheDocument();
+    expect(screen.queryByText(tEs("backup.confidence.heuristic"))).not.toBeInTheDocument();
     expect(screen.queryByText(tEs("backup.mode.unknown"))).not.toBeInTheDocument();
     // What it DOES know stays: the folder and who chose it.
     expect(screen.getByTestId("backup-destination-path")).toHaveTextContent(
@@ -320,7 +324,7 @@ describe("BackupSection", () => {
 
     expect(screen.getByTestId("backup-destination-path")).toHaveTextContent(DESTINATION.path);
     expect(screen.getByText(tEs("backup.provider.googleDrive"))).toBeInTheDocument();
-    expect(screen.getByText(/sugerida por proximidad · confianza heurística/i)).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.source.heuristic"))).toBeInTheDocument();
     expect(screen.getByText(tEs("backup.mode.mirrored"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Backup ahora" })).toBeInTheDocument();
     expect(screen.queryByTestId("backup-last-write")).not.toBeInTheDocument();
