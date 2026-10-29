@@ -19,6 +19,12 @@ Guía de los activos de marca definitivos: dónde está cada cosa y cómo usarla
 - El **SVG** es SIEMPRE vectorial real (colores planos de 6 tonos) — editable/escalable.
 - El **degradado suave** SOLO existe como **PNG** (no se vectoriza sin que el peso se dispare).
 - Para web → **SVG**. Para assets mostrados (documentos, portadas) → **PNG suave**.
+- Para **Windows** → `dorado/03_ico_dorado/demiurgos.ico`. Un `.lnk` no acepta SVG:
+  `IconLocation` exige un `.ico`. Se genera desde
+  `dorado/02_png_suave_dorado/letra-D-suave.png` recortando el margen
+  transparente y añadiendo un 6% simétrico, con tamaños 16/24/32/48/64/128/256
+  (los pequeños son los que se ven en la barra de tareas y en los menús).
+  Regenerarlo: `Pillow`, `Image.resize` LANCZOS y `save(format="ICO", sizes=[...])`.
 
 ## Estructura de carpetas
 
@@ -32,6 +38,7 @@ Logos de Demiurogs Definitivos/
 ├── dorado/                        # modelo OSCURO (logo dorado)
 │   ├── 01_svg_dorado/             # 4 SVG (6 tonos, vectorial)
 │   ├── 02_png_suave_dorado/       # 4 PNG (degradado continuo)
+│   ├── 03_ico_dorado/             # demiurgos.ico (Windows: accesos directos)
 │   ├── comparativa_dorado_lado_a_lado.png
 │   └── PALETA-INTERFAZ-OSCURA.md  # paleta definitiva del modo oscuro
 └── referencias-interface/         # mockups y comparativas visuales
