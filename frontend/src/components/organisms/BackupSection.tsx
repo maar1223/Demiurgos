@@ -490,12 +490,17 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               {t("backup.warning.overlapsContent")}
             </p>
           )}
-          <div>
-            <dt className="text-small text-muted">{t("backup.provider")}</dt>
-            <dd className="text-small text-primary">
-              {providerLabel(status.destination.provider, t)}
-            </dd>
-          </div>
+          {/* Only say who provides the folder when we actually know it. A
+              manually chosen folder is "unknown" by construction, and a line
+              that always says "no provider detected" informs nothing. */}
+          {status.destination.provider !== "unknown" && (
+            <div>
+              <dt className="text-small text-muted">{t("backup.provider")}</dt>
+              <dd className="text-small text-primary">
+                {providerLabel(status.destination.provider, t)}
+              </dd>
+            </div>
+          )}
           <div>
             <dt className="text-small text-muted">{t("backup.origin")}</dt>
             <dd className="text-small text-primary">
@@ -508,12 +513,17 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               })}
             </dd>
           </div>
-          <div>
-            <dt className="text-small text-muted">{t("backup.mode")}</dt>
-            <dd className="text-small text-primary">
-              {modeLabel(status.mode, t)}
-            </dd>
-          </div>
+          {/* The mode is a VERDICT on whether the folder is a real local copy.
+              "unknown" means we could not verify it, which is the normal case for
+              a folder the author picked: showing "unverified" adds no action and
+              no risk, so it stays quiet. A verified streaming target is the case
+              that matters, and it is loud (blocked card + remedy). */}
+          {(status.mode === "mirrored" || status.mode === "streaming") && (
+            <div>
+              <dt className="text-small text-muted">{t("backup.mode")}</dt>
+              <dd className="text-small text-primary">{modeLabel(status.mode, t)}</dd>
+            </div>
+          )}
         </dl>
       )}
 

@@ -291,6 +291,30 @@ describe("BackupSection", () => {
     expect(mocked.setBackupDestination).toHaveBeenCalledWith("/home/author/OneDrive");
   });
 
+  it("a manually chosen folder does not claim a provider or a mode it cannot know", async () => {
+    await renderSection({
+      ...CHOSEN_STATUS,
+      destination: {
+        ...DESTINATION,
+        path: "/home/author/Documentos/MisMundos",
+        provider: "unknown",
+        source: "user",
+        confidence: "heuristic",
+        mode_hint: "unknown",
+      },
+      mode: "unknown",
+    });
+
+    expect(
+      screen.queryByText(tEs("backup.provider.unknown")),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(tEs("backup.mode.unknown"))).not.toBeInTheDocument();
+    // What it DOES know stays: the folder and who chose it.
+    expect(screen.getByTestId("backup-destination-path")).toHaveTextContent(
+      "/home/author/Documentos/MisMundos",
+    );
+  });
+
   it("state 2: a chosen folder shows path, provider, source and mode", async () => {
     await renderSection(CHOSEN_STATUS);
 
