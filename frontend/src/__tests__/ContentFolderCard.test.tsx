@@ -167,6 +167,29 @@ describe("ContentFolderCard — moving", () => {
 
     expect(await screen.findByText(/must be empty/)).toBeInTheDocument();
     expect(screen.queryByTestId("content-move-done")).not.toBeInTheDocument();
+    // The fourth row of the table: the content is already there, so the honest
+    // action is to use that folder instead of moving.
+    expect(await screen.findByTestId("content-move-use-instead")).toBeInTheDocument();
+  });
+
+  it("never sends a destination that overlaps the content folder", async () => {
+    mocked.get.mockResolvedValue({ ...INFO, worlds: 3 });
+    render(<ContentFolderCard />);
+    await screen.findByTestId("content-card-path");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /mover el contenido|move the content/i }),
+    );
+    await userEvent.type(
+      screen.getByLabelText(/carpeta destino|destination folder/i),
+      `${ROOT}/copias`,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /copiar y mover|copy and move/i }),
+    );
+
+    expect(mocked.start).not.toHaveBeenCalled();
+    expect(await screen.findByText(/solapa|overlaps/i)).toBeInTheDocument();
   });
 });
 

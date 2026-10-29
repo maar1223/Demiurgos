@@ -234,6 +234,7 @@ from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
 from backup.state import backup_state  # backup card dedicated contract (WU-14)
+from content_move_service import read_last_move  # the move record (step 5)
 from content_root_router import create_content_root_router  # /api/data-root (step 4)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -913,6 +914,22 @@ def create_world(body: WorldCreateRequest, request: Request):
         principal = _resolve_principal(request)
         if principal is None:
             raise problem("auth.required")
+    # A COMPLETED move whose pointer already names the new folder, while this
+    # process still uses the old one, means a restart is pending. Creating a world
+    # now would write it into the old root, where the next start would not look
+    # for it. The record is the signal — not a pointer/environment divergence,
+    # which is a legitimate configuration (an override) and must keep working.
+    move_record = read_last_move(data_root.resolve_state_root() / "move")
+    if move_record is not None and move_record.get("state") == "done":
+        target = Path(str(move_record.get("target")))
+        if move_record.get("pointer_written") and target != _project_root():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "the content folder changed and the app has not restarted yet: "
+                    f"restart Demiurgos to write into {target}"
+                ),
+            )
     result = _create_world(_mundos_dir(), body.name, lore_skeleton=body.lore_skeleton)
     if result.kind == WorldResultKind.CREATED:
         registry = _local_state()

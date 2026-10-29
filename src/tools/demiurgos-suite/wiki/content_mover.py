@@ -21,6 +21,7 @@ checkout, and copying a repository is not moving the author's worlds.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import shutil
@@ -28,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from backup.inventory import build_inventory, match_exclusion
+from backup.inventory import build_inventory
 
 #: Carried with the content on purpose: without it the new root boots without
 #: ``DEMIURGOS_AUTH_MODE`` and the app fails closed. The backup excludes it as
@@ -37,6 +38,15 @@ CONTENT_ENV_FILE = ".env"
 
 #: How much a copy reads at a time while hashing.
 _CHUNK = 1024 * 1024
+
+#: Names a MOVE leaves behind that the backup's table classifies as content.
+#: They are not: a tool cache and the legacy machine-state files at the checkout
+#: root. The backup's table owns content classification, so the move carries its
+#: own narrow deny list rather than changing what a snapshot captures.
+MOVE_EXTRA_EXCLUSIONS: tuple[tuple[str, str], ...] = (
+    (".wrangler", "excluded:tool-cache"),
+    (".demiurgos-estado*.json", "excluded:local-machine-state"),
+)
 
 #: What a move may not overlap: the machine-state folder and the backup
 #: destination (a copy stored inside what it copies is one copy and one failure).
@@ -110,7 +120,14 @@ def _overlaps(first: Path, second: Path) -> bool:
     )
 
 
-def _entries(root: Path) -> tuple[list[str], list[str]]:
+def _extra_reason(name: str) -> str | None:
+    for pattern, reason in MOVE_EXTRA_EXCLUSIONS:
+        if fnmatch.fnmatch(name, pattern):
+            return reason
+    return None
+
+
+def _entries(root: Path) -> tuple[list[str], list[str], list[tuple[str, str]]]:
     """``(entries, top-level names)`` of the author content, in a stable order.
 
     The entries are the inventory's OWN member list — that is what makes a
@@ -122,21 +139,19 @@ def _entries(root: Path) -> tuple[list[str], list[str]]:
     entries = set(inventory.included)
     if (root / CONTENT_ENV_FILE).is_file():
         entries.add(CONTENT_ENV_FILE)
+    extra: list[tuple[str, str]] = []
+    for name in sorted({entry.split("/", 1)[0] for entry in entries}):
+        reason = _extra_reason(name)
+        if reason is not None:
+            extra.append((name, reason))
+            entries = {entry for entry in entries if entry.split("/", 1)[0] != name}
     ordered = sorted(entries)
     tops = sorted({entry.split("/", 1)[0] for entry in ordered})
-    return ordered, tops
-
-
-def _skipped_tops(root: Path, members: Iterable[str]) -> tuple[tuple[str, str], ...]:
-    """Top-level members left behind, each with the rule that excluded it."""
-    kept = set(members)
-    skipped: list[tuple[str, str]] = []
-    for entry in sorted(root.iterdir(), key=lambda item: item.name):
-        if entry.name in kept:
-            continue
-        reason = match_exclusion(entry.name) or "excluded"
-        skipped.append((entry.name, reason))
-    return tuple(skipped)
+    # Everything the inventory refused is reported at the path it refused, so
+    # the author can see that a machine-state file under data/ stays behind.
+    skipped = sorted({(item.path, item.reason) for item in inventory.excluded})
+    skipped.extend(extra)
+    return ordered, tops, sorted(set(skipped))
 
 
 def _measure(root: Path, entries: Iterable[str]) -> tuple[int, int]:
@@ -190,7 +205,7 @@ def plan_move(
             f"the destination folder must be empty: {dst} already holds content"
         )
 
-    entries, members = _entries(src)
+    entries, members, skipped = _entries(src)
     if not members:
         raise MoveError(f"there is no author content to move in {src}")
     files, size = _measure(src, entries)
@@ -215,7 +230,7 @@ def plan_move(
         total_files=files,
         total_bytes=size,
         free_bytes=available,
-        skipped=_skipped_tops(src, members),
+        skipped=tuple(skipped),
     )
 
 
@@ -304,6 +319,13 @@ def execute_move(
         outcome.cancelled = True
         return outcome
 
+    # A cancel that arrives while hashing must still win: verification can take
+    # minutes on a slow disk, and publishing after it would ignore the author.
+    if cancelled():
+        _remove_partial(plan.target)
+        outcome.cancelled = True
+        return outcome
+
     before = _fingerprint(plan.source, plan.entries)
     after = _fingerprint(plan.target, plan.entries)
     if before != after:
@@ -316,6 +338,11 @@ def execute_move(
             "the copy did not verify, so nothing changed: "
             f"{len(missing)} missing, {len(differing)} different"
         )
+
+    if cancelled():
+        _remove_partial(plan.target)
+        outcome.cancelled = True
+        return outcome
 
     writer = publish or _default_publish
     writer(plan.target)

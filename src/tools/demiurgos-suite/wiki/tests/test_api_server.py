@@ -9555,6 +9555,61 @@ def test_export_without_trigger_or_flow_keeps_the_old_manifest_shape(
     assert inspect_package(exported.content).ok
 
 
+def test_world_creation_is_refused_until_the_content_move_is_restarted(
+    empty_client: TestClient, tmp_path: Path, monkeypatch
+):
+    """A world created after a move would land in the OLD root.
+
+    The record of a completed move whose pointer already names the new folder,
+    while this process still uses the old one, is the signal: restart first.
+    """
+    api_server._LOCAL_STATE = None
+    old = tmp_path / "viejo"
+    new = tmp_path / "nuevo"
+    old.mkdir()
+    new.mkdir()
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", old)
+    monkeypatch.setattr(
+        api_server,
+        "read_last_move",
+        lambda record_dir: {
+            "schema_version": 1,
+            "state": "done",
+            "pointer_written": True,
+            "source": str(old),
+            "target": str(new),
+            "finished_at": "2026-10-29T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(api_server, "_mundos_dir", lambda: old / "mundos")
+
+    response = empty_client.post("/api/worlds", json={"name": "tarde"})
+
+    assert response.status_code == 409
+    assert "restart" in response.json()["detail"].lower()
+    assert not (old / "mundos" / "tarde").exists()
+
+
+def test_a_pointer_that_differs_without_a_move_record_still_creates(
+    empty_client: TestClient, tmp_path: Path, monkeypatch
+):
+    """An environment override is a legitimate configuration, not a pending move.
+
+    Without a recorded move there is nothing to restart for: refusing here would
+    break every install that runs under DEMIURGOS_DATA_ROOT.
+    """
+    api_server._LOCAL_STATE = None
+    root = tmp_path / "contenido"
+    (root / "mundos").mkdir(parents=True)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", root)
+    monkeypatch.setattr(api_server, "read_last_move", lambda record_dir: None)
+    monkeypatch.setattr(api_server, "_mundos_dir", lambda: root / "mundos")
+
+    response = empty_client.post("/api/worlds", json={"name": "temprano"})
+
+    assert response.status_code == 201, response.text
+
+
 def test_the_content_root_routes_are_mounted():
     """Step 4: the app exposes the content root on /api/data-root (GET + POST)."""
     import api_server

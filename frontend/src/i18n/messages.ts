@@ -1104,6 +1104,8 @@ export const messages = {
     "content.move.progress": "Copiando {copied} de {total} archivos",
     "content.move.cancel": "Cancelar la copia",
     "content.move.done": "La copia está completa y verificada.",
+    "content.move.useInstead":
+      "Esa carpeta ya tiene contenido. No se copia encima de nada: si tu contenido ya está ahí, cambia la carpeta en lugar de mover.",
     "content.move.cancelled": "La copia se canceló. No se cambió nada.",
     "content.cleanup.offer":
       "La copia nueva ya está en uso. Puedes borrar la carpeta anterior: {path}. Es la única copia que queda de esos archivos, así que asegúrate de que el contenido nuevo funciona antes.",
@@ -3250,6 +3252,8 @@ export const messages = {
     "content.move.progress": "Copying {copied} of {total} files",
     "content.move.cancel": "Cancel the copy",
     "content.move.done": "The copy is complete and verified.",
+    "content.move.useInstead":
+      "That folder already holds content. Nothing is copied over it: if your content is already there, change the folder instead of moving.",
     "content.move.cancelled": "The copy was cancelled. Nothing changed.",
     "content.cleanup.offer":
       "The new copy is in use. You can delete the previous folder: {path}. It is the only remaining copy of those files, so make sure the new content works first.",

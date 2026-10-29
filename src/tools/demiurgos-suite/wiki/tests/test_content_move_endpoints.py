@@ -45,7 +45,7 @@ def _empty(tmp_path: Path, name: str = "nuevo-disco") -> Path:
 
 def _service(tmp_path: Path, published: list[Path]) -> ContentMoveService:
     return ContentMoveService(
-        state_dir=tmp_path / "state" / "data",
+        record_dir=tmp_path / "state" / "move",
         publish=published.append,
         run_inline=True,
     )
@@ -116,7 +116,7 @@ def test_a_move_is_refused_while_another_one_runs(tmp_path: Path) -> None:
         release.wait(5)
 
     service = ContentMoveService(
-        state_dir=tmp_path / "state" / "data", publish=slow_publish
+        record_dir=tmp_path / "state" / "move", publish=slow_publish
     )
     client = _client(tmp_path, root, service)
     first = client.post(
@@ -248,7 +248,7 @@ def test_the_record_never_lands_in_the_content_root(tmp_path: Path) -> None:
     client.post("/api/data-root/move", json={"target": str(_empty(tmp_path))})
 
     assert service.record_path().is_file()
-    assert service.record_path().is_relative_to(tmp_path / "state")
+    assert service.record_path().is_relative_to(tmp_path / "state" / "move")
     assert not list(root.rglob("content-move-last.json"))
     record = json.loads(service.record_path().read_text(encoding="utf-8"))
     assert record["schema_version"] == 1

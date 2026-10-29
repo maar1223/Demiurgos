@@ -4,6 +4,7 @@ import {
   cleanupOldContent,
   getContentMove,
   getLastContentMove,
+  setContentRoot,
   startContentMove,
 } from "@/api/contentRoot";
 import type { ContentMoveJob, LastContentMove } from "@/api/contentRoot";
@@ -12,6 +13,7 @@ import { Button } from "@/components/atoms/Button";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { formatBytes } from "@/components/organisms/ContentFolderStep";
+import { overlapsContentRoot } from "@/lib/contentRootOverlap";
 
 /**
  * "Mover el contenido" — copy the author's content to another folder or disk.
@@ -47,6 +49,10 @@ export function MoveContentDialog({
   const [job, setJob] = useState<ContentMoveJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The server refuses a destination that already holds content (it would be a
+  // merge, not a move). When that happens the honest next action is "use this
+  // folder" — the fourth row of the action table.
+  const [useInstead, setUseInstead] = useState(false);
   const timer = useRef<number | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -84,6 +90,12 @@ export function MoveContentDialog({
     event.preventDefault();
     const chosen = target.trim();
     if (!chosen) return;
+    setUseInstead(false);
+    // Courtesy half: the server is the authority on both refusals.
+    if (overlapsContentRoot(chosen, contentRoot)) {
+      setError(t("backup.error.overlapsContent"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -94,6 +106,24 @@ export function MoveContentDialog({
       } else {
         setBusy(false);
       }
+    } catch (failure) {
+      setBusy(false);
+      const message = messageOf(failure);
+      setError(message);
+      setUseInstead(/must be empty/i.test(message));
+    }
+  };
+
+  const acceptInstead = async () => {
+    const chosen = target.trim();
+    if (!chosen) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = await setContentRoot(chosen);
+      setUseInstead(false);
+      if (payload.restart_required || payload.pending_restart) setRestartHint(true);
+      onMoved();
     } catch (failure) {
       setBusy(false);
       setError(messageOf(failure));
@@ -110,6 +140,7 @@ export function MoveContentDialog({
     }
   };
 
+  const [restartHint, setRestartHint] = useState(false);
   const running = job !== null && (job.state === "copying" || job.state === "queued");
   const progress =
     job && job.total_files > 0
@@ -191,6 +222,21 @@ export function MoveContentDialog({
       {job && (job.state === "failed" || job.state === "cancelled") && (
         <p className="mt-3 text-small text-danger" role="alert" data-testid="content-move-failed">
           {job.error ?? t("content.move.cancelled")}
+        </p>
+      )}
+
+      {useInstead && (
+        <div className="mt-3 space-y-2" data-testid="content-move-use-instead">
+          <p className="text-small text-secondary">{t("content.move.useInstead")}</p>
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => void acceptInstead()}>
+            {t("onboarding.folder.change")}
+          </Button>
+        </div>
+      )}
+
+      {restartHint && (
+        <p className="mt-3 text-small text-primary" data-testid="content-move-restart">
+          {t("onboarding.folder.restartRequired")}
         </p>
       )}
 

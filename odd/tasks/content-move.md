@@ -46,9 +46,9 @@ Acceptance: the frontend pre-check mirrors the server for the canonical cases an
 | ID | Task | Specs | Route | Status | Commit |
 |---|---|---|---|---|---|
 | T1 | `content_mover.py`: plan (content set, space), copy, verify, publish | S3, S4, S5 | inline | done (RED: 14 failed -> GREEN: 17 passed) | `4f5b55e3` |
-| T2 | Job + endpoints + last-run record in the state dir | S7, S8, S9 | inline | done | pending |
+| T2 | Job + endpoints + last-run record in the state dir | S7, S8, S9 | inline | done + post-verification fixes | `27e0127e` + fix commit |
 | T3 | Server-side cleanup of the old copy (double confirmation, record-bound) | S6 | inline | done | pending |
-| T4 | Shared action predicate + cells | S2, S10 | inline | pending | — |
+| T4 | Shared action predicate + cells | S2, S10 | inline | done (`lib/contentFolderAction.ts`, 4 rows) | fix commit |
 | T5 | `ContentFolderCard`, `MoveContentDialog`, cleanup flow | S1, S9 | inline | done | pending |
 
 Risk lines: T1/T2/T3 `Risk: item 1` (they decide where persisted content lives and T3 deletes it) · T1 also `item 6` · T4/T5 `item 6`. Item 1 gets one independent verifier at the end, as in steps 3 and 4.
@@ -70,3 +70,21 @@ L6 (T2/T3) — the job validates the plan synchronously (a refusal never starts 
 L7 (T5) — the settings surface has no "use this folder" button: in `/perfil` the folder is already in use, and having one collided with the backup picker's button of the same name. There the action is one of two: change (no content) or move (content). The onboarding step keeps its own accept, because there it commits the step.
 
 L8 (verification) — Backend **4457 passed / 24 skipped**; frontend **1606 tests in 130 files**; `tsc --noEmit` clean; `npm run build` OK. `payload_manifest.json` regenerated (171 files: `content_mover.py` and `content_move_service.py` enter the runtime payload).
+
+L9 (independent verification, item 1) — A read-only verifier ran over the whole delta against `4ad457f2` and found **seven blockers**. Four were severe and two of them made the feature unusable or unsafe in the shipped app:
+
+| Blocker | Why it mattered | Fix |
+|---|---|---|
+| **The router built a NEW service per request** | A job id was unreadable to the next request (progress and cancel → 404) and two moves could run at once. Same class of bug as step 4's B1: the tests injected the service, so the production wiring was never exercised | One service memoised per router; a cell drives the router exactly as `api_server` does, with no injection |
+| **A cancel during verification still published** | Verification can take minutes; publishing after a cancel ignores the author | Cancel is checked again after hashing and immediately before the publish |
+| **The record went through `resolve_state_dir()`** | Policy (ii) can answer `<content root>/data`, so the record modified the source of the move it described and was lost after the restart (cleanup then 409) | The record lives in the machine-state BASE (`<state base>/move/`), which policy (ii) never picks, and is refused if it would land inside the source |
+| **A world could be created between the move and the restart** | It landed in the OLD root and the cleanup could then delete it | `POST /api/worlds` refuses while a completed move's pointer names a folder this process does not use |
+| Action rule not shared; the "already holds content" row missing | S2 unmet | `lib/contentFolderAction.ts` with the four rows and its cells; the dialog offers "change folder instead" when the server refuses a non-empty target |
+| Move had no overlap pre-check | S10 unmet | The dialog refuses a target that overlaps the content folder before sending |
+| `output/` and `output`-like members travelling | Checked and KEPT: the backup carries them too, and dropping author-visible exports would lose work | Documented; only `.wrangler` (tool cache) and `.demiurgos-estado*.json` (machine state) were added to the move's own deny list |
+
+Advisories also fixed: a failed move no longer overwrites the record of a good one (which would leave two full trees and no way to remove one), and the cleanup re-checks that the pointer still names the folder that move created.
+
+Advisories left open with the reason: `SameFileError` for a symlinked directory inside the content (the copy reports it), a failed `publish` leaves a complete tree in the target (no data loss, a retry is refused because the target is no longer empty), and the `source_commit` of the manifest stamps the parent commit.
+
+L10 (final) — Backend **4466 passed / 24 skipped**; frontend **1611 tests in 131 files**; `tsc --noEmit` clean; `npm run build` OK. The verifier's five regression cells were adopted as `tests/test_content_move_production.py` (six cells), and every one of them fails against the pre-fix code.

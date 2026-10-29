@@ -36,6 +36,20 @@ STATE_CANCELLED = "cancelled"
 TERMINAL_STATES = frozenset({STATE_DONE, STATE_FAILED, STATE_CANCELLED})
 
 
+def read_last_move(record_dir: Path) -> dict[str, Any] | None:
+    """The persisted record of the last COMPLETED move, or ``None``."""
+    path = Path(record_dir) / RECORD_NAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schema_version") != RECORD_SCHEMA_VERSION:
+        return None
+    return payload
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -90,12 +104,17 @@ class ContentMoveService:
     def __init__(
         self,
         *,
-        state_dir: Path,
+        record_dir: Path,
         publish: Callable[[Path], None] | None = None,
+        pointer: Callable[[], Path | None] | None = None,
         run_inline: bool = False,
     ) -> None:
-        self._state_dir = Path(state_dir)
+        #: Where the record lives. This is NOT ``resolve_state_dir()``: policy (ii)
+        #: may answer ``<content root>/data``, and a record written there would
+        #: modify the source of the very move it describes and disappear with it.
+        self._record_dir = Path(record_dir)
         self._publish = publish
+        self._pointer = pointer
         self._run_inline = run_inline
         self._lock = threading.Lock()
         self._jobs: dict[str, MoveJob] = {}
@@ -103,23 +122,26 @@ class ContentMoveService:
 
     # -- record ------------------------------------------------------------
     def record_path(self) -> Path:
-        return self._state_dir / RECORD_NAME
+        return self._record_dir / RECORD_NAME
 
     def last_move(self) -> dict[str, Any] | None:
         """The persisted record of the last terminal move, or ``None``."""
-        path = self.record_path()
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        if payload.get("schema_version") != RECORD_SCHEMA_VERSION:
-            return None
-        return payload
+        return read_last_move(self._record_dir)
 
     def _write_record(self, job: MoveJob) -> None:
+        """Persist a COMPLETED move only.
+
+        A failed or cancelled attempt must not overwrite the record of a previous
+        good move: the record is what authorises deleting the old copy, and losing
+        it would leave the author with two full trees and no way to remove one.
+        """
+        if job.state != STATE_DONE or not job.pointer_written:
+            return
         path = self.record_path()
+        if path.is_relative_to(Path(job.source)):
+            # Defensive: a record inside the folder it describes would violate the
+            # promise that a move never touches the source.
+            return
         payload = {
             "schema_version": RECORD_SCHEMA_VERSION,
             "source": job.source,
@@ -244,6 +266,13 @@ class ContentMoveService:
                 "the last move did not finish with the content pointer on the new "
                 "folder, so the old copy is not deleted"
             )
+        if self._pointer is not None:
+            current = self._pointer()
+            if current is None or Path(current) != Path(str(record.get("target"))):
+                raise MoveError(
+                    "the content pointer no longer points at the folder that move "
+                    "created, so the old copy is not deleted"
+                )
         removed = content_mover.delete_source(
             record.get("source"), typed, forbidden=forbidden
         )

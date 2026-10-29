@@ -214,10 +214,34 @@ def create_content_root_router(
         )
         return payload
 
+    #: ONE service per router. Building it per request made a background job
+    #: unreadable to the next request (progress and cancel answered 404) and let
+    #: two moves run at once — the whole feature was dead in production.
+    service_cache: list[ContentMoveService] = []
+
+    def _pointer() -> Path | None:
+        try:
+            return resolver.read_pointer(config_dir=config_dir)
+        except resolver.DataRootNotConfigured:
+            return None
+
+    def _record_dir() -> Path:
+        """The machine-state base, never ``resolve_state_dir()``.
+
+        Policy (ii) can answer ``<content root>/data``; a record written there
+        would modify the source of the move it describes and be lost with it.
+        """
+        base = resolver.resolve_state_root(environ=environ, state_dir=state_dir)
+        return base / "move"
+
     def _service() -> ContentMoveService:
         if move_service is not None:
             return move_service
-        return ContentMoveService(state_dir=_state_dir())
+        if not service_cache:
+            service_cache.append(
+                ContentMoveService(record_dir=_record_dir(), pointer=_pointer)
+            )
+        return service_cache[0]
 
     def _state_dir() -> Path:
         return state_paths.resolve_state_dir(

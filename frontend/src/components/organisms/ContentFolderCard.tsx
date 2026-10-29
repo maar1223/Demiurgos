@@ -8,6 +8,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { formatBytes } from "@/components/organisms/ContentFolderStep";
 import { CleanupOldContent, MoveContentDialog } from "@/components/organisms/MoveContentDialog";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { contentActionFor } from "@/lib/contentFolderAction";
 
 /**
  * "Carpeta de tu contenido" — the settings home of what onboarding introduced.
@@ -84,7 +85,12 @@ export function ContentFolderCard({ onChanged }: { onChanged?: () => void }) {
   }
 
   const pinned = info?.pinned === true;
-  const hasContent = (info?.worlds ?? 0) > 0;
+  // The rule lives in one place; with no target chosen yet the target is empty,
+  // so the answer is "move" exactly when the folder already holds worlds.
+  const action = contentActionFor({
+    worlds: info?.worlds ?? 0,
+    targetHasContent: false,
+  });
 
   return (
     <div className="mt-3 border-t border-edge pt-3" data-testid="content-folder-card">
@@ -154,7 +160,7 @@ export function ContentFolderCard({ onChanged }: { onChanged?: () => void }) {
           </form>
         ) : (
           <div className="flex flex-wrap gap-3">
-            {!pinned && !hasContent && (
+            {!pinned && action === "use" && (
               <Button
                 type="button"
                 variant="secondary"
@@ -166,7 +172,7 @@ export function ContentFolderCard({ onChanged }: { onChanged?: () => void }) {
                 {t("onboarding.folder.change")}
               </Button>
             )}
-            {!pinned && hasContent && (
+            {!pinned && action === "move" && (
               <Button
                 type="button"
                 variant="secondary"
