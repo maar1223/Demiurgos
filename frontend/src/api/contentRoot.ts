@@ -82,28 +82,28 @@ export interface LastContentMove {
   finished_at: string;
 }
 
-/** POST /api/data-root/move — copy, verify and only then publish the new folder. */
+/** POST /api/data-root/move-content — copy, verify and only then publish the new folder. */
 export function startContentMove(
   target: string,
 ): Promise<{ job: ContentMoveJob }> {
-  return apiFetch<{ job: ContentMoveJob }>(`${API_BASE_URL}/api/data-root/move`, {
+  return apiFetch<{ job: ContentMoveJob }>(`${API_BASE_URL}/api/data-root/move-content`, {
     method: "POST",
     body: JSON.stringify({ target }),
   });
 }
 
-/** GET /api/data-root/move/{id} — state, counters and the failure reason. */
+/** GET /api/data-root/move-content/{id} — state, counters and the failure reason. */
 export function getContentMove(
   id: string,
 ): Promise<{ job: ContentMoveJob; last_move: LastContentMove | null }> {
-  return apiFetch(`${API_BASE_URL}/api/data-root/move/${encodeURIComponent(id)}`);
+  return apiFetch(`${API_BASE_URL}/api/data-root/move-content/${encodeURIComponent(id)}`);
 }
 
-/** POST /api/data-root/move/{id}/cancel — nothing is published if it stops. */
+/** POST /api/data-root/move-content/{id}/cancel — nothing is published if it stops. */
 export function cancelContentMove(
   id: string,
 ): Promise<{ job: ContentMoveJob }> {
-  return apiFetch(`${API_BASE_URL}/api/data-root/move/${encodeURIComponent(id)}/cancel`, {
+  return apiFetch(`${API_BASE_URL}/api/data-root/move-content/${encodeURIComponent(id)}/cancel`, {
     method: "POST",
   });
 }

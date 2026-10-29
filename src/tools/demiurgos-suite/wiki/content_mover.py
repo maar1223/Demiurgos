@@ -395,15 +395,63 @@ def delete_source(
 MAX_CANDIDATES = 12
 
 
+#: Filesystems that can never hold an author's content: snap/loop images, the
+#: kernel's own trees, container overlays. Offering them was noise in the list.
+DENIED_FILESYSTEMS = frozenset(
+    {
+        "squashfs",
+        "proc",
+        "sysfs",
+        "devtmpfs",
+        "devpts",
+        "cgroup",
+        "cgroup2",
+        "overlay",
+        "tmpfs",
+        "ramfs",
+        "nsfs",
+        "tracefs",
+        "debugfs",
+        "securityfs",
+        "pstore",
+        "bpf",
+        "configfs",
+        "fusectl",
+        "mqueue",
+        "hugetlbfs",
+        "autofs",
+    }
+)
+
+#: Mount points that are never a destination even on a real filesystem.
+DENIED_MOUNT_PREFIXES = (
+    "/boot",
+    "/snap",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/var/lib/docker",
+    "/var/lib/snapd",
+)
+
+
 def _mount_roots(mounts: str) -> list[Path]:
-    """Real block-device mount points from ``/proc/mounts``-shaped text."""
+    """Real, writable block-device mount points from ``/proc/mounts``-shaped text.
+
+    Only ``/dev/*`` devices, and never a filesystem from
+    :data:`DENIED_FILESYSTEMS`, a kernel tree, or a snap/loop image: those showed
+    up as "0 B" entries that no move could use.
+    """
     roots: list[Path] = []
     for line in mounts.splitlines():
         fields = line.split()
         if len(fields) < 3:
             continue
-        device, mount = fields[0], fields[1].replace("\\040", " ")
-        if not device.startswith("/dev/"):
+        device, mount, fstype = fields[0], fields[1].replace("\\040", " "), fields[2]
+        if not device.startswith("/dev/") or fstype in DENIED_FILESYSTEMS:
+            continue
+        if any(mount == prefix or mount.startswith(prefix + "/") for prefix in DENIED_MOUNT_PREFIXES):
             continue
         roots.append(Path(mount))
     return roots
@@ -492,6 +540,9 @@ def destination_candidates(
             continue
         if current_root is not None and _overlaps(path, current_root):
             continue
+        if not os.access(path, os.W_OK):
+            # A destination the app cannot write into is not a destination.
+            continue
         try:
             empty = next(path.iterdir(), None) is None
         except OSError:
@@ -499,9 +550,11 @@ def destination_candidates(
         try:
             free = shutil.disk_usage(path).free
         except OSError:
-            free = None
+            continue
+        if free <= 0:
+            continue
         candidates.append(
-            {"path": key, "free_bytes": free, "is_empty": empty, "writable": os.access(path, os.W_OK)}
+            {"path": key, "free_bytes": free, "is_empty": empty, "writable": True}
         )
 
     # An empty, writable folder is what a move needs: those come first, then the

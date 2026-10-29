@@ -94,3 +94,11 @@ L11 (the Owner found it while testing) — *"no puedo hacer click en ninguna par
 Two layers now: `GET /api/data-root/candidates` (mounted disks, home, Documents, siblings of the current folder; each with free space and whether it is empty) and `POST /api/data-root/pick-folder` (runs `zenity`/`kdialog`/`qarma` on POSIX, a PowerShell `FolderBrowserDialog` on Windows, always a fixed argv, never a shell). A host without a dialog answers 501, the button disappears, and the suggestions plus the manual path stay; a dialog that exists but fails says so instead of looking like a dead click. `native_dialog` travels in the candidates payload so the UI never offers a button that cannot work.
 
 Verification: backend **4477 passed / 24 skipped**, frontend **1616 tests**, typecheck and build clean, `payload_manifest.json` at 172 files (`folder_dialog.py` enters the payload).
+
+L12 (the Owner hit it in the first live try) — the form answered **"Se requieren los campos 'from' y 'to'"**. Cause: `POST /api/{mundo}/move` (moving a file inside a world) is registered earlier in `api_server.py` and matches `{mundo}="data-root"`, so it swallowed `/api/data-root/move` — my route never ran. My isolated-router cells could not see it, and the app-level cell only listed OpenAPI paths, where both exist.
+
+Fixes: the routes moved to `/move-content` (`POST`, `GET /{id}`, `POST /{id}/cancel`), which no two-segment generic route can match; an app-level cell now proves it (the old path still answers the world-file 400, the new one does not).
+
+Second defect from the same screenshot: the candidate list was 6 of 9 snap/loop mounts showing "0 B". `_mount_roots` now skips denied filesystems (`squashfs`, kernel trees, overlays, tmpfs), denied mount prefixes (`/boot`, `/snap`, `/run`, `/var/lib/docker`, …), and `destination_candidates` drops anything not writable or with zero free space.
+
+Verification: backend **4479 passed / 24 skipped**, frontend **1616 tests**, typecheck and build clean, `dist` rebuilt (`index-D44tDy-b.js`).

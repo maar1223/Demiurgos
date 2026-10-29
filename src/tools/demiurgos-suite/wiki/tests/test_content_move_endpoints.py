@@ -79,7 +79,7 @@ def test_a_move_runs_validates_and_publishes_the_new_folder(tmp_path: Path) -> N
     published: list[Path] = []
 
     response = _client(tmp_path, root, _service(tmp_path, published)).post(
-        "/api/data-root/move", json={"target": str(target)}
+        "/api/data-root/move-content", json={"target": str(target)}
     )
 
     assert response.status_code == 202, response.text
@@ -99,7 +99,7 @@ def test_a_refused_plan_never_starts_a_job(tmp_path: Path) -> None:
     published: list[Path] = []
 
     response = _client(tmp_path, root, _service(tmp_path, published)).post(
-        "/api/data-root/move", json={"target": str(target)}
+        "/api/data-root/move-content", json={"target": str(target)}
     )
 
     assert response.status_code == 400
@@ -120,12 +120,12 @@ def test_a_move_is_refused_while_another_one_runs(tmp_path: Path) -> None:
     )
     client = _client(tmp_path, root, service)
     first = client.post(
-        "/api/data-root/move", json={"target": str(_empty(tmp_path, "uno"))}
+        "/api/data-root/move-content", json={"target": str(_empty(tmp_path, "uno"))}
     )
     assert first.status_code == 202, first.text
 
     second = client.post(
-        "/api/data-root/move", json={"target": str(_empty(tmp_path, "dos"))}
+        "/api/data-root/move-content", json={"target": str(_empty(tmp_path, "dos"))}
     )
     release.set()
     assert second.status_code == 409
@@ -134,14 +134,14 @@ def test_a_move_is_refused_while_another_one_runs(tmp_path: Path) -> None:
     job_id = first.json()["job"]["id"]
     deadline = time.time() + 5
     while time.time() < deadline:
-        if client.get(f"/api/data-root/move/{job_id}").json()["job"]["state"] != "copying":
+        if client.get(f"/api/data-root/move-content/{job_id}").json()["job"]["state"] != "copying":
             break
         time.sleep(0.02)
 
 
 def test_an_unknown_job_is_404(tmp_path: Path) -> None:
     client = _client(tmp_path, _content_root(tmp_path), _service(tmp_path, []))
-    assert client.get("/api/data-root/move/nope").status_code == 404
+    assert client.get("/api/data-root/move-content/nope").status_code == 404
     assert client.post("/api/data-root/move/nope/cancel").status_code == 404
 
 
@@ -150,10 +150,10 @@ def test_the_job_reports_its_state_and_counters(tmp_path: Path) -> None:
     published: list[Path] = []
     client = _client(tmp_path, root, _service(tmp_path, published))
     started = client.post(
-        "/api/data-root/move", json={"target": str(_empty(tmp_path))}
+        "/api/data-root/move-content", json={"target": str(_empty(tmp_path))}
     ).json()["job"]
 
-    polled = client.get(f"/api/data-root/move/{started['id']}").json()
+    polled = client.get(f"/api/data-root/move-content/{started['id']}").json()
 
     assert polled["job"]["state"] == "done"
     assert polled["job"]["copied_bytes"] > 0
@@ -183,7 +183,7 @@ def test_cleanup_requires_the_exact_typed_path(tmp_path: Path) -> None:
     client = _client(
         tmp_path, lambda: in_use["path"], _service(tmp_path, published)
     )
-    client.post("/api/data-root/move", json={"target": str(target)})
+    client.post("/api/data-root/move-content", json={"target": str(target)})
     in_use["path"] = target.resolve()
 
     wrong = client.post("/api/data-root/cleanup", json={"confirm": str(tmp_path)})
@@ -209,7 +209,7 @@ def test_cleanup_never_deletes_the_folder_in_use(tmp_path: Path) -> None:
     published: list[Path] = []
     service = _service(tmp_path, published)
     client = _client(tmp_path, root, service)
-    client.post("/api/data-root/move", json={"target": str(_empty(tmp_path))})
+    client.post("/api/data-root/move-content", json={"target": str(_empty(tmp_path))})
     # The pointer now points at the new folder; pretend the app already runs there
     # while the record still names the old one: that pair must be refused when the
     # recorded folder IS the folder in use.
@@ -315,9 +315,9 @@ def test_a_host_without_a_dialog_answers_501(tmp_path: Path) -> None:
 def test_every_move_route_requires_a_principal(tmp_path: Path) -> None:
     root = _content_root(tmp_path)
     client = _client(tmp_path, root, _service(tmp_path, []), principal=False)
-    assert client.post("/api/data-root/move", json={"target": str(root)}).status_code == 401
-    assert client.get("/api/data-root/move/x").status_code == 401
-    assert client.post("/api/data-root/move/x/cancel").status_code == 401
+    assert client.post("/api/data-root/move-content", json={"target": str(root)}).status_code == 401
+    assert client.get("/api/data-root/move-content/x").status_code == 401
+    assert client.post("/api/data-root/move-content/x/cancel").status_code == 401
     assert client.get("/api/data-root/last-move").status_code == 401
     assert client.post("/api/data-root/cleanup", json={"confirm": ""}).status_code == 401
     assert client.get("/api/data-root/candidates").status_code == 401
@@ -335,7 +335,7 @@ def test_the_record_never_lands_in_the_content_root(tmp_path: Path) -> None:
     service = _service(tmp_path, published)
     client = _client(tmp_path, root, service)
 
-    client.post("/api/data-root/move", json={"target": str(_empty(tmp_path))})
+    client.post("/api/data-root/move-content", json={"target": str(_empty(tmp_path))})
 
     assert service.record_path().is_file()
     assert service.record_path().is_relative_to(tmp_path / "state" / "move")

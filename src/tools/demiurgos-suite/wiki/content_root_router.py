@@ -388,7 +388,10 @@ def create_content_root_router(
         return {"cancelled": False, "path": str(chosen)}
 
     # -- move --------------------------------------------------------------
-    @router.post("/move", status_code=202)
+    # NOT "/move": `POST /api/{mundo}/move` (moving a file inside a world) is
+    # registered earlier and matches `{mundo}="data-root"`, so a route named
+    # "/move" here was never reached — the app answered "from/to required".
+    @router.post("/move-content", status_code=202)
     def start_move(request: Request, body: MoveRequest) -> dict[str, Any]:
         """Copy, verify and only then publish the new content folder.
 
@@ -420,7 +423,7 @@ def create_content_root_router(
             ) from exc
         return {"job": job.to_dict()}
 
-    @router.get("/move/{job_id}")
+    @router.get("/move-content/{job_id}")
     def get_move(request: Request, job_id: str) -> dict[str, Any]:
         """The job's state, counters and failure reason."""
         _guard(request)
@@ -429,7 +432,7 @@ def create_content_root_router(
             raise HTTPException(status_code=404, detail="unknown move")
         return {"job": job.to_dict(), "last_move": _service().last_move()}
 
-    @router.post("/move/{job_id}/cancel")
+    @router.post("/move-content/{job_id}/cancel")
     def cancel_move(request: Request, job_id: str) -> dict[str, Any]:
         """Ask the running job to stop; nothing is published if it does."""
         _guard(request)

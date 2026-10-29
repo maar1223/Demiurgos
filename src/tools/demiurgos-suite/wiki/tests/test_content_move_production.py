@@ -105,11 +105,11 @@ def test_the_production_router_keeps_one_visible_and_exclusive_job(
     monkeypatch.setattr(content_mover, "execute_move", blocked)
     client = _production_client(tmp_path, root)
     try:
-        first = client.post("/api/data-root/move", json={"target": str(one)})
+        first = client.post("/api/data-root/move-content", json={"target": str(one)})
         assert first.status_code == 202, first.text
         job_id = first.json()["job"]["id"]
-        assert client.get(f"/api/data-root/move/{job_id}").status_code == 200
-        second = client.post("/api/data-root/move", json={"target": str(two)})
+        assert client.get(f"/api/data-root/move-content/{job_id}").status_code == 200
+        second = client.post("/api/data-root/move-content", json={"target": str(two)})
         assert second.status_code == 409, second.text
     finally:
         release.set()
@@ -171,7 +171,7 @@ def test_the_record_never_lands_in_the_content_root(
     before = _hashes(root)
 
     client = _production_client(tmp_path, root, env=env)
-    started = client.post("/api/data-root/move", json={"target": str(target)})
+    started = client.post("/api/data-root/move-content", json={"target": str(target)})
     assert started.status_code == 202, started.text
 
     deadline = time.time() + 10

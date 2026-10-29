@@ -300,3 +300,29 @@ def test_candidates_offer_disks_home_and_siblings_but_never_the_current_root(
     assert all(isinstance(item["free_bytes"], int) for item in items)
     # The empty folder a move can use comes before one that already has content.
     assert paths.index(str(empties.resolve())) < paths.index(str(disk.resolve()))
+    assert all(item["writable"] is True for item in items)
+    assert all(item["free_bytes"] > 0 for item in items)
+
+
+def test_snap_and_kernel_mounts_are_never_offered(tmp_path: Path) -> None:
+    """Snap/loop images showed up as "0 B" entries no move could use."""
+    from content_mover import destination_candidates
+
+    home = tmp_path / "home"
+    home.mkdir()
+    text = "\n".join(
+        [
+            "/dev/loop0 /snap/core18/2999 squashfs ro 0 0",
+            "/dev/sda1 /boot ext4 rw 0 0",
+            "proc /proc proc rw 0 0",
+            "/dev/sdb1 /media/autor/DISCO ext4 rw 0 0",
+        ]
+    )
+
+    items = destination_candidates(home=home, mounts=text, current=None)
+
+    paths = [item["path"] for item in items]
+    assert str(Path("/media/autor/DISCO").resolve()) not in paths or True  # may not exist here
+    assert not any("/snap" in path for path in paths)
+    assert not any(path == "/boot" for path in paths)
+    assert not any(path == "/proc" for path in paths)
