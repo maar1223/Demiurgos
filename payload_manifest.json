@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "79c8bd9c",
+  "source_commit": "6972278e",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -67,6 +67,8 @@
     "src/tools/demiurgos-suite/wiki/co_creation_materializer.py",
     "src/tools/demiurgos-suite/wiki/co_creation_protocol.py",
     "src/tools/demiurgos-suite/wiki/co_creation_session_store.py",
+    "src/tools/demiurgos-suite/wiki/content_move_service.py",
+    "src/tools/demiurgos-suite/wiki/content_mover.py",
     "src/tools/demiurgos-suite/wiki/content_root_router.py",
     "src/tools/demiurgos-suite/wiki/content_scan.py",
     "src/tools/demiurgos-suite/wiki/contract_projection.py",
@@ -78,6 +80,7 @@
     "src/tools/demiurgos-suite/wiki/docx_export.py",
     "src/tools/demiurgos-suite/wiki/emergency_key.py",
     "src/tools/demiurgos-suite/wiki/error_codes.py",
+    "src/tools/demiurgos-suite/wiki/folder_dialog.py",
     "src/tools/demiurgos-suite/wiki/graph_indexer.py",
     "src/tools/demiurgos-suite/wiki/graph_mcp_server.py",
     "src/tools/demiurgos-suite/wiki/graph_models.py",
@@ -314,7 +317,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1520
+        "line": 1537
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

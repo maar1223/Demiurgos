@@ -32,7 +32,15 @@ from pydantic import BaseModel
 
 import data_root as resolver
 import state_paths
+from backup.state import BackupStateError, read_destination
 from backup.sync_folder import TargetDecision, evaluate_target
+import folder_dialog
+from content_mover import MoveError, destination_candidates
+from content_move_service import (
+    ContentMoveService,
+    read_pointer_change,
+    record_pointer_change,
+)
 
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
@@ -64,6 +72,24 @@ class ContentRootRequest(BaseModel):
     """``POST /api/data-root`` payload — the folder the author picked."""
 
     path: str
+
+
+class MoveRequest(BaseModel):
+    """``POST /api/data-root/move`` payload — the destination for the content."""
+
+    target: str
+
+
+class PickFolderRequest(BaseModel):
+    """``POST /api/data-root/pick-folder`` payload — where the dialog starts."""
+
+    initial: str | None = None
+
+
+class CleanupRequest(BaseModel):
+    """``POST /api/data-root/cleanup`` payload — the typed confirmation."""
+
+    confirm: str
 
 
 def _absolute(path: str | Path) -> Path:
@@ -124,6 +150,8 @@ def create_content_root_router(
     current_root: Callable[[], Path] | None = None,
     classify: Callable[[Path], TargetDecision] | None = None,
     write: Callable[[Path], None] | None = None,
+    move_service: ContentMoveService | None = None,
+    pick_folder: Callable[..., Path | None] | None = None,
 ) -> APIRouter:
     """Build the ``/api/data-root`` router.
 
@@ -163,7 +191,7 @@ def create_content_root_router(
     def _payload() -> dict[str, Any]:
         root, origin = _in_use()
         recorded = _recorded()
-        pinned = env_pins_root(_override(), recorded)
+        pinned = _pinned(recorded)
         payload: dict[str, Any] = {
             "path": None if root is None else str(root),
             "origin": origin,
@@ -198,6 +226,68 @@ def create_content_root_router(
         )
         return payload
 
+    #: ONE service per router. Building it per request made a background job
+    #: unreadable to the next request (progress and cancel answered 404) and let
+    #: two moves run at once — the whole feature was dead in production.
+    service_cache: list[ContentMoveService] = []
+
+    def _pointer() -> Path | None:
+        try:
+            return resolver.read_pointer(config_dir=config_dir)
+        except resolver.DataRootNotConfigured:
+            return None
+
+    def _state_base() -> Path:
+        """The machine-state base, never ``resolve_state_dir()``.
+
+        Policy (ii) can answer ``<content root>/data``; a record written there
+        would modify the source of the move it describes and be lost with it.
+        """
+        return resolver.resolve_state_root(environ=environ, state_dir=state_dir)
+
+    def _record_dir() -> Path:
+        return _state_base() / "move"
+
+    def _pinned(recorded: Path | None) -> bool:
+        """Whether the environment really outranks the record.
+
+        After the APP writes the pointer, a launcher's boot-time
+        ``DEMIURGOS_DATA_ROOT`` echo disagrees with the record until the next
+        start. That is a pending restart, not an author override, and the app must
+        not claim the folder is "fixed by the variable" right after moving it.
+        """
+        if not env_pins_root(_override(), recorded):
+            return False
+        change = read_pointer_change(_state_base())
+        if change is None or recorded is None:
+            return True
+        return _absolute(str(change.get("path"))) != recorded
+
+    def _service() -> ContentMoveService:
+        if move_service is not None:
+            return move_service
+        if not service_cache:
+            service_cache.append(
+                ContentMoveService(record_dir=_record_dir(), pointer=_pointer)
+            )
+        return service_cache[0]
+
+    def _state_dir() -> Path:
+        return state_paths.resolve_state_dir(
+            environ=environ, state_dir=state_dir, config_dir=config_dir
+        )
+
+    def _forbidden(root: Path) -> list[Path]:
+        """What a destination must never overlap, and a delete must never touch."""
+        blocked = [_state_dir()]
+        try:
+            record = read_destination(root)
+        except BackupStateError:
+            record = None
+        if record is not None:
+            blocked.append(Path(record.path))
+        return blocked
+
     @router.get("")
     def get_content_root(request: Request) -> dict[str, Any]:
         """Where the content lives (the folder IN USE), and whether it is usable."""
@@ -218,7 +308,7 @@ def create_content_root_router(
         """
         _guard(request)
         root, _origin = _in_use()
-        if env_pins_root(_override(), _recorded()):
+        if _pinned(_recorded()):
             raise HTTPException(
                 status_code=409,
                 detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),
@@ -260,8 +350,163 @@ def create_content_root_router(
             lambda chosen: resolver.write_pointer(chosen, config_dir=config_dir)
         )
         writer(target)
+        record_pointer_change(_state_base(), target)
         # Rewriting the same folder changes nothing: no restart to ask for.
         changed = root is None or target != root
         return {**_payload(), "restart_required": changed}
+
+    # -- candidates --------------------------------------------------------
+    @router.get("/candidates")
+    def get_destinations(request: Request) -> dict[str, Any]:
+        """Folders worth offering as a destination, best first.
+
+        A browser cannot browse the server's disk, so the honest equivalent is a
+        list of where a destination usually is: mounted disks, home, Documents
+        and siblings of the current folder. The manual path stays as fallback.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        blocked = _forbidden(root) if root is not None else []
+
+        def clashes(candidate: Path) -> bool:
+            path = _absolute(candidate)
+            return any(
+                path == other
+                or path.is_relative_to(other)
+                or other.is_relative_to(path)
+                for other in ( _absolute(item) for item in blocked )
+            )
+
+        items = destination_candidates(current=root)
+        kept = [item for item in items if not clashes(Path(str(item["path"])))]
+        return {
+            "candidates": kept,
+            "picker": True,
+            # The browser cannot browse the server's disk, but the SERVER can open
+            # the system dialog. Tell the UI whether that is possible here.
+            "native_dialog": folder_dialog.is_available(),
+        }
+
+    # -- native picker -----------------------------------------------------
+    @router.post("/pick-folder")
+    def pick_destination(body: PickFolderRequest, request: Request) -> dict[str, Any]:
+        """Open the OS folder dialog on this machine and return the choice.
+
+        A browser cannot name a server folder; the server is running where the
+        author sits, so it opens the dialog itself. ``cancelled`` is not an error,
+        and a host without a dialog answers 501 so the UI can fall back to the
+        suggestions list.
+        """
+        _guard(request)
+        picker = pick_folder or folder_dialog.pick_directory
+        try:
+            chosen = picker(initial=body.initial)
+        except folder_dialog.DialogUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except folder_dialog.DialogFailed as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        if chosen is None:
+            return {"cancelled": True, "path": None}
+        return {"cancelled": False, "path": str(chosen)}
+
+    def _decorate_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Add what the cleanup needs to know about the recorded source.
+
+        Computed live, not only stored: a record written before the field existed
+        (or edited by hand) must still tell the UI that the old folder is a code
+        checkout and cannot be deleted. The server refuses it either way; this is
+        what stops the UI from asking for a confirmation that can only fail.
+        """
+        if record is None:
+            return None
+        source = record.get("source")
+        enriched = dict(record)
+        enriched["source_exists"] = bool(source) and Path(str(source)).is_dir()
+        enriched["source_is_checkout"] = bool(source) and (
+            Path(str(source)) / ".git"
+        ).exists()
+        return enriched
+
+    # -- move --------------------------------------------------------------
+    # NOT "/move": `POST /api/{mundo}/move` (moving a file inside a world) is
+    # registered earlier and matches `{mundo}="data-root"`, so a route named
+    # "/move" here was never reached — the app answered "from/to required".
+    @router.post("/move-content", status_code=202)
+    def start_move(request: Request, body: MoveRequest) -> dict[str, Any]:
+        """Copy, verify and only then publish the new content folder.
+
+        The plan is validated here, synchronously, so a refusal never starts a
+        job; the copy itself runs in the background because gigabytes do not fit
+        in a request.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        if root is None:
+            raise HTTPException(
+                status_code=409,
+                detail="no content folder configured; set one before moving",
+            )
+        if _pinned(_recorded()):
+            raise HTTPException(
+                status_code=409,
+                detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),
+            )
+        service = _service()
+        try:
+            job = service.start(
+                source=root, target=body.target, forbidden=_forbidden(root)
+            )
+        except MoveError as exc:
+            busy = "already running" in str(exc)
+            raise HTTPException(
+                status_code=409 if busy else 400, detail=str(exc)
+            ) from exc
+        return {"job": job.to_dict()}
+
+    @router.get("/move-content/{job_id}")
+    def get_move(request: Request, job_id: str) -> dict[str, Any]:
+        """The job's state, counters and failure reason."""
+        _guard(request)
+        job = _service().get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown move")
+        return {
+            "job": job.to_dict(),
+            "last_move": _decorate_record(_service().last_move()),
+        }
+
+    @router.post("/move-content/{job_id}/cancel")
+    def cancel_move(request: Request, job_id: str) -> dict[str, Any]:
+        """Ask the running job to stop; nothing is published if it does."""
+        _guard(request)
+        job = _service().cancel(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown move")
+        return {"job": job.to_dict()}
+
+    @router.get("/last-move")
+    def get_last_move(request: Request) -> dict[str, Any]:
+        """The record of the last terminal move, which gates the cleanup."""
+        _guard(request)
+        return {"last_move": _decorate_record(_service().last_move())}
+
+    # -- cleanup -----------------------------------------------------------
+    @router.post("/cleanup")
+    def cleanup_source(request: Request, body: CleanupRequest) -> dict[str, Any]:
+        """Delete the old copy: the recorded folder, typed back exactly.
+
+        Only a completed move that published the pointer authorises it, and the
+        typed value must equal the recorded source. Never automatic.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        forbidden = [p for p in [_state_dir(), root] if p is not None]
+        try:
+            removed = _service().delete_source(typed=body.confirm, forbidden=forbidden)
+        except MoveError as exc:
+            message = str(exc)
+            status = 400 if "type the folder exactly" in message else 409
+            raise HTTPException(status_code=status, detail=message) from exc
+        return {"removed": removed, "last_move": _decorate_record(_service().last_move())}
 
     return router

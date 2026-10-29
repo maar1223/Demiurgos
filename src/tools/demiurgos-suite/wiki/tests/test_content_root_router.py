@@ -310,3 +310,57 @@ def test_both_routes_require_a_principal(tmp_path: Path) -> None:
     assert (
         client.post("/api/data-root", json={"path": str(tmp_path)}).status_code == 401
     )
+
+
+def test_the_launchers_stale_echo_is_a_restart_not_a_pin(tmp_path: Path) -> None:
+    """After the APP writes the pointer, the boot-time echo disagrees with it.
+
+    The launcher exports DEMIURGOS_DATA_ROOT from the pointer it read at start.
+    Once the app moves the folder, that echo is stale: reporting "fixed by the
+    variable" right after a successful move confused the author (and blamed a
+    variable he never set).
+    """
+    old = _root(tmp_path, worlds=1)
+    new = _root(tmp_path / "nuevo", worlds=1)
+    config = _config(tmp_path)
+    _write_pointer(config, new)
+    # The app recorded this folder itself.
+    from content_move_service import record_pointer_change
+
+    record_pointer_change(tmp_path / "state", new)
+
+    payload = _client(
+        tmp_path, root=old, config=config, env={resolver.ENV_VAR: str(old)}
+    ).get("/api/data-root").json()
+
+    assert payload["pinned"] is False
+    assert payload["pending_restart"] is True
+
+
+def test_the_same_echo_without_an_app_change_is_still_a_pin(tmp_path: Path) -> None:
+    a = _root(tmp_path, worlds=1)
+    b = _root(tmp_path / "otra", worlds=1)
+    config = _config(tmp_path)
+    _write_pointer(config, b)
+
+    payload = _client(
+        tmp_path, root=a, config=config, env={resolver.ENV_VAR: str(a)}
+    ).get("/api/data-root").json()
+
+    assert payload["pinned"] is True
+
+
+def test_recording_a_folder_counts_as_an_app_change(tmp_path: Path) -> None:
+    current = _root(tmp_path, worlds=0)
+    chosen = _root(tmp_path / "elegida", worlds=0)
+    config = _config(tmp_path)
+
+    _client(tmp_path, root=current, config=config).post(
+        "/api/data-root", json={"path": str(chosen)}
+    )
+
+    from content_move_service import read_pointer_change
+
+    change = read_pointer_change(tmp_path / "state")
+    assert change is not None
+    assert change["path"] == str(chosen.resolve())

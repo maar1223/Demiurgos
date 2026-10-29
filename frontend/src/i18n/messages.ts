@@ -99,7 +99,7 @@ export const messages = {
     "onboarding.folder.worlds": "Mundos",
     "onboarding.folder.free": "Espacio libre",
     "onboarding.folder.pinnedByEnv":
-      "La carpeta está fijada por la variable DEMIURGOS_DATA_ROOT de esta instalación, así que no se puede cambiar desde aquí.",
+      "La variable DEMIURGOS_DATA_ROOT apunta a {env}, pero el registro dice {recorded}. Mientras esa variable exista, Demiurgos usa {env} y no puede cambiar la carpeta desde aquí. Quita la variable y reinicia para que use {recorded}.",
     "onboarding.folder.unusable":
       "Esta carpeta no es una ubicación segura para tus mundos.",
     "onboarding.folder.restartRequired":
@@ -1090,6 +1090,32 @@ export const messages = {
     "backup.error.loadConfig":
       "No se pudo cargar la configuración de respaldo",
     "backup.error.saveFolder": "No se pudo guardar la carpeta elegida",
+    "content.card.title": "Carpeta de tu contenido",
+    "content.card.move": "Mover el contenido a otro disco",
+    "content.move.title": "Mover tus mundos",
+    "content.move.intro":
+      "Demiurgos copia tu contenido a la carpeta nueva, comprueba que la copia esté completa y solo entonces empieza a usarla. La carpeta original queda intacta hasta que decidas borrarla.",
+    "content.move.from": "Desde: {path}",
+    "content.move.target": "Carpeta destino (ruta completa, debe estar vacía)",
+    "content.move.targetPlaceholder": "/media/disco-externo/MisMundos",
+    "content.move.emptyOnly":
+      "El destino tiene que ser una carpeta vacía. Si ya copiaste el contenido a mano, usa la opción de cambiar carpeta en lugar de mover.",
+    "content.move.start": "Copiar y mover",
+    "content.suggestions.choose": "Elegir carpeta…",
+    "content.suggestions.label": "O elige una carpeta de esta lista:",
+    "content.suggestions.empty": "vacía",
+    "content.move.progress": "Copiando {copied} de {total} archivos",
+    "content.move.cancel": "Cancelar la copia",
+    "content.move.done": "La copia está completa y verificada.",
+    "content.move.useInstead":
+      "Esa carpeta ya tiene contenido. No se copia encima de nada: si tu contenido ya está ahí, cambia la carpeta en lugar de mover.",
+    "content.move.cancelled": "La copia se canceló. No se cambió nada.",
+    "content.cleanup.offer":
+      "La copia nueva ya está en uso. Puedes borrar la carpeta anterior: {path}. Es la única copia que queda de esos archivos, así que asegúrate de que el contenido nuevo funciona antes.",
+    "content.cleanup.checkout":
+      "La carpeta anterior ({path}) es el repositorio del proyecto, así que Demiurgos no la borra: si ya no la necesitas como contenido, bórrala tú cuando quieras.",
+    "content.cleanup.confirmLabel": "Escribe la ruta anterior para confirmar",
+    "content.cleanup.action": "Borrar la carpeta anterior",
     "backup.error.overlapsContent":
       "Esa carpeta se solapa con la carpeta de tu contenido. Una copia guardada dentro de lo que copia es una sola copia: elige una carpeta fuera de ella.",
     "backup.warning.overlapsContent":
@@ -2239,7 +2265,7 @@ export const messages = {
     "onboarding.folder.worlds": "Worlds",
     "onboarding.folder.free": "Free space",
     "onboarding.folder.pinnedByEnv":
-      "The folder is fixed by this install's DEMIURGOS_DATA_ROOT variable, so it cannot be changed here.",
+      "DEMIURGOS_DATA_ROOT points at {env}, but the record says {recorded}. While that variable exists, Demiurgos uses {env} and cannot change the folder from here. Unset the variable and restart so it uses {recorded}.",
     "onboarding.folder.unusable":
       "This folder is not a safe location for your worlds.",
     "onboarding.folder.restartRequired":
@@ -3217,6 +3243,32 @@ export const messages = {
     "backup.error.loadStatus": "The backup status could not be loaded",
     "backup.error.loadConfig": "The backup configuration could not be loaded",
     "backup.error.saveFolder": "The chosen folder could not be saved",
+    "content.card.title": "Your content folder",
+    "content.card.move": "Move the content to another disk",
+    "content.move.title": "Move your worlds",
+    "content.move.intro":
+      "Demiurgos copies your content to the new folder, checks that the copy is complete, and only then starts using it. The original folder stays untouched until you decide to delete it.",
+    "content.move.from": "From: {path}",
+    "content.move.target": "Destination folder (full path, must be empty)",
+    "content.move.targetPlaceholder": "/media/external-disk/MyWorlds",
+    "content.move.emptyOnly":
+      "The destination must be an empty folder. If you already copied the content by hand, use the change-folder option instead of moving.",
+    "content.move.start": "Copy and move",
+    "content.suggestions.choose": "Choose folder…",
+    "content.suggestions.label": "Or pick a folder from this list:",
+    "content.suggestions.empty": "empty",
+    "content.move.progress": "Copying {copied} of {total} files",
+    "content.move.cancel": "Cancel the copy",
+    "content.move.done": "The copy is complete and verified.",
+    "content.move.useInstead":
+      "That folder already holds content. Nothing is copied over it: if your content is already there, change the folder instead of moving.",
+    "content.move.cancelled": "The copy was cancelled. Nothing changed.",
+    "content.cleanup.offer":
+      "The new copy is in use. You can delete the previous folder: {path}. It is the only remaining copy of those files, so make sure the new content works first.",
+    "content.cleanup.checkout":
+      "The previous folder ({path}) is the project repository, so Demiurgos does not delete it: if you no longer need it as content, delete it yourself when you like.",
+    "content.cleanup.confirmLabel": "Type the previous path to confirm",
+    "content.cleanup.action": "Delete the previous folder",
     "backup.error.overlapsContent":
       "That folder overlaps the folder that holds your content. A backup stored inside what it backs up is a single copy: choose a folder outside it.",
     "backup.warning.overlapsContent":
