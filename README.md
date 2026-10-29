@@ -53,10 +53,10 @@ cd frontend && npm install && cd ..
 
 | Platform | Command | Starts |
 |----------|---------|--------|
-| **Linux / macOS** | `./scripts/start-demiurgos-linux.sh start` | Hermes Gateway (8642), Wiki API (8000), Frontend (5173) |
+| **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Hermes Gateway (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | Same stack + graph warm-up |
 
-The launcher opens the app at **http://127.0.0.1:5173** (API health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. Other actions: `restart`, `stop`, and `install` (Linux desktop entry). On Windows you can also start just the API with `start-api.ps1`.
+The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows you can also start just the API with `start-api.ps1`.
 
 **VPS:** the same stack runs on a server. The session cookie is **scheme-aware**: HTTPS requests get a `Secure` cookie, plain HTTP (a VPS without TLS) does not — login works on any platform with zero configuration.
 

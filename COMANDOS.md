@@ -10,11 +10,11 @@ Comandos reales de la plataforma web Demiurgos, verificados contra el repositori
 
 | Plataforma | Comando | Inicia |
 |-----------|---------|--------|
-| **Linux / macOS** | `./scripts/start-demiurgos-linux.sh start` | Gateway de Hermes (8642), API de la wiki (8000), Frontend (5173) |
+| **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Gateway de Hermes (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | El mismo stack + warm-up del grafo |
 
-- Acciones del launcher Linux: `start`, `restart`, `stop`, `install` (crea el acceso de escritorio).
-- App: `http://127.0.0.1:5173` · Health de la API: `http://127.0.0.1:8000/health`
+- Acciones del launcher Linux: `start`, `restart`, `stop`, `install`. En Linux el instalador ya añade la entrada al menú de aplicaciones; `install` la reescribe e `install --desktop` añade además el icono en la carpeta del escritorio.
+- App y health de la API: `http://127.0.0.1:8000` · `/health`
 - En Windows puedes arrancar solo la API con `start-api.ps1`.
 
 ---

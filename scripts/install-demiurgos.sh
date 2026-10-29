@@ -448,6 +448,41 @@ write_channel_config() {
     printf 'install-demiurgos: persisted channel config at %s/channel.json\n' "$INSTALL_ROOT" >&2
 }
 
+# --- Linux applications-menu entry -----------------------------------------
+# The menu entry is standard installer behavior; the visible Desktop icon is
+# NOT written here. It stays opt-in (`start-demiurgos.sh install --desktop`):
+# a copied-down .desktop shows up as an "Untrusted application launcher" on
+# GNOME/Nautilus until it is marked metadata::trusted, so creating it behind
+# the user's back looks broken instead of helpful.
+#
+# The template is read as DATA from the installed app and substituted here.
+# The installer never executes payload files (threat-matrix "documentation-like
+# paths"), so it may not delegate to `start-demiurgos.sh install`; the
+# placeholder and the destination rule stay byte-identical to the launcher's
+# install_desktop — one product, two writers.
+DESKTOP_TEMPLATE_REL="desktop/Demiurgos.desktop"
+
+applications_dir() {
+    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+}
+
+install_desktop_entry() {
+    local app_root="$INSTALL_ROOT/current" template menu_dir
+    [ "$OS" = "Linux" ] || return 0
+    template="$app_root/$DESKTOP_TEMPLATE_REL"
+    if [ ! -f "$template" ]; then
+        warn "no $DESKTOP_TEMPLATE_REL in the payload; the applications menu entry is skipped"
+        return 0
+    fi
+    menu_dir="$(applications_dir)"
+    mkdir -p "$menu_dir" 2>/dev/null \
+        || { warn "cannot create $menu_dir; the applications menu entry is skipped"; return 0; }
+    sed "s|@PROJECT_ROOT@|$app_root|g" "$template" > "$menu_dir/Demiurgos.desktop" 2>/dev/null \
+        || { warn "cannot write the applications menu entry; skipped"; return 0; }
+    chmod 0644 "$menu_dir/Demiurgos.desktop" 2>/dev/null || true
+    printf 'install-demiurgos: applications menu entry at %s/Demiurgos.desktop\n' "$menu_dir" >&2
+}
+
 # --- data-root bootstrap-once + .env seed (4.9, S0-A) ------------------------
 
 seed_env_file() {
@@ -594,6 +629,10 @@ resolve_version
 # Idempotent re-run: same version already current -> exit 0, nothing to do.
 if [ -L "$INSTALL_ROOT/current" ] && [ "$(readlink "$INSTALL_ROOT/current")" = "app/$VERSION" ] && [ -d "$INSTALL_ROOT/app/$VERSION" ]; then
     printf 'install-demiurgos: %s is already installed and current; nothing to do\n' "$VERSION" >&2
+    # ...except the applications-menu entry, which is the installer's own to
+    # own: a user who deleted it (or who installed before it existed) gets it
+    # back by re-running the installer, without a reinstall.
+    install_desktop_entry
     exit 0
 fi
 
@@ -604,6 +643,7 @@ stage_and_install
 commit_staging
 write_channel_config
 bootstrap_data_root
+install_desktop_entry
 
 printf '%s\n' "install-demiurgos: done. Start Demiurgos with:"
 printf '%s\n' "  $INSTALL_ROOT/current/scripts/start-demiurgos.sh start"
