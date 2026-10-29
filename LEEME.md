@@ -55,9 +55,9 @@ Demiurgos/
    ```
 3. **Prepara el frontend:** `cd frontend && npm install && cd ..`
 4. **Arranca la plataforma:**
-   - Linux / macOS: `./scripts/start-demiurgos-linux.sh start`
+   - Linux / macOS: `./scripts/start-demiurgos.sh start`
    - Windows: `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1`
-5. **Abre la app:** `http://127.0.0.1:5173` — el primer arranque muestra el onboarding (idioma, proveedores LLM, crear o importar un mundo).
+5. **Abre la app:** `http://127.0.0.1:8000` — el primer arranque muestra el onboarding (idioma, proveedores LLM, crear o importar un mundo).
 
 > **Opcional:** si quieres el stack CLI de desarrollo (Hermes Agent, Engram y las skills narrativas de las 13 fases), usa el flag opt-in: `bash install.sh --with-cli-stack`. No es necesario para usar la app web (`install.sh` sin flags instala la app web).
 
