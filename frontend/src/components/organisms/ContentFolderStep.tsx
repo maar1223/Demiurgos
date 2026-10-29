@@ -162,7 +162,10 @@ export function ContentFolderStep({ onDone }: { onDone: () => void }) {
 
       {pinnedByEnv && (
         <p className="mt-4 text-small text-secondary" data-testid="content-folder-env">
-          {t("onboarding.folder.pinnedByEnv")}
+          {t("onboarding.folder.pinnedByEnv", {
+            env: info?.path ?? "—",
+            recorded: info?.recorded_path ?? "—",
+          })}
         </p>
       )}
       {unusable && (

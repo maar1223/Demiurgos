@@ -79,6 +79,7 @@ export interface LastContentMove {
   target: string;
   state: "done" | "failed" | "cancelled" | "cleaned";
   pointer_written: boolean;
+  source_is_checkout?: boolean;
   finished_at: string;
 }
 

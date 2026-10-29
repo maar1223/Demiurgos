@@ -291,6 +291,16 @@ export function CleanupOldContent({
     return null;
   }
 
+  if (record.source_is_checkout) {
+    // The app never deletes a code checkout; saying it beats a form that can
+    // only fail.
+    return (
+      <p className="mt-4 text-small text-secondary" data-testid="content-cleanup-checkout">
+        {t("content.cleanup.checkout", { path: record.source })}
+      </p>
+    );
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);

@@ -126,7 +126,10 @@ export function ContentFolderCard({ onChanged }: { onChanged?: () => void }) {
 
       {pinned && (
         <p className="mt-3 text-small text-secondary" data-testid="content-card-pinned">
-          {t("onboarding.folder.pinnedByEnv")}
+          {t("onboarding.folder.pinnedByEnv", {
+            env: info?.path ?? "—",
+            recorded: info?.recorded_path ?? "—",
+          })}
         </p>
       )}
       {error && (

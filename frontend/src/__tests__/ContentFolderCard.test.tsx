@@ -113,9 +113,19 @@ describe("ContentFolderCard — one action per state", () => {
   });
 
   it("does not offer either action when the environment pins the folder", async () => {
-    mocked.get.mockResolvedValue({ ...INFO, pinned: true, worlds: 3 });
+    mocked.get.mockResolvedValue({
+      ...INFO,
+      path: "/var/env-forzado",
+      recorded_path: "/var/registrado",
+      pinned: true,
+      worlds: 3,
+    });
     render(<ContentFolderCard />);
-    await screen.findByTestId("content-card-pinned");
+    const pinned = await screen.findByTestId("content-card-pinned");
+    // The message must name BOTH folders: which one the variable forces and
+    // which one the record holds, or the author cannot act on it.
+    expect(pinned).toHaveTextContent("/var/env-forzado");
+    expect(pinned).toHaveTextContent("/var/registrado");
 
     expect(
       screen.queryByRole("button", { name: /cambiar carpeta|change folder/i }),
@@ -245,6 +255,18 @@ describe("ContentFolderCard — deleting the old copy", () => {
     await screen.findByTestId("content-card-path");
 
     expect(screen.queryByTestId("content-cleanup-offer")).not.toBeInTheDocument();
+  });
+
+  it("explains a checkout instead of offering a delete that cannot work", async () => {
+    mocked.lastMove.mockResolvedValue({
+      last_move: { ...record, source_is_checkout: true },
+    });
+    render(<ContentFolderCard />);
+
+    expect(await screen.findByTestId("content-cleanup-checkout")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/escribe la ruta anterior|type the previous path/i),
+    ).not.toBeInTheDocument();
   });
 
   it("needs the exact path typed back before deleting", async () => {

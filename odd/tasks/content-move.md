@@ -102,3 +102,11 @@ Fixes: the routes moved to `/move-content` (`POST`, `GET /{id}`, `POST /{id}/can
 Second defect from the same screenshot: the candidate list was 6 of 9 snap/loop mounts showing "0 B". `_mount_roots` now skips denied filesystems (`squashfs`, kernel trees, overlays, tmpfs), denied mount prefixes (`/boot`, `/snap`, `/run`, `/var/lib/docker`, …), and `destination_candidates` drops anything not writable or with zero free space.
 
 Verification: backend **4479 passed / 24 skipped**, frontend **1616 tests**, typecheck and build clean, `dist` rebuilt (`index-D44tDy-b.js`).
+
+L13 (the Owner's first successful move, and the state it left) — the move completed on his real content root: **651 files, 248 MB**, methodology and `.env` included, source intact, and the pointer moved to `/mnt/…/Demiurgos`. The card then showed the pinned message and no actions, which is CORRECT: his shell had `DEMIURGOS_DATA_ROOT` exported pointing at the old root, so the environment outranked the record.
+
+Two things that state taught:
+1. The pinned message named only the variable. It now names BOTH: the folder the variable forces and the folder the record holds, plus how to resolve it (unset the variable and restart). Verified with two distinct paths in a cell.
+2. The cleanup would have offered a confirmation that could only fail, because the old folder is a code checkout (`.git`). The record now carries `source_is_checkout`, and the UI explains it instead of asking for the path.
+
+Verification: backend **4480 passed / 24 skipped**, frontend **1617 tests**, typecheck and build clean (`index-_kq1jpBg.js`).

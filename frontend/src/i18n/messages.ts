@@ -99,7 +99,7 @@ export const messages = {
     "onboarding.folder.worlds": "Mundos",
     "onboarding.folder.free": "Espacio libre",
     "onboarding.folder.pinnedByEnv":
-      "La carpeta está fijada por la variable DEMIURGOS_DATA_ROOT de esta instalación, así que no se puede cambiar desde aquí.",
+      "La variable DEMIURGOS_DATA_ROOT apunta a {env}, pero el registro dice {recorded}. Mientras esa variable exista, Demiurgos usa {env} y no puede cambiar la carpeta desde aquí. Quita la variable y reinicia para que use {recorded}.",
     "onboarding.folder.unusable":
       "Esta carpeta no es una ubicación segura para tus mundos.",
     "onboarding.folder.restartRequired":
@@ -1112,6 +1112,8 @@ export const messages = {
     "content.move.cancelled": "La copia se canceló. No se cambió nada.",
     "content.cleanup.offer":
       "La copia nueva ya está en uso. Puedes borrar la carpeta anterior: {path}. Es la única copia que queda de esos archivos, así que asegúrate de que el contenido nuevo funciona antes.",
+    "content.cleanup.checkout":
+      "La carpeta anterior ({path}) es el repositorio del proyecto, así que Demiurgos no la borra: si ya no la necesitas como contenido, bórrala tú cuando quieras.",
     "content.cleanup.confirmLabel": "Escribe la ruta anterior para confirmar",
     "content.cleanup.action": "Borrar la carpeta anterior",
     "backup.error.overlapsContent":
@@ -2263,7 +2265,7 @@ export const messages = {
     "onboarding.folder.worlds": "Worlds",
     "onboarding.folder.free": "Free space",
     "onboarding.folder.pinnedByEnv":
-      "The folder is fixed by this install's DEMIURGOS_DATA_ROOT variable, so it cannot be changed here.",
+      "DEMIURGOS_DATA_ROOT points at {env}, but the record says {recorded}. While that variable exists, Demiurgos uses {env} and cannot change the folder from here. Unset the variable and restart so it uses {recorded}.",
     "onboarding.folder.unusable":
       "This folder is not a safe location for your worlds.",
     "onboarding.folder.restartRequired":
@@ -3263,6 +3265,8 @@ export const messages = {
     "content.move.cancelled": "The copy was cancelled. Nothing changed.",
     "content.cleanup.offer":
       "The new copy is in use. You can delete the previous folder: {path}. It is the only remaining copy of those files, so make sure the new content works first.",
+    "content.cleanup.checkout":
+      "The previous folder ({path}) is the project repository, so Demiurgos does not delete it: if you no longer need it as content, delete it yourself when you like.",
     "content.cleanup.confirmLabel": "Type the previous path to confirm",
     "content.cleanup.action": "Delete the previous folder",
     "backup.error.overlapsContent":

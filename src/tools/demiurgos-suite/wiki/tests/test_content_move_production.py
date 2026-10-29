@@ -192,6 +192,23 @@ def test_the_record_never_lands_in_the_content_root(
     assert last.json()["last_move"] is not None
 
 
+def test_the_record_says_when_the_source_is_a_checkout(tmp_path: Path) -> None:
+    """The app never deletes a code checkout, so the UI must know before asking."""
+    service = ContentMoveService(
+        record_dir=tmp_path / "state" / "move", publish=lambda path: None, run_inline=True
+    )
+    source = _content_root(tmp_path)
+    (source / ".git").mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+
+    service.start(source=source, target=target, forbidden=[])
+
+    record = service.last_move()
+    assert record is not None
+    assert record["source_is_checkout"] is True
+
+
 def test_a_failed_move_does_not_erase_a_good_record(tmp_path: Path) -> None:
     """The record authorises a delete: losing it leaves two full trees."""
     published: list[Path] = []

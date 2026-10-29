@@ -148,6 +148,9 @@ class ContentMoveService:
             "target": job.target,
             "state": job.state,
             "pointer_written": job.pointer_written,
+            # A code checkout can never be deleted by the app, so the record says
+            # so and the UI offers the explanation instead of a dead confirmation.
+            "source_is_checkout": (Path(job.source) / ".git").exists(),
             "finished_at": job.finished_at or _utc_now(),
         }
         try:
