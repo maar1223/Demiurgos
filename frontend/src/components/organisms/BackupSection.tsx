@@ -23,6 +23,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { getContentRoot } from "@/api/contentRoot";
+import { ContentFolderCard } from "@/components/organisms/ContentFolderCard";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { overlapsContentRoot } from "@/lib/contentRootOverlap";
 import type { MessageKey, TFunction } from "@/i18n/messages";
@@ -463,6 +464,10 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
       {notice && <p className="mt-3 text-small text-status-success">{notice}</p>}
 
       {/* State 1 — no folder yet: the picker plus the candidate suggestions. */}
+      {/* Where the author's content lives: the folder the backup must never
+          overlap, and the place a move to another disk starts. */}
+      <ContentFolderCard />
+
       {!hasDestination && (
         <p className="mt-3 text-small text-muted">{t("backup.noFolder")}</p>
       )}

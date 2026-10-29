@@ -9562,3 +9562,12 @@ def test_the_content_root_routes_are_mounted():
     paths = api_server.app.openapi()["paths"]
     assert "/api/data-root" in paths
     assert set(paths["/api/data-root"]) == {"get", "post"}
+    # Step 5: the move is a job, plus the record and the confirmed cleanup.
+    for route in (
+        "/api/data-root/move",
+        "/api/data-root/move/{job_id}",
+        "/api/data-root/move/{job_id}/cancel",
+        "/api/data-root/last-move",
+        "/api/data-root/cleanup",
+    ):
+        assert route in paths, route

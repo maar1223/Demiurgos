@@ -45,11 +45,11 @@ Acceptance: the frontend pre-check mirrors the server for the canonical cases an
 
 | ID | Task | Specs | Route | Status | Commit |
 |---|---|---|---|---|---|
-| T1 | `content_mover.py`: plan (content set, space), copy, verify, publish | S3, S4, S5 | inline | pending | — |
-| T2 | Job + endpoints + last-run record in the state dir | S7, S8, S9 | inline | pending | — |
-| T3 | Server-side cleanup of the old copy (double confirmation, record-bound) | S6 | inline | pending | — |
+| T1 | `content_mover.py`: plan (content set, space), copy, verify, publish | S3, S4, S5 | inline | done (RED: 14 failed -> GREEN: 17 passed) | `4f5b55e3` |
+| T2 | Job + endpoints + last-run record in the state dir | S7, S8, S9 | inline | done | pending |
+| T3 | Server-side cleanup of the old copy (double confirmation, record-bound) | S6 | inline | done | pending |
 | T4 | Shared action predicate + cells | S2, S10 | inline | pending | — |
-| T5 | `ContentFolderCard` extracted, `MoveContentDialog`, cleanup flow | S1, S9 | inline | pending | — |
+| T5 | `ContentFolderCard`, `MoveContentDialog`, cleanup flow | S1, S9 | inline | done | pending |
 
 Risk lines: T1/T2/T3 `Risk: item 1` (they decide where persisted content lives and T3 deletes it) · T1 also `item 6` · T4/T5 `item 6`. Item 1 gets one independent verifier at the end, as in steps 3 and 4.
 
@@ -62,3 +62,11 @@ L2 (Owner, verbatim) — "si, me parece perfecto que vaya alli" → `/perfil` �
 L3 (Owner, verbatim) — "si, incluyelo con doble confirmacion" → U5/T3 included: deleting the old copy from the app, with double confirmation.
 
 L4 (design decision D1) — the moved set is the backup's own author-content classification plus `.env`, not "the whole folder". Reason: the content root may legitimately be a checkout (this machine's is), and copying a repository is not moving the author's worlds. The inventory includes unrecognised top-level members by default, so a new folder is not silently dropped.
+
+L5 (T1, and the flaw my own cell caught) — the first implementation copied the top-level folders wholesale, so `data/` carried `idea-capture.sqlite3` into the new root. An independent cell made it fail, and the consequence is not cosmetic: policy (ii) decides by artifacts under `<content>/data`, so the next boot would have ADOPTED that inert copy and the app would have read the old databases. The copy now walks the inventory's own entries, so a per-FILE exclusion is honoured; a cross-module cell asserts `state_paths.holds_state(target/"data") is False` after a move.
+
+L6 (T2/T3) — the job validates the plan synchronously (a refusal never starts a job), runs the copy on a thread with counters and a cancel flag, and writes its record to the machine-state directory. The cleanup is bound to that record: a completed move whose pointer landed on the new folder, plus the old path typed back exactly; it refuses a code checkout, the folder in use and the state folder. Regression cells model the restart by switching the provider after the move, and a cell proves a delete of the folder in use is refused.
+
+L7 (T5) — the settings surface has no "use this folder" button: in `/perfil` the folder is already in use, and having one collided with the backup picker's button of the same name. There the action is one of two: change (no content) or move (content). The onboarding step keeps its own accept, because there it commits the step.
+
+L8 (verification) — Backend **4457 passed / 24 skipped**; frontend **1606 tests in 130 files**; `tsc --noEmit` clean; `npm run build` OK. `payload_manifest.json` regenerated (171 files: `content_mover.py` and `content_move_service.py` enter the runtime payload).

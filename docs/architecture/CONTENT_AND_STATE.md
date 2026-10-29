@@ -121,6 +121,23 @@ from it), so the pointer is rewritten but the running process keeps the folder i
 booted with; the payload says `restart_required` and GET reports
 `pending_restart` until the two agree. Nothing is moved, copied or deleted.
 
+## Moving the content to another folder or disk
+
+`POST /api/data-root/move` copies the author content to an empty folder, verifies
+the copy and only then publishes the pointer; `GET /api/data-root/move/{id}`
+reports progress and the failure reason, and `.../cancel` stops it. The copy runs
+as a job because gigabytes do not fit in a request.
+
+What travels is the backup's own author-content classification **plus** the
+content-root `.env` — per file, not per folder. That matters: `data/` holds
+author material, and an inert copy of the databases in the new root would make
+policy (ii) adopt stale state on the next boot.
+
+The source is never modified, not even on success. Deleting the old copy is a
+second, separate action: it needs the record of a verified move whose pointer
+landed on the new folder, and the author typing the old path back exactly. It
+refuses a code checkout, the folder in use and the machine-state folder.
+
 ## Backup and restore
 
 The backup is the one feature that spans both roots:

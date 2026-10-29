@@ -32,7 +32,10 @@ from pydantic import BaseModel
 
 import data_root as resolver
 import state_paths
+from backup.state import BackupStateError, read_destination
 from backup.sync_folder import TargetDecision, evaluate_target
+from content_mover import MoveError
+from content_move_service import ContentMoveService
 
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
@@ -64,6 +67,18 @@ class ContentRootRequest(BaseModel):
     """``POST /api/data-root`` payload — the folder the author picked."""
 
     path: str
+
+
+class MoveRequest(BaseModel):
+    """``POST /api/data-root/move`` payload — the destination for the content."""
+
+    target: str
+
+
+class CleanupRequest(BaseModel):
+    """``POST /api/data-root/cleanup`` payload — the typed confirmation."""
+
+    confirm: str
 
 
 def _absolute(path: str | Path) -> Path:
@@ -124,6 +139,7 @@ def create_content_root_router(
     current_root: Callable[[], Path] | None = None,
     classify: Callable[[Path], TargetDecision] | None = None,
     write: Callable[[Path], None] | None = None,
+    move_service: ContentMoveService | None = None,
 ) -> APIRouter:
     """Build the ``/api/data-root`` router.
 
@@ -198,6 +214,27 @@ def create_content_root_router(
         )
         return payload
 
+    def _service() -> ContentMoveService:
+        if move_service is not None:
+            return move_service
+        return ContentMoveService(state_dir=_state_dir())
+
+    def _state_dir() -> Path:
+        return state_paths.resolve_state_dir(
+            environ=environ, state_dir=state_dir, config_dir=config_dir
+        )
+
+    def _forbidden(root: Path) -> list[Path]:
+        """What a destination must never overlap, and a delete must never touch."""
+        blocked = [_state_dir()]
+        try:
+            record = read_destination(root)
+        except BackupStateError:
+            record = None
+        if record is not None:
+            blocked.append(Path(record.path))
+        return blocked
+
     @router.get("")
     def get_content_root(request: Request) -> dict[str, Any]:
         """Where the content lives (the folder IN USE), and whether it is usable."""
@@ -263,5 +300,81 @@ def create_content_root_router(
         # Rewriting the same folder changes nothing: no restart to ask for.
         changed = root is None or target != root
         return {**_payload(), "restart_required": changed}
+
+    # -- move --------------------------------------------------------------
+    @router.post("/move", status_code=202)
+    def start_move(request: Request, body: MoveRequest) -> dict[str, Any]:
+        """Copy, verify and only then publish the new content folder.
+
+        The plan is validated here, synchronously, so a refusal never starts a
+        job; the copy itself runs in the background because gigabytes do not fit
+        in a request.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        if root is None:
+            raise HTTPException(
+                status_code=409,
+                detail="no content folder configured; set one before moving",
+            )
+        if env_pins_root(_override(), _recorded()):
+            raise HTTPException(
+                status_code=409,
+                detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),
+            )
+        service = _service()
+        try:
+            job = service.start(
+                source=root, target=body.target, forbidden=_forbidden(root)
+            )
+        except MoveError as exc:
+            busy = "already running" in str(exc)
+            raise HTTPException(
+                status_code=409 if busy else 400, detail=str(exc)
+            ) from exc
+        return {"job": job.to_dict()}
+
+    @router.get("/move/{job_id}")
+    def get_move(request: Request, job_id: str) -> dict[str, Any]:
+        """The job's state, counters and failure reason."""
+        _guard(request)
+        job = _service().get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown move")
+        return {"job": job.to_dict(), "last_move": _service().last_move()}
+
+    @router.post("/move/{job_id}/cancel")
+    def cancel_move(request: Request, job_id: str) -> dict[str, Any]:
+        """Ask the running job to stop; nothing is published if it does."""
+        _guard(request)
+        job = _service().cancel(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown move")
+        return {"job": job.to_dict()}
+
+    @router.get("/last-move")
+    def get_last_move(request: Request) -> dict[str, Any]:
+        """The record of the last terminal move, which gates the cleanup."""
+        _guard(request)
+        return {"last_move": _service().last_move()}
+
+    # -- cleanup -----------------------------------------------------------
+    @router.post("/cleanup")
+    def cleanup_source(request: Request, body: CleanupRequest) -> dict[str, Any]:
+        """Delete the old copy: the recorded folder, typed back exactly.
+
+        Only a completed move that published the pointer authorises it, and the
+        typed value must equal the recorded source. Never automatic.
+        """
+        _guard(request)
+        root, _origin = _in_use()
+        forbidden = [p for p in [_state_dir(), root] if p is not None]
+        try:
+            removed = _service().delete_source(typed=body.confirm, forbidden=forbidden)
+        except MoveError as exc:
+            message = str(exc)
+            status = 400 if "type the folder exactly" in message else 409
+            raise HTTPException(status_code=status, detail=message) from exc
+        return {"removed": removed, "last_move": _service().last_move()}
 
     return router

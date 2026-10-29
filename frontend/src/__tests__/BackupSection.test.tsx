@@ -29,7 +29,15 @@ import type {
   BackupSnapshot,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
-import { getContentRoot } from "@/api/contentRoot";
+import {
+  cleanupOldContent,
+  commitContentFolderStep,
+  getContentMove,
+  getContentRoot,
+  getLastContentMove,
+  setContentRoot,
+  startContentMove,
+} from "@/api/contentRoot";
 import { tEs } from "@/__tests__/i18nTestUtils";
 // Raw source of the organism under test — used by the honest-copy scan
 // (REQ-BUI-3) so a literal that no rendered state reaches is still caught.
@@ -54,9 +62,24 @@ vi.mock("@/api/backup", async (importOriginal) => {
 
 vi.mock("@/api/contentRoot", () => ({
   getContentRoot: vi.fn(),
+  setContentRoot: vi.fn(),
+  commitContentFolderStep: vi.fn(),
+  startContentMove: vi.fn(),
+  getContentMove: vi.fn(),
+  cancelContentMove: vi.fn(),
+  getLastContentMove: vi.fn(),
+  cleanupOldContent: vi.fn(),
 }));
 
 const contentRootMock = getContentRoot as Mock;
+const contentCardMocks = {
+  setContentRoot: setContentRoot as Mock,
+  commitContentFolderStep: commitContentFolderStep as Mock,
+  startContentMove: startContentMove as Mock,
+  getContentMove: getContentMove as Mock,
+  getLastContentMove: getLastContentMove as Mock,
+  cleanupOldContent: cleanupOldContent as Mock,
+};
 
 const mocked = {
   getBackupStatus: getBackupStatus as Mock,
@@ -195,7 +218,20 @@ describe("BackupSection", () => {
     // says so: a sibling, so the pre-check stays out of the way.
     contentRootMock.mockResolvedValue({
       path: "/home/author/Documentos/Demiurgos",
+      origin: "pointer",
+      configured: true,
+      recorded_path: "/home/author/Documentos/Demiurgos",
+      pending_restart: false,
+      pinned: false,
+      usable: true,
+      worlds: 0,
+      disk: { free_bytes: 1, total_bytes: 2, volume: null },
+      mode: "unknown",
+      warning: null,
+      reason: null,
     });
+    // The content card lives in this section now: give it quiet defaults.
+    contentCardMocks.getLastContentMove.mockResolvedValue({ last_move: null });
     mocked.setBackupDestination.mockResolvedValue(CHOSEN_STATUS);
     mocked.runBackupNow.mockResolvedValue(WRITTEN_STATUS);
     mocked.previewBackupRestore.mockResolvedValue(CLEAN_PREVIEW);
@@ -525,7 +561,20 @@ describe("BackupSection destination overlap", () => {
   });
 
   it("warns on the card when the chosen folder already overlaps", async () => {
-    contentRootMock.mockResolvedValue({ path: "/home/author" });
+    contentRootMock.mockResolvedValue({
+      path: "/home/author",
+      origin: "pointer",
+      configured: true,
+      recorded_path: "/home/author",
+      pending_restart: false,
+      pinned: false,
+      usable: true,
+      worlds: 0,
+      disk: { free_bytes: 1, total_bytes: 2, volume: null },
+      mode: "unknown",
+      warning: null,
+      reason: null,
+    });
     await renderSection(CHOSEN_STATUS);
 
     expect(

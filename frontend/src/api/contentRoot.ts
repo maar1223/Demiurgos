@@ -53,3 +53,72 @@ export function commitContentFolderStep(): Promise<OnboardingStatus> {
     { method: "POST" },
   );
 }
+
+/** A move job, as `GET /api/data-root/move/{id}` reports it. */
+export interface ContentMoveJob {
+  id: string;
+  state: "queued" | "copying" | "done" | "failed" | "cancelled";
+  source: string;
+  target: string;
+  total_files: number;
+  total_bytes: number;
+  copied_files: number;
+  copied_bytes: number;
+  skipped: { name: string; reason: string }[];
+  error: string | null;
+  pointer_written: boolean;
+  cancel_requested: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** The persisted record of the last move; it is what authorises the cleanup. */
+export interface LastContentMove {
+  schema_version: number;
+  source: string;
+  target: string;
+  state: "done" | "failed" | "cancelled" | "cleaned";
+  pointer_written: boolean;
+  finished_at: string;
+}
+
+/** POST /api/data-root/move — copy, verify and only then publish the new folder. */
+export function startContentMove(
+  target: string,
+): Promise<{ job: ContentMoveJob }> {
+  return apiFetch<{ job: ContentMoveJob }>(`${API_BASE_URL}/api/data-root/move`, {
+    method: "POST",
+    body: JSON.stringify({ target }),
+  });
+}
+
+/** GET /api/data-root/move/{id} — state, counters and the failure reason. */
+export function getContentMove(
+  id: string,
+): Promise<{ job: ContentMoveJob; last_move: LastContentMove | null }> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/move/${encodeURIComponent(id)}`);
+}
+
+/** POST /api/data-root/move/{id}/cancel — nothing is published if it stops. */
+export function cancelContentMove(
+  id: string,
+): Promise<{ job: ContentMoveJob }> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/move/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
+}
+
+/** GET /api/data-root/last-move — the record that gates the cleanup. */
+export function getLastContentMove(): Promise<{ last_move: LastContentMove | null }> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/last-move`);
+}
+
+/** POST /api/data-root/cleanup — delete the old copy, typed back exactly. */
+export function cleanupOldContent(
+  confirm: string,
+): Promise<{ removed: string; last_move: LastContentMove | null }> {
+  return apiFetch(`${API_BASE_URL}/api/data-root/cleanup`, {
+    method: "POST",
+    body: JSON.stringify({ confirm }),
+  });
+}
