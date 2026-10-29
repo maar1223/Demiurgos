@@ -23,6 +23,7 @@ export interface ContentRootInfo {
   configured: boolean;
   recorded_path: string | null;
   pending_restart: boolean;
+  pinned: boolean;
   usable: boolean;
   worlds: number;
   disk: ContentRootDisk;

@@ -157,11 +157,13 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --data-root)
             [ "$#" -ge 2 ] || fail "--data-root needs a path"
+            [ -n "$2" ] || fail "--data-root needs a non-empty path"
             DATA_ROOT_CHOICE="$2"
             shift 2
             ;;
         --data-root=*)
             DATA_ROOT_CHOICE="${1#--data-root=}"
+            [ -n "$DATA_ROOT_CHOICE" ] || fail "--data-root needs a non-empty path"
             shift
             ;;
         -h|--help)
@@ -174,7 +176,6 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-[ -n "$DATA_ROOT_CHOICE" ] || true
 if [ -n "$DATA_ROOT_CHOICE" ]; then
     case "$DATA_ROOT_CHOICE" in
         /*) ;;
@@ -498,11 +499,16 @@ read_pointer_value() {
 }
 
 # Byte-compatible with data_root.py (schema_version 1, indent 2, trailing
-# newline) so Python's read_pointer reads it back.
+# newline) so Python's read_pointer reads it back. The path is JSON-escaped: a
+# folder can validly contain a quote (POSIX) or a backslash (a POSIX path
+# with one, or a mounted Windows tree), and raw printf would write a record that
+# read_pointer rejects — or, worse, silently reads back a different path.
 write_pointer_record() {
+    local escaped
     mkdir -p "$CONFIG_DIR"
+    escaped="$(printf '%s' "$DATA_ROOT" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
     printf '{\n  "schema_version": 1,\n  "data_root": "%s",\n  "updated_at": "%s"\n}\n' \
-        "$DATA_ROOT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"
+        "$escaped" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"
 }
 
 ensure_content_dirs() {

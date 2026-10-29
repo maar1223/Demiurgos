@@ -1305,6 +1305,34 @@ class TestDataRootFlag:
         assert str(old) in result.stderr + result.stdout
         assert "reorient" in (result.stderr + result.stdout).lower()
 
+    @pytest.mark.parametrize("arg", [("--data-root", ""), ("--data-root=",)])
+    def test_an_empty_flag_never_installs_to_the_default(self, tmp_path: Path, arg):
+        """A path the author cleared must fail, not silently pick the default."""
+        env = _seed_env(tmp_path)
+
+        result = _run_seed_only(env, *arg)
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "non-empty" in (result.stderr + result.stdout)
+        pointer_dir = Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
+        assert list(pointer_dir.rglob("data-root.json")) == []
+        assert not (Path(env["HOME"]) / "Documents").exists()
+
+    @pytest.mark.parametrize(
+        "name", ['Mis "Mundos"', "mis\\mundos"]
+    )
+    def test_the_pointer_is_json_escaped(self, tmp_path: Path, name: str):
+        """A quote or a backslash must read back EXACTLY, not corrupt the record."""
+        env = _seed_env(tmp_path)
+        chosen = tmp_path / name
+
+        result = _run_seed_only(env, "--data-root", str(chosen))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos") == (
+            chosen.resolve()
+        )
+
     def test_an_unknown_argument_fails_instead_of_installing_elsewhere(
         self, tmp_path: Path
     ):

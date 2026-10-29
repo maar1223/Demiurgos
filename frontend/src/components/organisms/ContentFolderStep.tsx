@@ -114,7 +114,9 @@ export function ContentFolderStep({ onDone }: { onDone: () => void }) {
     );
   }
 
-  const pinnedByEnv = info?.origin === "env";
+  // `pinned` is the server's verdict: the shipped launchers export
+  // DEMIURGOS_DATA_ROOT from the pointer, so origin "env" alone means nothing.
+  const pinnedByEnv = info?.pinned === true;
   const unusable = info !== null && !info.usable;
 
   return (

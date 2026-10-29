@@ -65,6 +65,12 @@ describe("overlapsContentRoot", () => {
     );
   });
 
+  it("collapses dot segments the way the server resolves them", () => {
+    expect(overlapsContentRoot("/a/b/../c", "/a/c")).toBe(true);
+    expect(overlapsContentRoot("/a/./b", "/a/b")).toBe(true);
+    expect(overlapsContentRoot("/a/b/..", "/a")).toBe(true);
+  });
+
   it("never flags when a side is missing", () => {
     expect(overlapsContentRoot(ROOT, null)).toBe(false);
     expect(overlapsContentRoot("", ROOT)).toBe(false);

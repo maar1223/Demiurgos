@@ -28,7 +28,7 @@ Acceptance: a refused request persists nothing; an accepted one leaves the previ
 S8 — Decision (the Owner did not answer (a)/(b)/(c); the conservative branch is taken and recorded here): changing to a folder that holds no content while the current root holds worlds is **refused** until the chosen folder already holds content. Reversible by relaxing one predicate if the Owner prefers a warning.
 Acceptance: the refusal names both folders and never leaves the old content unreachable.
 
-S9 — Onboarding offers it, before the first world. A `content_folder` step enters `STEP_ORDER` immediately before `world`, is non-blocking, and never resurrects onboarding for an install that already completed it.
+S9 — Onboarding offers it, before the first world. A `content_folder` step enters `STEP_ORDER` before `world` in the derived flow (the tuple also carries the optional remote steps between them; the visual chain is step0 → account → content_folder → world), is non-blocking, and never resurrects onboarding for an install that already completed it.
 Acceptance: a fresh install reaches the step; an install whose onboarding is already complete keeps `completed: true` and never sees it again.
 
 S10 — The backup picker warns in the UI about a destination that overlaps the content root, so the API's 400 never arrives as a surprise.
@@ -38,7 +38,7 @@ Acceptance: choosing such a folder shows the reason before the request is sent.
 
 | ID | Task | Specs | Route | Status | Commit |
 |---|---|---|---|---|---|
-| T0 | Installer: `--data-root`/`-DataRoot` persists the choice; env keeps its meaning and seeds `.env`; visible notice | S1-S5 | inline | done (RED: 5 failed -> GREEN: 5 passed; installer contract 113 passed/5 skipped) | `e01797eb` |
+| T0 | Installer: `--data-root`/`-DataRoot` persists the choice; env keeps its meaning and seeds `.env`; visible notice | S1-S5 | inline | done + post-verification fixes (empty flag fails, pointer JSON-escaped) | `e01797eb` + fix commit |
 | T1 | `GET /api/data-root` with disk facts | S6 | inline | done (14 cells; mutation check: each guard removal fails its own cells) | `c9d2bf0d` |
 | T2 | `POST /api/data-root` with the guards | S7, S8 | inline | done (same commit) | `c9d2bf0d` |
 | T3 | `content_folder` step in `STEP_ORDER` | S9 | inline | done (RED: missing import -> 16 passed; 3 old flow pins updated) | `b55ef511` |
@@ -85,3 +85,16 @@ L13 (evidence) — Backend: **4423 passed, 24 skipped**. Frontend: 1583 tests in
 L14 (S10, closed) — `lib/contentRootOverlap.ts` mirrors `backup/state.py`: equal, inside or containing, in both directions. The picker refuses locally before sending, and the card warns when an already-chosen destination overlaps (the case where the content folder moved after the destination was picked). 11 cells on the helper and 2 on the section; the mock's default content root is a sibling so the pre-check stays out of the way of the other 18 cells. One difference from the server, recorded on purpose: a Windows path compares case-insensitively and a POSIX one does not, and `C:\` keeps its separator because `C:` is not a folder that reads as itself.
 
 L15 (final verification) — Backend **4423 passed / 24 skipped**. Frontend **1596 tests in 129 files**, `tsc --noEmit` clean, `npm run build` OK. `frontend/dist` rebuilt, so the step and the backup warning are visible with a forced reload. Branch `feat/content-folder-onboarding`: 5 commits, stacked on the step-3 branch, not pushed — push/PR are the Owner's decision.
+
+L16 (independent verification, item 1) — A read-only verifier ran over the whole step-4 delta against baseline `ee8cdcef`, in a scratch copy, and found **two blockers** the suite did not see:
+
+| Blocker | Why it mattered | Fix |
+|---|---|---|
+| **B1 — the change was unreachable in the shipped app.** `scripts/start-demiurgos.sh` (and the three `.ps1` launchers) always `export DEMIURGOS_DATA_ROOT` from the resolved pointer, so `origin == "env"` in production; the router refused every POST on that condition and the UI hid the form `origin === "env"` | The whole point of step 4 (choose another folder from the app) silently did not work — only a test that mimicked the launcher's environment could see it | `env_pins_root()`: the environment pins only when it DISAGREES with the pointer (or when there is no pointer). The payload reports `pinned`; the UI branches on it instead of on `origin` |
+| **B2 — `--data-root ""` / `--data-root=` installed to the default with exit 0** | An explicit empty value is never a legitimate choice; silently falling back to Documents is exactly the "author did not notice" failure this step exists to remove | The flag now requires a non-empty path and fails with usage |
+
+Advisories acted on: the pointer is JSON-escaped before it is written (a folder containing `"` or `\` used to produce an unreadable record or a silently different path); `restart_required` is now false when the POST repeats the folder already in use; `pending_restart` is false when the root is pinned (a restart cannot outrank the environment); the browser helper collapses `.`/`..` lexically like the server resolves them.
+
+Advisories left open, with the reason: the browser cannot resolve symlinks (the server still refuses, so the pre-check stays a courtesy); UNC paths are out of domain for that courtesy; `payload_manifest.json`'s `source_commit` records the parent commit because the generator stamps HEAD.
+
+Regression cells committed from the verifier's report: launcher-exported env does not freeze the folder, an empty flag fails, the pointer round-trips a quote and a backslash, a world keeps an old install complete, and dot segments collapse.

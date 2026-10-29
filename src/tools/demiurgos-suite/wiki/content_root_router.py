@@ -70,6 +70,23 @@ def _absolute(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 
 
+def env_pins_root(override: str, recorded: Path | None) -> bool:
+    """Whether the environment really pins the root.
+
+    The shipped launchers export ``DEMIURGOS_DATA_ROOT`` from the pointer they
+    just read (``scripts/start-demiurgos.sh``, ``start-demiurgos.ps1``,
+    ``start-api.ps1``, ``start-gateway.ps1``), so ``env == pointer`` is the
+    normal case in production and must NOT freeze the folder. A real override is
+    a value that DISAGREES with the record — or one that exists with no record
+    at all, where only the environment knows where the content is.
+    """
+    if not override:
+        return False
+    if recorded is None:
+        return True
+    return _absolute(override) != recorded
+
+
 def count_worlds(root: Path) -> int:
     """Worlds under ``<root>/mundos``; a missing folder counts zero."""
     worlds = Path(root) / WORLDS_DIRNAME
@@ -120,9 +137,12 @@ def create_content_root_router(
         if require_principal(request) is None:
             raise HTTPException(status_code=401, detail=_AUTH_REQUIRED_DETAIL)
 
+    def _override() -> str:
+        return (environ.get(resolver.ENV_VAR) or "").strip()
+
     def _in_use() -> tuple[Path | None, str]:
         """The root the RUNNING process uses, plus how it was resolved."""
-        override = (environ.get(resolver.ENV_VAR) or "").strip()
+        override = _override()
         try:
             if current_root is not None:
                 return _absolute(current_root()), (
@@ -143,13 +163,20 @@ def create_content_root_router(
     def _payload() -> dict[str, Any]:
         root, origin = _in_use()
         recorded = _recorded()
+        pinned = env_pins_root(_override(), recorded)
         payload: dict[str, Any] = {
             "path": None if root is None else str(root),
             "origin": origin,
             "configured": root is not None,
             "recorded_path": None if recorded is None else str(recorded),
+            # A restart can only help when nothing pins the root: with a real
+            # override the next start re-reads the same environment.
+            "pinned": pinned,
             "pending_restart": bool(
-                root is not None and recorded is not None and recorded != root
+                root is not None
+                and recorded is not None
+                and recorded != root
+                and not pinned
             ),
             "usable": False,
             "worlds": 0,
@@ -190,8 +217,8 @@ def create_content_root_router(
         folder it booted with until it restarts.
         """
         _guard(request)
-        root, origin = _in_use()
-        if origin == ORIGIN_ENV and root is not None:
+        root, _origin = _in_use()
+        if env_pins_root(_override(), _recorded()):
             raise HTTPException(
                 status_code=409,
                 detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),
@@ -233,6 +260,8 @@ def create_content_root_router(
             lambda chosen: resolver.write_pointer(chosen, config_dir=config_dir)
         )
         writer(target)
-        return {**_payload(), "restart_required": True}
+        # Rewriting the same folder changes nothing: no restart to ask for.
+        changed = root is None or target != root
+        return {**_payload(), "restart_required": changed}
 
     return router

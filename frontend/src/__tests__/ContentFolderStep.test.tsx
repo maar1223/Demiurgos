@@ -31,6 +31,7 @@ const INFO: ContentRootInfo = {
   configured: true,
   recorded_path: "/home/autora/Documentos/Demiurgos",
   pending_restart: false,
+  pinned: false,
   usable: true,
   worlds: 3,
   disk: { free_bytes: 52_428_800_000, total_bytes: 512_000_000_000, volume: null },
@@ -129,8 +130,18 @@ describe("ContentFolderStep", () => {
     expect(mocked.restart).toHaveBeenCalledWith("restart");
   });
 
+  it("offers the change when the launcher merely echoed the pointer", async () => {
+    mocked.get.mockResolvedValue({ ...INFO, origin: "env", pinned: false });
+    render(<ContentFolderStep onDone={vi.fn()} />);
+    await screen.findByTestId("content-folder-path");
+
+    expect(
+      screen.getByRole("button", { name: /cambiar carpeta|change folder/i }),
+    ).toBeInTheDocument();
+  });
+
   it("does not offer a change when the environment pins the folder", async () => {
-    mocked.get.mockResolvedValue({ ...INFO, origin: "env" });
+    mocked.get.mockResolvedValue({ ...INFO, origin: "env", pinned: true });
     render(<ContentFolderStep onDone={vi.fn()} />);
 
     expect(await screen.findByTestId("content-folder-env")).toBeInTheDocument();

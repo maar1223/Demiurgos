@@ -228,6 +228,63 @@ def test_a_folder_that_already_holds_worlds_is_accepted(tmp_path: Path) -> None:
     assert resolver.read_pointer(config_dir=config) == other.resolve()
 
 
+def test_the_launcher_exported_environment_does_not_freeze_the_folder(
+    tmp_path: Path,
+) -> None:
+    """The shipped launchers export DEMIURGOS_DATA_ROOT from the pointer.
+
+    That echo is the normal production case, not an author pin: refusing it made
+    the change unreachable in the real app (verification blocker B1).
+    """
+    current = _root(tmp_path, worlds=1)
+    other = _root(tmp_path / "otro", worlds=1)
+    config = _config(tmp_path)
+    _write_pointer(config, current)
+    env = {resolver.ENV_VAR: str(current)}  # exactly what start-demiurgos.sh exports
+
+    client = _client(tmp_path, root=current, config=config, env=env)
+    payload = client.get("/api/data-root").json()
+    assert payload["pinned"] is False
+    assert payload["origin"] == "env"
+
+    response = client.post("/api/data-root", json={"path": str(other)})
+
+    assert response.status_code == 200, response.text
+    assert resolver.read_pointer(config_dir=config) == other.resolve()
+
+
+def test_rewriting_the_folder_in_use_asks_for_no_restart(tmp_path: Path) -> None:
+    """No change, no restart: a false prompt teaches the author to ignore it."""
+    current = _root(tmp_path, worlds=1)
+    config = _config(tmp_path)
+    _write_pointer(config, current)
+
+    response = _client(tmp_path, root=current, config=config).post(
+        "/api/data-root", json={"path": str(current)}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["restart_required"] is False
+
+
+def test_a_real_override_disagreeing_with_the_pointer_is_pinned(
+    tmp_path: Path,
+) -> None:
+    """A restart cannot adopt a pointer the environment outranks: say so."""
+    recorded = _root(tmp_path, worlds=1)
+    in_use = _root(tmp_path / "override", worlds=1)
+    config = _config(tmp_path)
+    _write_pointer(config, recorded)
+    env = {resolver.ENV_VAR: str(in_use)}
+
+    payload = _client(tmp_path, root=in_use, config=config, env=env).get(
+        "/api/data-root"
+    ).json()
+
+    assert payload["pinned"] is True
+    assert payload["pending_restart"] is False
+
+
 def test_the_environment_pins_the_root_and_says_so(tmp_path: Path) -> None:
     current = _root(tmp_path, worlds=0)
     chosen = tmp_path / "otra"

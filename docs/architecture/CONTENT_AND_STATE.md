@@ -105,7 +105,15 @@ volume, and whether a recorded pointer still needs a restart. `POST
 It refuses, with a reason that names both paths: a relative path, something that
 is not an existing directory, a folder that overlaps the machine state, a folder
 that would hide existing worlds behind an empty one, and any change while
-`DEMIURGOS_DATA_ROOT` pins the root for the process.
+`DEMIURGOS_DATA_ROOT` really pins the root.
+
+**What "pins" means, and why it is not just "the env is set".** The shipped
+launchers export `DEMIURGOS_DATA_ROOT` from the pointer they just read, so in
+production `env == pointer` is the normal case; treating that as an author pin
+froze the folder and made the change unreachable (caught by an independent
+verification). A real override is an environment value that **disagrees** with
+the record — or one that exists with no record at all. GET reports it as
+`pinned`, and only then is a change refused and a restart not offered.
 
 **A recorded change takes effect on the next start.** Modules across the process
 resolve the data root once and cache it (`PROJECT_ROOT` and every store built
