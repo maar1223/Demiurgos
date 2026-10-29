@@ -110,3 +110,11 @@ Two things that state taught:
 2. The cleanup would have offered a confirmation that could only fail, because the old folder is a code checkout (`.git`). The record now carries `source_is_checkout`, and the UI explains it instead of asking for the path.
 
 Verification: backend **4480 passed / 24 skipped**, frontend **1617 tests**, typecheck and build clean (`index-_kq1jpBg.js`).
+
+L14 (the Owner launches from a desktop shortcut) — the installed `~/.local/share/applications/Demiurgos.desktop` still pointed at `scripts/start-demiurgos-linux.sh`, a compatibility alias that was deliberately removed (a test asserts it does not exist). Clicking it could not start anything; the launcher's own `install` action regenerates the entry from the current template. Regenerated and verified: `Exec=…/scripts/start-demiurgos.sh start`.
+
+And the real defect behind "fixed by the variable": the launcher exports `DEMIURGOS_DATA_ROOT` from the pointer it read AT BOOT, so right after the app moves the folder that echo disagrees with the record — indistinguishable, until now, from an author override. The app then told the author his folder was pinned by a variable he never set, right after doing the move itself.
+
+Fix: the app records the folder it wrote (`data-root-change.json` in the machine-state base) from both write paths (a move and a change of folder), and `pinned` ignores a disagreement the app itself caused, reporting `pending_restart` instead. Three cells: the stale echo is a restart, the same echo without an app change is still a pin, and recording a folder counts as an app change.
+
+Verification: backend **4483 passed / 24 skipped**, frontend **1617 tests**, typecheck and build clean (`index-rBA8HKOW.js`).

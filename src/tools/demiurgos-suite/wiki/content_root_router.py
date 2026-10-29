@@ -36,7 +36,11 @@ from backup.state import BackupStateError, read_destination
 from backup.sync_folder import TargetDecision, evaluate_target
 import folder_dialog
 from content_mover import MoveError, destination_candidates
-from content_move_service import ContentMoveService
+from content_move_service import (
+    ContentMoveService,
+    read_pointer_change,
+    record_pointer_change,
+)
 
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
@@ -187,7 +191,7 @@ def create_content_root_router(
     def _payload() -> dict[str, Any]:
         root, origin = _in_use()
         recorded = _recorded()
-        pinned = env_pins_root(_override(), recorded)
+        pinned = _pinned(recorded)
         payload: dict[str, Any] = {
             "path": None if root is None else str(root),
             "origin": origin,
@@ -233,14 +237,31 @@ def create_content_root_router(
         except resolver.DataRootNotConfigured:
             return None
 
-    def _record_dir() -> Path:
+    def _state_base() -> Path:
         """The machine-state base, never ``resolve_state_dir()``.
 
         Policy (ii) can answer ``<content root>/data``; a record written there
         would modify the source of the move it describes and be lost with it.
         """
-        base = resolver.resolve_state_root(environ=environ, state_dir=state_dir)
-        return base / "move"
+        return resolver.resolve_state_root(environ=environ, state_dir=state_dir)
+
+    def _record_dir() -> Path:
+        return _state_base() / "move"
+
+    def _pinned(recorded: Path | None) -> bool:
+        """Whether the environment really outranks the record.
+
+        After the APP writes the pointer, a launcher's boot-time
+        ``DEMIURGOS_DATA_ROOT`` echo disagrees with the record until the next
+        start. That is a pending restart, not an author override, and the app must
+        not claim the folder is "fixed by the variable" right after moving it.
+        """
+        if not env_pins_root(_override(), recorded):
+            return False
+        change = read_pointer_change(_state_base())
+        if change is None or recorded is None:
+            return True
+        return _absolute(str(change.get("path"))) != recorded
 
     def _service() -> ContentMoveService:
         if move_service is not None:
@@ -287,7 +308,7 @@ def create_content_root_router(
         """
         _guard(request)
         root, _origin = _in_use()
-        if env_pins_root(_override(), _recorded()):
+        if _pinned(_recorded()):
             raise HTTPException(
                 status_code=409,
                 detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),
@@ -329,6 +350,7 @@ def create_content_root_router(
             lambda chosen: resolver.write_pointer(chosen, config_dir=config_dir)
         )
         writer(target)
+        record_pointer_change(_state_base(), target)
         # Rewriting the same folder changes nothing: no restart to ask for.
         changed = root is None or target != root
         return {**_payload(), "restart_required": changed}
@@ -406,7 +428,7 @@ def create_content_root_router(
                 status_code=409,
                 detail="no content folder configured; set one before moving",
             )
-        if env_pins_root(_override(), _recorded()):
+        if _pinned(_recorded()):
             raise HTTPException(
                 status_code=409,
                 detail=REFUSAL_ENV_WINS.format(env=resolver.ENV_VAR),

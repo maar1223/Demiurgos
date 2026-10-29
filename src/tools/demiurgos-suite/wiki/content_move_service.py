@@ -25,6 +25,12 @@ from content_mover import MoveError, MovePlan
 
 #: The persisted record: the only thing that authorises deleting the old copy.
 RECORD_NAME = "content-move-last.json"
+
+#: The pointer was written by the app itself (a move or a change of folder).
+#: Without this, a launcher's ``DEMIURGOS_DATA_ROOT`` echo from boot looks exactly
+#: like an author override once the pointer has moved, and the app told the author
+#: "fixed by the variable" about something it had just done itself.
+POINTER_CHANGE_NAME = "data-root-change.json"
 RECORD_SCHEMA_VERSION = 1
 
 STATE_QUEUED = "queued"
@@ -48,6 +54,33 @@ def read_last_move(record_dir: Path) -> dict[str, Any] | None:
     if payload.get("schema_version") != RECORD_SCHEMA_VERSION:
         return None
     return payload
+
+
+def record_pointer_change(state_base: Path, written: Path) -> None:
+    """Note that the app recorded this content folder (best effort)."""
+    path = Path(state_base) / POINTER_CHANGE_NAME
+    payload = {
+        "schema_version": RECORD_SCHEMA_VERSION,
+        "path": str(Path(written).expanduser().resolve()),
+        "at": _utc_now(),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
+        temp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+    except OSError:
+        pass
+
+
+def read_pointer_change(state_base: Path) -> dict[str, Any] | None:
+    """The folder the app last recorded, or ``None``."""
+    path = Path(state_base) / POINTER_CHANGE_NAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _utc_now() -> str:
@@ -107,6 +140,7 @@ class ContentMoveService:
         record_dir: Path,
         publish: Callable[[Path], None] | None = None,
         pointer: Callable[[], Path | None] | None = None,
+        pointer_change_dir: Path | None = None,
         run_inline: bool = False,
     ) -> None:
         #: Where the record lives. This is NOT ``resolve_state_dir()``: policy (ii)
@@ -115,6 +149,11 @@ class ContentMoveService:
         self._record_dir = Path(record_dir)
         self._publish = publish
         self._pointer = pointer
+        self._pointer_change_dir = (
+            Path(pointer_change_dir)
+            if pointer_change_dir is not None
+            else self._record_dir.parent
+        )
         self._run_inline = run_inline
         self._lock = threading.Lock()
         self._jobs: dict[str, MoveJob] = {}
@@ -248,6 +287,8 @@ class ContentMoveService:
                 job.state = STATE_DONE
                 job.pointer_written = outcome.published
         finally:
+            if job.state == STATE_DONE and job.pointer_written:
+                record_pointer_change(self._pointer_change_dir, Path(job.target))
             job.finished_at = _utc_now()
             with self._lock:
                 self._active = None
