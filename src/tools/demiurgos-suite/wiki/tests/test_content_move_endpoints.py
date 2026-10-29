@@ -108,6 +108,30 @@ def test_a_refused_plan_never_starts_a_job(tmp_path: Path) -> None:
     assert not (target / "mundos").exists()
 
 
+def test_an_old_record_still_reports_that_the_source_is_a_checkout(
+    tmp_path: Path,
+) -> None:
+    """A record written before the field existed must not ask for a dead delete."""
+    root = _content_root(tmp_path)
+    service = _service(tmp_path, [])
+    client = _client(tmp_path, root, service)
+    started = client.post(
+        "/api/data-root/move-content", json={"target": str(_empty(tmp_path))}
+    )
+    assert started.status_code == 202, started.text
+    # Rewrite the record the way the older version wrote it: no checkout hint.
+    record = service.last_move()
+    assert record is not None
+    legacy = {k: v for k, v in record.items() if k != "source_is_checkout"}
+    service.record_path().write_text(json.dumps(legacy), encoding="utf-8")
+    (root / ".git").mkdir()
+
+    payload = client.get("/api/data-root/last-move").json()
+
+    assert payload["last_move"]["source_is_checkout"] is True
+    assert payload["last_move"]["source_exists"] is True
+
+
 def test_a_move_is_refused_while_another_one_runs(tmp_path: Path) -> None:
     root = _content_root(tmp_path)
     release = threading.Event()

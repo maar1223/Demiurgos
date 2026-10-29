@@ -118,3 +118,9 @@ And the real defect behind "fixed by the variable": the launcher exports `DEMIUR
 Fix: the app records the folder it wrote (`data-root-change.json` in the machine-state base) from both write paths (a move and a change of folder), and `pinned` ignores a disagreement the app itself caused, reporting `pending_restart` instead. Three cells: the stale echo is a restart, the same echo without an app change is still a pin, and recording a folder counts as an app change.
 
 Verification: backend **4483 passed / 24 skipped**, frontend **1617 tests**, typecheck and build clean (`index-rBA8HKOW.js`).
+
+L15 (his record predates the field) — after the restart the card offered the delete again: the record on his machine was written by the previous build, before `source_is_checkout` existed, so the UI had nothing to go on. The verdict is now computed live in `GET /move-content/{id}`, `/last-move` and `/cleanup`, so an old or hand-edited record still says "the old folder is a code checkout". A cell rewrites a record the old way and asserts the answer.
+
+Self-inflicted catch in that same cell: I wrote it against `/api/data-root/move`, the route I had just renamed away, so it silently got a 404 and produced no record. Fixed; a grep now asserts no test calls the old path (the one exception is the cell that documents the shadowing on purpose).
+
+Verification: backend **4484 passed / 24 skipped**, frontend **1617 tests in 132 files**, typecheck and build clean (`index-FWA-SKfR.js`).

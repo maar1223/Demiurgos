@@ -80,6 +80,7 @@ export interface LastContentMove {
   state: "done" | "failed" | "cancelled" | "cleaned";
   pointer_written: boolean;
   source_is_checkout?: boolean;
+  source_exists?: boolean;
   finished_at: string;
 }
 

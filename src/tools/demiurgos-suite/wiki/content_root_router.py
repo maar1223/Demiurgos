@@ -409,6 +409,24 @@ def create_content_root_router(
             return {"cancelled": True, "path": None}
         return {"cancelled": False, "path": str(chosen)}
 
+    def _decorate_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Add what the cleanup needs to know about the recorded source.
+
+        Computed live, not only stored: a record written before the field existed
+        (or edited by hand) must still tell the UI that the old folder is a code
+        checkout and cannot be deleted. The server refuses it either way; this is
+        what stops the UI from asking for a confirmation that can only fail.
+        """
+        if record is None:
+            return None
+        source = record.get("source")
+        enriched = dict(record)
+        enriched["source_exists"] = bool(source) and Path(str(source)).is_dir()
+        enriched["source_is_checkout"] = bool(source) and (
+            Path(str(source)) / ".git"
+        ).exists()
+        return enriched
+
     # -- move --------------------------------------------------------------
     # NOT "/move": `POST /api/{mundo}/move` (moving a file inside a world) is
     # registered earlier and matches `{mundo}="data-root"`, so a route named
@@ -452,7 +470,10 @@ def create_content_root_router(
         job = _service().get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="unknown move")
-        return {"job": job.to_dict(), "last_move": _service().last_move()}
+        return {
+            "job": job.to_dict(),
+            "last_move": _decorate_record(_service().last_move()),
+        }
 
     @router.post("/move-content/{job_id}/cancel")
     def cancel_move(request: Request, job_id: str) -> dict[str, Any]:
@@ -467,7 +488,7 @@ def create_content_root_router(
     def get_last_move(request: Request) -> dict[str, Any]:
         """The record of the last terminal move, which gates the cleanup."""
         _guard(request)
-        return {"last_move": _service().last_move()}
+        return {"last_move": _decorate_record(_service().last_move())}
 
     # -- cleanup -----------------------------------------------------------
     @router.post("/cleanup")
@@ -486,6 +507,6 @@ def create_content_root_router(
             message = str(exc)
             status = 400 if "type the folder exactly" in message else 409
             raise HTTPException(status_code=status, detail=message) from exc
-        return {"removed": removed, "last_move": _service().last_move()}
+        return {"removed": removed, "last_move": _decorate_record(_service().last_move())}
 
     return router
