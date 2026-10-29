@@ -75,7 +75,10 @@ default above; `<version>` is the installed `DEMIURGOS_VERSION` (e.g. `0.9.0`);
 
 The pointer is the byte-compatible format owned by `data_root.py`
 (`write_pointer`/`read_pointer`) — the installer reuses it and never
-re-implements the format. POSIX default location follows
+re-implements the format. The installer writes it for `--data-root PATH`
+(`-DataRoot` on Windows), the explicit install-time choice, and for the
+bootstrap default; `DEMIURGOS_DATA_ROOT` alone never writes it and says so in
+its output. The path is JSON-escaped before it lands in the record. POSIX default location follows
 `platformdirs` semantics (XDG_CONFIG_HOME/`~/.config`); Windows follows
 `%APPDATA%`. The installer writes the pointer only when neither the env nor a
 pointer exists (bootstrap-once).

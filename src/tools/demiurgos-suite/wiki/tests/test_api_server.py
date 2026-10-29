@@ -6239,6 +6239,27 @@ class TestOnboardingRoutes:
         resp = _post_step0(empty_client)
         assert resp.status_code == 200, resp.text
 
+    def test_content_folder_step_is_offered_and_commits(
+            self, empty_client: TestClient):
+        """Step 4: after the account the folder step is offered, and committing
+        it resumes at the world without storing a path (the pointer owns it)."""
+        api_server._LOCAL_STATE = None
+        assert _post_step0(empty_client).status_code == 200
+        registry = api_server._local_state()
+        registry.atomic_commit(
+            api_server._commit_account_created(registry.snapshot())
+        )
+        offered = empty_client.get("/api/onboarding/status").json()
+        assert offered["current_step"] == "content_folder"
+        assert "content_folder" in offered["pending_steps"]
+
+        committed = empty_client.post("/api/onboarding/content-folder")
+        assert committed.status_code == 200, committed.text
+        body = committed.json()
+        assert "content_folder" in body["completed_steps"]
+        assert body["current_step"] == "world"
+        assert body["completed"] is False
+
     def test_step0_write_fails_closed_without_principal_when_vault_on(
             self, empty_client: TestClient):
         """S-AC-02b — with the vault ON (persisted flag) unauthenticated
@@ -6468,13 +6489,13 @@ class TestWorldCreateEndpoint:
         assert login.json()["authenticated"] is True
         # step0 now resolves the real principal from the vault session. The
         # account step was already completed by the account creation above, so
-        # the flow resumes at world.
+        # the flow resumes at the content-folder step (step 4), before the world.
         step0 = _post_step0(empty_client)
         assert step0.status_code == 200, step0.text
         body = step0.json()
         assert "step0" in body["completed_steps"]
         assert "account" in body["completed_steps"]
-        assert body["current_step"] == "world"
+        assert body["current_step"] == "content_folder"
         # World creation resolves the same real principal (S-AC-02d satisfied).
         created = empty_client.post(
             "/api/worlds", json={"name": "real-mundo", "lore_skeleton": True})
@@ -9532,3 +9553,12 @@ def test_export_without_trigger_or_flow_keeps_the_old_manifest_shape(
     assert "trigger" not in manifest
     assert "guided_flow" not in manifest
     assert inspect_package(exported.content).ok
+
+
+def test_the_content_root_routes_are_mounted():
+    """Step 4: the app exposes the content root on /api/data-root (GET + POST)."""
+    import api_server
+
+    paths = api_server.app.openapi()["paths"]
+    assert "/api/data-root" in paths
+    assert set(paths["/api/data-root"]) == {"get", "post"}

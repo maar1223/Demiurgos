@@ -95,6 +95,32 @@ a later cleanup step can offer to remove it. A failed adoption is logged and the
 process keeps booting from the legacy tree — the pre-split behaviour — rather
 than refusing to start.
 
+## Choosing the folder
+
+`GET /api/data-root` reports the folder the running app uses, how it was resolved
+(`env` / `pointer`), how many worlds it holds, the free/total bytes and the
+volume, and whether a recorded pointer still needs a restart. `POST
+/api/data-root` records a new folder through `data_root.write_pointer`.
+
+It refuses, with a reason that names both paths: a relative path, something that
+is not an existing directory, a folder that overlaps the machine state, a folder
+that would hide existing worlds behind an empty one, and any change while
+`DEMIURGOS_DATA_ROOT` really pins the root.
+
+**What "pins" means, and why it is not just "the env is set".** The shipped
+launchers export `DEMIURGOS_DATA_ROOT` from the pointer they just read, so in
+production `env == pointer` is the normal case; treating that as an author pin
+froze the folder and made the change unreachable (caught by an independent
+verification). A real override is an environment value that **disagrees** with
+the record — or one that exists with no record at all. GET reports it as
+`pinned`, and only then is a change refused and a restart not offered.
+
+**A recorded change takes effect on the next start.** Modules across the process
+resolve the data root once and cache it (`PROJECT_ROOT` and every store built
+from it), so the pointer is rewritten but the running process keeps the folder it
+booted with; the payload says `restart_required` and GET reports
+`pending_restart` until the two agree. Nothing is moved, copied or deleted.
+
 ## Backup and restore
 
 The backup is the one feature that spans both roots:

@@ -5,6 +5,7 @@ import { createAccount } from "@/api/wiki";
 import type { OnboardingStatus } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { ContentFolderStep } from "@/components/organisms/ContentFolderStep";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -15,9 +16,10 @@ import type { MessageKey } from "@/i18n/messages";
 /**
  * First-run onboarding (OC1/OC2, Slice 1).
  *
- * Flow: step 0 (locale) → account (always active on a fresh install) → world
- * creation → ready. Remote steps (AI, Telegram, Backup) are NEVER blocking and
- * are reported as pending — they are resumed from the Profile (`/perfil`).
+ * Flow: step 0 (locale) → account (always active on a fresh install) → content
+ * folder (step 4: where the worlds live) → world creation → ready. Remote steps
+ * (AI, Telegram, Backup) are NEVER blocking and are reported as pending — they
+ * are resumed from the Profile (`/perfil`).
  * Completed steps are never replayed after a restart (server is
  * authoritative).
  *
@@ -157,6 +159,12 @@ export default function Onboarding() {
       });
   };
 
+  const handleContentFolderDone = () => {
+    // The step is committed server-side and nothing moved: refresh so the
+    // world step is offered next, on the folder the app actually has open.
+    loadStatus();
+  };
+
   const handleWordsConfirmed = () => {
     // Hide the one-time words card, then refresh the status: the account
     // step is done server-side, so the world step is offered next.
@@ -205,6 +213,8 @@ export default function Onboarding() {
               error={accountError}
               onSubmit={handleCreateAccount}
             />
+          ) : status.current_step === "content_folder" ? (
+            <ContentFolderStep onDone={handleContentFolderDone} />
           ) : (
             <WorldStep
               worldName={worldName}

@@ -1197,6 +1197,156 @@ class TestWindowsNoPrivateCloneOrNpm:
         assert "C:" + "\\Users" not in text
 
 
+# ---------------------------------------------------------------------------
+# Step 4 — the author chooses the content folder at install time (S1-S5)
+# ---------------------------------------------------------------------------
+
+
+def _seed_env(
+    tmp_path: Path,
+    *,
+    home: Path | None = None,
+    config: Path | None = None,
+) -> dict[str, str]:
+    """Hermetic env for the REAL installer's seed-only mode (no channel needed)."""
+    return {
+        "HOME": str(home if home is not None else tmp_path / "home"),
+        "XDG_CONFIG_HOME": str(config if config is not None else tmp_path / "config"),
+        "DEMIURGOS_HOME": str(tmp_path / "install"),
+        "DEMIURGOS_SEED_ONLY": "1",
+        "DEMIURGOS_LANGUAGE": "es",
+        "DEMIURGOS_NO_BROWSER": "1",
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+
+
+def _run_seed_only(
+    env: dict[str, str], *args: str, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(INSTALLER), *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=None if cwd is None else str(cwd),
+    )
+
+
+@POSIX_RUNNER
+class TestDataRootFlag:
+    """Step 4 (S1-S5): the install-time choice persists, asks nothing, and is visible."""
+
+    def test_the_flag_persists_the_choice(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        chosen = tmp_path / "discos" / "mis mundos"  # spaces must survive
+
+        result = _run_seed_only(env, "--data-root", str(chosen))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        pointer = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
+        assert pointer == chosen.resolve()
+        for folder in ("mundos", "ideas", "data", "config"):
+            assert (chosen / folder).is_dir()
+        assert (chosen / ".env").is_file()
+        # S3: the installer says where the content lives and how to change it.
+        assert str(chosen.resolve()) in result.stderr + result.stdout
+        assert "--data-root" in result.stderr + result.stdout
+        # S2: the choice never lands in the default folder instead.
+        assert not (Path(env["HOME"]) / "Documents").exists()
+
+    def test_a_relative_path_is_normalized_before_anything_is_written(
+        self, tmp_path: Path
+    ):
+        env = _seed_env(tmp_path)
+
+        result = _run_seed_only(env, "--data-root", "mis-mundos", cwd=tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        pointer = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
+        assert pointer == (tmp_path / "mis-mundos").resolve()
+
+    def test_the_env_alone_never_writes_a_pointer_but_does_seed_env(
+        self, tmp_path: Path
+    ):
+        """S4: the env stays an override, and stops leaving the app failing closed."""
+        worlds = tmp_path / "worlds"
+        worlds.mkdir()
+        env = {**_seed_env(tmp_path), "DEMIURGOS_DATA_ROOT": str(worlds)}
+
+        result = _run_seed_only(env)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        pointer_dir = Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
+        assert list(pointer_dir.rglob("data-root.json")) == []
+        assert (worlds / ".env").is_file()
+        assert "DEMIURGOS_AUTH_MODE=local-dev" in (worlds / ".env").read_text("utf-8")
+        assert (worlds / "mundos").is_dir()
+        # S3: the env-only path says the choice was NOT recorded.
+        assert "not recorded" in (result.stderr + result.stdout).lower()
+
+    def test_the_flag_reorients_a_pointer_and_says_so(self, tmp_path: Path):
+        """S5: only an explicit flag may re-orient; the change is announced."""
+        config = tmp_path / "config"
+        (config / "demiurgos").mkdir(parents=True)
+        old = tmp_path / "viejo"
+        (config / "demiurgos" / "data-root.json").write_text(
+            '{\n  "schema_version": 1,\n  "data_root": "%s",\n'
+            '  "updated_at": "2026-09-17T17:15:28Z"\n}\n' % old,
+            encoding="utf-8",
+        )
+        env = _seed_env(tmp_path, config=config)
+        chosen = tmp_path / "nuevo"
+
+        result = _run_seed_only(env, "--data-root", str(chosen))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _read_pointer(config / "demiurgos") == chosen.resolve()
+        assert str(old) in result.stderr + result.stdout
+        assert "reorient" in (result.stderr + result.stdout).lower()
+
+    @pytest.mark.parametrize("arg", [("--data-root", ""), ("--data-root=",)])
+    def test_an_empty_flag_never_installs_to_the_default(self, tmp_path: Path, arg):
+        """A path the author cleared must fail, not silently pick the default."""
+        env = _seed_env(tmp_path)
+
+        result = _run_seed_only(env, *arg)
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "non-empty" in (result.stderr + result.stdout)
+        pointer_dir = Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
+        assert list(pointer_dir.rglob("data-root.json")) == []
+        assert not (Path(env["HOME"]) / "Documents").exists()
+
+    @pytest.mark.parametrize(
+        "name", ['Mis "Mundos"', "mis\\mundos"]
+    )
+    def test_the_pointer_is_json_escaped(self, tmp_path: Path, name: str):
+        """A quote or a backslash must read back EXACTLY, not corrupt the record."""
+        env = _seed_env(tmp_path)
+        chosen = tmp_path / name
+
+        result = _run_seed_only(env, "--data-root", str(chosen))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos") == (
+            chosen.resolve()
+        )
+
+    def test_an_unknown_argument_fails_instead_of_installing_elsewhere(
+        self, tmp_path: Path
+    ):
+        """S2: a typo must never silently install to the default folder."""
+        env = _seed_env(tmp_path)
+
+        result = _run_seed_only(env, "--data-rot", str(tmp_path / "x"))
+
+        assert result.returncode != 0
+        assert "usage" in (result.stderr + result.stdout).lower()
+        pointer_dir = Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
+        assert list(pointer_dir.rglob("data-root.json")) == []
+
+
 class TestWindowsDataRootDocumentsDefault:
     """Step 3 (S1/S2): the .ps1 bootstrap default is <documents>\\Demiurgos.
 
@@ -1218,6 +1368,34 @@ class TestWindowsDataRootDocumentsDefault:
         for folder in ("mundos", "ideas", "data", "config"):
             assert f'Join-Path $script:dataRoot "{folder}"' in text
         assert 'Join-Path $installRoot "data"' not in text
+
+
+class TestWindowsDataRootFlag:
+    """Step 4 (S1-S5) parity: the .ps1 accepts -DataRoot and persists it.
+
+    No PowerShell on this host, so these are text pins: the POSIX cells above
+    run the real script end to end; this one keeps the two implementations
+    from drifting.
+    """
+
+    def test_ps1_takes_the_choice_as_a_parameter(self):
+        text = _text(PS_INSTALLER)
+        assert "[string]$DataRoot" in text
+        # PowerShell requires param() before any executable statement.
+        assert text.index("param(") < text.index('$ErrorActionPreference = "Stop"')
+        # A relative value is absolute before anything is written.
+        assert "[System.IO.Path]::GetFullPath($DataRoot)" in text
+
+    def test_ps1_persists_reorients_and_warns_like_the_posix_core(self):
+        text = _text(PS_INSTALLER)
+        assert "function Write-PointerRecord" in text
+        assert "reorienting the data root on explicit request" in text
+        assert "(override; the choice is NOT recorded)" in text
+        assert "the author content lives in" in text
+        # The env branch never writes a pointer.
+        env_branch = text.split("if ($env:DEMIURGOS_DATA_ROOT)")[1]
+        before_return = env_branch.split("return")[0]
+        assert "Write-PointerRecord" not in before_return
 
 
 class TestWindowsWheelsOnlyHashLocked:

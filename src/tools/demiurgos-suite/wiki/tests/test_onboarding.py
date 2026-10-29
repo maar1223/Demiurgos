@@ -19,6 +19,7 @@ from onboarding import (  # noqa: E402
     REMOTE_STEPS,
     STEP_ORDER,
     commit_account_created,
+    commit_content_folder,
     commit_step0,
     commit_world_created,
     default_onboarding,
@@ -65,7 +66,7 @@ def test_after_step0_without_account_current_step_is_account() -> None:
     assert "account" in status["blocking_pending"]
 
 
-def test_after_account_without_world_current_step_is_world() -> None:
+def test_after_account_the_folder_step_comes_before_the_world() -> None:
     state = commit_step0(
         _fresh_state(),
         {"ui": "en", "conversation": "en", "content": "en",
@@ -75,9 +76,12 @@ def test_after_account_without_world_current_step_is_world() -> None:
     state = commit_account_created(state)
     status = status_from(state, world_names=[])
     assert status["completed"] is False
-    assert status["current_step"] == "world"
+    # Step 4 puts the folder question between the account and the world.
+    assert status["current_step"] == "content_folder"
     assert "account" in status["completed_steps"]
     assert "account" not in status["pending_steps"]
+    after_folder = status_from(commit_content_folder(state), world_names=[])
+    assert after_folder["current_step"] == "world"
 
 
 def test_completed_requires_step0_account_and_world() -> None:
@@ -190,5 +194,57 @@ def test_account_commit_marks_blocking_step() -> None:
     )
     after = commit_account_created(state)
     assert "account" in after["onboarding"]["completed_steps"]
-    assert after["onboarding"]["current_step"] == "world"
+    # Step 4: the persisted hint points at the folder step, before the world.
+    assert after["onboarding"]["current_step"] == "content_folder"
     assert after["onboarding"]["completed"] is False
+
+# ---------------------------------------------------------------------------
+# Step 4 — the content-folder step runs once, before the first world
+# ---------------------------------------------------------------------------
+
+
+def test_the_content_folder_step_sits_before_the_world() -> None:
+    """S9: the author decides the folder before the first world lands in it."""
+    assert STEP_ORDER.index("content_folder") < STEP_ORDER.index("world")
+    assert STEP_ORDER.index("content_folder") > STEP_ORDER.index("account")
+
+
+def test_after_the_account_the_folder_step_is_offered() -> None:
+    state = {"onboarding": {"completed": False, "completed_steps": ["step0", "account"]}}
+    status = status_from(state, world_names=[])
+    assert status["current_step"] == "content_folder"
+    assert "content_folder" in status["pending_steps"]
+    # Offering it never blocks completion: only step0, account and world do.
+    assert "content_folder" not in status["blocking_pending"]
+    assert status["completed"] is False
+
+
+def test_committing_the_folder_step_moves_on_to_the_world() -> None:
+    state = {"onboarding": {"completed": False, "completed_steps": ["step0", "account"]}}
+    next_state = commit_content_folder(state)
+    status = status_from(next_state, world_names=[])
+    assert "content_folder" in status["completed_steps"]
+    assert status["current_step"] == "world"
+    assert status["completed"] is False
+
+
+def test_an_install_that_already_has_worlds_never_sees_the_step_again() -> None:
+    """S9: adding a step must not resurrect onboarding for an existing install."""
+    state = {
+        "onboarding": {
+            "completed": True,
+            "completed_steps": ["step0", "account", "world", "ready"],
+        }
+    }
+    status = status_from(state, world_names=["Avalor"])
+    assert "content_folder" not in status["pending_steps"]
+    assert status["current_step"] == "ready"
+    assert status["completed"] is True
+
+
+def test_skipping_the_folder_step_still_completes_with_a_world() -> None:
+    """Non-blocking: creating a world settles the question implicitly."""
+    state = {"onboarding": {"completed": False, "completed_steps": ["step0", "account"]}}
+    status = status_from(commit_world_created(state), world_names=["Avalor"])
+    assert status["completed"] is True
+    assert "content_folder" not in status["pending_steps"]
