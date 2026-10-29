@@ -124,8 +124,10 @@ jobs:
                    start-gateway.ps1 scripts/start-demiurgos.sh \
                    scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
                    scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
+                   scripts/lib/desktop-shortcut.ps1 \
                    desktop/Demiurgos.desktop \
                    "docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg" \
+                   docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico \
                    requirements.lock requirements-optional.txt; do
             [ -f "$f" ] || { echo "warn: extra missing: $f" >&2; continue; }
             mkdir -p "$stage/$(dirname "$f")"
@@ -152,8 +154,10 @@ jobs:
           scripts/install-demiurgos.ps1
           scripts/lib/verify_checksum.sh
           scripts/lib/verify_checksum.ps1
+          scripts/lib/desktop-shortcut.ps1
           desktop/Demiurgos.desktop
           docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg
+          docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico
           requirements.lock
           requirements-optional.txt
           LICENSE
@@ -217,8 +221,10 @@ jobs:
             'start-gateway.ps1', 'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
+            'scripts/lib/desktop-shortcut.ps1',
             'desktop/Demiurgos.desktop',
             'docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg',
+            'docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico',
             'requirements.lock', 'requirements-optional.txt'
           )
           foreach ($f in $extras) {
@@ -243,8 +249,10 @@ jobs:
             'start-gateway.ps1', 'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
+            'scripts/lib/desktop-shortcut.ps1',
             'desktop/Demiurgos.desktop',
             'docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg',
+            'docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico',
             'requirements.lock', 'requirements-optional.txt', 'LICENSE',
             'frontend/dist/'
           ) | Set-Content -Encoding ascii $allowFile

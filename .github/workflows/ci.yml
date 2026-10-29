@@ -345,11 +345,51 @@ jobs:
           foreach ($f in @(
             'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
             'start-gateway.ps1', 'scripts/install-demiurgos.ps1',
-            'scripts/lib/verify_checksum.ps1', 'scripts/install-cli-stack.ps1'
+            'scripts/lib/verify_checksum.ps1', 'scripts/lib/desktop-shortcut.ps1',
+            'scripts/install-cli-stack.ps1'
           )) {
             [scriptblock]::Create((Get-Content -Raw -LiteralPath $f)) | Out-Null
           }
           Write-Output 'PS 5.1 parse OK'
+
+      - name: Desktop shortcut contract (real .lnk on Windows)
+        # The lib is the single owner of the Windows desktop-integration rule:
+        # the Start Menu entry is automatic, the Desktop icon is opt-in. This
+        # cell executes it for real and reads the written .lnk back through
+        # WScript.Shell, so the target/arguments/icon contract cannot drift.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'desktop-shortcut'
+          if (Test-Path $base) { Remove-Item -Recurse -Force $base }
+          $programs = Join-Path $base 'Programs'
+          $desktop = Join-Path $base 'Desktop'
+          New-Item -ItemType Directory -Force -Path $desktop | Out-Null
+          . ./scripts/lib/desktop-shortcut.ps1
+
+          $startMenuOnly = Install-DemiurgosShortcuts -AppRoot $PWD.Path `
+            -ProgramsDirectory $programs -DesktopDirectory $desktop
+          if (@($startMenuOnly).Count -ne 1) {
+            throw "expected one shortcut without -Desktop, got $(@($startMenuOnly).Count)"
+          }
+          if (Test-Path (Join-Path $desktop 'Demiurgos.lnk')) {
+            throw 'the desktop icon must stay opt-in'
+          }
+
+          $both = Install-DemiurgosShortcuts -AppRoot $PWD.Path -Desktop `
+            -ProgramsDirectory $programs -DesktopDirectory $desktop
+          if (@($both).Count -ne 2) {
+            throw "expected two shortcuts with -Desktop, got $(@($both).Count)"
+          }
+
+          $lnk = Join-Path $desktop 'Demiurgos.lnk'
+          if (-not (Test-Path -LiteralPath $lnk)) { throw 'the desktop shortcut was not written' }
+          $shell = New-Object -ComObject WScript.Shell
+          $sc = $shell.CreateShortcut($lnk)
+          if ($sc.TargetPath -notlike '*powershell.exe') { throw "bad target: $($sc.TargetPath)" }
+          if ($sc.Arguments -notlike '*start-demiurgos.ps1*start*') { throw "bad arguments: $($sc.Arguments)" }
+          if ($sc.IconLocation -notlike '*demiurgos.ico*') { throw "bad icon: $($sc.IconLocation)" }
+          Write-Output 'desktop shortcut OK'
 
       - name: Payload audit runtime regression (allow-list must apply)
         # Bug 1 guard: PowerShell variable names are CASE-INSENSITIVE, so the
