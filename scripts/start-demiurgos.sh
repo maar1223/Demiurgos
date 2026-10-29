@@ -12,7 +12,7 @@
 # system Python: the interpreter always comes from the layout venv
 # (PYTHON_BIN) and the data-root .env is parsed in pure shell.
 #
-# Actions: start | restart | stop | install
+# Actions: start | restart | stop | install [--desktop]
 #
 # Bounded boot rollback (S6-2/D6): readiness requires a real HTTP 200 on
 # GET /health. When the new version fails to boot, the launcher falls back
@@ -96,23 +96,22 @@ HEALTH_POLLS="${DEMIURGOS_HEALTH_POLLS:-20}"
 HEALTH_POLL_INTERVAL="${DEMIURGOS_HEALTH_POLL_INTERVAL:-1}"
 
 DESKTOP_SOURCE="$APP_ROOT/desktop/Demiurgos.desktop"
-APPLICATIONS_DIR="$HOME/.local/share/applications"
-DESKTOP_DIR="$HOME/Desktop"
 
-# --- Default content root: the OS documents folder (step 3) ----------------
-# Author content belongs with the author's documents, not inside the install
-# root (where, on Windows, it would land inside the state root). The folder is
-# resolved through the OS contract and never hardcoded: freedesktop keeps the
-# localized path in user-dirs.dirs (~/Documentos, ~/Documenti, ...), so a
-# literal ~/Documents would create a second, English folder next to it. Pure
-# shell — no xdg-user-dir binary and no Python. Prints the folder only.
-documents_dir() {
+# --- freedesktop user directories -----------------------------------------
+# One resolver for every XDG user dir the launcher needs. freedesktop keeps
+# the localized path in user-dirs.dirs (~/Documentos, ~/Escritorio, ...), so a
+# literal ~/Documents or ~/Desktop would miss the folder the user actually
+# sees and create a second, English one next to it. Pure shell — no
+# xdg-user-dir binary and no Python. Prints the folder only.
+xdg_user_dir() {
+    local key="$1" fallback="$2"
+    local pattern='^[[:space:]]*'"$key"'[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$'
     local user_dirs="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" raw=""
     if [ -r "$user_dirs" ]; then
-        raw="$(sed -n 's/^[[:space:]]*XDG_DOCUMENTS_DIR[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$user_dirs" 2>/dev/null | sed -n '1p')"
+        raw="$(sed -n "s/${pattern}/\1/p" "$user_dirs" 2>/dev/null | sed -n '1p')"
     fi
     case "$raw" in
-        '') printf '%s\n' "$HOME/Documents" ;;
+        '') printf '%s\n' "$fallback" ;;
         '$HOME') printf '%s\n' "$HOME" ;;
         '$HOME/'*) printf '%s\n' "$HOME/${raw#\$HOME/}" ;;
         '${HOME}') printf '%s\n' "$HOME" ;;
@@ -120,6 +119,18 @@ documents_dir() {
         *) printf '%s\n' "$raw" ;;
     esac
 }
+
+# Default content root (step 3): author content belongs with the author's
+# documents, not inside the install root (where, on Windows, it would land
+# inside the state root).
+documents_dir() { xdg_user_dir XDG_DOCUMENTS_DIR "$HOME/Documents"; }
+
+# Visible Desktop folder (icon contract, opt-in — see install_desktop).
+desktop_dir() { xdg_user_dir XDG_DESKTOP_DIR "$HOME/Desktop"; }
+
+# Applications-menu directory: the freedesktop data home, never a bare
+# ~/.local, and the same rule the installer core applies to its own write.
+applications_dir() { printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"; }
 
 # --- Data-root resolution (S2-3) -------------------------------------------
 # Order: existing env -> existing pointer (left intact) -> bootstrap-once the
@@ -680,33 +691,54 @@ show_status() {
     fi
 }
 
+# --- desktop integration (freedesktop menu + opt-in Desktop icon) ---------
+# Two separate contracts, deliberately not one:
+#   - the applications-menu entry is standard behavior; `install` always
+#     writes it (the installer core writes its own copy at install time);
+#   - the visible Desktop icon lives in the user's own space and is written
+#     ONLY with `--desktop`. A copied-down .desktop also shows up as an
+#     "Untrusted application launcher" on GNOME/Nautilus until it is marked
+#     metadata::trusted, so creating it behind the user's back looks broken
+#     instead of helpful.
 install_desktop() {
+    local with_icon="$1" menu_dir="" icon_dir=""
     [ -f "$DESKTOP_SOURCE" ] || { printf 'Desktop file missing: %s\n' "$DESKTOP_SOURCE" >&2; return 1; }
-    mkdir -p "$APPLICATIONS_DIR"
-    # Substitute the app-root placeholder so the launcher survives moves.
+    menu_dir="$(applications_dir)"
+    mkdir -p "$menu_dir"
+    # Substitute the app-root placeholder so the entry survives moves and
+    # upgrades: APP_ROOT is the logical `current` path, not a version dir.
     sed "s|@PROJECT_ROOT@|$APP_ROOT|g" "$DESKTOP_SOURCE" \
-        > "$APPLICATIONS_DIR/Demiurgos.desktop"
-    chmod 0644 "$APPLICATIONS_DIR/Demiurgos.desktop"
-    if [ -d "$DESKTOP_DIR" ]; then
-        sed "s|@PROJECT_ROOT@|$APP_ROOT|g" "$DESKTOP_SOURCE" \
-            > "$DESKTOP_DIR/Demiurgos.desktop"
-        chmod 0755 "$DESKTOP_DIR/Demiurgos.desktop"
+        > "$menu_dir/Demiurgos.desktop"
+    chmod 0644 "$menu_dir/Demiurgos.desktop"
+    printf 'Installed: %s/Demiurgos.desktop\n' "$menu_dir"
+    [ "$with_icon" = "1" ] || return 0
+    icon_dir="$(desktop_dir)"
+    if [ ! -d "$icon_dir" ]; then
+        printf 'Desktop folder not found (%s); skipped the desktop icon.\n' "$icon_dir" >&2
+        return 0
     fi
-    printf 'Installed: %s/Demiurgos.desktop\n' "$APPLICATIONS_DIR"
-    [ -d "$DESKTOP_DIR" ] && printf 'Installed: %s/Demiurgos.desktop\n' "$DESKTOP_DIR"
+    # A read-only or otherwise unwritable Desktop must not fail `install`: the
+    # menu entry is already written and the icon was never a requirement.
+    sed "s|@PROJECT_ROOT@|$APP_ROOT|g" "$DESKTOP_SOURCE" 2>/dev/null \
+        > "$icon_dir/Demiurgos.desktop" \
+        || { printf 'Cannot write %s/Demiurgos.desktop; skipped the desktop icon.\n' "$icon_dir" >&2; return 0; }
+    chmod 0755 "$icon_dir/Demiurgos.desktop"
+    printf 'Installed: %s/Demiurgos.desktop\n' "$icon_dir"
 }
 
 usage() {
-    printf 'Usage: %s [--build-if-stale] {start|restart|stop|install}\n' "$0"
+    printf 'Usage: %s [--build-if-stale] {start|restart|stop} | install [--desktop]\n' "$0"
 }
 
 BUILD_IF_STALE=0
+WITH_DESKTOP_ICON=0
 
 main() {
     local action="" arg
     for arg in "$@"; do
         case "$arg" in
             --build-if-stale) BUILD_IF_STALE=1 ;;
+            --desktop) WITH_DESKTOP_ICON=1 ;;
             start|restart|stop|install) action="$arg" ;;
             *) usage >&2; return 2 ;;
         esac
@@ -719,7 +751,7 @@ main() {
         # opening a new tab would double-enter the app.
         restart) stop_all; start_all; show_status ;;
         stop) stop_all ;;
-        install) install_desktop ;;
+        install) install_desktop "$WITH_DESKTOP_ICON" ;;
     esac
 }
 
