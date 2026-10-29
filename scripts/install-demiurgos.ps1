@@ -435,6 +435,18 @@ function Invoke-SeedEnvFile {
     }
 }
 
+function Get-DocumentsDir {
+    # Default content root (step 3): the OS documents folder, never a literal
+    # $env:USERPROFILE\Documents. The shell API follows a redirection (OneDrive
+    # Known Folder Move) and the user's localized folder name. Pure .NET, no
+    # extra module.
+    $path = [Environment]::GetFolderPath('MyDocuments')
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        $path = Join-Path $env:USERPROFILE 'Documents'
+    }
+    return $path
+}
+
 function Invoke-DataRootBootstrap {
     if ($env:DEMIURGOS_DATA_ROOT) {
         $script:dataRoot = $env:DEMIURGOS_DATA_ROOT
@@ -458,7 +470,7 @@ function Invoke-DataRootBootstrap {
     # (schema_version 1, json.dumps indent 2, trailing newline) so Python's
     # read_pointer reads it back. UTF-8 without BOM: a Windows username may
     # legally contain non-ASCII characters.
-    $script:dataRoot = Join-Path $installRoot "data"
+    $script:dataRoot = Join-Path (Get-DocumentsDir) "Demiurgos"
     New-Item -ItemType Directory -Force -Path $configDir, $script:dataRoot,
         (Join-Path $script:dataRoot "mundos"), (Join-Path $script:dataRoot "ideas"),
         (Join-Path $script:dataRoot "data"), (Join-Path $script:dataRoot "config") | Out-Null

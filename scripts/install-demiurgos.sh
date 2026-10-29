@@ -414,6 +414,26 @@ seed_env_file() {
     fi
 }
 
+# Default content root (step 3): the OS documents folder, resolved through the
+# freedesktop contract and never hardcoded. A localized desktop keeps it in
+# ~/Documentos (or ~/Documenti, ...), so a literal ~/Documents would create a
+# second, English folder next to the one the user sees. Pure shell: no
+# xdg-user-dir binary and no Python. Prints the folder only.
+documents_dir() {
+    local user_dirs="${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" raw=""
+    if [ -r "$user_dirs" ]; then
+        raw="$(sed -n 's/^[[:space:]]*XDG_DOCUMENTS_DIR[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$user_dirs" 2>/dev/null | sed -n '1p')"
+    fi
+    case "$raw" in
+        '') printf '%s\n' "$HOME/Documents" ;;
+        '$HOME') printf '%s\n' "$HOME" ;;
+        '$HOME/'*) printf '%s\n' "$HOME/${raw#\$HOME/}" ;;
+        '${HOME}') printf '%s\n' "$HOME" ;;
+        '${HOME}/'*) printf '%s\n' "$HOME/${raw#\$\{HOME\}/}" ;;
+        *) printf '%s\n' "$raw" ;;
+    esac
+}
+
 bootstrap_data_root() {
     local pointed
     if [ -n "${DEMIURGOS_DATA_ROOT:-}" ]; then
@@ -433,7 +453,7 @@ bootstrap_data_root() {
     # Bootstrap-once: pointer + .env seed, only when neither env nor pointer
     # exists. Format is byte-compatible with data_root.py (schema_version 1,
     # indent 2, trailing newline) so Python's read_pointer reads it back.
-    DATA_ROOT="$INSTALL_ROOT/data"
+    DATA_ROOT="$(documents_dir)/Demiurgos"
     mkdir -p "$CONFIG_DIR" "$DATA_ROOT" "$DATA_ROOT/mundos" "$DATA_ROOT/ideas" "$DATA_ROOT/data" "$DATA_ROOT/config"
     printf '{\n  "schema_version": 1,\n  "data_root": "%s",\n  "updated_at": "%s"\n}\n' \
         "$DATA_ROOT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$POINTER_FILE"

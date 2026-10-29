@@ -4,7 +4,8 @@
 The portable POSIX launcher (``scripts/start-demiurgos.sh``) resolves the data
 root in this order (INSTALL_LAYOUT.md §2.4): existing env
 ``DEMIURGOS_DATA_ROOT`` -> existing pointer (left intact) -> bootstrap-once
-the default ``<install_root>/data``. The forced ``export
+the default ``<documents>/Demiurgos`` (step 3; it was ``<install_root>/data``).
+The forced ``export
 DEMIURGOS_DATA_ROOT="$PROJECT_ROOT"`` of the old Linux launcher is gone.
 ``DEMIURGOS_ROOT`` stays for legacy Hermes reads, and
 ``DEMIURGOS_FRONTEND_DIST`` is exported by the launcher and by nothing else
@@ -74,6 +75,144 @@ def test_portable_launcher_resolves_env_then_pointer_then_bootstrap():
     assert "${DEMIURGOS_DATA_ROOT:-}" in text
     assert "data-root.json" in text
     assert "bootstrap" in text.lower()
+
+
+def test_portable_launcher_bootstraps_documents_not_the_install_root():
+    """Step 3 (S1): the bootstrap default is <documents>/Demiurgos.
+
+    The pre-step-3 default `<install_root>/data` would put author content
+    inside the install tree — and on Windows inside the state root."""
+    text = _text(PORTABLE_LAUNCHER)
+    assert "$INSTALL_ROOT/data" not in text
+    assert 'DATA_ROOT="$(documents_dir)/Demiurgos"' in text
+
+
+def test_powershell_launchers_bootstrap_documents_not_the_install_root():
+    """Step 3 (S1/S2): the Windows bootstrap default is Documents\\Demiurgos.
+
+    ``[Environment]::GetFolderPath('MyDocuments')`` is the shell's own
+    resolution, so a OneDrive Known Folder Move or a localized folder is
+    followed; ``%USERPROFILE%\\Documents`` is only the last-resort fallback."""
+    for path in (PS_STACK, PS_API, PS_GATEWAY):
+        text = _text(path)
+        assert 'Join-Path $installRoot "data"' not in text
+        assert '$root = Join-Path (Get-DocumentsDir) "Demiurgos"' in text
+        assert "function Get-DocumentsDir" in text
+        assert "[Environment]::GetFolderPath('MyDocuments')" in text
+        assert "Join-Path $env:USERPROFILE 'Documents'" in text
+
+
+_POSIX_BASH = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe: on Windows a bare `bash` is the WSL stub",
+)
+
+
+def _source_probe(tmp_path: Path, script: str, *, user_dirs: str | None) -> str:
+    """Source the real launcher and run `script` inside it.
+
+    Hermetic: HOME and XDG_CONFIG_HOME point into `tmp_path`, so the pointer
+    and user-dirs.dirs are tmp files and the developer's real config is never
+    read or written. `main` is not executed (the script runs it only when it is
+    executed, not sourced).
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "config"
+    config.mkdir()
+    if user_dirs is not None:
+        (config / "user-dirs.dirs").write_text(user_dirs, encoding="utf-8")
+    env = {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(config),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    result = subprocess.run(
+        ["bash", "-c", script, "bash", str(PORTABLE_LAUNCHER)],
+        env=env, capture_output=True, text=True, timeout=30, cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@_POSIX_BASH
+def test_documents_dir_follows_the_localized_xdg_folder(tmp_path):
+    """S2: a Spanish desktop names it ~/Documentos; never a second, English one."""
+    out = _source_probe(
+        tmp_path,
+        'source "$1" __probe__; documents_dir',
+        user_dirs='XDG_DOCUMENTS_DIR="$HOME/Documentos"\n',
+    )
+    assert out.rstrip("\n") == str(tmp_path / "home" / "Documentos")
+
+
+@_POSIX_BASH
+def test_documents_dir_falls_back_to_english_when_xdg_is_silent(tmp_path):
+    out = _source_probe(
+        tmp_path,
+        'source "$1" __probe__; documents_dir',
+        user_dirs='XDG_DESKTOP_DIR="$HOME/Desktop"\n',
+    )
+    assert out.rstrip("\n") == str(tmp_path / "home" / "Documents")
+
+
+@_POSIX_BASH
+def test_bootstrap_writes_the_pointer_under_the_documents_folder(tmp_path):
+    """S1-S3: with no env and no pointer, the bootstrap default is Documents."""
+    out = _source_probe(
+        tmp_path,
+        'source "$1" __probe__; resolve_data_root >/dev/null 2>&1; '
+        'printf "%s|%s" "${DATA_ROOT:-UNSET}" "$POINTER_FILE"',
+        user_dirs='XDG_DOCUMENTS_DIR="$HOME/Documentos"\n',
+    )
+    data_root, pointer_file = out.split("|")
+    expected = tmp_path / "home" / "Documentos" / "Demiurgos"
+    assert data_root == str(expected)
+    assert (expected / "mundos").parent == expected
+    assert Path(pointer_file) == tmp_path / "config" / "demiurgos" / "data-root.json"
+    assert '"data_root": "%s"' % expected in Path(pointer_file).read_text(
+        encoding="utf-8"
+    )
+    # S2: the English folder is never created alongside the localized one.
+    assert not (tmp_path / "home" / "Documents").exists()
+
+
+@_POSIX_BASH
+def test_an_existing_pointer_is_never_reoriented(tmp_path):
+    """S3/S4: the pointer beats the new default and is left byte-identical."""
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "config"
+    (config / "demiurgos").mkdir(parents=True)
+    (config / "user-dirs.dirs").write_text(
+        'XDG_DOCUMENTS_DIR="$HOME/Documentos"\n', encoding="utf-8"
+    )
+    pointer = config / "demiurgos" / "data-root.json"
+    existing = tmp_path / "checkout"
+    original = (
+        '{\n  "schema_version": 1,\n  "data_root": "%s",\n'
+        '  "updated_at": "2026-09-17T17:15:28Z"\n}\n' % existing
+    )
+    pointer.write_text(original, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash", "-c",
+            'source "$1" __probe__; resolve_data_root >/dev/null 2>&1; '
+            'printf %s "${DATA_ROOT:-UNSET}"',
+            "bash", str(PORTABLE_LAUNCHER),
+        ],
+        env={
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(config),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        },
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(existing)
+    assert pointer.read_text(encoding="utf-8") == original
+    assert not (home / "Documentos").exists()
 
 
 def test_portable_launcher_exports_legacy_root_and_layout_dist():

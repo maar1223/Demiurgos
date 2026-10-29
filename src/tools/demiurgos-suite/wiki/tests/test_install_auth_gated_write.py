@@ -106,7 +106,9 @@ def fresh_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Boot the app against a fresh data root; returns (client, data_root_path,
     seed_env). The data root pre-exists with worlds but NO ``.env`` — the
     installer bootstrap-once must not clobber it (design S3-7)."""
-    data_root_path = tmp_path / "install" / "data"  # installer bootstrap default
+    # Installer bootstrap default (step 3): <documents>/Demiurgos under the
+    # hermetic HOME, which has no user-dirs.dirs -> ~/Documents.
+    data_root_path = tmp_path / "home" / "Documents" / "Demiurgos"
     (data_root_path / "mundos").mkdir(parents=True)
     for name in ("Avalor", "Kaelia"):
         (data_root_path / "mundos" / name / "lore").mkdir(parents=True)

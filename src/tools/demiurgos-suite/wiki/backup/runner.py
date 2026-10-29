@@ -56,7 +56,13 @@ from backup.manifest import (
 )
 from backup.retention import prune_snapshots
 from backup.snapshotter import LAST_WRITE_META_NAME, BackupSnapshotter
-from backup.state import BackupDestination, BackupStateError, read_destination
+from backup.state import (
+    DESTINATION_OVERLAP_REMEDY,
+    BackupDestination,
+    BackupStateError,
+    assert_destination_outside_content_root,
+    read_destination,
+)
 from backup.sync_folder import TargetDecision, evaluate_target
 from backup.transport.folder import FolderTransport
 
@@ -189,6 +195,17 @@ def run_backup(
             return _refused(str(exc))
     if destination is None:
         return _refused(REASON_NO_DESTINATION)
+
+    # A record written before the guard existed (or hand-edited) must not reach
+    # the writer: the pair is validated again here, before any probe or byte.
+    try:
+        assert_destination_outside_content_root(destination, root)
+    except BackupStateError as exc:
+        return _refused(
+            str(exc),
+            destination=destination,
+            remedy=DESTINATION_OVERLAP_REMEDY,
+        )
 
     classifier = evaluate or evaluate_target
     try:
