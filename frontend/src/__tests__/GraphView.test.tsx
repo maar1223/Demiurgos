@@ -118,13 +118,30 @@ class DOMMatrixReadOnlyMock {
  * (getDimensions), which jsdom always reports as 0 — the isNodeInitialized
  * gate then never passes and edges never render. Give elements a real size.
  */
+/** React Flow measures its canvas pane through offsetWidth/offsetHeight; a
+ *  node-sized container would clamp fitView to minZoom and make the graph look
+ *  permanently zoomed out. Give the pane real viewport dimensions. */
+function isFlowCanvas(element: HTMLElement): boolean {
+  const list = element.classList;
+  return (
+    !!list &&
+    (list.contains("react-flow") ||
+      list.contains("react-flow__pane") ||
+      list.contains("react-flow__renderer"))
+  );
+}
+
 Object.defineProperty(globalThis.HTMLElement.prototype, "offsetWidth", {
   configurable: true,
-  get: () => 150,
+  get() {
+    return isFlowCanvas(this as HTMLElement) ? 800 : 150;
+  },
 });
 Object.defineProperty(globalThis.HTMLElement.prototype, "offsetHeight", {
   configurable: true,
-  get: () => 40,
+  get() {
+    return isFlowCanvas(this as HTMLElement) ? 600 : 40;
+  },
 });
 
 /** Three linked entities (2 edges) — Dottua receives a backlink from Vael. */
@@ -444,6 +461,47 @@ describe("GraphView", () => {
       );
     });
     expect(neighbourMoved).toBe(true);
+  });
+
+  it("labels folder sections as soft clusters around their members", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    // personajes holds Rhyz + Vael → one cluster; lore holds only Dottua, so
+    // a lone entity never reads as a section (S7).
+    await waitFor(() => {
+      const labels = screen.getAllByTestId("graph-cluster");
+      expect(labels).toHaveLength(1);
+      expect(labels[0]).toHaveTextContent("personajes");
+    });
+  });
+
+  it("collapses nodes to status dots below the semantic-zoom threshold", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 0.3 });
+    });
+    await waitFor(() =>
+      expect(screen.getAllByTestId("graph-node-dot")).toHaveLength(3),
+    );
+    expect(
+      screen.queryByTestId("graph-node-card"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 1.1 });
+    });
+    await waitFor(() =>
+      expect(screen.getAllByTestId("graph-node-card")).toHaveLength(3),
+    );
+    expect(screen.queryByTestId("graph-node-dot")).not.toBeInTheDocument();
   });
 
   it("draws curved, quiet edges with no arrowheads", async () => {

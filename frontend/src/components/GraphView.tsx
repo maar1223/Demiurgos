@@ -1,5 +1,7 @@
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +14,9 @@ import {
   Handle,
   Position,
   ReactFlow,
+  useReactFlow,
+  useStore,
+  ViewportPortal,
   type Connection,
   type CoordinateExtent,
   type Edge,
@@ -101,6 +106,9 @@ const EDGE_BASE_WIDTH = 1.1;
 const EDGE_WIDTH_STEP = 0.45;
 const EDGE_MAX_WIDTH = 2.8;
 
+/** Below this zoom level nodes collapse to status dots (semantic zoom, S8). */
+const SEMANTIC_ZOOM_THRESHOLD = 0.55;
+
 /**
  * Whether the graph must skip animation. Reduced motion is a hard requirement
  * (S3); a host with no media-query API (jsdom in tests) also takes the
@@ -179,6 +187,76 @@ interface GraphNodeData extends Record<string, unknown> {
   tier: NodeTier;
 }
 
+/** Zoom tier shared with the node components: false = collapsed dot (S8). */
+const DetailedZoomContext = createContext(true);
+
+/** A folder/section that reads as a cluster (S7). */
+interface GraphCluster {
+  id: string;
+  label: string;
+  members: string[];
+}
+
+/** Group entities by their folder path; single-entity folders stay unnamed. */
+function buildClusters(entities: GraphEntity[]): GraphCluster[] {
+  const byFolder = new Map<string, GraphCluster>();
+  for (const entity of entities) {
+    const slash = entity.path.lastIndexOf("/");
+    if (slash < 0) continue;
+    const folder = entity.path.slice(0, slash);
+    const existing = byFolder.get(folder);
+    if (existing) {
+      existing.members.push(nodeKey(entity));
+    } else {
+      byFolder.set(folder, {
+        id: folder,
+        label: folder.split("/").pop() ?? folder,
+        members: [nodeKey(entity)],
+      });
+    }
+  }
+  return [...byFolder.values()].filter((cluster) => cluster.members.length >= 2);
+}
+
+/**
+ * Fits the viewport once the canvas is measured AND the nodes are initialized.
+ * The `fitView` prop fires as soon as nodes initialize, which can race a 0×0
+ * container (jsdom, or a hidden tab) and lock the viewport at minZoom — that
+ * would make a small graph look like a field of far-away dots.
+ */
+function AutoFit() {
+  const { fitView } = useReactFlow();
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
+  const initialized = useStore((state) => state.nodesInitialized);
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || !initialized || width <= 0 || height <= 0) return;
+    fitted.current = true;
+    void fitView({ padding: 0.2 });
+  }, [initialized, width, height, fitView]);
+  return null;
+}
+
+/**
+ * Reports the semantic-zoom tier from inside the React Flow store. It only
+ * calls back when the tier flips, so panning never re-renders the graph.
+ */
+function ZoomLevelWatcher({
+  threshold,
+  onChange,
+}: {
+  threshold: number;
+  onChange: (detailed: boolean) => void;
+}) {
+  const zoom = useStore((state) => state.transform[2]);
+  const detailed = zoom >= threshold;
+  useEffect(() => {
+    onChange(detailed);
+  }, [detailed, onChange]);
+  return null;
+}
+
 /**
  * A connection write awaiting author confirmation in the modal. `kind`
  * selects the endpoint action; `sourcePath`/`targetId` are exactly what the
@@ -205,7 +283,37 @@ type GraphNodeType = Node<GraphNodeData, "graph">;
 const handleStyle = { opacity: 0 } as const;
 
 function GraphNode({ data }: NodeProps<GraphNodeType>) {
+  const detailed = useContext(DetailedZoomContext);
   const canon = data.status ? NODE_CANON_CLASS[data.status] : null;
+
+  // S8: far away, a node is a dot coloured by canon — names return on zoom in.
+  if (!detailed) {
+    return (
+      <div className="relative flex h-3 w-3 items-center justify-center">
+        <Handle
+          type="target"
+          position={Position.Top}
+          style={handleStyle}
+          isConnectable={true}
+        />
+        <span
+          data-testid="graph-node-dot"
+          data-canon={data.status ?? "none"}
+          className={cn(
+            "h-3 w-3 rounded-full shadow-sm",
+            canon?.dot ?? "bg-muted",
+          )}
+        />
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          style={handleStyle}
+          isConnectable={true}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="relative">
       <Handle
@@ -321,6 +429,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const rf = useRef<ReactFlowInstance<GraphNodeType, Edge> | null>(null);
   const layoutRef = useRef<LiveForceLayout | null>(null);
   const reducedMotionRef = useRef(prefersReducedMotion());
+  const clusterRefs = useRef(new Map<string, HTMLDivElement>());
+  const clusterMembersRef = useRef<GraphCluster[]>([]);
 
   // Node inspector: selection state plus right-panel resize/focus. The
   // selected entity is DERIVED from the loaded set (by node key), so a status
@@ -329,6 +439,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
   // Hovered node: its edges light up while the rest recede (S5). Purely
   // visual, so it never touches the graph data or the layout.
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  // Semantic zoom tier (S8): cards up close, dots far away.
+  const [detailedZoom, setDetailedZoom] = useState(true);
   const [panelWidth, setPanelWidth] = useState<number>(() =>
     clampPanel(RIGHT_DEFAULT),
   );
@@ -489,17 +601,45 @@ export default function GraphView({ mundo }: GraphViewProps) {
     return () => clearTimeout(timer);
   }, [searchQuery, mundo]);
 
+  /** Move every cluster label to the centroid of its members (S7). Written
+   *  imperatively, like node positions, so it follows the live layout without
+   *  re-rendering. */
+  const positionClusters = useCallback((positions: ForcePositions) => {
+    for (const cluster of clusterMembersRef.current) {
+      const element = clusterRefs.current.get(cluster.id);
+      if (!element) continue;
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      for (const member of cluster.members) {
+        const position = positions.get(member);
+        if (!position) continue;
+        sumX += position.x;
+        sumY += position.y;
+        count += 1;
+      }
+      if (count === 0) continue;
+      element.style.transform =
+        `translate(${sumX / count}px, ${sumY / count - 16}px) ` +
+        "translate(-50%, -100%)";
+    }
+  }, []);
+
   /** Push simulation positions straight into the React Flow store. This is
    *  the only per-frame write: it keeps the component tree out of the loop
    *  (S2) while React Flow still re-renders the node it owns. */
-  const applyPositions = useCallback((positions: ForcePositions) => {
-    rf.current?.setNodes((current) =>
-      current.map((node) => {
-        const position = positions.get(node.id);
-        return position ? { ...node, position } : node;
-      }),
-    );
-  }, []);
+  const applyPositions = useCallback(
+    (positions: ForcePositions) => {
+      rf.current?.setNodes((current) =>
+        current.map((node) => {
+          const position = positions.get(node.id);
+          return position ? { ...node, position } : node;
+        }),
+      );
+      positionClusters(positions);
+    },
+    [positionClusters],
+  );
 
   // Build the layout and (re)seed the node set whenever the dataset changes
   // (folder filter/orphans/reload). A fresh dataset means a fresh simulation:
@@ -562,9 +702,10 @@ export default function GraphView({ mundo }: GraphViewProps) {
     });
     setNodes(nextNodes);
     // The prop only seeds the first mount; later dataset changes must reach
-    // the already-mounted canvas through its instance.
+    // the already-mounted canvas through its instance. AutoFit owns the
+    // viewport on mount, so no fit is scheduled here (a 0×0 container would
+    // clamp the zoom to minZoom and never recover).
     rf.current?.setNodes(nextNodes);
-    requestAnimationFrame(() => rf.current?.fitView({ padding: 0.2 }));
 
     if (!reducedMotion) {
       layout.onPositions = applyPositions;
@@ -581,6 +722,21 @@ export default function GraphView({ mundo }: GraphViewProps) {
     error,
     applyPositions,
   ]);
+
+  // Folder clusters (S7): entities from the same folder read as one group.
+  const clusters = useMemo(() => {
+    const clusterEntities = nodes
+      .map((node) => entityByKey.get(node.id))
+      .filter((entity): entity is GraphEntity => Boolean(entity));
+    return buildClusters(clusterEntities);
+  }, [nodes, entityByKey]);
+
+  // Keep the imperative label placement in sync with the current clusters and
+  // the layout's positions (the labels themselves render through the portal).
+  useEffect(() => {
+    clusterMembersRef.current = clusters;
+    positionClusters(layoutRef.current?.positions() ?? new Map());
+  }, [clusters, positionClusters]);
 
   /** Remount key for the canvas: a new node identity set (status refetch,
    *  folder filter, orphans toggle) needs a fresh uncontrolled instance seeded
@@ -904,111 +1060,133 @@ export default function GraphView({ mundo }: GraphViewProps) {
         )}
 
         {!loading && !error && nodes.length > 0 && (
-          <div className="relative h-full w-full" data-testid="graph-view">
-            <ReactFlow
-              key={canvasKey}
-              // Uncontrolled on purpose: the force engine owns live positions
-              // and writes them through the instance store (S2), so this
-              // component never re-renders per animation frame.
-              defaultNodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodeClick={handleNodeClick}
-              onNodeMouseEnter={handleNodeMouseEnter}
-              onNodeMouseLeave={handleNodeMouseLeave}
-              onNodeDragStart={handleNodeDragStart}
-              onNodeDrag={handleNodeDrag}
-              onNodeDragStop={handleNodeDragStop}
-              onConnect={handleConnect}
-              onEdgeClick={handleEdgeClick}
-              onInit={(inst) => {
-                rf.current = inst;
-              }}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-              minZoom={0.2}
-              maxZoom={2}
-              className="h-full w-full"
-            >
-              <Background />
-            </ReactFlow>
-
-            {/* Focus toggle: hide the inspector to give the canvas every pixel;
-                toggling back restores the last width. It docks to the left edge
-                of the floating panel while the panel is open. */}
-            {selectedEntity && (
-              <button
-                type="button"
-                onClick={() => setFocusMode((prev) => !prev)}
-                aria-label={
-                  focusMode
-                    ? "Mostrar panel de inspección"
-                    : "Ocultar panel de inspección"
-                }
-                aria-pressed={focusMode}
-                style={
-                  {
-                    "--inspector-offset": `${panelWidth + 8}px`,
-                  } as CSSProperties
-                }
-                className={cn(
-                  "absolute right-2 top-2 z-30 rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary",
-                  !focusMode && "md:right-[var(--inspector-offset)]",
-                )}
+          <DetailedZoomContext.Provider value={detailedZoom}>
+            <div className="relative h-full w-full" data-testid="graph-view">
+              <ReactFlow
+                key={canvasKey}
+                // Uncontrolled on purpose: the force engine owns live positions
+                // and writes them through the instance store (S2), so this
+                // component never re-renders per animation frame.
+                defaultNodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                onNodeClick={handleNodeClick}
+                onNodeMouseEnter={handleNodeMouseEnter}
+                onNodeMouseLeave={handleNodeMouseLeave}
+                onNodeDragStart={handleNodeDragStart}
+                onNodeDrag={handleNodeDrag}
+                onNodeDragStop={handleNodeDragStop}
+                onConnect={handleConnect}
+                onEdgeClick={handleEdgeClick}
+                onInit={(inst) => {
+                  rf.current = inst;
+                }}
+                minZoom={0.2}
+                maxZoom={2}
+                className="h-full w-full"
               >
-                <Icon
-                  name={focusMode ? "minimize" : "expand"}
-                  size={16}
+                <Background />
+                <AutoFit />
+                <ZoomLevelWatcher
+                  threshold={SEMANTIC_ZOOM_THRESHOLD}
+                  onChange={setDetailedZoom}
                 />
-              </button>
-            )}
+                {/* Section clusters (S7): soft folder labels that pan and zoom
+                    with the canvas and follow their members' centroid. */}
+                <ViewportPortal>
+                  {clusters.map((cluster) => (
+                    <div
+                      key={cluster.id}
+                      ref={(element) => {
+                        if (element) clusterRefs.current.set(cluster.id, element);
+                        else clusterRefs.current.delete(cluster.id);
+                      }}
+                      data-testid="graph-cluster"
+                      className="pointer-events-none absolute left-0 top-0 whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-muted/50"
+                    >
+                      {cluster.label}
+                    </div>
+                  ))}
+                </ViewportPortal>
+              </ReactFlow>
 
-            {/* Inspector floats over the canvas at a fixed width; the divider
-                on its left edge resizes it. Hidden on small screens and in
-                focus mode; absent entirely when nothing is selected. */}
-            {selectedEntity && !focusMode && (
-              <>
-                <div
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label={t("graph.resizeInspector")}
-                  tabIndex={0}
-                  onMouseDown={startPanelDrag}
-                  onKeyDown={(e) => {
-                    const { min, max } = panelLimits();
-                    const step = 40;
-                    if (e.key === "ArrowLeft")
-                      setPanelWidth((w) => Math.min(max, w + step));
-                    if (e.key === "ArrowRight")
-                      setPanelWidth((w) => Math.max(min, w - step));
-                  }}
-                  style={{ right: panelWidth }}
+              {/* Focus toggle: hide the inspector to give the canvas every pixel;
+                  toggling back restores the last width. It docks to the left edge
+                  of the floating panel while the panel is open. */}
+              {selectedEntity && (
+                <button
+                  type="button"
+                  onClick={() => setFocusMode((prev) => !prev)}
+                  aria-label={
+                    focusMode
+                      ? "Mostrar panel de inspección"
+                      : "Ocultar panel de inspección"
+                  }
+                  aria-pressed={focusMode}
+                  style={
+                    {
+                      "--inspector-offset": `${panelWidth + 8}px`,
+                    } as CSSProperties
+                  }
                   className={cn(
-                    "absolute top-0 z-20 hidden h-full w-2 cursor-col-resize items-center justify-center border-l border-edge bg-surface-raised/80 backdrop-blur-sm transition-colors hover:bg-surface-hover active:bg-surface-hover md:flex",
-                    draggingPanel && "bg-surface-hover select-none",
+                    "absolute right-2 top-2 z-30 rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary",
+                    !focusMode && "md:right-[var(--inspector-offset)]",
                   )}
                 >
-                  <Icon name="grip" size={14} className="text-muted" />
-                </div>
-
-                <div
-                  className="absolute right-0 top-0 z-10 hidden h-full overflow-hidden border-l border-edge bg-surface/90 shadow-2xl backdrop-blur-md md:flex"
-                  style={{ width: panelWidth }}
-                  data-testid="node-inspector"
-                >
-                  <NodeInspectorPanel
-                    entity={selectedEntity}
-                    visibleEntityKeys={visibleEntityKeys}
-                    entityByKey={entityByKey}
-                    onNeighborClick={handleNeighborClick}
-                    onOpenFicha={handleOpenFicha}
-                    onClose={() => setSelectedNodeId(null)}
-                    mundo={mundo}
+                  <Icon
+                    name={focusMode ? "minimize" : "expand"}
+                    size={16}
                   />
-                </div>
-              </>
-            )}
-          </div>
+                </button>
+              )}
+
+              {/* Inspector floats over the canvas at a fixed width; the divider
+                  on its left edge resizes it. Hidden on small screens and in
+                  focus mode; absent entirely when nothing is selected. */}
+              {selectedEntity && !focusMode && (
+                <>
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={t("graph.resizeInspector")}
+                    tabIndex={0}
+                    onMouseDown={startPanelDrag}
+                    onKeyDown={(e) => {
+                      const { min, max } = panelLimits();
+                      const step = 40;
+                      if (e.key === "ArrowLeft")
+                        setPanelWidth((w) => Math.min(max, w + step));
+                      if (e.key === "ArrowRight")
+                        setPanelWidth((w) => Math.max(min, w - step));
+                    }}
+                    style={{ right: panelWidth }}
+                    className={cn(
+                      "absolute top-0 z-20 hidden h-full w-2 cursor-col-resize items-center justify-center border-l border-edge bg-surface-raised/80 backdrop-blur-sm transition-colors hover:bg-surface-hover active:bg-surface-hover md:flex",
+                      draggingPanel && "bg-surface-hover select-none",
+                    )}
+                  >
+                    <Icon name="grip" size={14} className="text-muted" />
+                  </div>
+
+                  <div
+                    className="absolute right-0 top-0 z-10 hidden h-full overflow-hidden border-l border-edge bg-surface/90 shadow-2xl backdrop-blur-md md:flex"
+                    style={{ width: panelWidth }}
+                    data-testid="node-inspector"
+                  >
+                    <NodeInspectorPanel
+                      entity={selectedEntity}
+                      visibleEntityKeys={visibleEntityKeys}
+                      entityByKey={entityByKey}
+                      onNeighborClick={handleNeighborClick}
+                      onOpenFicha={handleOpenFicha}
+                      onClose={() => setSelectedNodeId(null)}
+                      mundo={mundo}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </DetailedZoomContext.Provider>
         )}
 
         {/* Controls float over the canvas instead of shrinking it (S4). */}
