@@ -793,7 +793,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
             : highlighted
               ? EDGE_HIGHLIGHT_OPACITY
               : EDGE_BASE_OPACITY,
-          transition: "opacity 150ms ease, stroke-width 150ms ease",
+          transition: "opacity 150ms ease",
         },
         zIndex: highlighted ? 1 : 0,
       });
