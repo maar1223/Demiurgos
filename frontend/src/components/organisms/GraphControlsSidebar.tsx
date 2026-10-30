@@ -24,7 +24,7 @@ interface GraphControlsSidebarProps {
 }
 
 /**
- * Left sidebar of the graph view, consolidating every graph control:
+ * Floating controls panel of the graph view, consolidating every control:
  * node search (input + results dropdown), status filter, hierarchical folder
  * tree, orphans toggle, and the "Ver todo" (fitView) button.
  *
@@ -33,8 +33,9 @@ interface GraphControlsSidebarProps {
  * orchestration, no direct access to React Flow state — GraphView owns all
  * of that and passes the data down.
  *
- * Layout mirrors `TallerExplorerSidebar`: a header block of stacked labeled
- * controls above a scrollable body (the folder tree can grow long).
+ * Layout: a translucent panel that FLOATS over the canvas (S4) instead of
+ * taking a column away from it — a header block of stacked labeled controls
+ * above a scrollable body (the folder tree can grow long).
  */
 export function GraphControlsSidebar({
   status,
@@ -62,9 +63,9 @@ export function GraphControlsSidebar({
   };
 
   return (
-    <aside className="flex h-full w-72 flex-col border-r border-edge bg-surface">
+    <aside className="absolute left-3 top-3 z-10 flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-edge/80 bg-surface/85 shadow-xl backdrop-blur-md">
       {/* Header block: stacked labeled controls (search + status) */}
-      <div className="space-y-3 border-b border-edge px-4 py-3">
+      <div className="space-y-3 border-b border-edge/70 px-4 py-3">
         {/* Node search: debounced server-side search with results dropdown */}
         <div className="space-y-1">
           <span className="text-xs font-medium text-muted">{t("graph.search")}</span>

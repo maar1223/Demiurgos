@@ -377,6 +377,29 @@ describe("GraphView", () => {
     expect(setNodesSpy).not.toHaveBeenCalled();
   });
 
+  it("floats the controls and the inspector over the full canvas surface", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    const surface = screen.getByTestId("graph-surface");
+    const canvas = within(surface).getByTestId("graph-view");
+
+    // S4: the canvas fills the surface; the controls overlay it (absolute)
+    // instead of taking a column away from it.
+    expect(canvas.className).toContain("h-full");
+    expect(screen.getByRole("complementary")).toHaveClass("absolute");
+    expect(
+      within(surface).getByLabelText("Filtrar por estado"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+    expect(
+      within(canvas).getByTestId("node-inspector-panel"),
+    ).toBeInTheDocument();
+  });
+
   it("pins a dragged node and re-heats its neighbours", async () => {
     stubMotionPreference(false);
     const { flush } = stubAnimationFrames();
@@ -421,6 +444,55 @@ describe("GraphView", () => {
       );
     });
     expect(neighbourMoved).toBe(true);
+  });
+
+  it("draws curved, quiet edges with no arrowheads", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    const paths = [
+      ...document.querySelectorAll<SVGPathElement>(".react-flow__edge-path"),
+    ];
+    expect(paths).toHaveLength(2);
+    for (const path of paths) {
+      // Cubic bezier curve, never three straight points…
+      expect(path.getAttribute("d")).toMatch(/C/);
+      // …and direction is out of scope (L2): no arrowhead markers.
+      expect(path.getAttribute("marker-end")).toBeNull();
+      expect(path.style.strokeWidth).toBe("1.1");
+      expect(Number(path.style.opacity)).toBeCloseTo(0.32, 2);
+    }
+  });
+
+  it("thickens a pair with more than one relation and highlights it on hover", async () => {
+    // Rhyz ↔ Vael has two relation records (forward + back), so it must read
+    // heavier than Vael → Dottua, which has one.
+    mockFetch.mockResolvedValue({
+      entities: LINKED,
+      links: [
+        ...LINKS,
+        { source: "Stal::Vael", target: "Stal::Rhyz", kind: "forward" },
+      ],
+    });
+    renderGraphView();
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    const paths = () => [
+      ...document.querySelectorAll<SVGPathElement>(".react-flow__edge-path"),
+    ];
+    const [heavier, lighter] = paths();
+    expect(Number(heavier.style.strokeWidth)).toBeGreaterThan(
+      Number(lighter.style.strokeWidth),
+    );
+
+    // Hovering Rhyz lights its curve and lets the unrelated one recede.
+    fireEvent.mouseEnter(screen.getByText("Rhyz").closest(".react-flow__node")!);
+    await waitFor(() => {
+      const [highlighted, dimmed] = paths();
+      expect(highlighted.style.opacity).toBe("0.9");
+      expect(dimmed.style.opacity).toBe("0.07");
+    });
   });
 
   it("colors nodes by status via STATUS_META tokens", async () => {

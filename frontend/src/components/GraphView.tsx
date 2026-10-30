@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Background,
@@ -82,6 +89,17 @@ const DRAG_REHEAT_ALPHA = 0.35;
 const DROP_REHEAT_ALPHA = 0.5;
 /** Alpha used by the synchronous settle after a drag under reduced motion. */
 const SETTLE_ALPHA = 1;
+
+/** Edge look (S5): quiet by default, neighbourhood-first on hover. No
+ *  arrowheads — direction is explicitly out of scope (L2). */
+const EDGE_STROKE = "rgb(var(--color-muted))";
+const EDGE_BASE_OPACITY = 0.32;
+const EDGE_HIGHLIGHT_OPACITY = 0.9;
+const EDGE_DIM_OPACITY = 0.07;
+const EDGE_BASE_WIDTH = 1.1;
+/** Extra stroke width per parallel relation between the same pair. */
+const EDGE_WIDTH_STEP = 0.45;
+const EDGE_MAX_WIDTH = 2.8;
 
 /**
  * Whether the graph must skip animation. Reduced motion is a hard requirement
@@ -172,10 +190,10 @@ interface GraphViewProps {
  *   (name, type, status, path, neighbor links, content preview); the ficha
  *   route is reached via the panel's "Abrir ficha" button.
  * - Node search input (debounced) centers a matching node in the viewport.
- * - All graph controls (search, status, folder tree, orphans toggle, fitView)
- *   live in the left GraphControlsSidebar. The folder tree is a hierarchical
- *   multi-select that hides nodes outside the selected folders (prefix union);
- *   edges touching hidden nodes vanish.
+ * - The canvas owns the whole surface (S4): controls and the inspector float
+ *   over it as translucent panels instead of taking columns. The folder tree
+ *   is a hierarchical multi-select that hides nodes outside the selected
+ *   folders (prefix union); edges touching hidden nodes vanish.
  * - Zoom/pan come from React Flow.
  */
 export default function GraphView({ mundo }: GraphViewProps) {
@@ -228,6 +246,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
   // selected entity is DERIVED from the loaded set (by node key), so a status
   // re-fetch or mundo switch can never leave the panel showing stale data.
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // Hovered node: its edges light up while the rest recede (S5). Purely
+  // visual, so it never touches the graph data or the layout.
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState<number>(() =>
     clampPanel(RIGHT_DEFAULT),
   );
@@ -487,26 +508,60 @@ export default function GraphView({ mundo }: GraphViewProps) {
     [nodes],
   );
 
-  // Edges derived from the current node set (read-only; follow dragged nodes).
-  // Mutual references (A→B and B→A) collapse into a single line per pair so
-  // one relationship never renders as two overlapping edges.
+  // Edges derived from the current node set (read-only; follow dragged
+  // nodes). Mutual references (A→B and B→A) collapse into a single curve per
+  // pair, and every extra relation between that pair thickens it. Hovering a
+  // node lights up its curves while the rest recede (S5).
   const edges = useMemo(() => {
     const nodeIds = new Set(nodes.map((n) => n.id));
-    const seen = new Set<string>();
-    const result: Edge[] = [];
+    const pairs = new Map<
+      string,
+      { source: string; target: string; weight: number }
+    >();
     for (const link of links) {
       if (!nodeIds.has(link.source) || !nodeIds.has(link.target)) continue;
       const key = [link.source, link.target].sort().join("::");
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const pair = pairs.get(key);
+      if (pair) {
+        pair.weight += 1;
+      } else {
+        pairs.set(key, {
+          source: link.source,
+          target: link.target,
+          weight: 1,
+        });
+      }
+    }
+
+    const result: Edge[] = [];
+    for (const pair of pairs.values()) {
+      const highlighted =
+        hoveredNodeId !== null &&
+        (pair.source === hoveredNodeId || pair.target === hoveredNodeId);
+      const dimmed = hoveredNodeId !== null && !highlighted;
       result.push({
-        id: `${link.source}->${link.target}`,
-        source: link.source,
-        target: link.target,
+        id: `${pair.source}->${pair.target}`,
+        source: pair.source,
+        target: pair.target,
+        type: "bezier",
+        style: {
+          stroke: EDGE_STROKE,
+          strokeWidth: Math.min(
+            EDGE_MAX_WIDTH,
+            EDGE_BASE_WIDTH + (pair.weight - 1) * EDGE_WIDTH_STEP,
+          ),
+          opacity: dimmed
+            ? EDGE_DIM_OPACITY
+            : highlighted
+              ? EDGE_HIGHLIGHT_OPACITY
+              : EDGE_BASE_OPACITY,
+          transition: "opacity 150ms ease, stroke-width 150ms ease",
+        },
+        zIndex: highlighted ? 1 : 0,
       });
     }
     return result;
-  }, [nodes, links]);
+  }, [nodes, links, hoveredNodeId]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
@@ -519,6 +574,17 @@ export default function GraphView({ mundo }: GraphViewProps) {
     },
     [],
   );
+
+  const handleNodeMouseEnter = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      setHoveredNodeId(node.id);
+    },
+    [],
+  );
+
+  const handleNodeMouseLeave = useCallback(() => {
+    setHoveredNodeId(null);
+  }, []);
 
   /** "Abrir ficha" in the inspector — navigate by the entity NAME (the same
    *  identifier WikiLink uses). The entity page resolves a name, not a file
@@ -726,54 +792,37 @@ export default function GraphView({ mundo }: GraphViewProps) {
   );
 
   return (
-    <div className="flex h-full flex-col gap-3 md:flex-row">
-      <GraphControlsSidebar
-        status={status}
-        onStatusChange={setStatus}
-        selectedFolders={selectedFolders}
-        onSelectedFoldersChange={setSelectedFolders}
-        showOrphans={showOrphans}
-        onShowOrphansChange={setShowOrphans}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        searchResults={searchResults}
-        searching={searching}
-        searchError={searchError}
-        onSelectResult={handleSelectResult}
-        folderTree={folderTree}
-        onFitView={() => rf.current?.fitView()}
-      />
-
-      <main className="min-w-0 flex-1">
+    <div className="flex h-full w-full flex-col">
+      <div
+        className="relative flex h-[calc(100dvh-18rem)] min-h-[520px] w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface"
+        data-testid="graph-surface"
+      >
         {loading && (
-          <div className="flex items-center justify-center py-24">
+          <div className="flex h-full items-center justify-center">
             <Spinner size="lg" />
           </div>
         )}
 
         {error && !loading && (
-          <ErrorBanner message={error} onRetry={() => void load()} />
+          <div className="flex h-full items-center justify-center p-6 md:pl-80">
+            <ErrorBanner message={error} onRetry={() => void load()} />
+          </div>
         )}
 
         {!loading && !error && entities.length === 0 && (
-          <EmptyState
-            icon="empty"
-            message={t("graph.noEntities")}
-          />
+          <div className="flex h-full items-center justify-center p-6 md:pl-80">
+            <EmptyState icon="empty" message={t("graph.noEntities")} />
+          </div>
         )}
 
         {!loading && !error && entities.length > 0 && nodes.length === 0 && (
-          <EmptyState
-            icon="empty"
-            message={t("graph.noNodes")}
-          />
+          <div className="flex h-full items-center justify-center p-6 md:pl-80">
+            <EmptyState icon="empty" message={t("graph.noNodes")} />
+          </div>
         )}
 
         {!loading && !error && nodes.length > 0 && (
-          <div
-            className="relative min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
-            data-testid="graph-view"
-          >
+          <div className="relative h-full w-full" data-testid="graph-view">
             <ReactFlow
               key={canvasKey}
               // Uncontrolled on purpose: the force engine owns live positions
@@ -782,8 +831,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
               defaultNodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
-              defaultEdgeOptions={{ type: "straight" }}
               onNodeClick={handleNodeClick}
+              onNodeMouseEnter={handleNodeMouseEnter}
+              onNodeMouseLeave={handleNodeMouseLeave}
               onNodeDragStart={handleNodeDragStart}
               onNodeDrag={handleNodeDrag}
               onNodeDragStop={handleNodeDragStop}
@@ -796,12 +846,14 @@ export default function GraphView({ mundo }: GraphViewProps) {
               fitViewOptions={{ padding: 0.2 }}
               minZoom={0.2}
               maxZoom={2}
+              className="h-full w-full"
             >
               <Background />
             </ReactFlow>
 
-            {/* Focus toggle: hide the inspector (and its divider) to give the
-                canvas every pixel; toggling back restores the last width. */}
+            {/* Focus toggle: hide the inspector to give the canvas every pixel;
+                toggling back restores the last width. It docks to the left edge
+                of the floating panel while the panel is open. */}
             {selectedEntity && (
               <button
                 type="button"
@@ -812,7 +864,15 @@ export default function GraphView({ mundo }: GraphViewProps) {
                     : "Ocultar panel de inspección"
                 }
                 aria-pressed={focusMode}
-                className="absolute right-2 top-2 z-10 rounded border border-edge bg-surface-raised p-1.5 text-icon-muted shadow-sm transition-colors hover:text-primary"
+                style={
+                  {
+                    "--inspector-offset": `${panelWidth + 8}px`,
+                  } as CSSProperties
+                }
+                className={cn(
+                  "absolute right-2 top-2 z-30 rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary",
+                  !focusMode && "md:right-[var(--inspector-offset)]",
+                )}
               >
                 <Icon
                   name={focusMode ? "minimize" : "expand"}
@@ -820,54 +880,75 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 />
               </button>
             )}
+
+            {/* Inspector floats over the canvas at a fixed width; the divider
+                on its left edge resizes it. Hidden on small screens and in
+                focus mode; absent entirely when nothing is selected. */}
+            {selectedEntity && !focusMode && (
+              <>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("graph.resizeInspector")}
+                  tabIndex={0}
+                  onMouseDown={startPanelDrag}
+                  onKeyDown={(e) => {
+                    const { min, max } = panelLimits();
+                    const step = 40;
+                    if (e.key === "ArrowLeft")
+                      setPanelWidth((w) => Math.min(max, w + step));
+                    if (e.key === "ArrowRight")
+                      setPanelWidth((w) => Math.max(min, w - step));
+                  }}
+                  style={{ right: panelWidth }}
+                  className={cn(
+                    "absolute top-0 z-20 hidden h-full w-2 cursor-col-resize items-center justify-center border-l border-edge bg-surface-raised/80 backdrop-blur-sm transition-colors hover:bg-surface-hover active:bg-surface-hover md:flex",
+                    draggingPanel && "bg-surface-hover select-none",
+                  )}
+                >
+                  <Icon name="grip" size={14} className="text-muted" />
+                </div>
+
+                <div
+                  className="absolute right-0 top-0 z-10 hidden h-full overflow-hidden border-l border-edge bg-surface/90 shadow-2xl backdrop-blur-md md:flex"
+                  style={{ width: panelWidth }}
+                  data-testid="node-inspector"
+                >
+                  <NodeInspectorPanel
+                    entity={selectedEntity}
+                    visibleEntityKeys={visibleEntityKeys}
+                    entityByKey={entityByKey}
+                    onNeighborClick={handleNeighborClick}
+                    onOpenFicha={handleOpenFicha}
+                    onClose={() => setSelectedNodeId(null)}
+                    mundo={mundo}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
-      </main>
 
-      {/* Right-hand inspector (node-inspector): divider + panel, siblings of
-          <main> in the flex row (Approach 1). Hidden in focus mode at ALL
-          breakpoints; absent entirely when nothing is selected. */}
-      {selectedEntity && !focusMode && (
-        <>
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("graph.resizeInspector")}
-            tabIndex={0}
-            onMouseDown={startPanelDrag}
-            onKeyDown={(e) => {
-              const { min, max } = panelLimits();
-              const step = 40;
-              if (e.key === "ArrowLeft")
-                setPanelWidth((w) => Math.min(max, w + step));
-              if (e.key === "ArrowRight")
-                setPanelWidth((w) => Math.max(min, w - step));
-            }}
-            className={cn(
-              "hidden md:flex w-2 cursor-col-resize items-center justify-center border-l border-edge bg-surface-raised hover:bg-surface-hover active:bg-surface-hover transition-colors",
-              draggingPanel && "bg-surface-hover select-none",
-            )}
-          >
-            <Icon name="grip" size={14} className="text-muted" />
-          </div>
-
-          <div
-            className="hidden md:flex h-full overflow-hidden"
-            style={{ width: panelWidth }}
-            data-testid="node-inspector"
-          >
-            <NodeInspectorPanel
-              entity={selectedEntity}
-              visibleEntityKeys={visibleEntityKeys}
-              entityByKey={entityByKey}
-              onNeighborClick={handleNeighborClick}
-              onOpenFicha={handleOpenFicha}
-              onClose={() => setSelectedNodeId(null)}
-              mundo={mundo}
-            />
-          </div>
-        </>
-      )}
+        {/* Controls float over the canvas instead of shrinking it (S4). */}
+        {!loading && !error && (
+          <GraphControlsSidebar
+            status={status}
+            onStatusChange={setStatus}
+            selectedFolders={selectedFolders}
+            onSelectedFoldersChange={setSelectedFolders}
+            showOrphans={showOrphans}
+            onShowOrphansChange={setShowOrphans}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            searchResults={searchResults}
+            searching={searching}
+            searchError={searchError}
+            onSelectResult={handleSelectResult}
+            folderTree={folderTree}
+            onFitView={() => rf.current?.fitView()}
+          />
+        )}
+      </div>
 
       {/* Gated write modal: the author reviews the pending connection change
           (create or break) before it is persisted. Cancel/overlay/Escape abort
