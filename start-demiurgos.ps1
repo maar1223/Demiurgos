@@ -22,11 +22,15 @@
 # Run:  powershell.exe -NoProfile -File start-demiurgos.ps1
 #       powershell.exe -NoProfile -File start-demiurgos.ps1 restart
 #       powershell.exe -NoProfile -File start-demiurgos.ps1 stop
+#       powershell.exe -NoProfile -File start-demiurgos.ps1 install [-Desktop]
 # ---------------------------------------------------------------------------
 
 param(
-    [ValidateSet("start", "restart", "stop")]
-    [string]$Action = "start"
+    [ValidateSet("start", "restart", "stop", "install")]
+    [string]$Action = "start",
+    # `install` only: also drop the visible Desktop icon. The Start Menu entry
+    # is written either way (scripts/lib/desktop-shortcut.ps1 owns the rule).
+    [switch]$Desktop
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +55,22 @@ if ($env:DEMIURGOS_HOME) {
     $installRoot = Split-Path -Parent $appRoot
 } else {
     $installRoot = $appRoot
+}
+
+# --- install action (desktop integration) ----------------------------------
+# Handled here, before any runtime work, on purpose: registering the menu
+# entry must not load the data-root .env, bootstrap a pointer, warn about a
+# missing Hermes CLI or touch a port. Mirrors the POSIX launcher's `install`.
+if ($Action -eq "install") {
+    try {
+        . (Join-Path $appRoot "scripts\lib\desktop-shortcut.ps1")
+        $entries = Install-DemiurgosShortcuts -AppRoot $appRoot -Desktop:$Desktop
+        foreach ($entry in $entries) { Write-Host "Installed: $entry" }
+    } catch {
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        exit 1
+    }
+    exit 0
 }
 
 # Layout contract: venv <current>\.venv\Scripts\python.exe, API dir, logs

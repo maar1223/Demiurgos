@@ -542,6 +542,33 @@ function Invoke-DataRootBootstrap {
     Invoke-SeedEnvFile
 }
 
+# --- Windows Start Menu entry ----------------------------------------------
+# Parity with the Linux applications-menu entry: written by the installer and
+# never fatal. The visible Desktop icon stays opt-in
+# (start-demiurgos.ps1 install -Desktop), so a re-run can always repair the
+# entry without touching the user's own Desktop folder.
+#
+# The helper is read from the installed app, not from wherever this installer
+# happens to sit, and it is dot-sourced only here: an older payload without
+# scripts\lib\desktop-shortcut.ps1 degrades to a warning.
+function Install-StartMenuShortcut {
+    $appRoot = Join-Path $installRoot "current"
+    $lib = Join-Path $appRoot "scripts\lib\desktop-shortcut.ps1"
+    if (-not (Test-Path -LiteralPath $lib -PathType Leaf)) {
+        Warn "no scripts\lib\desktop-shortcut.ps1 in the payload; the Start Menu entry is skipped"
+        return
+    }
+    try {
+        . $lib
+        $written = Install-DemiurgosShortcuts -AppRoot $appRoot
+        foreach ($entry in $written) {
+            Write-Host "install-demiurgos: Start Menu entry at $entry"
+        }
+    } catch {
+        Warn "could not write the Start Menu entry: $($_.Exception.Message)"
+    }
+}
+
 # --- seed-only entry point (S0-A; test/ops seam) -----------------------------
 # DEMIURGOS_SEED_ONLY=1 performs ONLY the data-root bootstrap-once + .env seed
 # (design S3-7) and exits 0 - the exact code path the full install runs at the
@@ -584,6 +611,9 @@ try {
     }
     if ($alreadyCurrent) {
         Write-Host "install-demiurgos: $version is already installed and current; nothing to do"
+        # ...except the Start Menu entry, which is the installer's own to own:
+        # a user who deleted it gets it back by re-running the installer.
+        Install-StartMenuShortcut
         exit 0
     }
 
@@ -594,9 +624,10 @@ try {
     Invoke-CommitStaging
     Write-ChannelConfig
     Invoke-DataRootBootstrap
+    Install-StartMenuShortcut
 
     Write-Host "install-demiurgos: done. Start Demiurgos with:"
-    Write-Host "  $installRoot\current\scripts\start-demiurgos.ps1 start"
+    Write-Host "  $installRoot\current\start-demiurgos.ps1 start"
 } catch {
     Remove-WorkDirs
     Write-Host $_.Exception.Message -ForegroundColor Red

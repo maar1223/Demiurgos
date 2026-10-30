@@ -15,6 +15,9 @@ Comandos reales de la plataforma web Demiurgos, verificados contra el repositori
 
 - Acciones del launcher Linux: `start`, `restart`, `stop`, `install`. En Linux el instalador ya añade la entrada al menú de aplicaciones; `install` la reescribe e `install --desktop` añade además el icono en la carpeta del escritorio.
 - App y health de la API: `http://127.0.0.1:8000` · `/health`
+- Acciones del launcher Windows: `start`, `restart`, `stop`, `install`. El instalador
+  añade el acceso al menú Inicio; `start-demiurgos.ps1 install -Desktop` añade además
+  el icono del escritorio.
 - En Windows puedes arrancar solo la API con `start-api.ps1`.
 
 ---

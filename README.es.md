@@ -56,7 +56,7 @@ cd frontend && npm install && cd ..
 | **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Gateway de Hermes (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | El mismo stack + warm-up del grafo |
 
-El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows también puedes arrancar solo la API con `start-api.ps1`.
+El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows el instalador añade un acceso al menú Inicio y `start-demiurgos.ps1 install -Desktop` añade el icono del escritorio; `start-api.ps1` arranca solo la API.
 
 **VPS:** el mismo stack funciona en un servidor. La cookie de sesión es **scheme-aware**: las peticiones HTTPS reciben una cookie `Secure`; HTTP plano (un VPS sin TLS) no — el inicio de sesión funciona en cualquier plataforma sin configuración.
 
