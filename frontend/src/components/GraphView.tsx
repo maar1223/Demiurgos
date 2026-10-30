@@ -1,17 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  forceCenter,
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
-} from "d3-force";
-import {
   Background,
   Handle,
   Position,
@@ -33,6 +22,11 @@ import {
   searchEntities,
   type GraphStatusFilter,
 } from "@/api/graph";
+import {
+  computeForcePositions,
+  computeLayoutSize,
+  nodeKey,
+} from "@/lib/graphForce";
 import type {
   EntityLink,
   FichaStatus,
@@ -56,9 +50,6 @@ import { cn } from "@/lib/utils";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Node key: canonical id when present, path fallback for legacy entities. */
-function nodeKey(entity: GraphEntity): string {
-  return entity.id || entity.path;
-}
 
 /** Default inspector panel width (desktop). */
 const RIGHT_DEFAULT = 280;
@@ -75,153 +66,10 @@ const clampPanel = (w: number) => {
   return Math.min(max, Math.max(min, Math.round(w)));
 };
 
-/**
- * Simulation node: d3-force datum carrying the entity's node key as id.
- * `x`/`y` are filled in by the simulation.
- */
-interface SimNode extends SimulationNodeDatum {
-  id: string;
-}
-
-/** Minimum layout area side; grows with node count so nodes never overlap. */
-const LAYOUT_MIN_SIZE = 400;
-/** Per-node target spacing used to size the layout area (no collision force). */
-const LAYOUT_NODE_SPACING = 180;
-/** Preferred link length in the settled layout. */
-const LINK_DISTANCE = 160;
-/** Repulsive force between every node pair (negative = repel). */
-const CHARGE_STRENGTH = -400;
-/** Strength pulling every node toward the center (limits group spread). */
-const CENTER_STRENGTH = 0.06;
-/** Collision radius keeping node centers apart so labels never overlap. */
-const NODE_COLLIDE_RADIUS = 75;
-/** Minimum distance a node center keeps from edges it is NOT connected to,
- *  so a node never sits on another group's relations looking connected. */
-const EDGE_MIN_DISTANCE = 60;
-/** Fallback node size used when measured dimensions are unavailable. */
+/** Fallback node size used when measured dimensions are unavailable (the
+ *  drag push-out below; the force engine owns its own constants). */
 const NODE_MIN_WIDTH = 140;
 const NODE_MIN_HEIGHT = 36;
-/** Synchronous settle budget; enough for ~52-node worlds. */
-const SETTLE_TICKS = 300;
-
-/**
- * Layout area side length scales with node count (sqrt(N) * spacing) so the
- * graph has room to spread nodes without overlapping — no collision force.
- */
-function computeLayoutSize(nodeCount: number): number {
-  return Math.max(
-    LAYOUT_MIN_SIZE,
-    Math.sqrt(Math.max(1, nodeCount)) * LAYOUT_NODE_SPACING,
-  );
-}
-
-/**
- * Custom d3-force: repels every node from edge SEGMENTS it is NOT connected
- * to. Keeps a node from sitting on another group's relations, which visually
- * reads as a connection that does not exist. Runs inside the settle ticks.
- */
-function edgeAvoidanceForce(
-  simNodes: SimNode[],
-  simLinks: SimulationLinkDatum<SimNode>[],
-) {
-  return (alpha: number) => {
-    for (const node of simNodes) {
-      for (const link of simLinks) {
-        const sourceNode =
-          typeof link.source === "object" ? (link.source as SimNode) : undefined;
-        const targetNode =
-          typeof link.target === "object" ? (link.target as SimNode) : undefined;
-        if (!sourceNode || !targetNode) continue;
-        if (sourceNode.id === node.id || targetNode.id === node.id) continue;
-        const sx = sourceNode.x ?? 0;
-        const sy = sourceNode.y ?? 0;
-        const tx = targetNode.x ?? 0;
-        const ty = targetNode.y ?? 0;
-        const dx = tx - sx;
-        const dy = ty - sy;
-        const len2 = dx * dx + dy * dy;
-        let t = 0;
-        if (len2 > 0) {
-          t = Math.max(
-            0,
-            Math.min(
-              1,
-              (((node.x ?? 0) - sx) * dx + ((node.y ?? 0) - sy) * dy) / len2,
-            ),
-          );
-        }
-        const px = sx + t * dx;
-        const py = sy + t * dy;
-        const dist = Math.hypot((node.x ?? 0) - px, (node.y ?? 0) - py);
-        if (dist < EDGE_MIN_DISTANCE && dist > 0.0001) {
-          const force = ((EDGE_MIN_DISTANCE - dist) / dist) * alpha * 0.4;
-          node.vx = (node.vx ?? 0) + ((node.x ?? 0) - px) * force;
-          node.vy = (node.vy ?? 0) + ((node.y ?? 0) - py) * force;
-        }
-      }
-    }
-  };
-}
-
-/**
- * Force-directed layout via d3-force — replaces the deterministic grid.
- * Nodes repel each other while links pull connected ones together, so the
- * result reads as an organic graph instead of a table. The simulation runs
- * ONCE, synchronously: `stop()` disables the internal timer and a manual
- * `tick()` loop settles it — no async timers, so tests stay deterministic
- * and React never sees updates outside `act()`. No collision force on
- * purpose: overlapping nodes are acceptable (Obsidian-style organic look).
- */
-function computeForcePositions(
-  entities: GraphEntity[],
-  links: EntityLink[],
-  size: number,
-): Map<string, { x: number; y: number }> {
-  const bounds: CoordinateExtent = [
-    [0, 0],
-    [size, size],
-  ];
-  const nodeIds = new Set(entities.map(nodeKey));
-  const simNodes: SimNode[] = entities.map((entity) => ({
-    id: nodeKey(entity),
-  }));
-  // Only links whose endpoints are both visible participate (mirrors the
-  // edge filtering below, so the layout and the rendered edges agree).
-  const simLinks: SimulationLinkDatum<SimNode>[] = links
-    .filter((link) => nodeIds.has(link.source) && nodeIds.has(link.target))
-    .map((link) => ({ source: link.source, target: link.target }));
-
-  const simulation = forceSimulation<SimNode>(simNodes)
-    .force(
-      "link",
-      forceLink<SimNode, SimulationLinkDatum<SimNode>>(simLinks)
-        .id((d) => d.id)
-        .distance(LINK_DISTANCE),
-    )
-    .force("charge", forceManyBody<SimNode>().strength(CHARGE_STRENGTH))
-    .force("center", forceCenter<SimNode>(size / 2, size / 2))
-    .force("x", forceX<SimNode>(size / 2).strength(CENTER_STRENGTH))
-    .force("y", forceY<SimNode>(size / 2).strength(CENTER_STRENGTH))
-    .force(
-      "collide",
-      forceCollide<SimNode>()
-        .radius(NODE_COLLIDE_RADIUS)
-        .strength(0.8),
-    )
-    .force("edgeAvoid", edgeAvoidanceForce(simNodes, simLinks))
-    .stop();
-
-  simulation.tick(SETTLE_TICKS);
-
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const node of simulation.nodes()) {
-    // Clamp to the layout bounds so clusters never spread off-canvas.
-    const x = Math.min(Math.max(node.x ?? 0, bounds[0][0]), bounds[1][0]);
-    const y = Math.min(Math.max(node.y ?? 0, bounds[0][1]), bounds[1][1]);
-    positions.set(node.id, { x, y });
-  }
-  return positions;
-}
 
 /** Solid-background node look keyed by status (chips keep translucent bg).
  *  Border colors match STATUS_META so node colors never drift from chips.
