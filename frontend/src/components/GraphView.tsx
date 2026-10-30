@@ -46,7 +46,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Toast } from "@/components/atoms/Toast";
-import { Icon } from "@/components/atoms/Icon";
+import { Icon, type IconName } from "@/components/atoms/Icon";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { GraphControlsSidebar } from "@/components/organisms/GraphControlsSidebar";
 import { NodeInspectorPanel } from "@/components/organisms/NodeInspectorPanel";
@@ -114,16 +114,69 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** Solid-background node look keyed by status (chips keep translucent bg).
- *  Border colors match STATUS_META so node colors never drift from chips.
- *  Text uses dark: variants: dark amber/emerald on light mode, light on dark. */
-const NODE_STATUS_CLASS: Record<FichaStatus, string> = {
-  draft: "border-amber-400/50 text-amber-700 dark:text-amber-200",
-  stable: "border-emerald-500/60 text-emerald-700 dark:text-emerald-200",
+/** Entity-type icon (S6): the frontmatter type decides the glyph; unknown
+ *  types fall back to a plain document instead of a blank card. */
+const TYPE_ICONS: Record<string, IconName> = {
+  personaje: "avatar",
+  character: "avatar",
+  lugar: "world",
+  place: "world",
+  location: "world",
+  evento: "history",
+  event: "history",
+  concepto: "lightbulb",
+  concept: "lightbulb",
+  idea: "lightbulb",
+  objeto: "file",
+  object: "file",
+  item: "file",
+  referencia: "markdown",
+  reference: "markdown",
+};
+
+function typeIcon(type?: string): IconName {
+  if (!type) return "file";
+  return TYPE_ICONS[type.toLowerCase()] ?? "file";
+}
+
+/** Degree tiers (S6): hubs read first, isolated nodes recede. */
+type NodeTier = "hub" | "node" | "leaf";
+/** Minimum connections for a node to read as a hub. */
+const HUB_MIN_DEGREE = 5;
+
+function nodeTier(degree: number): NodeTier {
+  if (degree >= HUB_MIN_DEGREE) return "hub";
+  if (degree === 0) return "leaf";
+  return "node";
+}
+
+const NODE_TIER_CLASS: Record<NodeTier, string> = {
+  hub: "gap-2 px-3.5 py-2.5 text-small font-semibold",
+  node: "gap-2 px-3 py-2 text-small font-medium",
+  leaf: "gap-1.5 px-2.5 py-1.5 text-xs font-normal",
+};
+
+/** Canon reads through fill + ring + status dot — never border colour alone
+ *  (S6). The base border stays neutral so the status never depends on it. */
+const NODE_CANON_CLASS: Record<
+  FichaStatus,
+  { card: string; dot: string }
+> = {
+  draft: {
+    card: "bg-amber-400/10 ring-1 ring-amber-400/60",
+    dot: "bg-amber-500",
+  },
+  stable: {
+    card: "bg-emerald-500/10 ring-1 ring-emerald-500/60",
+    dot: "bg-emerald-500",
+  },
 };
 
 interface GraphNodeData extends Record<string, unknown> {
   label: string;
+  type?: string;
+  status?: FichaStatus;
+  tier: NodeTier;
 }
 
 /**
@@ -152,6 +205,7 @@ type GraphNodeType = Node<GraphNodeData, "graph">;
 const handleStyle = { opacity: 0 } as const;
 
 function GraphNode({ data }: NodeProps<GraphNodeType>) {
+  const canon = data.status ? NODE_CANON_CLASS[data.status] : null;
   return (
     <div className="relative">
       <Handle
@@ -160,7 +214,33 @@ function GraphNode({ data }: NodeProps<GraphNodeType>) {
         style={handleStyle}
         isConnectable={true}
       />
-      <span>{data.label}</span>
+      <div
+        data-testid="graph-node-card"
+        data-tier={data.tier}
+        data-canon={data.status ?? "none"}
+        className={cn(
+          "flex items-center rounded-lg border-2 border-edge bg-surface-raised shadow-sm text-primary",
+          NODE_TIER_CLASS[data.tier],
+          canon?.card,
+        )}
+      >
+        <Icon
+          name={typeIcon(data.type)}
+          size={data.tier === "leaf" ? 12 : 14}
+          data-testid="node-type-icon"
+          data-icon={typeIcon(data.type)}
+          className="text-muted"
+        />
+        <span className="max-w-[11rem] truncate">{data.label}</span>
+        <span
+          data-testid="canon-dot"
+          aria-hidden="true"
+          className={cn(
+            "h-1.5 w-1.5 shrink-0 rounded-full",
+            canon?.dot ?? "bg-muted",
+          )}
+        />
+      </div>
       <Handle
         type="source"
         position={Position.Bottom}
@@ -465,19 +545,21 @@ export default function GraphView({ mundo }: GraphViewProps) {
       ? layout.settle()
       : layout.step(INITIAL_LIVE_TICKS);
 
-    const nextNodes: GraphNodeType[] = visible.map((entity) => ({
-      id: nodeKey(entity),
-      type: "graph",
-      position: positions.get(nodeKey(entity)) ?? { x: 0, y: 0 },
-      data: { label: entity.name },
-      extent: bounds,
-      className: cn(
-        "rounded-lg border-2 px-3 py-2 text-xs font-medium bg-surface-raised",
-        entity.status
-          ? NODE_STATUS_CLASS[entity.status]
-          : "border-edge text-muted",
-      ),
-    }));
+    const nextNodes: GraphNodeType[] = visible.map((entity) => {
+      const degree = entity.forward_links.length + entity.backlinks.length;
+      return {
+        id: nodeKey(entity),
+        type: "graph",
+        position: positions.get(nodeKey(entity)) ?? { x: 0, y: 0 },
+        data: {
+          label: entity.name,
+          type: entity.type ?? undefined,
+          status: entity.status ?? undefined,
+          tier: nodeTier(degree),
+        },
+        extent: bounds,
+      };
+    });
     setNodes(nextNodes);
     // The prop only seeds the first mount; later dataset changes must reach
     // the already-mounted canvas through its instance.

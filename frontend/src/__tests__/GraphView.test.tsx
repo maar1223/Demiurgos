@@ -495,16 +495,93 @@ describe("GraphView", () => {
     });
   });
 
-  it("colors nodes by status via STATUS_META tokens", async () => {
+  it("reads canon through fill, ring and a status dot, never border colour alone", async () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
 
     await waitFor(() => expect(countNodes()).toBe(3));
-    // stable → emerald token; draft → amber token (STATUS_META chipClass).
-    const rhyz = screen.getByText("Rhyz").closest(".react-flow__node");
-    expect(rhyz).toHaveClass("border-emerald-500/60");
-    const vael = screen.getByText("Vael").closest(".react-flow__node");
-    expect(vael).toHaveClass("border-amber-400/50");
+    const card = (name: string) =>
+      screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
+
+    // S6: canon is fill + ring + dot; the border stays neutral on purpose.
+    const rhyz = card("Rhyz");
+    expect(rhyz).toHaveAttribute("data-canon", "stable");
+    expect(rhyz).toHaveClass("ring-emerald-500/60", "bg-emerald-500/10");
+    expect(rhyz).toHaveClass("border-edge");
+    expect(rhyz.querySelector('[data-testid="canon-dot"]')).toHaveClass(
+      "bg-emerald-500",
+    );
+
+    const vael = card("Vael");
+    expect(vael).toHaveAttribute("data-canon", "draft");
+    expect(vael).toHaveClass("ring-amber-400/60", "bg-amber-400/10");
+    expect(vael.querySelector('[data-testid="canon-dot"]')).toHaveClass(
+      "bg-amber-500",
+    );
+  });
+
+  it("shows the entity type icon and sizes nodes by connection degree", async () => {
+    const user = userEvent.setup();
+    const spokes = ["Ana", "Bran", "Cael", "Dara", "Elen"];
+    const HUB_WORLD: GraphEntity[] = [
+      {
+        id: "Hub::Centro",
+        name: "Centro",
+        type: "concepto",
+        path: "lore/Centro.md",
+        status: "stable",
+        content: "",
+        forward_links: spokes,
+        backlinks: [],
+        relaciones: [],
+      },
+      ...spokes.map((name) => ({
+        id: `Hub::${name}`,
+        name,
+        type: "personaje",
+        path: `personajes/${name}.md`,
+        status: "draft" as const,
+        content: "",
+        forward_links: [],
+        backlinks: ["lore/Centro.md"],
+        relaciones: [],
+      })),
+      {
+        id: "Hub::Solo",
+        name: "Solo",
+        type: "objeto",
+        path: "lore/Solo.md",
+        status: "draft" as const,
+        content: "",
+        forward_links: [],
+        backlinks: [],
+        relaciones: [],
+      },
+    ];
+    const HUB_LINKS: EntityLink[] = spokes.map((name) => ({
+      source: "Hub::Centro",
+      target: `Hub::${name}`,
+      kind: "forward",
+    }));
+    mockFetch.mockResolvedValue({ entities: HUB_WORLD, links: HUB_LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(6));
+    const card = (name: string) =>
+      screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
+
+    expect(card("Centro")).toHaveAttribute("data-tier", "hub");
+    expect(card("Ana")).toHaveAttribute("data-tier", "node");
+    expect(
+      card("Centro").querySelector('[data-testid="node-type-icon"]'),
+    ).toHaveAttribute("data-icon", "lightbulb");
+
+    await user.click(screen.getByLabelText("Mostrar nodos aislados"));
+    await waitFor(() => expect(countNodes()).toBe(7));
+    expect(card("Solo")).toHaveAttribute("data-tier", "leaf");
+    expect(
+      card("Solo").querySelector('[data-testid="node-type-icon"]'),
+    ).toHaveAttribute("data-icon", "file");
   });
 
   it("re-fetches with the selected status filter", async () => {
