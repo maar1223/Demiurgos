@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { ComponentProps, ElementType } from "react";
@@ -31,6 +38,11 @@ const mockFlowInstance: { instance: ReactFlowInstance | null } = {
   instance: null,
 };
 
+/** Latest props the component handed to React Flow (drag callbacks etc.). */
+const mockFlowProps: { current: Record<string, unknown> | null } = {
+  current: null,
+};
+
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
   const { createElement } = await import("react");
@@ -39,14 +51,16 @@ vi.mock("@xyflow/react", async (importOriginal) => {
     ...actual,
     // Wrap ReactFlow to capture the instance onInit receives; every other
     // prop is forwarded untouched, so rendering behavior stays identical.
-    ReactFlow: (props: ComponentProps<typeof RealReactFlow>) =>
-      createElement(RealReactFlow as ElementType, {
+    ReactFlow: (props: ComponentProps<typeof RealReactFlow>) => {
+      mockFlowProps.current = props as unknown as Record<string, unknown>;
+      return createElement(RealReactFlow as ElementType, {
         ...props,
         onInit: (instance: ReactFlowInstance) => {
           mockFlowInstance.instance = instance;
           props.onInit?.(instance);
         },
-      }),
+      });
+    },
   };
 });
 
@@ -241,6 +255,50 @@ function countEdges(): number {
   return document.querySelectorAll(".react-flow__edge").length;
 }
 
+/** Stub `prefers-reduced-motion` (and every other media query) for a test. */
+function stubMotionPreference(reduced: boolean): void {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: reduced && query.includes("prefers-reduced-motion"),
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
+
+/**
+ * Replace requestAnimationFrame with a manual queue so the live layout only
+ * advances when the test says so — no wall-clock waits, no act() warnings.
+ */
+function stubAnimationFrames() {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+  const flush = (count = 1) => {
+    for (let index = 0; index < count; index += 1) {
+      const frame = frames.shift();
+      if (!frame) return;
+      frame(0);
+    }
+  };
+  return { frames, flush };
+}
+
+type DragHandler = (
+  event: unknown,
+  node: { id: string; position: { x: number; y: number } },
+) => void;
+
+function dragHandler(name: "onNodeDragStart" | "onNodeDrag" | "onNodeDragStop"): DragHandler | undefined {
+  return mockFlowProps.current?.[name] as DragHandler | undefined;
+}
+
 describe("GraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -270,6 +328,99 @@ describe("GraphView", () => {
     expect(screen.getByText("Rhyz")).toBeInTheDocument();
     expect(screen.getByText("Vael")).toBeInTheDocument();
     expect(screen.getByText("Dottua")).toBeInTheDocument();
+  });
+
+  it("cools the layout down through the React Flow instance when motion is allowed", async () => {
+    stubMotionPreference(false);
+    const { flush } = stubAnimationFrames();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+    const before = new Map(
+      instance.getNodes().map((node) => [node.id, { ...node.position }]),
+    );
+
+    act(() => flush(8));
+
+    // S1/S2: the simulation advanced and wrote positions into the store
+    // without the view re-seeding the node array from React state.
+    const moved = instance
+      .getNodes()
+      .some((node) => {
+        const start = before.get(node.id);
+        return (
+          !!start &&
+          (node.position.x !== start.x || node.position.y !== start.y)
+        );
+      });
+    expect(moved).toBe(true);
+  });
+
+  it("settles instantly and never animates under prefers-reduced-motion", async () => {
+    stubMotionPreference(true);
+    const { frames, flush } = stubAnimationFrames();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+    const setNodesSpy = vi.spyOn(instance, "setNodes");
+
+    // Only the one-shot fitView frame exists; the simulation never scheduled
+    // a frame of its own (S3).
+    expect(frames.length).toBeLessThanOrEqual(1);
+    act(() => flush(10));
+    expect(setNodesSpy).not.toHaveBeenCalled();
+  });
+
+  it("pins a dragged node and re-heats its neighbours", async () => {
+    stubMotionPreference(false);
+    const { flush } = stubAnimationFrames();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    // Let the initial cooling finish, so the drag is what moves the graph.
+    act(() => flush(400));
+    const before = new Map(
+      instance.getNodes().map((node) => [node.id, { ...node.position }]),
+    );
+
+    const start = dragHandler("onNodeDragStart");
+    const drag = dragHandler("onNodeDrag");
+    expect(start).toBeTypeOf("function");
+    expect(drag).toBeTypeOf("function");
+
+    act(() => {
+      start!(null, { id: "Stal::Rhyz", position: { x: 40, y: 40 } });
+      drag!(null, { id: "Stal::Rhyz", position: { x: 40, y: 40 } });
+      flush(6);
+    });
+
+    const after = instance.getNodes();
+    // The dragged node stays exactly where the author dropped it…
+    expect(after.find((node) => node.id === "Stal::Rhyz")?.position).toEqual({
+      x: 40,
+      y: 40,
+    });
+    // …and its neighbours react to the new pin.
+    const neighbourMoved = after.some((node) => {
+      if (node.id === "Stal::Rhyz") return false;
+      const startPosition = before.get(node.id);
+      return (
+        !!startPosition &&
+        (node.position.x !== startPosition.x ||
+          node.position.y !== startPosition.y)
+      );
+    });
+    expect(neighbourMoved).toBe(true);
   });
 
   it("colors nodes by status via STATUS_META tokens", async () => {

@@ -5,7 +5,6 @@ import {
   Handle,
   Position,
   ReactFlow,
-  useNodesState,
   type Connection,
   type CoordinateExtent,
   type Edge,
@@ -23,9 +22,12 @@ import {
   type GraphStatusFilter,
 } from "@/api/graph";
 import {
-  computeForcePositions,
   computeLayoutSize,
+  createLiveForceLayout,
   nodeKey,
+  SETTLE_TICKS,
+  type ForcePositions,
+  type LiveForceLayout,
 } from "@/lib/graphForce";
 import type {
   EntityLink,
@@ -49,8 +51,6 @@ import {
 import { cn } from "@/lib/utils";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
-/** Node key: canonical id when present, path fallback for legacy entities. */
-
 /** Default inspector panel width (desktop). */
 const RIGHT_DEFAULT = 280;
 
@@ -70,6 +70,31 @@ const clampPanel = (w: number) => {
  *  drag push-out below; the force engine owns its own constants). */
 const NODE_MIN_WIDTH = 140;
 const NODE_MIN_HEIGHT = 36;
+
+/** Ticks applied before the first paint: centres the initial d3 spiral so the
+ *  graph does not visibly explode from the top-left corner. */
+const INITIAL_LIVE_TICKS = 2;
+/** Alpha restored on a dataset change: enough movement to read as "alive". */
+const DATASET_REHEAT_ALPHA = 0.35;
+/** Alpha restored while a node is dragged, so neighbours keep reacting. */
+const DRAG_REHEAT_ALPHA = 0.35;
+/** Alpha restored on drop: the neighbourhood re-settles around the pin. */
+const DROP_REHEAT_ALPHA = 0.5;
+/** Alpha used by the synchronous settle after a drag under reduced motion. */
+const SETTLE_ALPHA = 1;
+
+/**
+ * Whether the graph must skip animation. Reduced motion is a hard requirement
+ * (S3); a host with no media-query API (jsdom in tests) also takes the
+ * synchronous path, so the layout stays deterministic instead of animating
+ * blindly.
+ */
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return true;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 /** Solid-background node look keyed by status (chips keep translucent bg).
  *  Border colors match STATUS_META so node colors never drift from chips.
@@ -189,11 +214,15 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Draggable node state. Nodes are seeded from the settled force layout and
-  // updated by onNodesChange on drag; they are re-seeded only when the
-  // dataset (filter/orphans) changes.
-  const [nodes, setNodes, onNodesChange] = useNodesState<GraphNodeType>([]);
+  // Structural node state: ids, labels, classes and the INITIAL positions.
+  // React Flow runs uncontrolled (`defaultNodes`) and owns the live positions;
+  // the simulation writes them straight into its store, so an animation frame
+  // never re-renders this component (S2). The state is re-seeded only when the
+  // dataset (filter/orphans/reload) changes.
+  const [nodes, setNodes] = useState<GraphNodeType[]>([]);
   const rf = useRef<ReactFlowInstance<GraphNodeType, Edge> | null>(null);
+  const layoutRef = useRef<LiveForceLayout | null>(null);
+  const reducedMotionRef = useRef(prefersReducedMotion());
 
   // Node inspector: selection state plus right-panel resize/focus. The
   // selected entity is DERIVED from the loaded set (by node key), so a status
@@ -359,11 +388,26 @@ export default function GraphView({ mundo }: GraphViewProps) {
     return () => clearTimeout(timer);
   }, [searchQuery, mundo]);
 
-  // Build the settled force layout and (re)seed the draggable node state
-  // whenever the dataset changes (folder filter/orphans). Dragging a node
-  // updates state via onNodesChange and is NOT reset until the dataset
-  // changes.
+  /** Push simulation positions straight into the React Flow store. This is
+   *  the only per-frame write: it keeps the component tree out of the loop
+   *  (S2) while React Flow still re-renders the node it owns. */
+  const applyPositions = useCallback((positions: ForcePositions) => {
+    rf.current?.setNodes((current) =>
+      current.map((node) => {
+        const position = positions.get(node.id);
+        return position ? { ...node, position } : node;
+      }),
+    );
+  }, []);
+
+  // Build the layout and (re)seed the node set whenever the dataset changes
+  // (folder filter/orphans/reload). A fresh dataset means a fresh simulation:
+  // it cools down from a readable starting point, or settles synchronously
+  // when motion is reduced (S1/S3).
   useEffect(() => {
+    layoutRef.current?.stop();
+    layoutRef.current = null;
+
     if (loading || error) return;
     if (visibleEntities.length === 0) {
       setNodes([]);
@@ -384,11 +428,21 @@ export default function GraphView({ mundo }: GraphViewProps) {
       : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
-    const positions = computeForcePositions(visible, links, size);
+    const layout = createLiveForceLayout({ entities: visible, links, size });
+    layoutRef.current = layout;
+
     const bounds: CoordinateExtent = [
       [0, 0],
       [size, size],
     ];
+
+    const reducedMotion = prefersReducedMotion();
+    reducedMotionRef.current = reducedMotion;
+    // Reduced motion jumps to the settled layout in the same frame; otherwise
+    // a couple of ticks let the initial spiral centre before the first paint.
+    const positions = reducedMotion
+      ? layout.settle()
+      : layout.step(INITIAL_LIVE_TICKS);
 
     const nextNodes: GraphNodeType[] = visible.map((entity) => ({
       id: nodeKey(entity),
@@ -404,15 +458,34 @@ export default function GraphView({ mundo }: GraphViewProps) {
       ),
     }));
     setNodes(nextNodes);
+    // The prop only seeds the first mount; later dataset changes must reach
+    // the already-mounted canvas through its instance.
+    rf.current?.setNodes(nextNodes);
     requestAnimationFrame(() => rf.current?.fitView({ padding: 0.2 }));
+
+    if (!reducedMotion) {
+      layout.onPositions = applyPositions;
+      layout.reheat(DATASET_REHEAT_ALPHA);
+      layout.start();
+    }
+
+    return () => layout.stop();
   }, [
     visibleEntities,
     links,
     showOrphans,
     loading,
     error,
-    setNodes,
+    applyPositions,
   ]);
+
+  /** Remount key for the canvas: a new node identity set (status refetch,
+   *  folder filter, orphans toggle) needs a fresh uncontrolled instance seeded
+   *  with the new nodes; updates that only change positions/links reuse it. */
+  const canvasKey = useMemo(
+    () => nodes.map((node) => `${node.id}:${node.data.label}`).join("|"),
+    [nodes],
+  );
 
   // Edges derived from the current node set (read-only; follow dragged nodes).
   // Mutual references (A→B and B→A) collapse into a single line per pair so
@@ -570,47 +643,86 @@ export default function GraphView({ mundo }: GraphViewProps) {
     }
   }, [pendingConnection, pendingBreak, mundo, load, closeModal]);
 
-  // After a drag ends, push the dropped node out of any overlap so nodes can
-  // never be left stacked on top of each other (extent bounds the canvas, but
-  // not node-vs-node collision).
+  /** Re-heat after an interaction. Animated when motion is allowed; under
+   *  reduced motion the neighbourhood settles synchronously in the same tick
+   *  (S1/S3). */
+  const reheatAfterInteraction = useCallback(
+    (alpha: number) => {
+      const layout = layoutRef.current;
+      if (!layout) return;
+      if (reducedMotionRef.current) {
+        layout.reheat(SETTLE_ALPHA);
+        applyPositions(layout.step(SETTLE_TICKS));
+        return;
+      }
+      layout.reheat(alpha);
+      layout.start();
+    },
+    [applyPositions],
+  );
+
+  /** Drag start: pin the node where the author grabbed it and wake the
+   *  simulation so its neighbours react (Obsidian-style live physics). */
+  const handleNodeDragStart = useCallback((_event: unknown, node: Node) => {
+    const layout = layoutRef.current;
+    if (!layout) return;
+    layout.pin(node.id, node.position.x, node.position.y);
+    if (!reducedMotionRef.current) {
+      layout.reheat(DRAG_REHEAT_ALPHA);
+      layout.start();
+    }
+  }, []);
+
+  const handleNodeDrag = useCallback((_event: unknown, node: Node) => {
+    const layout = layoutRef.current;
+    if (!layout) return;
+    // The dragged node follows the pointer exactly; it must never drift.
+    layout.pin(node.id, node.position.x, node.position.y);
+    if (!reducedMotionRef.current && layout.isSettled()) {
+      layout.reheat(DRAG_REHEAT_ALPHA);
+      layout.start();
+    }
+  }, []);
+
+  // Drop: the node STAYS pinned (Obsidian keeps dragged nodes put) and is
+  // pushed out of any overlap — collide cannot separate a pinned node, and the
+  // extent bounds the canvas but not node-vs-node stacking.
   const handleNodeDragStop = useCallback(
     (_event: unknown, dragged: Node) => {
-      setNodes((current) => {
-        const dw = dragged.measured?.width ?? NODE_MIN_WIDTH;
-        const dh = dragged.measured?.height ?? NODE_MIN_HEIGHT;
-        let nx = dragged.position.x;
-        let ny = dragged.position.y;
-        for (const other of current) {
-          if (other.id === dragged.id) continue;
-          const ow = other.measured?.width ?? NODE_MIN_WIDTH;
-          const oh = other.measured?.height ?? NODE_MIN_HEIGHT;
-          const overlapX = Math.min(
-            nx + dw - other.position.x,
-            other.position.x + ow - nx,
-          );
-          const overlapY = Math.min(
-            ny + dh - other.position.y,
-            other.position.y + oh - ny,
-          );
-          if (overlapX > 0 && overlapY > 0) {
-            // Push out along the axis of least penetration.
-            if (overlapX < overlapY) {
-              nx = nx < other.position.x
-                ? other.position.x - dw
-                : other.position.x + ow;
-            } else {
-              ny = ny < other.position.y
-                ? other.position.y - dh
-                : other.position.y + oh;
-            }
+      const layout = layoutRef.current;
+      if (!layout) return;
+      const simPositions = layout.positions();
+      const current = rf.current?.getNodes() ?? nodes;
+      const dw = dragged.measured?.width ?? NODE_MIN_WIDTH;
+      const dh = dragged.measured?.height ?? NODE_MIN_HEIGHT;
+      let nx = dragged.position.x;
+      let ny = dragged.position.y;
+      for (const other of current) {
+        if (other.id === dragged.id) continue;
+        const position = simPositions.get(other.id) ?? other.position;
+        const ow = other.measured?.width ?? NODE_MIN_WIDTH;
+        const oh = other.measured?.height ?? NODE_MIN_HEIGHT;
+        const overlapX = Math.min(
+          nx + dw - position.x,
+          position.x + ow - nx,
+        );
+        const overlapY = Math.min(
+          ny + dh - position.y,
+          position.y + oh - ny,
+        );
+        if (overlapX > 0 && overlapY > 0) {
+          // Push out along the axis of least penetration.
+          if (overlapX < overlapY) {
+            nx = nx < position.x ? position.x - dw : position.x + ow;
+          } else {
+            ny = ny < position.y ? position.y - dh : position.y + oh;
           }
         }
-        return current.map((n) =>
-          n.id === dragged.id ? { ...n, position: { x: nx, y: ny } } : n,
-        );
-      });
+      }
+      layout.pin(dragged.id, nx, ny);
+      reheatAfterInteraction(DROP_REHEAT_ALPHA);
     },
-    [setNodes],
+    [nodes, reheatAfterInteraction],
   );
 
   return (
@@ -663,12 +775,17 @@ export default function GraphView({ mundo }: GraphViewProps) {
             data-testid="graph-view"
           >
             <ReactFlow
-              nodes={nodes}
+              key={canvasKey}
+              // Uncontrolled on purpose: the force engine owns live positions
+              // and writes them through the instance store (S2), so this
+              // component never re-renders per animation frame.
+              defaultNodes={nodes}
               edges={edges}
-              onNodesChange={onNodesChange}
               nodeTypes={nodeTypes}
               defaultEdgeOptions={{ type: "straight" }}
               onNodeClick={handleNodeClick}
+              onNodeDragStart={handleNodeDragStart}
+              onNodeDrag={handleNodeDrag}
               onNodeDragStop={handleNodeDragStop}
               onConnect={handleConnect}
               onEdgeClick={handleEdgeClick}
