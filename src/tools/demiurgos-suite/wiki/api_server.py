@@ -6493,7 +6493,7 @@ def _relacion_keys(content: str) -> list[str]:
     return keys
 
 
-def _apply_relation_plan(mundo: str, plan) -> None:
+def _apply_relation_plan(mundo: str, plan) -> bool:
     """Add every missing grounded relation through the shared frontmatter writer.
 
     Additive on purpose: existing entries (hand-edited or Hermes-authored) are
@@ -6502,7 +6502,10 @@ def _apply_relation_plan(mundo: str, plan) -> None:
     Folder membership is exact truth bounded by the folder itself, so structural
     ids never consume the textual ``MAX_RELATIONS`` budget; only inferred
     (name/alias/stem/ordinal) relations are capped.
+
+    Returns ``True`` when at least one ficha changed on disk.
     """
+    wrote = False
     for rel_path, target_ids in plan.relations.items():
         full = _resolve_mundo_path(mundo, rel_path)
         if full is None or not full.is_file():
@@ -6531,6 +6534,8 @@ def _apply_relation_plan(mundo: str, plan) -> None:
                     room -= 1
             if updated != content:
                 _atomic_write(full, updated)
+                wrote = True
+    return wrote
 
 
 def _reconcile_relations_after_write(mundo: str, paths: list[str]) -> None:
@@ -6544,9 +6549,11 @@ def _reconcile_relations_after_write(mundo: str, paths: list[str]) -> None:
         )
         if not plan:
             return
-        _apply_relation_plan(mundo, plan)
-        # The cached index now carries stale ``relaciones``/links.
-        _graph_indices.pop(mundo, None)
+        if _apply_relation_plan(mundo, plan):
+            # The cached index now carries stale ``relaciones``/links; drop it
+            # only when the plan actually wrote, so an identical re-save never
+            # pays a rebuild.
+            _graph_indices.pop(mundo, None)
     except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
         logger.warning(
             "relations: reconcile after save failed for world %s: %s", mundo, exc

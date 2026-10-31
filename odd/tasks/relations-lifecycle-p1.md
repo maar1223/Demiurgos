@@ -65,11 +65,14 @@ P2 persists provenance.
 S9 — Structural relations are uncapped (Owner decision, L5). Folder membership
 (`folder-index` evidence) is exact truth bounded by the folder itself, so it
 never consumes the textual `MAX_RELATIONS` budget: an index page with 20 members
-keeps 20 relations and a member keeps its one belonging edge. The cap applies
-only to inferred evidence (name/alias/stem/ordinal), where a hub ficha stays at
-12. `MAX_RELATIONS` was a size limit for the importer's LLM response; that reason
-does not exist at save time, and silently truncating the hierarchy loses part of
-the map.
+keeps 20 relations and a member keeps its one belonging edge. Membership is
+tracked as its own id set (`import_relations.structural_relations`), never by the
+evidence string that won the match: an index page that lists its members in the
+body matches them by full name too, and they must still stay outside the cap.
+The cap applies only to inferred evidence (name/alias/stem/ordinal), where a hub
+ficha stays at 12. `MAX_RELATIONS` was a size limit for the importer's LLM
+response; that reason does not exist at save time, and silently truncating the
+hierarchy loses part of the map.
 
 S10 — Ambiguous identity keys are not evidence (Owner decision, L5). When two
 entities share a normalized title, an alias segment or a filename stem, that key
@@ -82,11 +85,12 @@ report uses the same guard.
 - [x] T1 — `relation_service.py`: catalog projection, forward + reverse + folder
   index passes, additive idempotent merge, fail-open per ficha. (S1–S3, S5–S8)
   Route: inline. Evidence: `tests/test_relation_service.py` 7 passed.
-- [x] T2 — Hook the service after a successful write in the editor save route,
-  the guided/materialize create route, and restore; invalidate the cached graph
-  index. (S4, S6) Route: inline. Evidence: `TestRelationsAfterSave` green; the
-  hook is a single helper called from `save_file`, `save_file_via_save`,
-  `create_file` and `restore_history`, after every digest check.
+- [x] T2 — Hook the service after a successful write in the editor save route
+  and the guided/materialize create route (restore is excluded, S4); invalidate
+  the cached graph index only when the plan actually wrote. (S4, S6) Route:
+  inline. Evidence: `TestRelationsAfterSave` green; the hook is a single helper
+  called from `save_file`, `save_file_via_save` and `create_file`, after every
+  digest check.
 - [x] T3 — Tests: unit coverage of every pass, idempotency, additive merge,
   non-entity skip, malformed-file fail-open, plus one API-level save test.
   (S2, S5–S8) Route: inline. Evidence: full backend suite 4321 passed, 4
@@ -144,3 +148,18 @@ L6 Evidence for L5:
 - Two fichas sharing a title or stem were both linked from one mention. Fixed by
   S10.
 - `restore_history` no longer reconciles, so a restore is byte-exact.
+
+L7 Re-verification (independent, `eb84f9e` vs `44dd7d2`) found one blocker, now
+fixed: S9 was incomplete because `grounded_relations` classified membership by
+the evidence string that won. An index page whose body lists its members matched
+them by `full-name`, so 13 members were capped to 12 through the real save
+route, and a member could lose its belonging edge when its body named the index
+plus 12 others. Membership now comes from `structural_relations` (an independent
+id set) in both the extraction split and the applier budget. Ten verifier probes
+are committed as `tests/test_relations_lifecycle_p1_verifier.py`.
+Also fixed: the cached graph index is dropped only when the plan actually wrote,
+so an identical re-save never pays a rebuild. Residual advisory: after a real
+change the next save rebuilds the index from disk (O(world)); a cheaper
+incremental invalidation is a follow-up, not a correctness issue.
+Final evidence: relation tests 35 passed; full backend suite 4353 passed,
+8 skipped; importer default output unchanged on non-ambiguous inputs.

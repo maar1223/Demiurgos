@@ -245,8 +245,10 @@ def test_folder_index_beyond_the_cap_through_the_save_route(client, monkeypatch)
     w = _world()
     regions = w / "regions"
     regions.mkdir(parents=True, exist_ok=True)
+    listing = "\n".join(f"- Member {n}" for n in range(13))
     (regions / "regions.md").write_text(
-        "---\ntype: region\nid: lore::regions::regions\ntitle: Regions\n---\nIndex.\n",
+        "---\ntype: region\nid: lore::regions::regions\ntitle: Regions\n---\n"
+        f"{listing}\n",
         encoding="utf-8",
     )
     for n in range(13):

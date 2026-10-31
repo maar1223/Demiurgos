@@ -161,11 +161,10 @@ def grounded_relations(
 
     body_norm = _normalize(body or "")
     generic = _generic_tokens(source_path)
-    source_folder = _folder(source_path)
-    index_path = _folder_index_path(source_folder)
-    # The folder index lists its members and each member points back at it.
-    source_is_index = bool(source_path) and source_path == index_path
     ambiguous = _ambiguous_identity_keys(targets)
+    structural = structural_relations(
+        source_id=source_id, source_path=source_path, targets=targets
+    )
 
     best: dict[str, tuple[int, str]] = {}
     for target in targets:
@@ -177,13 +176,7 @@ def grounded_relations(
         evidence = _match_target(target, body_norm, generic, ambiguous)
         if evidence is not None:
             _keep(best, target.canonical_id, evidence)
-        if index_path and target.path == index_path:
-            _keep(best, target.canonical_id, "folder-index")
-        if (
-            source_is_index
-            and target.path
-            and _folder(target.path) == source_folder
-        ):
+        if target.canonical_id in structural:
             _keep(best, target.canonical_id, "folder-index")
 
     ordered = sorted(
@@ -191,15 +184,48 @@ def grounded_relations(
         key=lambda item: (_EVIDENCE_PRIORITY[item[1][1]], item[0]),
     )
     if structural_uncapped:
-        textual = [item for item in ordered if item[1][1] != "folder-index"]
-        structural = [item for item in ordered if item[1][1] == "folder-index"]
-        selected = textual[:max_relations] + structural
+        # Membership is filed by its own set, not by the evidence string that
+        # won: an index page that lists its members in the body matches them by
+        # full name too, and they must still stay outside the textual cap.
+        textual = [item for item in ordered if item[0] not in structural]
+        structural_items = [item for item in ordered if item[0] in structural]
+        selected = textual[:max_relations] + structural_items
     else:
         selected = ordered[:max_relations]
     return [
         GroundedRelation(canonical_id=canonical_id, evidence=evidence)
         for canonical_id, (_priority, evidence) in selected
     ]
+
+
+def structural_relations(
+    *,
+    source_id: str,
+    source_path: str,
+    targets: Sequence[RelationTarget],
+) -> frozenset[str]:
+    """Ids connected to the source by folder membership alone.
+
+    Derived from the path, never from the body: the folder's own index and each
+    member's belonging edge. Kept separate from the evidence kind because a
+    member named in the index body matches by full name as well — the cap must
+    not treat that as an inferred relation.
+    """
+
+    folder = _folder(source_path)
+    index_path = _folder_index_path(folder)
+    source_is_index = bool(source_path) and source_path == index_path
+    ids: set[str] = set()
+    for target in targets:
+        if not target.canonical_id or target.canonical_id == source_id:
+            continue
+        if target.path and source_path and target.path == source_path:
+            continue
+        if index_path and target.path == index_path:
+            ids.add(target.canonical_id)
+        elif source_is_index and target.path and _folder(target.path) == folder:
+            ids.add(target.canonical_id)
+    return frozenset(ids)
 
 
 def _ambiguous_identity_keys(

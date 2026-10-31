@@ -37,6 +37,7 @@ from import_relations import (
     RelationTarget,
     build_relation_targets,
     grounded_relations,
+    structural_relations,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,11 +148,13 @@ def build_relation_plan(
         plan[source.path] = tuple(
             relation.canonical_id for relation in relations
         )
-        folder_ids = frozenset(
-            relation.canonical_id
-            for relation in relations
-            if relation.evidence == "folder-index"
-        )
+        # Membership is its own set: a member named in the index body matches
+        # by full name too, and must still bypass the textual cap.
+        folder_ids = structural_relations(
+            source_id=source.canonical_id,
+            source_path=source.path,
+            targets=targets,
+        ) & set(plan[source.path])
         if folder_ids:
             structural[source.path] = folder_ids
     return RelationPlan(plan, structural)
