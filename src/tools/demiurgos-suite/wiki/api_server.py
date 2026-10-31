@@ -67,6 +67,7 @@ from chat_attachments import (
 )
 from chat_vision import describe_chat_image
 from import_relations import MAX_RELATIONS
+from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
 from guided_character_protocol import (
     Capabilities,
@@ -1691,9 +1692,10 @@ def purge_trash_world(name: str, request: Request):
 VALID_SECTIONS = {"lore", "personajes", "referencias", "media"}
 
 # Internal bookkeeping directories that must never be reachable as content
-# targets: ``.papelera`` (trash) and ``.history`` (edit snapshots). Both are
-# gitignored and managed exclusively by the server.
-_INTERNAL_DIRS = {".papelera", ".history"}
+# targets: ``.papelera`` (trash), ``.history`` (edit snapshots) and
+# ``.relations`` (rejected relation pairs). All are gitignored and managed
+# exclusively by the server.
+_INTERNAL_DIRS = {".papelera", ".history", ".relations"}
 
 
 def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
@@ -6961,8 +6963,10 @@ def set_graph_relation(mundo: str, body: dict):
     with idx._lock:
         entities = idx._cache.get("entities", {})
         rel_source = str(full.relative_to(mundo_dir)).replace("\\", "/")
-        if entities.get(rel_source) is None:
+        source_entity = entities.get(rel_source)
+        if source_entity is None:
             raise HTTPException(status_code=404, detail="Entidad origen no encontrada")
+        source_id = str(source_entity.get("id") or "")
         if not any(ent.get("id") == target_id for ent in entities.values()):
             raise HTTPException(status_code=404, detail="Entidad destino no encontrada")
 
@@ -6982,6 +6986,21 @@ def set_graph_relation(mundo: str, body: dict):
         raise HTTPException(status_code=500, detail=f"Error al actualizar relaciones: {exc}") from exc
 
     _graph_indices.pop(mundo, None)
+    # Curation memory (P2): a broken pair is never proposed again, and an
+    # explicit create clears the verdict. The source key is its canonical id,
+    # or its path for a legacy ficha without one. Fail-open: the ficha is
+    # already written, so a bookkeeping error must not turn it into an error.
+    source_key = source_id or rel_source
+    try:
+        if action == "break":
+            record_rejection(mundo_dir, source_key, target_id)
+        else:
+            clear_rejection(mundo_dir, source_key, target_id)
+    except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
+        logger.warning(
+            "relations: cannot record rejection for %s/%s in %s: %s",
+            source_key, target_id, mundo, exc,
+        )
     return {"success": True, "path": rel_source, "action": action, "target_id": target_id}
 
 
