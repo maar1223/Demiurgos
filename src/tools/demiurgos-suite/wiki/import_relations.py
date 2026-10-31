@@ -407,6 +407,11 @@ def relaciones_entry_key(raw: str) -> str:
     return cleaned.strip("[]").strip()
 
 
+def normalize_mention(text: str) -> str:
+    """Public form of the mention normalization used by every matcher."""
+    return _normalize(text)
+
+
 def _normalize(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text or "")
     stripped = "".join(

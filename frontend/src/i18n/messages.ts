@@ -1025,6 +1025,23 @@ export const messages = {
     "relaciones.propuestas.loadError": "No se pudieron cargar las propuestas.",
     "relaciones.propuestas.actionError": "No se pudo completar la acción.",
 
+    "relaciones.reconcile.title": "Reconciliar mundo",
+    "relaciones.reconcile.hint":
+      "Agrega lo que el texto justifica y quita lo que ningún texto respalda. Antes de escribir se guarda un respaldo.",
+    "relaciones.reconcile.preview": "Previsualizar",
+    "relaciones.reconcile.apply": "Aplicar reconciliación",
+    "relaciones.reconcile.confirmTitle": "Aplicar reconciliación",
+    "relaciones.reconcile.confirmMessage":
+      "Se modificarán {files} fichas: {additions} relaciones agregadas y {removals} quitadas. Se guarda un respaldo antes de escribir.",
+    "relaciones.reconcile.empty": "El mundo ya está reconciliado.",
+    "relaciones.reconcile.applied":
+      "Reconciliadas {files} fichas. Respaldo: {backup}",
+    "relaciones.reconcile.failed":
+      "{count} fichas no se pudieron actualizar.",
+    "relaciones.reconcile.files": "{count} fichas",
+    "relaciones.reconcile.additions": "+{count}",
+    "relaciones.reconcile.removals": "−{count}",
+
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
     "backup.provider.googleDrive": "Google Drive",
@@ -3210,6 +3227,22 @@ export const messages = {
       "The semantic provider did not respond. Try again.",
     "relaciones.propuestas.loadError": "Could not load proposals.",
     "relaciones.propuestas.actionError": "Could not complete the action.",
+
+    "relaciones.reconcile.title": "Reconcile world",
+    "relaciones.reconcile.hint":
+      "Adds what the text justifies and removes what no text backs. A backup is written before any change.",
+    "relaciones.reconcile.preview": "Preview",
+    "relaciones.reconcile.apply": "Apply reconciliation",
+    "relaciones.reconcile.confirmTitle": "Apply reconciliation",
+    "relaciones.reconcile.confirmMessage":
+      "{files} fiches will change: {additions} relations added and {removals} removed. A backup is written first.",
+    "relaciones.reconcile.empty": "The world is already reconciled.",
+    "relaciones.reconcile.applied":
+      "Reconciled {files} fiches. Backup: {backup}",
+    "relaciones.reconcile.failed": "{count} fiches could not be updated.",
+    "relaciones.reconcile.files": "{count} fiches",
+    "relaciones.reconcile.additions": "+{count}",
+    "relaciones.reconcile.removals": "−{count}",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",

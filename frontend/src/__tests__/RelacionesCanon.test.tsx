@@ -15,6 +15,8 @@ vi.mock("@/components/GraphView", () => ({
 
 vi.mock("@/api/graph", () => ({
   fetchRelationCandidates: vi.fn(),
+  fetchRelationReconcilePreview: vi.fn(),
+  applyRelationReconcile: vi.fn(),
   fetchRelationProposals: vi.fn(),
   sweepRelations: vi.fn(),
   acceptRelationProposal: vi.fn(),
@@ -25,8 +27,10 @@ vi.mock("@/api/graph", () => ({
 
 import { useWorlds } from "@/hooks/useWorlds";
 import {
+  applyRelationReconcile,
   fetchRelationCandidates,
   fetchRelationProposals,
+  fetchRelationReconcilePreview,
   muteRelationCandidate,
   sweepRelations,
 } from "@/api/graph";
@@ -80,6 +84,29 @@ describe("RelacionesCanon", () => {
     vi.mocked(muteRelationCandidate).mockResolvedValue({
       success: true,
       muted: true,
+    });
+    vi.mocked(fetchRelationReconcilePreview).mockResolvedValue({
+      files: 1,
+      additions: 1,
+      removals: 1,
+      unresolved: 0,
+      items: [
+        {
+          path: "lore/alpha.md",
+          add: ["lore::beta"],
+          remove: [
+            { key: "lore::gamma", target_id: "lore::gamma", reason: "ungrounded" },
+          ],
+        },
+      ],
+    });
+    vi.mocked(applyRelationReconcile).mockResolvedValue({
+      applied: 1,
+      failed: [],
+      backup: ".relations/preimages/20261031T220000Z",
+      files: 1,
+      additions: 1,
+      removals: 1,
     });
   });
 
@@ -149,5 +176,24 @@ describe("RelacionesCanon", () => {
       "vibrantes",
       "lore/alpha.md",
     );
+  });
+
+  it("previews and applies the world reconciliation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: "Propuestas" }));
+
+    await user.click(await screen.findByTestId("reconcile-preview"));
+    expect(await screen.findByTestId("reconcile-summary")).toHaveTextContent(
+      "1 fichas · +1 · −1",
+    );
+
+    await user.click(screen.getByTestId("reconcile-apply"));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Aplicar reconciliación" }),
+    );
+
+    expect(applyRelationReconcile).toHaveBeenCalledWith("vibrantes");
   });
 });

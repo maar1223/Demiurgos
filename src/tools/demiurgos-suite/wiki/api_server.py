@@ -69,6 +69,7 @@ from chat_vision import describe_chat_image
 from import_relations import MAX_RELATIONS, relaciones_entry_key
 from relation_candidates import scan_candidates
 from relation_proposals import load_proposals, remove_proposal
+from relation_reconcile import build_global_plan, create_preimage_backup
 from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
 from relation_state import load_state as load_relation_state
@@ -6514,7 +6515,8 @@ def _apply_relation_plan(mundo: str, plan) -> bool:
         if full is None or not full.is_file():
             continue
         with _target_lock_for(full):
-            content = full.read_text(encoding="utf-8")
+            with open(full, "r", encoding="utf-8", newline="") as handle:
+                content = handle.read()
             existing = _relacion_keys(content)
             existing_set = set(existing)
             structural = plan.structural.get(rel_path, frozenset())
@@ -6672,12 +6674,16 @@ def _set_relation_mute(mundo: str, body: dict, *, muted: bool) -> dict:
     full = _resolve_mundo_path(mundo, path)
     if full is None or not full.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    # Store the canonical world-relative path: the same file can be requested
+    # with an accepted spelling (``lore/./alpha.md``) and the reconcile pass
+    # compares against the index path.
+    canonical = full.relative_to(mundo_dir).as_posix()
     changed = (
-        mute_relation_candidate(mundo_dir, path)
+        mute_relation_candidate(mundo_dir, canonical)
         if muted
-        else unmute_relation_candidate(mundo_dir, path)
+        else unmute_relation_candidate(mundo_dir, canonical)
     )
-    return {"success": True, "path": path, "muted": muted, "changed": changed}
+    return {"success": True, "path": canonical, "muted": muted, "changed": changed}
 
 
 @app.post("/api/{mundo}/relations/mute")
@@ -6755,7 +6761,8 @@ def relations_proposal_accept(mundo: str, proposal_id: str):
     if full is None or not full.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     with _target_lock_for(full):
-        content = full.read_text(encoding="utf-8")
+        with open(full, "r", encoding="utf-8", newline="") as handle:
+            content = handle.read()
         try:
             updated = _set_frontmatter_relaciones(
                 content, "create", proposal.target_id
@@ -6775,6 +6782,122 @@ def relations_proposal_accept(mundo: str, proposal_id: str):
         "proposal_id": proposal.id,
         "path": proposal.source_path,
         "target_id": proposal.target_id,
+    }
+
+
+@app.get("/api/{mundo}/relations/reconcile/preview")
+def relations_reconcile_preview(mundo: str):
+    """Preview the world-wide deterministic reconciliation (P4). Read-only."""
+    if _resolve_mundo_dir(mundo) is None:
+        raise problem("world.not_found")
+    plan = build_global_plan(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=_get_graph(mundo),
+    )
+    return _global_plan_dict(plan)
+
+
+def _global_plan_dict(plan) -> dict:
+    return {
+        "files": len(plan.files),
+        "additions": plan.additions,
+        "removals": plan.removals,
+        "unresolved": plan.unresolved,
+        "items": [
+            {
+                "path": file_plan.path,
+                "add": list(file_plan.add),
+                "remove": [
+                    {
+                        "key": removal.key,
+                        "target_id": removal.target_id,
+                        "reason": removal.reason,
+                    }
+                    for removal in file_plan.remove
+                ],
+            }
+            for file_plan in plan.files
+        ],
+    }
+
+
+@app.post("/api/{mundo}/relations/reconcile")
+def relations_reconcile(mundo: str):
+    """Apply the reconciliation after a pre-image backup (one confirmation).
+
+    The plan is recomputed server-side; a client can never supply the changes.
+    """
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise problem("world.not_found")
+    plan = build_global_plan(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=_get_graph(mundo),
+    )
+    if not plan:
+        return {
+            "applied": 0,
+            "failed": [],
+            "backup": "",
+            "files": 0,
+            "additions": 0,
+            "removals": 0,
+        }
+    try:
+        backup, unreadable = create_preimage_backup(
+            mundo_dir,
+            [file_plan.path for file_plan in plan.files],
+            counts={"additions": plan.additions, "removals": plan.removals},
+        )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo crear el respaldo previo: {exc}",
+        )
+    applied = 0
+    failed: list[str] = list(unreadable)
+    for file_plan in plan.files:
+        if file_plan.path in unreadable:
+            continue
+        full = _resolve_mundo_path(mundo, file_plan.path)
+        if full is None or not full.is_file():
+            failed.append(file_plan.path)
+            continue
+        try:
+            with _target_lock_for(full):
+                with open(full, "r", encoding="utf-8", newline="") as handle:
+                    content = handle.read()
+                updated = content
+                for removal in file_plan.remove:
+                    try:
+                        updated = _set_frontmatter_relaciones(
+                            updated, "break", removal.key
+                        )
+                    except RelationConflict:
+                        continue
+                for target in file_plan.add:
+                    try:
+                        updated = _set_frontmatter_relaciones(
+                            updated, "create", target
+                        )
+                    except RelationConflict:
+                        continue
+                if updated != content:
+                    _atomic_write(full, updated)
+                    applied += 1
+        except Exception as exc:  # noqa: BLE001 — one file must not abort the pass
+            logger.warning("relations: reconcile failed for %s: %s", file_plan.path, exc)
+            failed.append(file_plan.path)
+    _graph_indices.pop(mundo, None)
+    return {
+        "applied": applied,
+        "failed": failed,
+        "backup": str(backup.relative_to(mundo_dir)),
+        "files": len(plan.files),
+        "additions": plan.additions,
+        "removals": plan.removals,
     }
 
 
