@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "fd51f37",
+  "source_commit": "d070bdc",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -132,6 +132,7 @@
     "src/tools/demiurgos-suite/wiki/readiness.py",
     "src/tools/demiurgos-suite/wiki/relation_candidates.py",
     "src/tools/demiurgos-suite/wiki/relation_proposals.py",
+    "src/tools/demiurgos-suite/wiki/relation_reconcile.py",
     "src/tools/demiurgos-suite/wiki/relation_rejections.py",
     "src/tools/demiurgos-suite/wiki/relation_service.py",
     "src/tools/demiurgos-suite/wiki/relation_state.py",
@@ -324,7 +325,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1545
+        "line": 1547
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

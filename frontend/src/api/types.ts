@@ -2176,6 +2176,36 @@ export interface RelationSweepResponse {
   message: string;
 }
 
+/** P4 — one declared entry the reconciliation would remove. */
+export interface RelationReconcileRemoval {
+  key: string;
+  target_id: string;
+  reason: "ungrounded" | "unresolved" | "rejected";
+}
+
+export interface RelationReconcileItem {
+  path: string;
+  add: string[];
+  remove: RelationReconcileRemoval[];
+}
+
+export interface RelationReconcilePreview {
+  files: number;
+  additions: number;
+  removals: number;
+  unresolved: number;
+  items: RelationReconcileItem[];
+}
+
+export interface RelationReconcileApply {
+  applied: number;
+  failed: string[];
+  backup: string;
+  files: number;
+  additions: number;
+  removals: number;
+}
+
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
  *  Telegram webhook/getUpdates conflict, or `import.job_not_found` for the

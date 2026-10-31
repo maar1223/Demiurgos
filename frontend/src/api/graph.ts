@@ -5,6 +5,8 @@ import type {
   GraphStatus,
   RelationCandidatesResponse,
   RelationProposalsResponse,
+  RelationReconcileApply,
+  RelationReconcilePreview,
   RelationResponse,
   RelationSweepResponse,
   SearchResult,
@@ -226,6 +228,29 @@ export async function rejectRelationProposal(
 ): Promise<{ success: boolean }> {
   return apiFetch<{ success: boolean }>(
     apiUrl(["api", mundo, "relations", "proposals", proposalId, "reject"]),
+    { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// P4 — world-wide reconciliation (preview then apply with a pre-image backup)
+// ---------------------------------------------------------------------------
+
+/** GET /api/{mundo}/relations/reconcile/preview — read-only plan. */
+export async function fetchRelationReconcilePreview(
+  mundo: string,
+): Promise<RelationReconcilePreview> {
+  return apiFetch<RelationReconcilePreview>(
+    apiUrl(["api", mundo, "relations", "reconcile", "preview"]),
+  );
+}
+
+/** POST /api/{mundo}/relations/reconcile — apply after a pre-image backup. */
+export async function applyRelationReconcile(
+  mundo: string,
+): Promise<RelationReconcileApply> {
+  return apiFetch<RelationReconcileApply>(
+    apiUrl(["api", mundo, "relations", "reconcile"]),
     { method: "POST" },
   );
 }
