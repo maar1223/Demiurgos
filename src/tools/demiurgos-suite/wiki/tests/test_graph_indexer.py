@@ -554,3 +554,42 @@ class TestEntityEnvelope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNonEntityDocuments(unittest.TestCase):
+    """``graph: false`` keeps meta documents out of the entity graph (S7)."""
+
+    def test_graph_false_is_excluded_from_the_index(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path = Path(tmpdir) / "mundos"
+            lore = mundos_path / "w" / "lore" / "meta"
+            lore.mkdir(parents=True)
+            (lore / "nota.md").write_text(
+                "---\ntype: concepto\nid: W::Nota\ntitle: Nota\n"
+                "graph: false\n---\n# Nota\n\nTexto de trabajo.\n",
+                encoding="utf-8",
+            )
+            (lore / "real.md").write_text(
+                "---\ntype: concepto\nid: W::Real\ntitle: Real\n---\n"
+                "# Real\n\nContenido del mundo.\n",
+                encoding="utf-8",
+            )
+
+            index = EntityGraphIndex(mundos_path)
+            self.assertEqual(index.build("w"), 1)
+            self.assertEqual([entity["name"] for entity in index.entities()],
+                             ["Real"])
+
+    def test_graph_true_is_indexed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path = Path(tmpdir) / "mundos"
+            lore = mundos_path / "w" / "lore"
+            lore.mkdir(parents=True)
+            (lore / "ficha.md").write_text(
+                "---\ntype: concepto\nid: W::Ficha\ntitle: Ficha\n"
+                "graph: true\n---\n# Ficha\n",
+                encoding="utf-8",
+            )
+
+            index = EntityGraphIndex(mundos_path)
+            self.assertEqual(index.build("w"), 1)

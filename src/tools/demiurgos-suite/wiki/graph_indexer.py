@@ -201,6 +201,11 @@ class EntityGraphIndex:
         fm = self._parse_frontmatter(content)
         if not fm or "type" not in fm:
             return None
+        # Non-entity documents (glossaries, indexes, working notes) opt out of
+        # the graph explicitly. Without this, a meta document typed as
+        # ``concepto`` becomes an unreachable orphan node.
+        if fm.get("graph") is False:
+            return None
 
         # Split body text (everything after frontmatter)
         body_start = content.find("---\n", 4)
