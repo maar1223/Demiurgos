@@ -35,13 +35,23 @@ error; the banner simply does not appear.
 
 ## Tasks
 
-- T1 — `import_relations.ficha_quality`: tags for one ficha against a catalog.
-- T2 — `GET /relations/quality?path=` endpoint.
-- T3 — Editor banner after save/create, with the reused copy.
-- T4 — Tests: unit tags, endpoint cases, editor banner.
-- T5 — Ship nothing new in the manifest unless a new module is added (the
-  helper lives in an already-shipped file).
+- [x] T1 — `import_relations.ficha_quality`: tags for one ficha against a
+  catalog. Route: inline. Evidence: five unit cases green.
+- [x] T2 — `GET /relations/quality?path=` endpoint. Route: inline. Evidence:
+  five endpoint cases green, including the 404.
+- [x] T3 — Editor banner after save/create, with the reused copy. Route: inline.
+  Evidence: `WikiEditor.test.tsx` asserts the request and the banner.
+- [x] T4 — Tests: unit tags, endpoint cases, editor banner. Route: inline.
+  Evidence: backend 4438 passed / 8 skipped; frontend 1658 passed; typecheck and
+  build green; PR #68 CI 16/16.
+- [x] T5 — Ship nothing new in the manifest unless a new module is added (the
+  helper lives in an already-shipped file). Route: inline. Evidence: no new
+  module, manifest unchanged.
 
 ## Log
 
 L1 (verbatim Owner request): "ok adelante" — continue with P5 after P4.
+
+L2 Delivery: PR #68 merged. This closes the relations lifecycle (P1–P5): the
+deterministic service, rejection memory, on-demand semantic sweep, global
+synchronization with a pre-image backup, and now the per-save health report.
