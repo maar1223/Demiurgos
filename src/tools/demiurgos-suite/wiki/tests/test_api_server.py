@@ -656,6 +656,70 @@ class TestSaveEndpoint:
         assert "traversal" in resp.json()["detail"].lower()
 
 
+class TestRelationsAfterSave:
+    """P1: a save grows relations from the body, deterministically."""
+
+    def _add_target(self) -> Path:
+        world = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (world / "beta.md").write_text(
+            "---\ntype: personaje\nid: lore::beta\ntitle: Beta\n---\nBeta.\n",
+            encoding="utf-8",
+        )
+        api_server._graph_indices.clear()
+        return world
+
+    def test_save_links_a_body_mention(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        world = self._add_target()
+        content = "---\ntype: criatura\ntitle: Inicio\n---\nBeta arrives.\n"
+        conf, base_rev = _confirm(client, "00_inicio.md", content)
+
+        resp = _gated_write(client, "00_inicio.md", content, conf, base_rev)
+
+        assert resp.status_code == 200, resp.text
+        saved = (world / "00_inicio.md").read_text(encoding="utf-8")
+        assert "relaciones:" in saved
+        assert saved.count("lore::beta") == 1
+
+    def test_resaving_does_not_duplicate_the_relation(
+        self, client: TestClient, monkeypatch
+    ):
+        _principal(monkeypatch)
+        world = self._add_target()
+        content = "---\ntype: criatura\ntitle: Inicio\n---\nBeta arrives.\n"
+        conf, base_rev = _confirm(client, "00_inicio.md", content)
+        assert _gated_write(client, "00_inicio.md", content, conf, base_rev).status_code == 200
+        saved = (world / "00_inicio.md").read_text(encoding="utf-8")
+
+        conf2, base_rev2 = _confirm(client, "00_inicio.md", saved, edit_id="e2")
+        resp = _gated_write(client, "00_inicio.md", saved, conf2, base_rev2, edit_id="e2")
+
+        assert resp.status_code == 200, resp.text
+        resaved = (world / "00_inicio.md").read_text(encoding="utf-8")
+        assert resaved.count("lore::beta") == 1
+        assert resaved == saved
+
+    def test_reverse_pass_links_an_existing_mention(
+        self, client: TestClient, monkeypatch
+    ):
+        _principal(monkeypatch)
+        world = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (world / "delta.md").write_text(
+            "---\ntype: personaje\nid: lore::delta\ntitle: Delta\n---\n"
+            "Delta mentions Gamma.\n",
+            encoding="utf-8",
+        )
+        api_server._graph_indices.clear()
+        content = "---\ntype: personaje\nid: lore::gamma\ntitle: Gamma\n---\nGamma is new.\n"
+        conf, base_rev = _confirm(client, "00_inicio.md", content)
+
+        resp = _gated_write(client, "00_inicio.md", content, conf, base_rev)
+
+        assert resp.status_code == 200, resp.text
+        delta = (world / "delta.md").read_text(encoding="utf-8")
+        assert delta.count("lore::gamma") == 1
+
+
 class TestDiffEndpoint:
     def test_diff_marks_added_removed_same(self, client: TestClient):
         resp = client.post(

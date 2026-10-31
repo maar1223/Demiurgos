@@ -66,6 +66,8 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
+from import_relations import MAX_RELATIONS
+from relation_service import build_relation_plan
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -5838,6 +5840,10 @@ def restore_history(mundo: str, body: dict, request: Request):
         "snapshot_id": snapshot_id,
         "proposed_digest": record["content_digest"],
     })
+    # Restore stays byte-exact: no relation reconciliation here. Adding
+    # relations after a restore would hand back content that differs from the
+    # snapshot the Author chose. The next normal save (or the global
+    # reconciliation) grows them.
     return _write_content(
         mundo, section, relative_path, payload, request, kind="restore"
     )
@@ -5846,7 +5852,9 @@ def restore_history(mundo: str, body: dict, request: Request):
 @app.post("/api/{mundo}/{section}/file")
 def save_file(mundo: str, section: str, path: str, body: dict, request: Request):
     """Save an existing file — gated by a valid confirmation token."""
-    return _write_content(mundo, section, path, body, request, kind="edit")
+    result = _write_content(mundo, section, path, body, request, kind="edit")
+    _reconcile_relations_after_write(mundo, [f"{section}/{path}"])
+    return result
 
 
 @app.post("/api/{mundo}/{section}/save")
@@ -5856,7 +5864,9 @@ def save_file_via_save(mundo: str, section: str, path: str, body: dict, request:
     Same gated behavior as POST /file; kept as a distinct route so both
     callers work.
     """
-    return _write_content(mundo, section, path, body, request, kind="edit")
+    result = _write_content(mundo, section, path, body, request, kind="edit")
+    _reconcile_relations_after_write(mundo, [f"{section}/{path}"])
+    return result
 
 
 @app.post("/api/{mundo}/{section}/create")
@@ -5947,6 +5957,7 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
         )
         result.update({"index_status": reconciliation.index_status, "retryable": reconciliation.retryable,
                        "message": reconciliation.message})
+    _reconcile_relations_after_write(mundo, [f"{section}/{path}"])
     return result
 
 
@@ -6452,6 +6463,102 @@ def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> st
     updated_inner = "".join(lines[:rel_idx] + new_lines + lines[section_end:])
     _validate_fm_yaml(updated_inner)
     return content[: m.start(1)] + updated_inner + content[m.end(1):]
+
+
+def _relacion_keys(content: str) -> list[str]:
+    """Return the dedupe keys already in the frontmatter ``relaciones:`` block."""
+    m = _RE_FRONTMATTER.match(content)
+    if m is None:
+        return []
+    lines = m.group(1).splitlines()
+    rel_idx = next(
+        (i for i, line in enumerate(lines) if _RE_FM_RELACIONES_HEADER.match(line)),
+        None,
+    )
+    if rel_idx is None:
+        return []
+    keys: list[str] = []
+    rest = lines[rel_idx].split(":", 1)[1]
+    for part in rest.split(","):
+        key = _relaciones_entry_key(part)
+        if key and key not in keys:
+            keys.append(key)
+    for line in lines[rel_idx + 1:]:
+        item = _RE_FM_RELACIONES_ITEM.match(line)
+        if item is None:
+            break
+        key = _relaciones_entry_key(item.group("body"))
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _apply_relation_plan(mundo: str, plan) -> bool:
+    """Add every missing grounded relation through the shared frontmatter writer.
+
+    Additive on purpose: existing entries (hand-edited or Hermes-authored) are
+    never removed. Destructive reconciliation belongs to the global pass.
+
+    Folder membership is exact truth bounded by the folder itself, so structural
+    ids never consume the textual ``MAX_RELATIONS`` budget; only inferred
+    (name/alias/stem/ordinal) relations are capped.
+
+    Returns ``True`` when at least one ficha changed on disk.
+    """
+    wrote = False
+    for rel_path, target_ids in plan.relations.items():
+        full = _resolve_mundo_path(mundo, rel_path)
+        if full is None or not full.is_file():
+            continue
+        with _target_lock_for(full):
+            content = full.read_text(encoding="utf-8")
+            existing = _relacion_keys(content)
+            existing_set = set(existing)
+            structural = plan.structural.get(rel_path, frozenset())
+            structural_present = len([key for key in existing if key in structural])
+            room = max(0, MAX_RELATIONS - (len(existing) - structural_present))
+            updated = content
+            added: set[str] = set()
+            for target_id in target_ids:
+                if target_id in existing_set or target_id in added:
+                    continue
+                is_structural = target_id in structural
+                if not is_structural and room == 0:
+                    continue
+                try:
+                    updated = _set_frontmatter_relaciones(updated, "create", target_id)
+                except RelationConflict:
+                    continue
+                added.add(target_id)
+                if not is_structural:
+                    room -= 1
+            if updated != content:
+                _atomic_write(full, updated)
+                wrote = True
+    return wrote
+
+
+def _reconcile_relations_after_write(mundo: str, paths: list[str]) -> None:
+    """Grow relations after a durable ficha write; never break the save."""
+    try:
+        plan = build_relation_plan(
+            mundo=mundo,
+            changed_paths=paths,
+            mundos_dir=_mundos_dir(),
+            index=_get_graph(mundo),
+        )
+        if plan:
+            _apply_relation_plan(mundo, plan)
+        # The cached index still carries the pre-save body and links of the
+        # fichas just written, even when the plan added nothing (an edit that
+        # only introduced a mention of a not-yet-existing entity). Drop it on
+        # every save so the next reverse pass reads the real bodies; the
+        # rebuild stays lazy.
+        _graph_indices.pop(mundo, None)
+    except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
+        logger.warning(
+            "relations: reconcile after save failed for world %s: %s", mundo, exc
+        )
 
 
 @app.post("/api/{mundo}/{section}/status")
