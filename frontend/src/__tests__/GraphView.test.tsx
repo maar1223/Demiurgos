@@ -536,6 +536,42 @@ describe("GraphView", () => {
     );
   });
 
+  it("never re-settles the map when a name is revealed or hidden", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+    const positions = () =>
+      new Map(
+        instance.getNodes().map((node) => [node.id, { ...node.position }]),
+      );
+    const expectStable = (before: Map<string, { x: number; y: number }>) => {
+      for (const [id, position] of before) {
+        expect(positions().get(id)).toEqual(position);
+      }
+    };
+
+    // Compact band: non-hub names are hidden until focused.
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
+    });
+    const before = positions();
+
+    fireEvent.mouseEnter(document.querySelector('[data-id="Stal::Rhyz"]')!);
+    await waitFor(() => expect(screen.getByText("Rhyz")).toBeInTheDocument());
+    // The card got wider to fit the name; the layout must not react.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expectStable(before);
+
+    fireEvent.mouseLeave(document.querySelector('[data-id="Stal::Rhyz"]')!);
+    await waitFor(() =>
+      expect(screen.queryByText("Rhyz")).not.toBeInTheDocument(),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expectStable(before);
+  });
+
   it("shows only hub names in the middle zoom band until a node is focused", async () => {
     // Centro is a hub (5 connections); Ana is not.
     const spokes = ["Ana", "Bran", "Cael", "Dara", "Elen"];

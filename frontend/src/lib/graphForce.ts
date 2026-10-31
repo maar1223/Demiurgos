@@ -56,6 +56,9 @@ export interface LiveForceLayoutOptions {
   /** Measured node sizes; cards are much wider than they are tall, so a fixed
    *  circular radius leaves them overlapping. */
   sizes?: ReadonlyMap<string, NodeSize>;
+  /** Group nodes by folder and pull the most connected one to the group's
+   *  centre with the rest in rings around it (default true). */
+  hierarchy?: boolean;
 }
 
 export interface LiveForceLayout {
@@ -93,6 +96,16 @@ const LAYOUT_NODE_SPACING = 230;
 const LINK_DISTANCE = 240;
 /** Extra space between two connected cards, beyond their half widths. */
 const LINK_GAP = 40;
+/** Space added between concentric hierarchy rings. */
+const HIERARCHY_RING_GAP = 70;
+/** Space between the circles that enclose two folder groups. */
+const HIERARCHY_GROUP_GAP = 180;
+/** How hard the group's main node is pulled to its centre. */
+const HIERARCHY_MAIN_STRENGTH = 0.9;
+/** How hard the rest of a group is pulled to its ring slot. */
+const HIERARCHY_MEMBER_STRENGTH = 0.45;
+/** Hops beyond this are placed on the outermost ring. */
+const HIERARCHY_MAX_HOP = 3;
 /** Minimum gap kept between two card rectangles by the final overlap pass. */
 const CARD_GAP = 18;
 /** Iterations of the final rectangle-separation pass. */
@@ -105,8 +118,8 @@ const CENTER_STRENGTH = 0.06;
 const NODE_COLLIDE_RADIUS = 75;
 /** Fallback card size (rough node card), used to keep cards inside the bounds
  *  before React Flow measures them. */
-const NODE_FALLBACK_WIDTH = 190;
-const NODE_FALLBACK_HEIGHT = 40;
+const NODE_FALLBACK_WIDTH = 150;
+const NODE_FALLBACK_HEIGHT = 36;
 /** Breathing room added to the measured collision radius. */
 const NODE_COLLIDE_PADDING = 10;
 /** Minimum distance a node center keeps from edges it is NOT connected to,
@@ -225,15 +238,13 @@ export function createLiveForceLayout(
   // A card is a wide, short rectangle; a circle that contains it is the safe
   // collision primitive. Falling back to the fixed radius keeps unmeasured
   // nodes from stacking.
-  /** Measured card size, never smaller than the fallback: compact cards (no
-   *  label) and collapsed dots must not shrink the settled layout. */
-  const effectiveSize = (id: string): NodeSize => {
-    const measured = sizes.get(id);
-    return {
-      width: Math.max(measured?.width ?? 0, NODE_FALLBACK_WIDTH),
-      height: Math.max(measured?.height ?? 0, NODE_FALLBACK_HEIGHT),
+  /** Layout footprint supplied by the view (deterministic per dataset), with
+   *  a fixed fallback for nodes without one. */
+  const effectiveSize = (id: string): NodeSize =>
+    sizes.get(id) ?? {
+      width: NODE_FALLBACK_WIDTH,
+      height: NODE_FALLBACK_HEIGHT,
     };
-  };
 
   const collideRadius = (node: SimNode): number => {
     const measured = effectiveSize(node.id);
@@ -315,6 +326,218 @@ export function createLiveForceLayout(
     }
   };
 
+  interface HierarchyPlan {
+    targets: Map<string, ForcePosition>;
+    mainIds: Set<string>;
+  }
+
+  /**
+   * Folder groups become small radial trees: the most connected node sits at
+   * the group centre and the others are spread on rings by their hop distance
+   * from it. Without this, a force layout scatters parents and children and
+   * the hierarchy is impossible to read.
+   */
+  const buildHierarchy = (): HierarchyPlan => {
+    const targets = new Map<string, ForcePosition>();
+    const mainIds = new Set<string>();
+    if (options.hierarchy === false) return { targets, mainIds };
+
+    const folderById = new Map<string, string>();
+    for (const entity of entities) {
+      const slash = entity.path.lastIndexOf("/");
+      folderById.set(
+        nodeKey(entity),
+        slash >= 0 ? entity.path.slice(0, slash) : "",
+      );
+    }
+
+    const groups = new Map<string, SimNode[]>();
+    for (const node of simNodes) {
+      const folder = folderById.get(node.id) ?? "";
+      const members = groups.get(folder);
+      if (members) members.push(node);
+      else groups.set(folder, [node]);
+    }
+
+    const degree = new Map<string, number>();
+    const inDegree = new Map<string, number>();
+    const adjacency = new Map<string, string[]>();
+    const connect = (from: string, to: string) => {
+      const neighbours = adjacency.get(from);
+      if (neighbours) neighbours.push(to);
+      else adjacency.set(from, [to]);
+    };
+    for (const simLink of simLinks) {
+      const source = endpointId(simLink.source);
+      const target = endpointId(simLink.target);
+      degree.set(source, (degree.get(source) ?? 0) + 1);
+      degree.set(target, (degree.get(target) ?? 0) + 1);
+      inDegree.set(target, (inDegree.get(target) ?? 0) + 1);
+      connect(source, target);
+      connect(target, source);
+    }
+
+    const mainOf = (members: SimNode[]): SimNode =>
+      [...members].sort((a, b) => {
+        const byDegree = (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0);
+        if (byDegree !== 0) return byDegree;
+        const byIn = (inDegree.get(b.id) ?? 0) - (inDegree.get(a.id) ?? 0);
+        if (byIn !== 0) return byIn;
+        return a.id.localeCompare(b.id);
+      })[0];
+
+    const hopsFrom = (members: SimNode[], main: SimNode) => {
+      const allowed = new Set(members.map((member) => member.id));
+      const hops = new Map<string, number>([[main.id, 0]]);
+      const queue = [main.id];
+      while (queue.length > 0) {
+        const current = queue.shift() as string;
+        for (const next of adjacency.get(current) ?? []) {
+          if (!allowed.has(next) || hops.has(next)) continue;
+          hops.set(next, (hops.get(current) ?? 0) + 1);
+          queue.push(next);
+        }
+      }
+      return hops;
+    };
+
+    const planned = [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, members]) => {
+        const main = mainOf(members);
+        const hops = hopsFrom(members, main);
+        const rings = new Map<number, SimNode[]>();
+        for (const member of members) {
+          if (member.id === main.id) continue;
+          const hop = Math.min(
+            hops.get(member.id) ?? HIERARCHY_MAX_HOP,
+            HIERARCHY_MAX_HOP,
+          );
+          const ring = rings.get(hop);
+          if (ring) ring.push(member);
+          else rings.set(hop, [member]);
+        }
+        const ringRadius = new Map<number, number>();
+        const mainWidth = effectiveSize(main.id).width;
+        let radius = 0;
+        for (const hop of [...rings.keys()].sort((a, b) => a - b)) {
+          const ring = rings.get(hop) as SimNode[];
+          const averageWidth =
+            ring.reduce(
+              (sum, node) => sum + effectiveSize(node.id).width,
+              0,
+            ) / ring.length;
+          // Adjacent nodes sit on a CHORD, not on the arc: for few nodes the
+          // chord is much shorter, so the naive circumference formula leaves
+          // them overlapping.
+          const spacing = averageWidth + HIERARCHY_RING_GAP;
+          const chordRadius =
+            ring.length > 1
+              ? spacing / (2 * Math.sin(Math.PI / ring.length))
+              : 0;
+          // The first ring also has to clear the main node itself.
+          const clearance =
+            hop === [...rings.keys()].sort((a, b) => a - b)[0]
+              ? Math.max(
+                  ...ring.map(
+                    (node) =>
+                      (mainWidth + effectiveSize(node.id).width) / 2 +
+                      CARD_GAP,
+                  ),
+                )
+              : 0;
+          radius = Math.max(radius + 60, chordRadius, clearance);
+          ringRadius.set(hop, radius);
+        }
+        return { id, main, rings, ringRadius, radius: radius + 120 };
+      });
+
+    const centreX = size / 2;
+    const centreY = size / 2;
+    const centres = new Map<string, ForcePosition>();
+    let scale = 1;
+    if (planned.length === 1) {
+      centres.set(planned[0].id, { x: centreX, y: centreY });
+    } else if (planned.length > 1) {
+      const maxRadius = planned.reduce(
+        (largest, group) => Math.max(largest, group.radius),
+        0,
+      );
+      const circumference = planned.reduce(
+        (sum, group) => sum + 2 * group.radius + HIERARCHY_GROUP_GAP,
+        0,
+      );
+      let orbit = Math.max(
+        circumference / (2 * Math.PI),
+        maxRadius + HIERARCHY_GROUP_GAP,
+      );
+      if (orbit + maxRadius > size / 2) {
+        scale = Math.max(0.2, size / 2 / (orbit + maxRadius));
+        orbit *= scale;
+      }
+      let cursor = 0;
+      for (const group of planned) {
+        const slot =
+          ((2 * group.radius + HIERARCHY_GROUP_GAP) / circumference) *
+          2 *
+          Math.PI;
+        const angle = cursor + slot / 2;
+        cursor += slot;
+        centres.set(group.id, {
+          x: centreX + Math.cos(angle) * orbit,
+          y: centreY + Math.sin(angle) * orbit,
+        });
+      }
+    }
+
+    for (const group of planned) {
+      const centre = centres.get(group.id);
+      if (!centre) continue;
+      targets.set(group.main.id, centre);
+      mainIds.add(group.main.id);
+      for (const [hop, ring] of group.rings) {
+        const radius = (group.ringRadius.get(hop) ?? 0) * scale;
+        [...ring]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .forEach((node, index) => {
+            const angle = (2 * Math.PI * index) / ring.length;
+            targets.set(node.id, {
+              x: centre.x + Math.cos(angle) * radius,
+              y: centre.y + Math.sin(angle) * radius,
+            });
+          });
+      }
+    }
+    return { targets, mainIds };
+  };
+
+  const hierarchy = buildHierarchy();
+  const hasHierarchy = hierarchy.targets.size > 0;
+
+  // Start near the target so the opening animation reads as the group
+  // unfolding, not as nodes flying in from the top-left corner.
+  if (hasHierarchy) {
+    for (const node of simNodes) {
+      const target = hierarchy.targets.get(node.id);
+      if (!target) continue;
+      const angle = simNodes.indexOf(node) * 2.399963;
+      node.x = target.x + Math.cos(angle) * 24;
+      node.y = target.y + Math.sin(angle) * 24;
+    }
+  }
+
+  const hierarchyForce = (alpha: number) => {
+    for (const [id, target] of hierarchy.targets) {
+      const node = nodeById.get(id);
+      if (!node || (node.fx != null && node.fy != null)) continue;
+      const strength = hierarchy.mainIds.has(id)
+        ? HIERARCHY_MAIN_STRENGTH
+        : HIERARCHY_MEMBER_STRENGTH;
+      node.vx = (node.vx ?? 0) + (target.x - (node.x ?? 0)) * alpha * strength;
+      node.vy = (node.vy ?? 0) + (target.y - (node.y ?? 0)) * alpha * strength;
+    }
+  };
+
   const linkForce = forceLink<SimNode, SimLink>(simLinks)
     .id((node) => node.id)
     .distance(linkDistance);
@@ -322,14 +545,24 @@ export function createLiveForceLayout(
   const simulation = forceSimulation<SimNode>(simNodes)
     .force("link", linkForce)
     .force("charge", forceManyBody<SimNode>().strength(CHARGE_STRENGTH))
-    .force("center", forceCenter<SimNode>(size / 2, size / 2))
-    .force("x", forceX<SimNode>(size / 2).strength(CENTER_STRENGTH))
-    .force("y", forceY<SimNode>(size / 2).strength(CENTER_STRENGTH))
     .force(
       "collide",
       forceCollide<SimNode>().radius(collideRadius).strength(0.8),
     )
-    .force("edgeAvoid", edgeAvoidanceForce(simNodes, simLinks))
+    .force("edgeAvoid", edgeAvoidanceForce(simNodes, simLinks));
+
+  if (hasHierarchy) {
+    // The radial targets ARE the framing; a global centre force would fight
+    // the group centres.
+    simulation.force("hierarchy", hierarchyForce);
+  } else {
+    simulation
+      .force("center", forceCenter<SimNode>(size / 2, size / 2))
+      .force("x", forceX<SimNode>(size / 2).strength(CENTER_STRENGTH))
+      .force("y", forceY<SimNode>(size / 2).strength(CENTER_STRENGTH));
+  }
+
+  simulation
     .alpha(ALPHA_START)
     .alphaDecay(1 - Math.pow(ALPHA_AFTER_SETTLE / ALPHA_START, 1 / SETTLE_TICKS))
     .stop();

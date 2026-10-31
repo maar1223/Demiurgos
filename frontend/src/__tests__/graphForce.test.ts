@@ -198,6 +198,85 @@ describe("createLiveForceLayout", () => {
     expect(layout.positions().get("ana")).toEqual({ x: -500, y: 1900 });
   });
 
+  it("keeps each folder group around its own main node", () => {
+    const world = [
+      entity("a-main", "grupo-a/main.md"),
+      entity("a-one", "grupo-a/one.md"),
+      entity("a-two", "grupo-a/two.md"),
+      entity("b-main", "grupo-b/main.md"),
+      entity("b-one", "grupo-b/one.md"),
+      entity("b-two", "grupo-b/two.md"),
+    ].map((node) => ({ ...node, name: node.id }) as unknown as GraphEntity);
+    const worldLinks = [
+      link("a-main", "a-one"),
+      link("a-main", "a-two"),
+      link("a-one", "a-two"),
+      link("b-main", "b-one"),
+      link("b-main", "b-two"),
+      link("b-one", "b-two"),
+      link("a-main", "b-main"),
+    ];
+    const layout = createLiveForceLayout({
+      entities: world,
+      links: worldLinks,
+      size: 2200,
+    });
+    layout.step(300);
+    const positions = layout.positions();
+    const distance = (from: string, to: string) => {
+      const a = positions.get(from)!;
+      const b = positions.get(to)!;
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    for (const member of ["a-one", "a-two"]) {
+      expect(distance(member, "a-main")).toBeLessThan(
+        distance(member, "b-main"),
+      );
+    }
+    for (const member of ["b-one", "b-two"]) {
+      expect(distance(member, "b-main")).toBeLessThan(
+        distance(member, "a-main"),
+      );
+    }
+  });
+
+  it("puts the most connected node at the centre of its folder group", () => {
+    const group = ["alpha", "beta", "gamma", "delta", "epsilon"].map((id) =>
+      entity(id, `grupo/${id}.md`),
+    );
+    const groupLinks = [
+      link("alpha", "beta"),
+      link("alpha", "gamma"),
+      link("alpha", "delta"),
+      link("alpha", "epsilon"),
+      link("beta", "gamma"),
+    ];
+    const layout = createLiveForceLayout({
+      entities: group,
+      links: groupLinks,
+      size: 1600,
+    });
+    layout.step(300);
+    const positions = layout.positions();
+    const centroid = [...positions.values()].reduce(
+      (sum, position) => ({
+        x: sum.x + position.x / positions.size,
+        y: sum.y + position.y / positions.size,
+      }),
+      { x: 0, y: 0 },
+    );
+    const distance = (id: string) => {
+      const position = positions.get(id)!;
+      return Math.hypot(position.x - centroid.x, position.y - centroid.y);
+    };
+
+    // alpha has four connections, so it is the group's main theme: it must
+    // read as the centre, not as one more scattered node.
+    for (const child of ["beta", "gamma", "delta", "epsilon"]) {
+      expect(distance("alpha")).toBeLessThan(distance(child));
+    }
+  });
+
   it("separates a dense world of wide cards without stacking any pair", () => {
     const many = Array.from({ length: 60 }, (_, index) => entity(`n${index}`));
     const manyLinks = [

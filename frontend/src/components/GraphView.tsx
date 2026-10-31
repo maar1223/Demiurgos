@@ -21,7 +21,6 @@ import {
   type Edge,
   type EdgeTypes,
   type Node,
-  type NodeChange,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
@@ -163,6 +162,28 @@ function nodeTier(degree: number): NodeTier {
   if (degree >= HUB_MIN_DEGREE) return "hub";
   if (degree === 0) return "leaf";
   return "node";
+}
+
+/** Card chrome (padding, icon, gap, status dot, border) beyond the label. */
+const CARD_CHROME_WIDTH = 70;
+/** Average glyph width at the card's 13px type scale. */
+const CARD_CHAR_WIDTH = 8;
+/** Card width cap: the label truncates at 11rem (176px). */
+const CARD_MAX_WIDTH = 244;
+
+/**
+ * Deterministic layout footprint of a card. It must NOT depend on the
+ * presentation tier: if revealing a name on hover (or hiding it while zoomed
+ * out) changed the footprint, the simulation would re-settle and the whole map
+ * would jump — the author would be chasing the node instead of reading it.
+ */
+function estimateNodeSize(entity: GraphEntity, tier: NodeTier): NodeSize {
+  const width = Math.min(
+    CARD_MAX_WIDTH,
+    Math.max(120, CARD_CHROME_WIDTH + entity.name.length * CARD_CHAR_WIDTH),
+  );
+  const height = tier === "hub" ? 46 : tier === "leaf" ? 36 : 42;
+  return { width, height };
 }
 
 const NODE_TIER_CLASS: Record<NodeTier, string> = {
@@ -758,11 +779,20 @@ export default function GraphView({ mundo }: GraphViewProps) {
       : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
+    // One deterministic footprint per node for the whole dataset: stable under
+    // hover and zoom, so the map never re-settles while being read.
+    const layoutSizes = new Map<string, NodeSize>();
+    for (const entity of visible) {
+      const degree = entity.forward_links.length + entity.backlinks.length;
+      layoutSizes.set(nodeKey(entity), estimateNodeSize(entity, nodeTier(degree)));
+    }
+    nodeSizesRef.current = layoutSizes;
+
     const layout = createLiveForceLayout({
       entities: visible,
       links,
       size,
-      sizes: nodeSizesRef.current,
+      sizes: layoutSizes,
     });
     layoutRef.current = layout;
 
@@ -1068,32 +1098,6 @@ export default function GraphView({ mundo }: GraphViewProps) {
     [applyPositions],
   );
 
-  /** Measured card sizes arrive after the first paint. Feed them to the
-   *  collision force so wide cards stop overlapping; a collapsed dot (semantic
-   *  zoom) is too small to be a real card and is ignored. */
-  const handleNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      let measured = false;
-      for (const change of changes) {
-        if (change.type !== "dimensions" || !change.dimensions) continue;
-        const { width, height } = change.dimensions;
-        if (width < 40 || height < 20) continue;
-        // Compact cards (no label) are narrower than the real card; never
-        // shrink a recorded size, or zooming would re-settle the layout.
-        const previous = nodeSizesRef.current.get(change.id);
-        if (previous && width < previous.width && height < previous.height) {
-          continue;
-        }
-        nodeSizesRef.current.set(change.id, { width, height });
-        measured = true;
-      }
-      if (!measured) return;
-      layoutRef.current?.updateSizes(nodeSizesRef.current);
-      reheatAfterInteraction(DATASET_REHEAT_ALPHA);
-    },
-    [reheatAfterInteraction],
-  );
-
   /** Drag start: pin the node where the author grabbed it and wake the
    *  simulation so its neighbours react (Obsidian-style live physics). */
   const handleNodeDragStart = useCallback(
@@ -1212,7 +1216,6 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 // component never re-renders per animation frame.
                 defaultNodes={nodes}
                 edges={edges}
-                onNodesChange={handleNodesChange}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 onNodeClick={handleNodeClick}
