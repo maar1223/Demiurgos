@@ -66,9 +66,12 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
-from import_relations import MAX_RELATIONS
+from import_relations import MAX_RELATIONS, relaciones_entry_key
+from relation_candidates import scan_candidates
 from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
+from relation_state import mute as mute_relation_candidate
+from relation_state import unmute as unmute_relation_candidate
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -6361,15 +6364,10 @@ def _validate_fm_yaml(inner: str) -> None:
 def _relaciones_entry_key(raw: str) -> str:
     """Normalize one ``relaciones:`` entry to its dedupe key.
 
-    The key is the inner wikilink text for ``[[Name]]`` entries or the bare
-    (quote/bracket-stripped) scalar otherwise — matching the graph indexer's
-    canonical-id resolution so duplicate detection works across both forms.
+    Delegates to the shared helper so the frontmatter writer, the plan applier
+    and candidate detection cannot drift apart.
     """
-    raw = raw.strip().strip('"').strip("'").strip()
-    m = _RE_FM_WIKILINK.search(raw)
-    if m:
-        return m.group(1).strip()
-    return raw.strip("[]").strip()
+    return relaciones_entry_key(raw)
 
 
 def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> str:
@@ -6626,6 +6624,67 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
         _graph_indices[mundo] = idx
 
     return _graph_indices[mundo]
+
+
+@app.get("/api/{mundo}/relations/candidates")
+def relations_candidates(mundo: str):
+    """Deterministic reviewable-work signal for the on-demand sweep (P3).
+
+    No model call: a ficha is a candidate when its body mentions another world
+    entity and its body digest changed since its last sweep, unless the Author
+    muted it or the pair was rejected. Powers the passive badge.
+    """
+    if _resolve_mundo_dir(mundo) is None:
+        raise problem("world.not_found")
+    items = scan_candidates(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=_get_graph(mundo),
+    )
+    return {
+        "count": len(items),
+        "items": [
+            {
+                "path": candidate.path,
+                "id": candidate.source_key,
+                "title": candidate.title,
+                "digest": candidate.digest,
+                "mentions": list(candidate.mentions),
+                "missing": list(candidate.missing),
+            }
+            for candidate in items
+        ],
+    }
+
+
+def _set_relation_mute(mundo: str, body: dict, *, muted: bool) -> dict:
+    path = (body or {}).get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'path'")
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise problem("world.not_found")
+    full = _resolve_mundo_path(mundo, path)
+    if full is None or not full.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    changed = (
+        mute_relation_candidate(mundo_dir, path)
+        if muted
+        else unmute_relation_candidate(mundo_dir, path)
+    )
+    return {"success": True, "path": path, "muted": muted, "changed": changed}
+
+
+@app.post("/api/{mundo}/relations/mute")
+def relations_mute(mundo: str, body: dict):
+    """Mark a ficha as "leave as is": never a sweep candidate again."""
+    return _set_relation_mute(mundo, body, muted=True)
+
+
+@app.post("/api/{mundo}/relations/unmute")
+def relations_unmute(mundo: str, body: dict):
+    """Undo "leave as is" so the ficha is reviewable again."""
+    return _set_relation_mute(mundo, body, muted=False)
 
 
 @app.post("/api/worlds/{world_id}/relationships/reconcile")

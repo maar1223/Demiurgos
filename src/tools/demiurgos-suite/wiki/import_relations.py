@@ -390,6 +390,23 @@ def _folder(path: str) -> str:
     return path.rsplit("/", 1)[0] if "/" in path else ""
 
 
+_RE_WIKILINK_ENTRY = re.compile(r"\[\[([^\]]+)\]\]")
+
+
+def relaciones_entry_key(raw: str) -> str:
+    """Normalize one ``relaciones:`` entry to its dedupe key.
+
+    ``[[Name]]`` entries yield the inner wikilink text; anything else yields the
+    bare scalar with quotes and brackets stripped. One implementation shared by
+    the frontmatter writer, the plan applier and candidate detection.
+    """
+    cleaned = raw.strip().strip('"').strip("'").strip()
+    match = _RE_WIKILINK_ENTRY.search(cleaned)
+    if match:
+        return match.group(1).strip()
+    return cleaned.strip("[]").strip()
+
+
 def _normalize(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text or "")
     stripped = "".join(
