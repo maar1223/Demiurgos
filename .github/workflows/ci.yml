@@ -32,7 +32,7 @@ jobs:
           - os: ubuntu-24.04-arm
             cell: linux-aarch64-glibc
             venv_python: .venv/bin/python
-          - os: macos-14
+          - os: macos-15
             cell: macos-arm64
             venv_python: .venv/bin/python
           - os: windows-latest
@@ -204,7 +204,7 @@ jobs:
               src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
               src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py
               src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
-          - os: macos-14
+          - os: macos-15
             venv_python: .venv/bin/python
             launcher_files: >-
               src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
