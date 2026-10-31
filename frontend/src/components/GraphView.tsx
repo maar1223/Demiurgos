@@ -20,7 +20,9 @@ import {
   type Connection,
   type CoordinateExtent,
   type Edge,
+  type EdgeTypes,
   type Node,
+  type NodeChange,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
@@ -38,8 +40,10 @@ import {
   createLiveForceLayout,
   nodeKey,
   SETTLE_TICKS,
+  type ForcePosition,
   type ForcePositions,
   type LiveForceLayout,
+  type NodeSize,
 } from "@/lib/graphForce";
 import type {
   EntityLink,
@@ -52,6 +56,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Toast } from "@/components/atoms/Toast";
 import { Icon, type IconName } from "@/components/atoms/Icon";
+import { GraphEdge } from "@/components/GraphEdge";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { GraphControlsSidebar } from "@/components/organisms/GraphControlsSidebar";
 import { NodeInspectorPanel } from "@/components/organisms/NodeInspectorPanel";
@@ -98,9 +103,9 @@ const SETTLE_ALPHA = 1;
 /** Edge look (S5): quiet by default, neighbourhood-first on hover. No
  *  arrowheads — direction is explicitly out of scope (L2). */
 const EDGE_STROKE = "rgb(var(--color-muted))";
-const EDGE_BASE_OPACITY = 0.32;
-const EDGE_HIGHLIGHT_OPACITY = 0.9;
-const EDGE_DIM_OPACITY = 0.07;
+const EDGE_BASE_OPACITY = 0.22;
+const EDGE_HIGHLIGHT_OPACITY = 0.85;
+const EDGE_DIM_OPACITY = 0.05;
 const EDGE_BASE_WIDTH = 1.1;
 /** Extra stroke width per parallel relation between the same pair. */
 const EDGE_WIDTH_STEP = 0.45;
@@ -189,6 +194,19 @@ interface GraphNodeData extends Record<string, unknown> {
 
 /** Zoom tier shared with the node components: false = collapsed dot (S8). */
 const DetailedZoomContext = createContext(true);
+
+/**
+ * Hover focus shared with the node components: while a node is hovered its
+ * neighbours stay legible and everything else recedes, so the author can read
+ * "what connects to what" without following every line (S5).
+ */
+interface HoverFocus {
+  hovered: string | null;
+  neighbours: Set<string>;
+}
+
+const EMPTY_HOVER: HoverFocus = { hovered: null, neighbours: new Set() };
+const HoverFocusContext = createContext<HoverFocus>(EMPTY_HOVER);
 
 /** A folder/section that reads as a cluster (S7). */
 interface GraphCluster {
@@ -282,8 +300,10 @@ type GraphNodeType = Node<GraphNodeData, "graph">;
 
 const handleStyle = { opacity: 0 } as const;
 
-function GraphNode({ data }: NodeProps<GraphNodeType>) {
+function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
   const detailed = useContext(DetailedZoomContext);
+  const hover = useContext(HoverFocusContext);
+  const faded = hover.hovered !== null && !hover.neighbours.has(id);
   const canon = data.status ? NODE_CANON_CLASS[data.status] : null;
 
   // S8: far away, a node is a dot coloured by canon — names return on zoom in.
@@ -302,6 +322,7 @@ function GraphNode({ data }: NodeProps<GraphNodeType>) {
           className={cn(
             "h-3 w-3 rounded-full shadow-sm",
             canon?.dot ?? "bg-muted",
+            faded && "opacity-30",
           )}
         />
         <Handle
@@ -327,9 +348,10 @@ function GraphNode({ data }: NodeProps<GraphNodeType>) {
         data-tier={data.tier}
         data-canon={data.status ?? "none"}
         className={cn(
-          "flex items-center rounded-lg border-2 border-edge bg-surface-raised shadow-sm text-primary",
+          "flex items-center rounded-lg border-2 border-edge bg-surface-raised shadow-sm text-primary transition-opacity",
           NODE_TIER_CLASS[data.tier],
           canon?.card,
+          faded && "opacity-30",
         )}
       >
         <Icon
@@ -360,6 +382,7 @@ function GraphNode({ data }: NodeProps<GraphNodeType>) {
 }
 
 const nodeTypes: NodeTypes = { graph: GraphNode };
+const edgeTypes: EdgeTypes = { graph: GraphEdge };
 
 interface GraphViewProps {
   mundo: string;
@@ -431,6 +454,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const reducedMotionRef = useRef(prefersReducedMotion());
   const clusterRefs = useRef(new Map<string, HTMLDivElement>());
   const clusterMembersRef = useRef<GraphCluster[]>([]);
+  const nodeSizesRef = useRef<Map<string, NodeSize>>(new Map());
+  const positionsRef = useRef<ForcePositions>(new Map());
 
   // Node inspector: selection state plus right-panel resize/focus. The
   // selected entity is DERIVED from the loaded set (by node key), so a status
@@ -625,20 +650,46 @@ export default function GraphView({ mundo }: GraphViewProps) {
     }
   }, []);
 
+  /** The engine lays nodes out by their CENTRE; React Flow positions a node
+   *  by its top-left corner (and clamps it inside the extent by its size).
+   *  Converting here keeps both coordinate systems honest. */
+  const centreToTopLeft = useCallback(
+    (id: string, centre: ForcePosition): ForcePosition => {
+      const size = nodeSizesRef.current.get(id);
+      const width = size?.width ?? NODE_MIN_WIDTH;
+      const height = size?.height ?? NODE_MIN_HEIGHT;
+      return { x: centre.x - width / 2, y: centre.y - height / 2 };
+    },
+    [],
+  );
+
+  const topLeftToCentre = useCallback(
+    (id: string, topLeft: ForcePosition): ForcePosition => {
+      const size = nodeSizesRef.current.get(id);
+      const width = size?.width ?? NODE_MIN_WIDTH;
+      const height = size?.height ?? NODE_MIN_HEIGHT;
+      return { x: topLeft.x + width / 2, y: topLeft.y + height / 2 };
+    },
+    [],
+  );
+
   /** Push simulation positions straight into the React Flow store. This is
    *  the only per-frame write: it keeps the component tree out of the loop
    *  (S2) while React Flow still re-renders the node it owns. */
   const applyPositions = useCallback(
     (positions: ForcePositions) => {
+      positionsRef.current = positions;
       rf.current?.setNodes((current) =>
         current.map((node) => {
-          const position = positions.get(node.id);
-          return position ? { ...node, position } : node;
+          const centre = positions.get(node.id);
+          return centre
+            ? { ...node, position: centreToTopLeft(node.id, centre) }
+            : node;
         }),
       );
       positionClusters(positions);
     },
-    [positionClusters],
+    [centreToTopLeft, positionClusters],
   );
 
   // Build the layout and (re)seed the node set whenever the dataset changes
@@ -669,7 +720,12 @@ export default function GraphView({ mundo }: GraphViewProps) {
       : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
-    const layout = createLiveForceLayout({ entities: visible, links, size });
+    const layout = createLiveForceLayout({
+      entities: visible,
+      links,
+      size,
+      sizes: nodeSizesRef.current,
+    });
     layoutRef.current = layout;
 
     const bounds: CoordinateExtent = [
@@ -684,13 +740,16 @@ export default function GraphView({ mundo }: GraphViewProps) {
     const positions = reducedMotion
       ? layout.settle()
       : layout.step(INITIAL_LIVE_TICKS);
+    positionsRef.current = positions;
 
     const nextNodes: GraphNodeType[] = visible.map((entity) => {
       const degree = entity.forward_links.length + entity.backlinks.length;
+      const key = nodeKey(entity);
+      const centre = positions.get(key) ?? { x: 0, y: 0 };
       return {
-        id: nodeKey(entity),
+        id: key,
         type: "graph",
-        position: positions.get(nodeKey(entity)) ?? { x: 0, y: 0 },
+        position: centreToTopLeft(key, centre),
         data: {
           label: entity.name,
           type: entity.type ?? undefined,
@@ -721,6 +780,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
     loading,
     error,
     applyPositions,
+    centreToTopLeft,
   ]);
 
   // Folder clusters (S7): entities from the same folder read as one group.
@@ -781,7 +841,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
         id: `${pair.source}->${pair.target}`,
         source: pair.source,
         target: pair.target,
-        type: "bezier",
+        type: "graph",
         style: {
           stroke: EDGE_STROKE,
           strokeWidth: Math.min(
@@ -800,6 +860,16 @@ export default function GraphView({ mundo }: GraphViewProps) {
     }
     return result;
   }, [nodes, links, hoveredNodeId]);
+
+  const hoverFocus = useMemo<HoverFocus>(() => {
+    if (!hoveredNodeId) return EMPTY_HOVER;
+    const neighbours = new Set<string>([hoveredNodeId]);
+    for (const edge of edges) {
+      if (edge.source === hoveredNodeId) neighbours.add(edge.target);
+      if (edge.target === hoveredNodeId) neighbours.add(edge.source);
+    }
+    return { hovered: hoveredNodeId, neighbours };
+  }, [hoveredNodeId, edges]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
@@ -965,28 +1035,56 @@ export default function GraphView({ mundo }: GraphViewProps) {
     [applyPositions],
   );
 
+  /** Measured card sizes arrive after the first paint. Feed them to the
+   *  collision force so wide cards stop overlapping; a collapsed dot (semantic
+   *  zoom) is too small to be a real card and is ignored. */
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      let measured = false;
+      for (const change of changes) {
+        if (change.type !== "dimensions" || !change.dimensions) continue;
+        const { width, height } = change.dimensions;
+        if (width < 40 || height < 20) continue;
+        nodeSizesRef.current.set(change.id, { width, height });
+        measured = true;
+      }
+      if (!measured) return;
+      layoutRef.current?.updateSizes(nodeSizesRef.current);
+      reheatAfterInteraction(DATASET_REHEAT_ALPHA);
+    },
+    [reheatAfterInteraction],
+  );
+
   /** Drag start: pin the node where the author grabbed it and wake the
    *  simulation so its neighbours react (Obsidian-style live physics). */
-  const handleNodeDragStart = useCallback((_event: unknown, node: Node) => {
-    const layout = layoutRef.current;
-    if (!layout) return;
-    layout.pin(node.id, node.position.x, node.position.y);
-    if (!reducedMotionRef.current) {
-      layout.reheat(DRAG_REHEAT_ALPHA);
-      layout.start();
-    }
-  }, []);
+  const handleNodeDragStart = useCallback(
+    (_event: unknown, node: Node) => {
+      const layout = layoutRef.current;
+      if (!layout) return;
+      const centre = topLeftToCentre(node.id, node.position);
+      layout.pin(node.id, centre.x, centre.y);
+      if (!reducedMotionRef.current) {
+        layout.reheat(DRAG_REHEAT_ALPHA);
+        layout.start();
+      }
+    },
+    [topLeftToCentre],
+  );
 
-  const handleNodeDrag = useCallback((_event: unknown, node: Node) => {
-    const layout = layoutRef.current;
-    if (!layout) return;
-    // The dragged node follows the pointer exactly; it must never drift.
-    layout.pin(node.id, node.position.x, node.position.y);
-    if (!reducedMotionRef.current && layout.isSettled()) {
-      layout.reheat(DRAG_REHEAT_ALPHA);
-      layout.start();
-    }
-  }, []);
+  const handleNodeDrag = useCallback(
+    (_event: unknown, node: Node) => {
+      const layout = layoutRef.current;
+      if (!layout) return;
+      // The dragged node follows the pointer exactly; it must never drift.
+      const centre = topLeftToCentre(node.id, node.position);
+      layout.pin(node.id, centre.x, centre.y);
+      if (!reducedMotionRef.current && layout.isSettled()) {
+        layout.reheat(DRAG_REHEAT_ALPHA);
+        layout.start();
+      }
+    },
+    [topLeftToCentre],
+  );
 
   // Drop: the node STAYS pinned (Obsidian keeps dragged nodes put) and is
   // pushed out of any overlap — collide cannot separate a pinned node, and the
@@ -995,7 +1093,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
     (_event: unknown, dragged: Node) => {
       const layout = layoutRef.current;
       if (!layout) return;
-      const simPositions = layout.positions();
+      const simCentres = layout.positions();
       const current = rf.current?.getNodes() ?? nodes;
       const dw = dragged.measured?.width ?? NODE_MIN_WIDTH;
       const dh = dragged.measured?.height ?? NODE_MIN_HEIGHT;
@@ -1003,9 +1101,10 @@ export default function GraphView({ mundo }: GraphViewProps) {
       let ny = dragged.position.y;
       for (const other of current) {
         if (other.id === dragged.id) continue;
-        const position = simPositions.get(other.id) ?? other.position;
         const ow = other.measured?.width ?? NODE_MIN_WIDTH;
         const oh = other.measured?.height ?? NODE_MIN_HEIGHT;
+        const centre = simCentres.get(other.id) ?? topLeftToCentre(other.id, other.position);
+        const position = { x: centre.x - ow / 2, y: centre.y - oh / 2 };
         const overlapX = Math.min(
           nx + dw - position.x,
           position.x + ow - nx,
@@ -1023,10 +1122,14 @@ export default function GraphView({ mundo }: GraphViewProps) {
           }
         }
       }
-      layout.pin(dragged.id, nx, ny);
+      const centre = {
+        x: nx + dw / 2,
+        y: ny + dh / 2,
+      };
+      layout.pin(dragged.id, centre.x, centre.y);
       reheatAfterInteraction(DROP_REHEAT_ALPHA);
     },
-    [nodes, reheatAfterInteraction],
+    [nodes, reheatAfterInteraction, topLeftToCentre],
   );
 
   return (
@@ -1061,7 +1164,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
         {!loading && !error && nodes.length > 0 && (
           <DetailedZoomContext.Provider value={detailedZoom}>
-            <div className="relative h-full w-full" data-testid="graph-view">
+            <HoverFocusContext.Provider value={hoverFocus}>
+              <div className="relative h-full w-full" data-testid="graph-view">
               <ReactFlow
                 key={canvasKey}
                 // Uncontrolled on purpose: the force engine owns live positions
@@ -1069,7 +1173,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 // component never re-renders per animation frame.
                 defaultNodes={nodes}
                 edges={edges}
+                onNodesChange={handleNodesChange}
                 nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
                 onNodeClick={handleNodeClick}
                 onNodeMouseEnter={handleNodeMouseEnter}
                 onNodeMouseLeave={handleNodeMouseLeave}
@@ -1080,6 +1186,11 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 onEdgeClick={handleEdgeClick}
                 onInit={(inst) => {
                   rf.current = inst;
+                  // Measurements may have re-settled the layout before the
+                  // instance existed; push the latest positions once.
+                  if (positionsRef.current.size > 0) {
+                    applyPositions(positionsRef.current);
+                  }
                 }}
                 minZoom={0.2}
                 maxZoom={2}
@@ -1186,6 +1297,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 </>
               )}
             </div>
+            </HoverFocusContext.Provider>
           </DetailedZoomContext.Provider>
         )}
 

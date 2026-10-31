@@ -519,8 +519,40 @@ describe("GraphView", () => {
       // …and direction is out of scope (L2): no arrowhead markers.
       expect(path.getAttribute("marker-end")).toBeNull();
       expect(path.style.strokeWidth).toBe("1.1");
-      expect(Number(path.style.opacity)).toBeCloseTo(0.32, 2);
+      expect(Number(path.style.opacity)).toBeCloseTo(0.22, 2);
     }
+  });
+
+  it("anchors edges at node centres, not at the top/bottom handles", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countEdges()).toBe(2));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+
+    await waitFor(() => {
+      const centres = mockFlowInstance.instance!.getNodes().map((node) => ({
+        x: node.position.x + (node.measured?.width ?? 150) / 2,
+        y: node.position.y + (node.measured?.height ?? 40) / 2,
+      }));
+      const paths = [
+        ...document.querySelectorAll<SVGPathElement>(".react-flow__edge-path"),
+      ];
+      expect(paths).toHaveLength(2);
+      for (const path of paths) {
+        const match = /^M\s*([-\d.]+),([-\d.]+)/.exec(
+          path.getAttribute("d") ?? "",
+        );
+        expect(match).not.toBeNull();
+        const x = Number(match![1]);
+        const y = Number(match![2]);
+        // One end sits on a node centre; the old top/bottom handles put it on
+        // a card border instead, which is what made links loop around cards.
+        const anchored = centres.some(
+          (centre) => Math.abs(centre.x - x) < 2 && Math.abs(centre.y - y) < 2,
+        );
+        expect(anchored).toBe(true);
+      }
+    });
   });
 
   it("thickens a pair with more than one relation and highlights it on hover", async () => {
@@ -548,9 +580,15 @@ describe("GraphView", () => {
     fireEvent.mouseEnter(screen.getByText("Rhyz").closest(".react-flow__node")!);
     await waitFor(() => {
       const [highlighted, dimmed] = paths();
-      expect(highlighted.style.opacity).toBe("0.9");
-      expect(dimmed.style.opacity).toBe("0.07");
+      expect(highlighted.style.opacity).toBe("0.85");
+      expect(dimmed.style.opacity).toBe("0.05");
     });
+
+    // Its neighbour stays legible; the unrelated card recedes too.
+    const card = (name: string) =>
+      screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
+    expect(card("Vael")).not.toHaveClass("opacity-30");
+    expect(card("Dottua")).toHaveClass("opacity-30");
   });
 
   it("reads canon through fill, ring and a status dot, never border colour alone", async () => {

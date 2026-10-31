@@ -37,6 +37,12 @@ export interface ForcePosition {
   y: number;
 }
 
+/** Measured card size used to size the collision radius. */
+export interface NodeSize {
+  width: number;
+  height: number;
+}
+
 export type ForcePositions = Map<string, ForcePosition>;
 
 /** Schedules one simulation step and returns its cancel handle. */
@@ -47,6 +53,9 @@ export interface LiveForceLayoutOptions {
   links: EntityLink[];
   size: number;
   ticker?: ForceTicker;
+  /** Measured node sizes; cards are much wider than they are tall, so a fixed
+   *  circular radius leaves them overlapping. */
+  sizes?: ReadonlyMap<string, NodeSize>;
 }
 
 export interface LiveForceLayout {
@@ -60,6 +69,8 @@ export interface LiveForceLayout {
   pin(id: string, x: number, y: number): void;
   /** Release a pinned node. */
   release(id: string): void;
+  /** Refresh the collision radii with measured card sizes. */
+  updateSizes(sizes: ReadonlyMap<string, NodeSize>): void;
   positions(): ForcePositions;
   isSettled(): boolean;
   /** Drive the simulation through the ticker until it settles. */
@@ -77,18 +88,26 @@ export function nodeKey(entity: GraphEntity): string {
 /** Minimum layout area side; grows with node count so nodes never overlap. */
 const LAYOUT_MIN_SIZE = 400;
 /** Per-node target spacing used to size the layout area. */
-const LAYOUT_NODE_SPACING = 180;
-/** Preferred link length in the settled layout. */
-const LINK_DISTANCE = 160;
+const LAYOUT_NODE_SPACING = 230;
+/** Minimum link length in the settled layout. */
+const LINK_DISTANCE = 240;
+/** Extra space between two connected cards, beyond their half widths. */
+const LINK_GAP = 40;
 /** Repulsive force between every node pair (negative = repel). */
 const CHARGE_STRENGTH = -400;
 /** Strength pulling every node toward the center (limits group spread). */
 const CENTER_STRENGTH = 0.06;
-/** Collision radius keeping node centers apart so labels never overlap. */
+/** Fallback collision radius, used until a node is measured. */
 const NODE_COLLIDE_RADIUS = 75;
+/** Fallback card size (rough node card), used to keep cards inside the bounds
+ *  before React Flow measures them. */
+const NODE_FALLBACK_WIDTH = 150;
+const NODE_FALLBACK_HEIGHT = 36;
+/** Breathing room added to the measured collision radius. */
+const NODE_COLLIDE_PADDING = 10;
 /** Minimum distance a node center keeps from edges it is NOT connected to,
  *  so a node never sits on another group's relations looking connected. */
-const EDGE_MIN_DISTANCE = 60;
+const EDGE_MIN_DISTANCE = 90;
 /** Synchronous settle budget; enough for ~52-node worlds. */
 export const SETTLE_TICKS = 300;
 /** Initial alpha the simulation cools down from. */
@@ -175,6 +194,7 @@ export function createLiveForceLayout(
 ): LiveForceLayout {
   const { entities, links, size } = options;
   const ticker = options.ticker ?? animationFrameTicker;
+  const sizes = new Map<string, NodeSize>(options.sizes ?? []);
 
   const visible = new Set(entities.map(nodeKey));
   const simNodes: SimNode[] = entities.map((entity) => ({
@@ -185,22 +205,63 @@ export function createLiveForceLayout(
     .filter((link) => visible.has(link.source) && visible.has(link.target))
     .map((link) => ({ source: link.source, target: link.target }));
 
-  const clamp = (value: number) => Math.min(size, Math.max(0, value));
+  // Positions are node CENTRES. React Flow bounds each node's top-left corner
+  // by the same [0, size] extent, so a centre clamped to `size` would have its
+  // card clamped back to `size - width`, stacking nodes on the edge. Keep the
+  // centre inside the box with room for half the card on each side.
+  const halfSize = (id: string): { x: number; y: number } => {
+    const measured = sizes.get(id);
+    return {
+      x: (measured?.width ?? NODE_FALLBACK_WIDTH) / 2,
+      y: (measured?.height ?? NODE_FALLBACK_HEIGHT) / 2,
+    };
+  };
+  const clampAxis = (value: number, half: number) => {
+    const maximum = Math.max(half, size - half);
+    return Math.min(maximum, Math.max(half, value));
+  };
+
+  // A card is a wide, short rectangle; a circle that contains it is the safe
+  // collision primitive. Falling back to the fixed radius keeps unmeasured
+  // nodes from stacking.
+  const collideRadius = (node: SimNode): number => {
+    const measured = sizes.get(node.id);
+    if (!measured) return NODE_COLLIDE_RADIUS;
+    return (
+      Math.max(measured.width, measured.height) / 2 + NODE_COLLIDE_PADDING
+    );
+  };
+
+  const halfWidth = (id: string): number =>
+    (sizes.get(id)?.width ?? NODE_FALLBACK_WIDTH) / 2;
+
+  const endpointId = (endpoint: SimLink["source"]): string =>
+    typeof endpoint === "object" ? endpoint.id : String(endpoint);
+
+  // Two connected wide cards must be at least their half widths plus a gap
+  // apart; the collide force alone loses to the link force once alpha cools,
+  // which is exactly what left cards overlapping on screen.
+  const linkDistance = (link: SimLink): number =>
+    Math.max(
+      LINK_DISTANCE,
+      halfWidth(endpointId(link.source)) +
+        halfWidth(endpointId(link.target)) +
+        LINK_GAP,
+    );
+
+  const linkForce = forceLink<SimNode, SimLink>(simLinks)
+    .id((node) => node.id)
+    .distance(linkDistance);
 
   const simulation = forceSimulation<SimNode>(simNodes)
-    .force(
-      "link",
-      forceLink<SimNode, SimLink>(simLinks)
-        .id((node) => node.id)
-        .distance(LINK_DISTANCE),
-    )
+    .force("link", linkForce)
     .force("charge", forceManyBody<SimNode>().strength(CHARGE_STRENGTH))
     .force("center", forceCenter<SimNode>(size / 2, size / 2))
     .force("x", forceX<SimNode>(size / 2).strength(CENTER_STRENGTH))
     .force("y", forceY<SimNode>(size / 2).strength(CENTER_STRENGTH))
     .force(
       "collide",
-      forceCollide<SimNode>().radius(NODE_COLLIDE_RADIUS).strength(0.8),
+      forceCollide<SimNode>().radius(collideRadius).strength(0.8),
     )
     .force("edgeAvoid", edgeAvoidanceForce(simNodes, simLinks))
     .alpha(ALPHA_START)
@@ -212,7 +273,11 @@ export function createLiveForceLayout(
   const positions = (): ForcePositions => {
     const result: ForcePositions = new Map();
     for (const node of simNodes) {
-      result.set(node.id, { x: clamp(node.x ?? 0), y: clamp(node.y ?? 0) });
+      const half = halfSize(node.id);
+      result.set(node.id, {
+        x: clampAxis(node.x ?? 0, half.x),
+        y: clampAxis(node.y ?? 0, half.y),
+      });
     }
     return result;
   };
@@ -246,6 +311,13 @@ export function createLiveForceLayout(
       if (!node) return;
       node.fx = null;
       node.fy = null;
+    },
+    updateSizes(next) {
+      sizes.clear();
+      for (const [id, measured] of next) sizes.set(id, measured);
+      // d3 caches each link's length when a force initializes, so new card
+      // widths only reach the layout after re-initializing the link force.
+      linkForce.initialize?.(simNodes, Math.random);
     },
     positions,
     isSettled() {

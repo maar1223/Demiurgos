@@ -119,29 +119,76 @@ describe("createLiveForceLayout", () => {
     const layout = createLiveForceLayout({ entities: WORLD, links: LINKS, size });
     layout.step(300);
 
-    layout.pin("ana", 42, 84);
+    layout.pin("ana", 120, 120);
     layout.step(60);
 
-    expect(layout.positions().get("ana")).toEqual({ x: 42, y: 84 });
-    expect(layout.positions().get("dario")).not.toEqual({ x: 42, y: 84 });
+    expect(layout.positions().get("ana")).toEqual({ x: 120, y: 120 });
+    expect(layout.positions().get("dario")).not.toEqual({ x: 120, y: 120 });
   });
 
   it("releases a pinned node so the simulation can move it again", () => {
     const layout = createLiveForceLayout({ entities: WORLD, links: LINKS, size });
-    layout.pin("ana", 42, 84);
+    layout.pin("ana", 120, 120);
     layout.step(60);
-    expect(layout.positions().get("ana")).toEqual({ x: 42, y: 84 });
+    expect(layout.positions().get("ana")).toEqual({ x: 120, y: 120 });
 
     layout.release("ana");
     layout.reheat();
     layout.step(200);
-    expect(layout.positions().get("ana")).not.toEqual({ x: 42, y: 84 });
+    expect(layout.positions().get("ana")).not.toEqual({ x: 120, y: 120 });
+  });
+
+  it("sizes collision from the measured cards so wide nodes stop overlapping", () => {
+    const wide = 2000;
+    const distance = (layout: ReturnType<typeof createLiveForceLayout>) => {
+      const a = layout.positions().get("ana")!;
+      const b = layout.positions().get("bruno")!;
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const layout = createLiveForceLayout({
+      entities: WORLD,
+      links: LINKS,
+      size: wide,
+    });
+    layout.step(300);
+    const withoutSizes = distance(layout);
+
+    layout.updateSizes(
+      new Map([
+        ["ana", { width: 400, height: 40 }],
+        ["bruno", { width: 400, height: 40 }],
+      ]),
+    );
+    layout.reheat();
+    layout.step(300);
+    // Two 400px cards need 2 × (200 + 10) between their centres, more than
+    // the 240px link distance, so the measured size must win.
+    expect(distance(layout)).toBeGreaterThan(withoutSizes + 50);
+  });
+
+  it("reserves the measured card width when clamping positions to the bounds", () => {
+    const layout = createLiveForceLayout({
+      entities: WORLD,
+      links: LINKS,
+      size: 400,
+      sizes: new Map([["ana", { width: 300, height: 40 }]]),
+    });
+    // Far outside the canvas: the card must still fit, so the CENTRE stops
+    // half a card before the edge (top-left inside [0, size - width]).
+    layout.pin("ana", 1000, 1000);
+    expect(layout.positions().get("ana")).toEqual({ x: 250, y: 380 });
   });
 
   it("keeps pinned coordinates clamped inside the bounds", () => {
-    const layout = createLiveForceLayout({ entities: WORLD, links: LINKS, size });
-    layout.pin("ana", -500, size + 900);
-    expect(layout.positions().get("ana")).toEqual({ x: 0, y: size });
+    const layout = createLiveForceLayout({
+      entities: WORLD,
+      links: LINKS,
+      size: 1000,
+      sizes: new Map([["ana", { width: 300, height: 40 }]]),
+    });
+    layout.pin("ana", -500, 1900);
+    // Half a card of margin on each side keeps the top-left inside the extent.
+    expect(layout.positions().get("ana")).toEqual({ x: 150, y: 980 });
   });
 
   it("ignores links whose endpoints are not visible", () => {
