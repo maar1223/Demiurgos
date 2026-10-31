@@ -92,3 +92,20 @@ cancelled by GitHub's scheduled runner-image brownout (not code).
 L3 Decision: additive merge (S8) instead of recompute-and-replace, because P1
 has no provenance field to tell auto from manual relations; destructive
 reconciliation stays in P4.
+
+L4 Verification (independent, commit `301c8f3` vs base `44dd7d2`): every S#
+passed, no blockers. Evidence: service 7 passed; save/create routes 5 passed;
+whole `test_api_server.py` 531 passed; payload/installer 188 passed; 13
+durable probes added as `tests/test_relations_after_save_p1.py`. Advisories
+recorded as follow-ups, not blockers:
+1. `payload_manifest.json` `source_commit` drifts after every commit; the same
+   drift exists at the baseline, so it is pre-existing provenance noise.
+2. A guided create whose first reindex returns `dirty`/`pending` records the
+   pre-hook digest, so a later `/guided/index/retry` would see a changed file.
+   Narrow (build normally returns `indexed`); refresh the recorded digest after
+   the hook when the retry path is touched.
+3. The reverse pass scans the in-memory index (O(world) CPU, no disk), and the
+   first save per process builds the index once; the quoted "O(k)" holds for
+   disk reads, not for the in-memory body scan.
+4. A legacy `[[Display Name]]` wikilink plus the new canonical id shows two
+   entries for the same target; consistent with the stated dedupe key.
