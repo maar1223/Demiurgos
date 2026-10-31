@@ -163,3 +163,12 @@ change the next save rebuilds the index from disk (O(world)); a cheaper
 incremental invalidation is a follow-up, not a correctness issue.
 Final evidence: relation tests 35 passed; full backend suite 4353 passed,
 8 skipped; importer default output unchanged on non-ambiguous inputs.
+
+L8 Scoped recheck of L7 (blocker closed) found one regression introduced by the
+cache optimization, now fixed: dropping the cached graph index only when the
+plan wrote left the PRE-save body in memory, so a later create's reverse pass
+missed an entity the edited body already named. The hook now drops the cached
+index after every successful save (the rebuild stays lazy). The recheck's probes
+are committed as `tests/test_relations_lifecycle_p1_recheck.py`; the failing
+probe now passes. Final evidence: 40 relation tests passed; full backend suite
+4358 passed, 8 skipped.

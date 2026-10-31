@@ -6547,13 +6547,14 @@ def _reconcile_relations_after_write(mundo: str, paths: list[str]) -> None:
             mundos_dir=_mundos_dir(),
             index=_get_graph(mundo),
         )
-        if not plan:
-            return
-        if _apply_relation_plan(mundo, plan):
-            # The cached index now carries stale ``relaciones``/links; drop it
-            # only when the plan actually wrote, so an identical re-save never
-            # pays a rebuild.
-            _graph_indices.pop(mundo, None)
+        if plan:
+            _apply_relation_plan(mundo, plan)
+        # The cached index still carries the pre-save body and links of the
+        # fichas just written, even when the plan added nothing (an edit that
+        # only introduced a mention of a not-yet-existing entity). Drop it on
+        # every save so the next reverse pass reads the real bodies; the
+        # rebuild stays lazy.
+        _graph_indices.pop(mundo, None)
     except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
         logger.warning(
             "relations: reconcile after save failed for world %s: %s", mundo, exc
