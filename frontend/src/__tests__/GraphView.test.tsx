@@ -417,6 +417,33 @@ describe("GraphView", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves the canvas unbounded: nodes are not clamped to an extent", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    // No per-node extent: the author can drag a card anywhere on the map.
+    expect(instance.getNodes().every((node) => node.extent === undefined)).toBe(
+      true,
+    );
+
+    const start = dragHandler("onNodeDragStart");
+    const drag = dragHandler("onNodeDrag");
+    const stop = dragHandler("onNodeDragStop");
+    act(() => {
+      start!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
+      drag!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
+      stop!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
+    });
+    const dropped = instance
+      .getNodes()
+      .find((node) => node.id === "Stal::Rhyz")!;
+    expect(dropped.position.x).toBeGreaterThan(8000);
+    expect(dropped.position.y).toBeGreaterThan(6000);
+  });
+
   it("pins a dragged node and re-heats its neighbours", async () => {
     stubMotionPreference(false);
     const { flush } = stubAnimationFrames();

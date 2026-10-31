@@ -166,20 +166,26 @@ describe("createLiveForceLayout", () => {
     expect(distance(layout)).toBeGreaterThan(withoutSizes + 50);
   });
 
-  it("reserves the measured card width when clamping positions to the bounds", () => {
+  it("keeps the automatic layout inside the box, half a card from each edge", () => {
+    const sizes = new Map(
+      WORLD.map((node) => [node.id, { width: 300, height: 40 }] as const),
+    );
     const layout = createLiveForceLayout({
       entities: WORLD,
       links: LINKS,
-      size: 400,
-      sizes: new Map([["ana", { width: 300, height: 40 }]]),
+      size: 600,
+      sizes,
     });
-    // Far outside the canvas: the card must still fit, so the CENTRE stops
-    // half a card before the edge (top-left inside [0, size - width]).
-    layout.pin("ana", 1000, 1000);
-    expect(layout.positions().get("ana")).toEqual({ x: 250, y: 380 });
+    layout.step(300);
+    for (const { x, y } of layout.positions().values()) {
+      expect(x).toBeGreaterThanOrEqual(150);
+      expect(x).toBeLessThanOrEqual(450);
+      expect(y).toBeGreaterThanOrEqual(20);
+      expect(y).toBeLessThanOrEqual(580);
+    }
   });
 
-  it("keeps pinned coordinates clamped inside the bounds", () => {
+  it("keeps a dropped node exactly where it was dropped, even outside the box", () => {
     const layout = createLiveForceLayout({
       entities: WORLD,
       links: LINKS,
@@ -187,8 +193,63 @@ describe("createLiveForceLayout", () => {
       sizes: new Map([["ana", { width: 300, height: 40 }]]),
     });
     layout.pin("ana", -500, 1900);
-    // Half a card of margin on each side keeps the top-left inside the extent.
-    expect(layout.positions().get("ana")).toEqual({ x: 150, y: 980 });
+    // The author owns dragged nodes: the layout box only frames the automatic
+    // arrangement, it is not a cage.
+    expect(layout.positions().get("ana")).toEqual({ x: -500, y: 1900 });
+  });
+
+  it("separates a dense world of wide cards without stacking any pair", () => {
+    const many = Array.from({ length: 60 }, (_, index) => entity(`n${index}`));
+    const manyLinks = [
+      ...many.slice(0, -1).map((node, index) => link(node.id, many[index + 1].id)),
+      ...many.slice(0, 20).map((node) => link(node.id, "n59")),
+    ];
+    const cards = new Map(
+      many.map((node) => [node.id, { width: 200, height: 40 }] as const),
+    );
+    const layout = createLiveForceLayout({
+      entities: many,
+      links: manyLinks,
+      size: computeLayoutSize(many.length),
+      sizes: cards,
+    });
+    layout.step(300);
+    const positions = [...layout.positions()];
+    let overlaps = 0;
+    for (let index = 0; index < positions.length; index += 1) {
+      for (let other = index + 1; other < positions.length; other += 1) {
+        const [, a] = positions[index];
+        const [, b] = positions[other];
+        const separated =
+          Math.abs(a.x - b.x) >= 199.5 || Math.abs(a.y - b.y) >= 39.5;
+        if (!separated) overlaps += 1;
+      }
+    }
+    expect(overlaps).toBe(0);
+  });
+
+  it("leaves no overlapping cards once the layout settles", () => {
+    const cards = new Map(
+      WORLD.map((node) => [node.id, { width: 200, height: 40 }] as const),
+    );
+    const layout = createLiveForceLayout({
+      entities: WORLD,
+      links: LINKS,
+      size: 600,
+      sizes: cards,
+    });
+    layout.step(300);
+    const positions = [...layout.positions()];
+    for (let index = 0; index < positions.length; index += 1) {
+      for (let other = index + 1; other < positions.length; other += 1) {
+        const [, a] = positions[index];
+        const [, b] = positions[other];
+        const separated =
+          Math.abs(a.x - b.x) >= 200 - 0.5 ||
+          Math.abs(a.y - b.y) >= 40 - 0.5;
+        expect(separated).toBe(true);
+      }
+    }
   });
 
   it("ignores links whose endpoints are not visible", () => {

@@ -18,7 +18,6 @@ import {
   useStore,
   ViewportPortal,
   type Connection,
-  type CoordinateExtent,
   type Edge,
   type EdgeTypes,
   type Node,
@@ -401,6 +400,8 @@ interface GraphViewProps {
  *   (name, type, status, path, neighbor links, content preview); the ficha
  *   route is reached via the panel's "Abrir ficha" button.
  * - Node search input (debounced) centers a matching node in the viewport.
+ * - The canvas is unbounded: no node extent is applied, so the author can drag
+ *   any node anywhere (the layout box only frames the automatic layout).
  * - The canvas owns the whole surface (S4): controls and the inspector float
  *   over it as translucent panels instead of taking columns. The folder tree
  *   is a hierarchical multi-select that hides nodes outside the selected
@@ -728,11 +729,6 @@ export default function GraphView({ mundo }: GraphViewProps) {
     });
     layoutRef.current = layout;
 
-    const bounds: CoordinateExtent = [
-      [0, 0],
-      [size, size],
-    ];
-
     const reducedMotion = prefersReducedMotion();
     reducedMotionRef.current = reducedMotion;
     // Reduced motion jumps to the settled layout in the same frame; otherwise
@@ -756,7 +752,6 @@ export default function GraphView({ mundo }: GraphViewProps) {
           status: entity.status ?? undefined,
           tier: nodeTier(degree),
         },
-        extent: bounds,
       };
     });
     setNodes(nextNodes);

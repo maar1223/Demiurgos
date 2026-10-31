@@ -93,6 +93,10 @@ const LAYOUT_NODE_SPACING = 230;
 const LINK_DISTANCE = 240;
 /** Extra space between two connected cards, beyond their half widths. */
 const LINK_GAP = 40;
+/** Minimum gap kept between two card rectangles by the final overlap pass. */
+const CARD_GAP = 18;
+/** Iterations of the final rectangle-separation pass. */
+const SEPARATION_PASSES = 120;
 /** Repulsive force between every node pair (negative = repel). */
 const CHARGE_STRENGTH = -400;
 /** Strength pulling every node toward the center (limits group spread). */
@@ -249,6 +253,63 @@ export function createLiveForceLayout(
         LINK_GAP,
     );
 
+  /** Final guarantee: d3's circular collide is alpha-scaled and can leave
+   *  overlaps once the layout cools, so a direct rectangle pass separates the
+   *  cards (wide, short) the last few pixels. Pinned nodes stay put; the other
+   *  node of the pair takes the whole push. */
+  const resolveOverlaps = () => {
+    // Work in the SAME coordinates `positions()` returns: clamping at read
+    // time otherwise reintroduces overlaps that the pass already fixed on the
+    // raw (out-of-bounds) coordinates.
+    for (const node of simNodes) {
+      if (node.fx != null && node.fy != null) continue;
+      const half = halfSize(node.id);
+      node.x = clampAxis(node.x ?? 0, half.x);
+      node.y = clampAxis(node.y ?? 0, half.y);
+    }
+    for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
+      let moved = false;
+      for (let index = 0; index < simNodes.length; index += 1) {
+        const a = simNodes[index];
+        const halfA = halfSize(a.id);
+        for (let other = index + 1; other < simNodes.length; other += 1) {
+          const b = simNodes[other];
+          const halfB = halfSize(b.id);
+          const dx = (b.x ?? 0) - (a.x ?? 0);
+          const dy = (b.y ?? 0) - (a.y ?? 0);
+          const overlapX = halfA.x + halfB.x + CARD_GAP - Math.abs(dx);
+          const overlapY = halfA.y + halfB.y + CARD_GAP - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          const aPinned = a.fx != null && a.fy != null;
+          const bPinned = b.fx != null && b.fy != null;
+          if (aPinned && bPinned) continue;
+          moved = true;
+          const horizontal = overlapX <= overlapY;
+          const pushX = horizontal
+            ? (dx >= 0 ? overlapX : -overlapX)
+            : 0;
+          const pushY = horizontal
+            ? 0
+            : (dy >= 0 ? overlapY : -overlapY);
+          const move = (node: SimNode, dx: number, dy: number) => {
+            const half = halfSize(node.id);
+            node.x = clampAxis((node.x ?? 0) + dx, half.x);
+            node.y = clampAxis((node.y ?? 0) + dy, half.y);
+          };
+          if (aPinned) {
+            move(b, pushX, pushY);
+          } else if (bPinned) {
+            move(a, -pushX, -pushY);
+          } else {
+            move(a, -pushX / 2, -pushY / 2);
+            move(b, pushX / 2, pushY / 2);
+          }
+        }
+      }
+      if (!moved) return;
+    }
+  };
+
   const linkForce = forceLink<SimNode, SimLink>(simLinks)
     .id((node) => node.id)
     .distance(linkDistance);
@@ -269,14 +330,20 @@ export function createLiveForceLayout(
     .stop();
 
   let cancelFrame: (() => void) | null = null;
+  // Once the simulation cools and the overlap pass has run, further ticks only
+  // add float noise; freeze until something explicitly re-heats the layout.
+  let frozen = false;
 
   const positions = (): ForcePositions => {
     const result: ForcePositions = new Map();
     for (const node of simNodes) {
       const half = halfSize(node.id);
+      // A node the author dropped is theirs, even outside the layout box; the
+      // box only frames the automatic layout.
+      const pinned = node.fx != null && node.fy != null;
       result.set(node.id, {
-        x: clampAxis(node.x ?? 0, half.x),
-        y: clampAxis(node.y ?? 0, half.y),
+        x: pinned ? (node.x ?? 0) : clampAxis(node.x ?? 0, half.x),
+        y: pinned ? (node.y ?? 0) : clampAxis(node.y ?? 0, half.y),
       });
     }
     return result;
@@ -284,21 +351,31 @@ export function createLiveForceLayout(
 
   const layout: LiveForceLayout = {
     step(ticks = 1) {
-      for (let index = 0; index < ticks; index += 1) simulation.tick();
+      if (!frozen) {
+        for (let index = 0; index < ticks; index += 1) simulation.tick();
+        if (simulation.alpha() <= simulation.alphaMin()) {
+          resolveOverlaps();
+          frozen = true;
+        }
+      }
       return positions();
     },
     settle() {
       simulation.alpha(ALPHA_START);
       simulation.tick(SETTLE_TICKS);
+      resolveOverlaps();
+      frozen = true;
       return positions();
     },
     reheat(alpha = 0.6) {
       simulation.alpha(alpha);
       simulation.alphaTarget(0);
+      frozen = false;
     },
     pin(id, x, y) {
       const node = nodeById.get(id);
       if (!node) return;
+      frozen = false;
       // x/y move with the pin, not only fx/fy: a dragged node is visually
       // here NOW, and positions() must agree before the next tick.
       node.fx = x;
@@ -309,10 +386,12 @@ export function createLiveForceLayout(
     release(id) {
       const node = nodeById.get(id);
       if (!node) return;
+      frozen = false;
       node.fx = null;
       node.fy = null;
     },
     updateSizes(next) {
+      frozen = false;
       sizes.clear();
       for (const [id, measured] of next) sizes.set(id, measured);
       // d3 caches each link's length when a force initializes, so new card
@@ -327,8 +406,10 @@ export function createLiveForceLayout(
       if (cancelFrame) return;
       const frame = () => {
         simulation.tick();
+        if (layout.isSettled()) resolveOverlaps();
         layout.onPositions?.(positions());
         if (layout.isSettled()) {
+          frozen = true;
           cancelFrame = null;
           return;
         }
