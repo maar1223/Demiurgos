@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 import api_server
 from relation_reconcile import create_preimage_backup
@@ -61,6 +64,10 @@ def test_s5_backup_failure_writes_nothing(client, monkeypatch) -> None:
     assert _digest(world / "lore" / "alpha.md") == before
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX permission semantics: chmod cannot make a Windows target unwritable",
+)
 def test_s7_rewrite_failure_is_reported_and_does_not_abort(client, monkeypatch) -> None:
     _principal(monkeypatch)
     world = _world()
@@ -82,6 +89,10 @@ def test_s7_rewrite_failure_is_reported_and_does_not_abort(client, monkeypatch) 
     assert _digest(delta) == delta_before
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX permission semantics: chmod cannot make a Windows target unwritable",
+)
 def test_s7_unreadable_file_is_reported_and_does_not_abort(client, monkeypatch) -> None:
     _principal(monkeypatch)
     world = _world()
