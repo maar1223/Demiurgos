@@ -67,6 +67,10 @@ vi.mock("@/components/organisms/AIAssistantSidebar", () => ({
 // is used by the ImagePicker thumbnails. moveNode/duplicateFile/
 // getFileContent/createFile/deleteFile back the card ⋯ action flows.
 // setStatus backs the file-bar status chip (item 14).
+vi.mock("@/api/graph", () => ({
+  fetchRelationQuality: vi.fn(),
+}));
+
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
@@ -141,6 +145,7 @@ import {
   setStatus,
   listTrash,
 } from "@/api/wiki";
+import { fetchRelationQuality } from "@/api/graph";
 import { ApiError } from "@/api/types";
 import { CATALOGUE } from "@/i18n/messages";
 import type { Mock } from "vitest";
@@ -216,6 +221,10 @@ function unstubObjectUrl() {
 
 describe("WikiEditor", () => {
   beforeEach(() => {
+    (fetchRelationQuality as Mock).mockResolvedValue({
+      path: "capitulos/cap1.md",
+      tags: ["standalone"],
+    });
     (useWorlds as Mock).mockReturnValue({
       worlds: mockWorlds,
       isLoading: false,
@@ -643,6 +652,15 @@ describe("WikiEditor", () => {
 
     // Success feedback
     expect(screen.getByText(/Guardado/i)).toBeInTheDocument();
+
+    // P5 — the relation-health report for the ficha just saved
+    expect(fetchRelationQuality).toHaveBeenCalledWith(
+      "Vibrantes",
+      "capitulos/cap1.md",
+    );
+    expect(await screen.findByTestId("relation-quality")).toHaveTextContent(
+      "Sin relaciones ni menciones: nada la conecta todavía",
+    );
   });
 
   it("hides the YAML frontmatter from the editor textarea", async () => {

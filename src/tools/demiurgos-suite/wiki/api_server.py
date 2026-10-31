@@ -66,7 +66,12 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
-from import_relations import MAX_RELATIONS, relaciones_entry_key
+from import_relations import (
+    MAX_RELATIONS,
+    build_relation_targets,
+    ficha_quality,
+    relaciones_entry_key,
+)
 from relation_candidates import scan_candidates
 from relation_proposals import load_proposals, remove_proposal
 from relation_reconcile import build_global_plan, create_preimage_backup
@@ -6629,6 +6634,53 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
         _graph_indices[mundo] = idx
 
     return _graph_indices[mundo]
+
+
+def _read_ficha_frontmatter(full: Path) -> tuple[dict, str]:
+    """Return the parsed frontmatter and body of one ficha (CRLF-safe)."""
+    with open(full, "r", encoding="utf-8", newline="") as handle:
+        content = handle.read()
+    match = _RE_FRONTMATTER.match(content)
+    if match is None:
+        return {}, content
+    try:
+        frontmatter = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        frontmatter = {}
+    return (
+        frontmatter if isinstance(frontmatter, dict) else {},
+        content[match.end():],
+    )
+
+
+@app.get("/api/{mundo}/relations/quality")
+def relations_quality(mundo: str, path: str = Query(...)):
+    """Relation-health tags for one saved ficha (P5).
+
+    Read-only: the editor calls it after a save to surface ``false-orphan``,
+    ``standalone`` or ``non-entity`` without another write.
+    """
+    if _resolve_mundo_dir(mundo) is None:
+        raise problem("world.not_found")
+    full = _resolve_mundo_path(mundo, path)
+    if full is None or not full.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    frontmatter, body = _read_ficha_frontmatter(full)
+    index = _get_graph(mundo)
+    targets = build_relation_targets(index.entities()) if index is not None else []
+    tags = ficha_quality(
+        body=body,
+        relaciones=[
+            entry
+            for entry in (frontmatter.get("relaciones") or [])
+            if isinstance(entry, str)
+        ],
+        graph=frontmatter.get("graph", True) is not False,
+        source_id=str(frontmatter.get("id") or ""),
+        source_path=path,
+        targets=targets,
+    )
+    return {"path": path, "tags": tags}
 
 
 @app.get("/api/{mundo}/relations/candidates")

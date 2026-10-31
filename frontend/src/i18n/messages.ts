@@ -1025,6 +1025,7 @@ export const messages = {
     "relaciones.propuestas.loadError": "No se pudieron cargar las propuestas.",
     "relaciones.propuestas.actionError": "No se pudo completar la acción.",
 
+    "relaciones.quality.title": "Relación con el grafo",
     "relaciones.reconcile.title": "Sincronizar relaciones",
     "relaciones.reconcile.hint":
       "Alinea el grafo con lo que dice el texto: agrega lo que falta y quita lo que ningún texto respalda. Antes de escribir se guarda un respaldo.",
@@ -3228,6 +3229,7 @@ export const messages = {
     "relaciones.propuestas.loadError": "Could not load proposals.",
     "relaciones.propuestas.actionError": "Could not complete the action.",
 
+    "relaciones.quality.title": "Relation health",
     "relaciones.reconcile.title": "Sync relations",
     "relaciones.reconcile.hint":
       "Aligns the graph with what the text says: adds what is missing and removes what no text backs. A backup is written before any change.",
