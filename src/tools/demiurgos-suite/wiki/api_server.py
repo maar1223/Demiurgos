@@ -68,10 +68,12 @@ from chat_attachments import (
 from chat_vision import describe_chat_image
 from import_relations import MAX_RELATIONS, relaciones_entry_key
 from relation_candidates import scan_candidates
+from relation_proposals import load_proposals, remove_proposal
 from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
 from relation_state import mute as mute_relation_candidate
 from relation_state import unmute as unmute_relation_candidate
+from relation_sweep import sweep_next
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -6685,6 +6687,114 @@ def relations_mute(mundo: str, body: dict):
 def relations_unmute(mundo: str, body: dict):
     """Undo "leave as is" so the ficha is reviewable again."""
     return _set_relation_mute(mundo, body, muted=False)
+
+
+def _proposal_dict(proposal) -> dict:
+    return {
+        "id": proposal.id,
+        "source_path": proposal.source_path,
+        "source_key": proposal.source_key,
+        "target_id": proposal.target_id,
+        "relationship_type": proposal.relationship_type,
+        "confidence": proposal.confidence,
+        "evidence": proposal.evidence,
+        "created_at": proposal.created_at,
+    }
+
+
+def _find_proposal(mundo_dir, proposal_id: str):
+    return next(
+        (proposal for proposal in load_proposals(mundo_dir) if proposal.id == proposal_id),
+        None,
+    )
+
+
+@app.get("/api/{mundo}/relations/proposals")
+def relations_proposals(mundo: str):
+    """The pending semantic proposal queue, newest review surface for P3."""
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise problem("world.not_found")
+    items = load_proposals(mundo_dir)
+    return {"count": len(items), "items": [_proposal_dict(item) for item in items]}
+
+
+@app.post("/api/{mundo}/relations/sweep")
+def relations_sweep(mundo: str):
+    """Sweep exactly one candidate: one model call, proposals only."""
+    if _resolve_mundo_dir(mundo) is None:
+        raise problem("world.not_found")
+    result = sweep_next(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=_get_graph(mundo),
+        runner=_sync_hermes_enricher,
+    )
+    return {
+        "status": result.status,
+        "path": result.path,
+        "created": result.created,
+        "pending": result.pending,
+        "message": result.message,
+    }
+
+
+@app.post("/api/{mundo}/relations/proposals/{proposal_id}/accept")
+def relations_proposal_accept(mundo: str, proposal_id: str):
+    """Accept a proposal: write the relation through the shared writer."""
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise problem("world.not_found")
+    proposal = _find_proposal(mundo_dir, proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+    full = _resolve_mundo_path(mundo, proposal.source_path)
+    if full is None or not full.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    with _target_lock_for(full):
+        content = full.read_text(encoding="utf-8")
+        try:
+            updated = _set_frontmatter_relaciones(
+                content, "create", proposal.target_id
+            )
+        except RelationConflict:
+            updated = content  # already present: accepting is still a success
+        if updated != content:
+            _atomic_write(full, updated)
+    _graph_indices.pop(mundo, None)
+    try:
+        clear_rejection(mundo_dir, proposal.source_key, proposal.target_id)
+    except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
+        logger.warning("relations: cannot clear rejection on accept: %s", exc)
+    remove_proposal(mundo_dir, proposal.id)
+    return {
+        "success": True,
+        "proposal_id": proposal.id,
+        "path": proposal.source_path,
+        "target_id": proposal.target_id,
+    }
+
+
+@app.post("/api/{mundo}/relations/proposals/{proposal_id}/reject")
+def relations_proposal_reject(mundo: str, proposal_id: str):
+    """Reject a proposal: the pair joins the P2 rejection memory."""
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise problem("world.not_found")
+    proposal = _find_proposal(mundo_dir, proposal_id)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+    try:
+        record_rejection(mundo_dir, proposal.source_key, proposal.target_id)
+    except Exception as exc:  # noqa: BLE001 — the queue removal still proceeds
+        logger.warning("relations: cannot record rejection on reject: %s", exc)
+    remove_proposal(mundo_dir, proposal.id)
+    return {
+        "success": True,
+        "proposal_id": proposal.id,
+        "target_id": proposal.target_id,
+        "rejected": True,
+    }
 
 
 @app.post("/api/worlds/{world_id}/relationships/reconcile")

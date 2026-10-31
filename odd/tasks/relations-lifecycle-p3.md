@@ -58,14 +58,16 @@ Hermes bridge; the sweep owns only the propose-don't-write orchestration.
 - [x] T3 — Endpoints: `GET /relations/candidates`, `POST /relations/mute`,
   `POST /relations/unmute`. Route: inline. Evidence:
   `test_relations_lifecycle_p3.py` 4 passed; full backend suite 4389 passed.
-- [ ] T4 — Sweep: `POST /relations/sweep` (one candidate per call) building
+- [x] T4 — Sweep: `POST /relations/sweep` (one candidate per call) building
   proposals through the reused pipeline; queue persistence; accept/reject
-  endpoints.
+  endpoints. Route: inline. Evidence: `test_relation_proposals.py` (6),
+  `test_relation_sweep.py` (6), P3 API tests (7); full backend suite 4404
+  passed, 8 skipped. A silent provider leaves the ficha unswept.
 - [ ] T5 — Frontend "Propuestas" tab: badge, sweep progress, queue with
   accept/reject/mute.
-- [ ] T6 — Ship the new modules in the runtime payload manifest. Partially done:
-  `relation_state.py` and `relation_candidates.py` are listed (177 payload
-  files); the sweep module joins when T4 lands.
+- [x] T6 — Ship the new modules in the runtime payload manifest. Route: inline.
+  Evidence: 179 payload files, `relation_state.py`, `relation_candidates.py`,
+  `relation_proposals.py` and `relation_sweep.py` listed.
 
 ## Log
 

@@ -89,3 +89,86 @@ def test_mute_requires_a_path(client, monkeypatch):
     response = client.post("/api/test_mundo/relations/mute", json={})
 
     assert response.status_code == 400
+
+
+def _theory():
+    import json
+
+    return json.dumps(
+        {
+            "relationships": [
+                {
+                    "source_candidate_id": "lore::alpha",
+                    "target_canonical_id": "lore::beta",
+                    "relationship_type": "aliado-de",
+                    "confidence": 0.9,
+                    "evidence": "Alpha served Beta.",
+                }
+            ]
+        }
+    )
+
+
+def test_sweep_creates_a_proposal_and_accept_writes_it(client, monkeypatch):
+    _principal(monkeypatch)
+    world = _world()
+    _seed(world)
+    monkeypatch.setattr(api_server, "_sync_hermes_enricher", lambda prompt, session: _theory())
+
+    swept = client.post("/api/test_mundo/relations/sweep")
+
+    assert swept.status_code == 200, swept.text
+    body = swept.json()
+    assert body["status"] == "swept"
+    assert body["created"] == 1
+    queue = client.get("/api/test_mundo/relations/proposals").json()
+    assert queue["count"] == 1
+    item = queue["items"][0]
+    assert item["target_id"] == "lore::beta"
+    assert item["relationship_type"] == "aliado-de"
+
+    accepted = client.post(
+        f"/api/test_mundo/relations/proposals/{item['id']}/accept"
+    )
+
+    assert accepted.status_code == 200, accepted.text
+    saved = (world / "lore" / "alpha.md").read_text(encoding="utf-8")
+    assert "lore::beta" in saved
+    assert client.get("/api/test_mundo/relations/proposals").json()["count"] == 0
+
+
+def test_reject_records_the_pair_and_removes_it(client, monkeypatch):
+    _principal(monkeypatch)
+    world = _world()
+    _seed(world)
+    monkeypatch.setattr(api_server, "_sync_hermes_enricher", lambda prompt, session: _theory())
+    assert client.post("/api/test_mundo/relations/sweep").json()["created"] == 1
+    item = client.get("/api/test_mundo/relations/proposals").json()["items"][0]
+
+    rejected = client.post(
+        f"/api/test_mundo/relations/proposals/{item['id']}/reject"
+    )
+
+    assert rejected.status_code == 200, rejected.text
+    assert client.get("/api/test_mundo/relations/proposals").json()["count"] == 0
+    from relation_rejections import load_rejected
+
+    assert ("lore::alpha", "lore::beta") in load_rejected(world)
+
+
+def test_a_silent_provider_leaves_the_ficha_reviewable(client, monkeypatch):
+    _principal(monkeypatch)
+    _seed(_world())
+    monkeypatch.setattr(api_server, "_sync_hermes_enricher", lambda prompt, session: "")
+
+    swept = client.post("/api/test_mundo/relations/sweep")
+
+    assert swept.status_code == 200, swept.text
+    assert swept.json()["status"] == "unavailable"
+    assert swept.json()["created"] == 0
+    assert client.get("/api/test_mundo/relations/proposals").json()["count"] == 0
+    paths = [
+        item["path"]
+        for item in client.get("/api/test_mundo/relations/candidates").json()["items"]
+    ]
+    assert "lore/alpha.md" in paths
