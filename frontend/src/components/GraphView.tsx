@@ -384,8 +384,12 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
 
   // Progressive labels: hubs always, everything else only when the map is
   // fully zoomed in or the node belongs to the focused neighbourhood.
-  const showLabel =
-    zoomTier === "labels" || data.tier === "hub" || focused;
+  const inlineLabel =
+    zoomTier === "labels" || (zoomTier === "compact" && data.tier === "hub");
+  // Focused nodes that are not showing their name inline get a FLOATING label.
+  // Growing the card on hover changed its measured box and painted over the
+  // neighbouring cards (the "blip"); a floating tag never touches geometry.
+  const floatingLabel = !inlineLabel && focused;
 
   return (
     <div className="relative">
@@ -399,8 +403,7 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
         data-testid="graph-node-card"
         data-tier={data.tier}
         data-canon={data.status ?? "none"}
-        data-label={showLabel ? "shown" : "hidden"}
-        title={data.label}
+        data-label={inlineLabel || floatingLabel ? "shown" : "hidden"}
         className={cn(
           "flex items-center rounded-lg border-2 border-edge bg-surface-raised shadow-sm text-primary transition-opacity",
           NODE_TIER_CLASS[data.tier],
@@ -415,7 +418,7 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
           data-icon={typeIcon(data.type)}
           className="text-muted"
         />
-        {showLabel && (
+        {inlineLabel && (
           <span className="max-w-[11rem] truncate">{data.label}</span>
         )}
         <span
@@ -427,6 +430,11 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
           )}
         />
       </div>
+      {floatingLabel && (
+        <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-edge bg-surface-raised/95 px-2 py-0.5 text-xs font-medium text-primary shadow-lg backdrop-blur-sm">
+          {data.label}
+        </span>
+      )}
       <Handle
         type="source"
         position={Position.Bottom}
