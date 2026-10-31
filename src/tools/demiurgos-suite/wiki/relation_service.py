@@ -39,6 +39,7 @@ from import_relations import (
     grounded_relations,
     structural_relations,
 )
+from relation_rejections import load_rejected
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +76,17 @@ def build_relation_plan(
     changed_paths: Iterable[str],
     mundos_dir: Path,
     index: Any = None,
+    rejected: set[tuple[str, str]] | None = None,
 ) -> RelationPlan:
     """Compute the grounded relations affected by ``changed_paths``.
 
     ``index`` is the world's ``EntityGraphIndex`` (duck-typed: it only needs
     ``entities()``). When it is ``None`` the changed fichas still get their
     forward pass, but the reverse pass cannot see the rest of the world.
+
+    ``rejected`` is the world's curation memory (P2). When omitted it is loaded
+    from ``<world>/.relations/rejected.json``; a rejected pair is never
+    proposed, in any pass.
     """
 
     changed = [path for path in dict.fromkeys(changed_paths) if path]
@@ -88,6 +94,8 @@ def build_relation_plan(
         return RelationPlan({})
 
     world_root = Path(mundos_dir) / mundo
+    if rejected is None:
+        rejected = load_rejected(world_root)
     fichas = _indexed_fichas(index)
     changed_fichas: list[_Ficha] = []
     for rel_path in changed:
@@ -143,6 +151,14 @@ def build_relation_plan(
             targets=targets,
             structural_uncapped=True,
         )
+        # Curation memory (P2): the Author's verdict beats the text. A legacy
+        # ficha without a canonical id keys its verdict by its path.
+        source_key = source.canonical_id or source.path
+        relations = [
+            relation
+            for relation in relations
+            if (source_key, relation.canonical_id) not in rejected
+        ]
         if not relations:
             continue
         plan[source.path] = tuple(

@@ -271,3 +271,69 @@ def test_ambiguous_name_is_not_linked(tmp_path: Path) -> None:
     )
 
     assert plan.relations == {}
+
+
+def test_rejected_forward_pair_is_not_proposed(tmp_path: Path) -> None:
+    world = tmp_path / "mundos" / "world"
+    _write(
+        world / "lore" / "alpha.md",
+        "type: personaje\nid: lore::alpha\ntitle: Alpha\n",
+        "Alpha served Beta.",
+    )
+    index = FakeIndex([_entity("lore/beta.md", "lore::beta", "Beta")])
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/alpha.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=index,
+        rejected={("lore::alpha", "lore::beta")},
+    )
+
+    assert plan.relations == {}
+
+
+def test_rejected_reverse_pair_is_not_proposed(tmp_path: Path) -> None:
+    world = tmp_path / "mundos" / "world"
+    _write(
+        world / "lore" / "gamma.md",
+        "type: personaje\nid: lore::gamma\ntitle: Gamma\n",
+        "Gamma is new.",
+    )
+    index = FakeIndex(
+        [_entity("lore/delta.md", "lore::delta", "Delta", "Delta mentions Gamma.")]
+    )
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/gamma.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=index,
+        rejected={("lore::delta", "lore::gamma")},
+    )
+
+    assert plan.relations == {}
+
+
+def test_rejection_beats_folder_membership(tmp_path: Path) -> None:
+    world = tmp_path / "mundos" / "world"
+    _write(
+        world / "lore" / "regions" / "alpha.md",
+        "type: region\nid: lore::regions::alpha\ntitle: Alpha\n",
+        "A region.",
+    )
+    index = FakeIndex(
+        [_entity("lore/regions/regions.md", "lore::regions::regions", "Regions")]
+    )
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/regions/alpha.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=index,
+        rejected={("lore::regions::alpha", "lore::regions::regions")},
+    )
+
+    assert plan.relations.get("lore/regions/alpha.md") is None
+    # The reciprocal pair was not rejected: the index still lists the member.
+    assert plan.relations["lore/regions/regions.md"] == ("lore::regions::alpha",)
