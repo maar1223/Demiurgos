@@ -394,6 +394,23 @@ describe("GraphView", () => {
     expect(setNodesSpy).not.toHaveBeenCalled();
   });
 
+  it("collapses the floating filters into a pill and restores them", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    await user.click(screen.getByRole("button", { name: "Ocultar filtros" }));
+    expect(
+      screen.queryByLabelText("Filtrar por estado"),
+    ).not.toBeInTheDocument();
+    const pill = screen.getByRole("button", { name: "Mostrar filtros" });
+    expect(pill).toHaveTextContent("Filtros");
+
+    await user.click(pill);
+    expect(screen.getByLabelText("Filtrar por estado")).toBeInTheDocument();
+  });
+
   it("floats the controls and the inspector over the full canvas surface", async () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
@@ -490,11 +507,17 @@ describe("GraphView", () => {
     expect(neighbourMoved).toBe(true);
   });
 
-  it("labels folder sections as soft clusters around their members", async () => {
+  it("labels folder sections while zoomed out and hides them up close", async () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
 
     await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
+    });
     // personajes holds Rhyz + Vael → one cluster; lore holds only Dottua, so
     // a lone entity never reads as a section (S7).
     await waitFor(() => {
@@ -502,6 +525,69 @@ describe("GraphView", () => {
       expect(labels).toHaveLength(1);
       expect(labels[0]).toHaveTextContent("personajes");
     });
+
+    // Up close the cards are the reference; the soft labels would only add
+    // noise over them.
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 1.2 });
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("graph-cluster")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("shows only hub names in the middle zoom band until a node is focused", async () => {
+    // Centro is a hub (5 connections); Ana is not.
+    const spokes = ["Ana", "Bran", "Cael", "Dara", "Elen"];
+    const HUB_WORLD: GraphEntity[] = [
+      {
+        id: "Hub::Centro",
+        name: "Centro",
+        type: "concepto",
+        path: "lore/Centro.md",
+        status: "stable",
+        content: "",
+        forward_links: spokes,
+        backlinks: [],
+        relaciones: [],
+      },
+      ...spokes.map((name) => ({
+        id: `Hub::${name}`,
+        name,
+        type: "personaje",
+        path: `personajes/${name}.md`,
+        status: "draft" as const,
+        content: "",
+        forward_links: [],
+        backlinks: ["lore/Centro.md"],
+        relaciones: [],
+      })),
+    ];
+    const HUB_LINKS: EntityLink[] = spokes.map((name) => ({
+      source: "Hub::Centro",
+      target: `Hub::${name}`,
+      kind: "forward",
+    }));
+    mockFetch.mockResolvedValue({ entities: HUB_WORLD, links: HUB_LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(6));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Centro")).toBeInTheDocument(); // hub keeps its name
+      expect(screen.queryByText("Ana")).not.toBeInTheDocument();
+    });
+
+    // Hovering the hub reveals its neighbourhood's names.
+    fireEvent.mouseEnter(
+      document.querySelector('[data-id="Hub::Centro"]')!,
+    );
+    await waitFor(() => expect(screen.getByText("Ana")).toBeInTheDocument());
+    expect(screen.getByText("Bran")).toBeInTheDocument();
   });
 
   it("collapses nodes to status dots below the semantic-zoom threshold", async () => {

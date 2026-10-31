@@ -112,6 +112,9 @@ const EDGE_MAX_WIDTH = 2.8;
 
 /** Below this zoom level nodes collapse to status dots (semantic zoom, S8). */
 const SEMANTIC_ZOOM_THRESHOLD = 0.55;
+/** Below this zoom level only hubs and the focused neighbourhood show names;
+ *  every card showing its name at once is what made a close view noisy. */
+const LABEL_ZOOM_THRESHOLD = 0.95;
 
 /**
  * Whether the graph must skip animation. Reduced motion is a hard requirement
@@ -191,8 +194,16 @@ interface GraphNodeData extends Record<string, unknown> {
   tier: NodeTier;
 }
 
-/** Zoom tier shared with the node components: false = collapsed dot (S8). */
-const DetailedZoomContext = createContext(true);
+/**
+ * Presentation tier shared with the node components:
+ * - `dot`: far away, a canon-coloured dot (S8);
+ * - `compact`: close enough to see the cards, only hubs (and the focused
+ *   neighbourhood) carry a name;
+ * - `labels`: fully zoomed in, every card shows its name.
+ */
+type ZoomTier = "dot" | "compact" | "labels";
+
+const ZoomTierContext = createContext<ZoomTier>("labels");
 
 /**
  * Hover focus shared with the node components: while a node is hovered its
@@ -200,11 +211,18 @@ const DetailedZoomContext = createContext(true);
  * "what connects to what" without following every line (S5).
  */
 interface HoverFocus {
+  /** Node under the pointer (drives edge/node dimming). */
   hovered: string | null;
+  /** Node whose neighbourhood is revealed: hovered, or the selected one. */
+  focus: string | null;
   neighbours: Set<string>;
 }
 
-const EMPTY_HOVER: HoverFocus = { hovered: null, neighbours: new Set() };
+const EMPTY_HOVER: HoverFocus = {
+  hovered: null,
+  focus: null,
+  neighbours: new Set(),
+};
 const HoverFocusContext = createContext<HoverFocus>(EMPTY_HOVER);
 
 /** A folder/section that reads as a cluster (S7). */
@@ -259,18 +277,25 @@ function AutoFit() {
  * Reports the semantic-zoom tier from inside the React Flow store. It only
  * calls back when the tier flips, so panning never re-renders the graph.
  */
-function ZoomLevelWatcher({
-  threshold,
+function ZoomTierWatcher({
+  semanticThreshold,
+  labelThreshold,
   onChange,
 }: {
-  threshold: number;
-  onChange: (detailed: boolean) => void;
+  semanticThreshold: number;
+  labelThreshold: number;
+  onChange: (tier: ZoomTier) => void;
 }) {
   const zoom = useStore((state) => state.transform[2]);
-  const detailed = zoom >= threshold;
+  const tier: ZoomTier =
+    zoom < semanticThreshold
+      ? "dot"
+      : zoom < labelThreshold
+        ? "compact"
+        : "labels";
   useEffect(() => {
-    onChange(detailed);
-  }, [detailed, onChange]);
+    onChange(tier);
+  }, [tier, onChange]);
   return null;
 }
 
@@ -300,13 +325,15 @@ type GraphNodeType = Node<GraphNodeData, "graph">;
 const handleStyle = { opacity: 0 } as const;
 
 function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
-  const detailed = useContext(DetailedZoomContext);
+  const zoomTier = useContext(ZoomTierContext);
   const hover = useContext(HoverFocusContext);
+  const focused = hover.focus !== null && hover.neighbours.has(id);
+  // Hover/selection dims the rest of the map, but only while focusing.
   const faded = hover.hovered !== null && !hover.neighbours.has(id);
   const canon = data.status ? NODE_CANON_CLASS[data.status] : null;
 
-  // S8: far away, a node is a dot coloured by canon — names return on zoom in.
-  if (!detailed) {
+  // S8: far away, a node is a dot coloured by canon.
+  if (zoomTier === "dot") {
     return (
       <div className="relative flex h-3 w-3 items-center justify-center">
         <Handle
@@ -334,6 +361,11 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
     );
   }
 
+  // Progressive labels: hubs always, everything else only when the map is
+  // fully zoomed in or the node belongs to the focused neighbourhood.
+  const showLabel =
+    zoomTier === "labels" || data.tier === "hub" || focused;
+
   return (
     <div className="relative">
       <Handle
@@ -346,6 +378,8 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
         data-testid="graph-node-card"
         data-tier={data.tier}
         data-canon={data.status ?? "none"}
+        data-label={showLabel ? "shown" : "hidden"}
+        title={data.label}
         className={cn(
           "flex items-center rounded-lg border-2 border-edge bg-surface-raised shadow-sm text-primary transition-opacity",
           NODE_TIER_CLASS[data.tier],
@@ -360,7 +394,9 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
           data-icon={typeIcon(data.type)}
           className="text-muted"
         />
-        <span className="max-w-[11rem] truncate">{data.label}</span>
+        {showLabel && (
+          <span className="max-w-[11rem] truncate">{data.label}</span>
+        )}
         <span
           data-testid="canon-dot"
           aria-hidden="true"
@@ -465,8 +501,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
   // Hovered node: its edges light up while the rest recede (S5). Purely
   // visual, so it never touches the graph data or the layout.
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  // Semantic zoom tier (S8): cards up close, dots far away.
-  const [detailedZoom, setDetailedZoom] = useState(true);
+  // Presentation tier: dots far away, compact cards in the middle, names when
+  // fully zoomed in (S8 + progressive labels).
+  const [zoomTier, setZoomTier] = useState<ZoomTier>("labels");
   const [panelWidth, setPanelWidth] = useState<number>(() =>
     clampPanel(RIGHT_DEFAULT),
   );
@@ -791,7 +828,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
   useEffect(() => {
     clusterMembersRef.current = clusters;
     positionClusters(layoutRef.current?.positions() ?? new Map());
-  }, [clusters, positionClusters]);
+  }, [clusters, positionClusters, zoomTier]);
 
   /** Remount key for the canvas: a new node identity set (status refetch,
    *  folder filter, orphans toggle) needs a fresh uncontrolled instance seeded
@@ -856,15 +893,16 @@ export default function GraphView({ mundo }: GraphViewProps) {
     return result;
   }, [nodes, links, hoveredNodeId]);
 
+  const focusNodeId = hoveredNodeId ?? selectedNodeId;
   const hoverFocus = useMemo<HoverFocus>(() => {
-    if (!hoveredNodeId) return EMPTY_HOVER;
-    const neighbours = new Set<string>([hoveredNodeId]);
+    if (!focusNodeId) return EMPTY_HOVER;
+    const neighbours = new Set<string>([focusNodeId]);
     for (const edge of edges) {
-      if (edge.source === hoveredNodeId) neighbours.add(edge.target);
-      if (edge.target === hoveredNodeId) neighbours.add(edge.source);
+      if (edge.source === focusNodeId) neighbours.add(edge.target);
+      if (edge.target === focusNodeId) neighbours.add(edge.source);
     }
-    return { hovered: hoveredNodeId, neighbours };
-  }, [hoveredNodeId, edges]);
+    return { hovered: hoveredNodeId, focus: focusNodeId, neighbours };
+  }, [hoveredNodeId, focusNodeId, edges]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
@@ -1040,6 +1078,12 @@ export default function GraphView({ mundo }: GraphViewProps) {
         if (change.type !== "dimensions" || !change.dimensions) continue;
         const { width, height } = change.dimensions;
         if (width < 40 || height < 20) continue;
+        // Compact cards (no label) are narrower than the real card; never
+        // shrink a recorded size, or zooming would re-settle the layout.
+        const previous = nodeSizesRef.current.get(change.id);
+        if (previous && width < previous.width && height < previous.height) {
+          continue;
+        }
         nodeSizesRef.current.set(change.id, { width, height });
         measured = true;
       }
@@ -1158,7 +1202,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
         )}
 
         {!loading && !error && nodes.length > 0 && (
-          <DetailedZoomContext.Provider value={detailedZoom}>
+          <ZoomTierContext.Provider value={zoomTier}>
             <HoverFocusContext.Provider value={hoverFocus}>
               <div className="relative h-full w-full" data-testid="graph-view">
               <ReactFlow
@@ -1193,27 +1237,33 @@ export default function GraphView({ mundo }: GraphViewProps) {
               >
                 <Background />
                 <AutoFit />
-                <ZoomLevelWatcher
-                  threshold={SEMANTIC_ZOOM_THRESHOLD}
-                  onChange={setDetailedZoom}
+                <ZoomTierWatcher
+                  semanticThreshold={SEMANTIC_ZOOM_THRESHOLD}
+                  labelThreshold={LABEL_ZOOM_THRESHOLD}
+                  onChange={setZoomTier}
                 />
-                {/* Section clusters (S7): soft folder labels that pan and zoom
-                    with the canvas and follow their members' centroid. */}
-                <ViewportPortal>
-                  {clusters.map((cluster) => (
-                    <div
-                      key={cluster.id}
-                      ref={(element) => {
-                        if (element) clusterRefs.current.set(cluster.id, element);
-                        else clusterRefs.current.delete(cluster.id);
-                      }}
-                      data-testid="graph-cluster"
-                      className="pointer-events-none absolute left-0 top-0 whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-muted/50"
-                    >
-                      {cluster.label}
-                    </div>
-                  ))}
-                </ViewportPortal>
+                {/* Section clusters (S7): they orient the far view; close up
+                    they would only add noise over the cards, so they hide. */}
+                {zoomTier !== "labels" && (
+                  <ViewportPortal>
+                    {clusters.map((cluster) => (
+                      <div
+                        key={cluster.id}
+                        ref={(element) => {
+                          if (element) {
+                            clusterRefs.current.set(cluster.id, element);
+                          } else {
+                            clusterRefs.current.delete(cluster.id);
+                          }
+                        }}
+                        data-testid="graph-cluster"
+                        className="pointer-events-none absolute left-0 top-0 whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-muted/50"
+                      >
+                        {cluster.label}
+                      </div>
+                    ))}
+                  </ViewportPortal>
+                )}
               </ReactFlow>
 
               {/* Focus toggle: hide the inspector to give the canvas every pixel;
@@ -1293,7 +1343,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
               )}
             </div>
             </HoverFocusContext.Provider>
-          </DetailedZoomContext.Provider>
+          </ZoomTierContext.Provider>
         )}
 
         {/* Controls float over the canvas instead of shrinking it (S4). */}

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { FolderNode } from "@/lib/graphFilters";
 import type { GraphStatusFilter } from "@/api/graph";
 import type { SearchResult } from "@/api/types";
+import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Switch } from "@/components/atoms/Switch";
 import { FolderTreeNode } from "@/components/molecules/FolderTreeNode";
@@ -54,6 +56,9 @@ export function GraphControlsSidebar({
   onFitView,
 }: GraphControlsSidebarProps) {
   const { t } = useAppLanguage();
+  // The panel floats over the map, so it must be collapsible: when collapsed
+  // it becomes a single pill and gives the canvas every pixel back.
+  const [collapsed, setCollapsed] = useState(false);
   /** Controlled single-folder toggle: add or remove `path` from the array. */
   const handleToggleFolder = (path: string) => {
     const next = selectedFolders.includes(path)
@@ -62,8 +67,40 @@ export function GraphControlsSidebar({
     onSelectedFoldersChange(next);
   };
 
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        aria-expanded={false}
+        aria-label={t("graph.showFilters")}
+        className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-xl border border-edge/80 bg-surface/90 px-3 py-2 text-small font-medium text-primary shadow-lg backdrop-blur-md transition-colors hover:border-action/40 hover:text-action"
+      >
+        <Icon name="search" size={14} className="text-icon-muted" />
+        {t("graph.filters")}
+        <Icon name="chevron-right" size={14} className="text-muted" />
+      </button>
+    );
+  }
+
   return (
     <aside className="absolute left-3 top-3 z-10 flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-edge/80 bg-surface/85 shadow-xl backdrop-blur-md">
+      {/* Title bar: the panel collapses into a pill instead of stealing map. */}
+      <div className="flex items-center justify-between border-b border-edge/70 px-4 py-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+          {t("graph.filters")}
+        </span>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          aria-expanded={true}
+          aria-label={t("graph.hideFilters")}
+          className="rounded p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
+        >
+          <Icon name="chevron-left" size={14} />
+        </button>
+      </div>
+
       {/* Header block: stacked labeled controls (search + status) */}
       <div className="space-y-3 border-b border-edge/70 px-4 py-3">
         {/* Node search: debounced server-side search with results dropdown */}

@@ -105,8 +105,8 @@ const CENTER_STRENGTH = 0.06;
 const NODE_COLLIDE_RADIUS = 75;
 /** Fallback card size (rough node card), used to keep cards inside the bounds
  *  before React Flow measures them. */
-const NODE_FALLBACK_WIDTH = 150;
-const NODE_FALLBACK_HEIGHT = 36;
+const NODE_FALLBACK_WIDTH = 190;
+const NODE_FALLBACK_HEIGHT = 40;
 /** Breathing room added to the measured collision radius. */
 const NODE_COLLIDE_PADDING = 10;
 /** Minimum distance a node center keeps from edges it is NOT connected to,
@@ -214,11 +214,8 @@ export function createLiveForceLayout(
   // card clamped back to `size - width`, stacking nodes on the edge. Keep the
   // centre inside the box with room for half the card on each side.
   const halfSize = (id: string): { x: number; y: number } => {
-    const measured = sizes.get(id);
-    return {
-      x: (measured?.width ?? NODE_FALLBACK_WIDTH) / 2,
-      y: (measured?.height ?? NODE_FALLBACK_HEIGHT) / 2,
-    };
+    const measured = effectiveSize(id);
+    return { x: measured.width / 2, y: measured.height / 2 };
   };
   const clampAxis = (value: number, half: number) => {
     const maximum = Math.max(half, size - half);
@@ -228,16 +225,24 @@ export function createLiveForceLayout(
   // A card is a wide, short rectangle; a circle that contains it is the safe
   // collision primitive. Falling back to the fixed radius keeps unmeasured
   // nodes from stacking.
+  /** Measured card size, never smaller than the fallback: compact cards (no
+   *  label) and collapsed dots must not shrink the settled layout. */
+  const effectiveSize = (id: string): NodeSize => {
+    const measured = sizes.get(id);
+    return {
+      width: Math.max(measured?.width ?? 0, NODE_FALLBACK_WIDTH),
+      height: Math.max(measured?.height ?? 0, NODE_FALLBACK_HEIGHT),
+    };
+  };
+
   const collideRadius = (node: SimNode): number => {
-    const measured = sizes.get(node.id);
-    if (!measured) return NODE_COLLIDE_RADIUS;
+    const measured = effectiveSize(node.id);
     return (
-      Math.max(measured.width, measured.height) / 2 + NODE_COLLIDE_PADDING
+      Math.max(NODE_COLLIDE_RADIUS, Math.max(measured.width, measured.height) / 2 + NODE_COLLIDE_PADDING)
     );
   };
 
-  const halfWidth = (id: string): number =>
-    (sizes.get(id)?.width ?? NODE_FALLBACK_WIDTH) / 2;
+  const halfWidth = (id: string): number => effectiveSize(id).width / 2;
 
   const endpointId = (endpoint: SimLink["source"]): string =>
     typeof endpoint === "object" ? endpoint.id : String(endpoint);
