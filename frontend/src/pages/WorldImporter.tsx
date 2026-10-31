@@ -403,6 +403,13 @@ function Checklist({
   );
 }
 
+/** Relation-quality tags -> catalogue keys (the API sends the tag). */
+const RELATION_QUALITY_LABEL_KEYS = {
+  "false-orphan": "importer.candidate.quality.false-orphan",
+  standalone: "importer.candidate.quality.standalone",
+  "non-entity": "importer.candidate.quality.non-entity",
+} as const;
+
 export default function WorldImporter() {
   const navigate = useNavigate();
   const { language, t } = useAppLanguage();
@@ -2275,6 +2282,28 @@ function CandidateCard({
                 </div>
               )}
             </dl>
+          </div>
+        )}
+
+        {candidate.relation_quality && candidate.relation_quality.length > 0 && (
+          <div
+            className="mt-3 rounded-md border border-edge bg-surface px-3 py-2"
+            data-testid={`relation-quality-${candidate.candidate_id}`}
+          >
+            <p className="text-xs text-muted">
+              {t("importer.candidate.relationQuality")}
+            </p>
+            <p className="mt-1 text-xs text-action">
+              {candidate.relation_quality
+                .map((tag) =>
+                  t(
+                    RELATION_QUALITY_LABEL_KEYS[
+                      tag as keyof typeof RELATION_QUALITY_LABEL_KEYS
+                    ] ?? "importer.candidate.relationQuality",
+                  ),
+                )
+                .join(" · ")}
+            </p>
           </div>
         )}
 

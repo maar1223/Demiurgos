@@ -1418,6 +1418,8 @@ export interface FrontmatterCandidate {
   description: string;
   relaciones: string[];
   state: FrontmatterState;
+  /** False marks a non-entity document (glossary, index, note). */
+  graph?: boolean;
 }
 
 /**
@@ -1461,6 +1463,11 @@ export interface ImportCandidate {
   summary: string;
   frontmatter: FrontmatterCandidate | null;
   media_diagnostics: MediaDiagnostic[];
+  /**
+   * Relation-health report from the server (S8): ``false-orphan``,
+   * ``standalone`` or ``non-entity``. Empty when the ficha has relations.
+   */
+  relation_quality?: string[];
   /** pending | eligible | conflict | rejected — server is the authority. */
   status: string;
   okf_issues: Array<Record<string, unknown>>;

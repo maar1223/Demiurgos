@@ -1439,6 +1439,13 @@ export const messages = {
     "importer.candidate.type": "Tipo",
     "importer.candidate.description": "Descripción",
     "importer.candidate.relations": "Relaciones",
+    "importer.candidate.relationQuality": "Relación con el grafo",
+    "importer.candidate.quality.false-orphan":
+      "Sin relaciones, pero el texto nombra a otra ficha",
+    "importer.candidate.quality.standalone":
+      "Sin relaciones ni menciones: nada la conecta todavía",
+    "importer.candidate.quality.non-entity":
+      "Documento no-entidad: queda fuera del grafo",
     "importer.candidate.referencedImages": "Imágenes referenciadas",
     "importer.candidate.resolved.one": "{count} resuelta",
     "importer.candidate.resolved.many": "{count} resueltas",
@@ -3591,6 +3598,13 @@ export const messages = {
     "importer.candidate.type": "Type",
     "importer.candidate.description": "Description",
     "importer.candidate.relations": "Relationships",
+    "importer.candidate.relationQuality": "Graph relation",
+    "importer.candidate.quality.false-orphan":
+      "No relations, but the text names another ficha",
+    "importer.candidate.quality.standalone":
+      "No relations or mentions: nothing connects it yet",
+    "importer.candidate.quality.non-entity":
+      "Non-entity document: kept out of the graph",
     "importer.candidate.referencedImages": "Referenced images",
     "importer.candidate.resolved.one": "{count} resolved",
     "importer.candidate.resolved.many": "{count} resolved",

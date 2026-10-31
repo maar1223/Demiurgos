@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "6972278e",
+  "source_commit": "a26f200",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -108,6 +108,7 @@
     "src/tools/demiurgos-suite/wiki/import_models.py",
     "src/tools/demiurgos-suite/wiki/import_notion.py",
     "src/tools/demiurgos-suite/wiki/import_registry.py",
+    "src/tools/demiurgos-suite/wiki/import_relations.py",
     "src/tools/demiurgos-suite/wiki/import_router.py",
     "src/tools/demiurgos-suite/wiki/import_service.py",
     "src/tools/demiurgos-suite/wiki/import_spool_gc.py",
@@ -375,7 +376,7 @@
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_enrichment.py",
-        "line": 112
+        "line": 113
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",

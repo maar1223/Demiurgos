@@ -47,6 +47,7 @@ from import_models import (
 
 if TYPE_CHECKING:
     from sync_lore.schemas import ImageEntry
+from import_relations import relation_quality
 from import_intake import (
     BoundedSpool,
     MalformedProviderError,
@@ -1108,6 +1109,10 @@ def create_import_router(
             enrichment_statuses.append(
                 getattr(c, "enrichment_status", "disabled"))
         candidates_payload = [c.model_dump() for c in candidates]
+        quality = relation_quality(candidates)
+        for payload in candidates_payload:
+            payload["relation_quality"] = quality.get(
+                payload.get("candidate_id", ""), [])
         digest = _service.candidate_digest(job) if _service else ""
         return {
             "job": job.model_dump_redacted(),

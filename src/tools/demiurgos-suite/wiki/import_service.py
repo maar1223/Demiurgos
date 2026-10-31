@@ -365,6 +365,8 @@ def render_frontmatter_document(
     # fichas land as borrador (draft); when the import seeds a brand-new
     # world, the author's auto-canon preference promotes them to ``stable``.
     lines.append(f"status: {status}")
+    if not frontmatter.graph:
+        lines.append("graph: false")
     if frontmatter.relaciones:
         # Block-form quoted wikilinks (matching the existing OKF corpus) so the
         # YAML is unambiguous: each entry is a ``[[canonical_id]]`` string that

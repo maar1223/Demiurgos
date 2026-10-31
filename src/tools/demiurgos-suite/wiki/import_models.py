@@ -349,6 +349,9 @@ class FrontmatterCandidate(BaseModel):
     description: str = ""
     relaciones: list[str] = Field(default_factory=list)
     state: FrontmatterState = FrontmatterState.MANUAL
+    #: ``False`` marks a non-entity document (glossary, index, working note):
+    #: it is imported as a ficha but the graph index skips it.
+    graph: bool = True
 
 
 class MediaDiagnostic(BaseModel):
