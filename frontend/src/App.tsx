@@ -165,14 +165,11 @@ export default function App() {
                 }
               />
               <Route path="/wiki/:mundo" element={<WikiWorld />} />
-              {/* Relaciones y Canon — DEV-only: hidden from the MVP production
-                  build, kept reachable in the author's dev session. */}
-              {import.meta.env.DEV && (
-                <Route
-                  path="/taller-mundo/:mundo/relaciones-canon"
-                  element={<RelacionesCanon />}
-                />
-              )}
+              {/* Relaciones y Canon — semantic relations graph entry. */}
+              <Route
+                path="/taller-mundo/:mundo/relaciones-canon"
+                element={<RelacionesCanon />}
+              />
               <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
               <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
             </Route>
