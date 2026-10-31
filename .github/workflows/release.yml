@@ -86,7 +86,7 @@ jobs:
           - os: ubuntu-24.04-arm
             cell: linux-aarch64
             format: tar.gz
-          - os: macos-14
+          - os: macos-15
             cell: macos-arm64
             format: tar.gz
           - os: windows-latest
