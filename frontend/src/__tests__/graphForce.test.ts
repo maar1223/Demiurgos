@@ -275,6 +275,37 @@ describe("createLiveForceLayout", () => {
     for (const child of ["beta", "gamma", "delta", "epsilon"]) {
       expect(distance("alpha")).toBeLessThan(distance(child));
     }
+    // The view needs the same choice to label only the group's main (S11).
+    expect([...layout.mainIds()]).toEqual(["alpha"]);
+  });
+
+  it("reports exactly one hierarchy main per folder", () => {
+    const world = [
+      entity("a-main", "grupo-a/main.md"),
+      entity("a-one", "grupo-a/one.md"),
+      entity("a-two", "grupo-a/two.md"),
+      entity("a-three", "grupo-a/three.md"),
+      entity("b-main", "grupo-b/main.md"),
+      entity("b-one", "grupo-b/one.md"),
+      entity("b-two", "grupo-b/two.md"),
+      entity("b-three", "grupo-b/three.md"),
+    ];
+    // Each main has three links and every other member exactly one, so the
+    // choice is unambiguous (degree, then in-degree).
+    const worldLinks = [
+      link("a-main", "a-one"),
+      link("a-main", "a-two"),
+      link("a-main", "a-three"),
+      link("b-main", "b-one"),
+      link("b-main", "b-two"),
+      link("b-main", "b-three"),
+    ];
+    const layout = createLiveForceLayout({
+      entities: world,
+      links: worldLinks,
+      size: 1600,
+    });
+    expect([...layout.mainIds()].sort()).toEqual(["a-main", "b-main"]);
   });
 
   it("separates a dense world of wide cards without stacking any pair", () => {

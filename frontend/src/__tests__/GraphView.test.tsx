@@ -572,7 +572,7 @@ describe("GraphView", () => {
     expectStable(before);
   });
 
-  it("shows only hub names in the middle zoom band until a node is focused", async () => {
+  it("shows only each folder's main name in the middle zoom band until a node is focused", async () => {
     // Centro is a hub (5 connections); Ana is not.
     const spokes = ["Ana", "Bran", "Cael", "Dara", "Elen"];
     const HUB_WORLD: GraphEntity[] = [
@@ -614,8 +614,12 @@ describe("GraphView", () => {
       await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
     });
     await waitFor(() => {
-      expect(screen.getByText("Centro")).toBeInTheDocument(); // hub keeps its name
-      expect(screen.queryByText("Ana")).not.toBeInTheDocument();
+      // Centro is alone in "lore" so it is that group's main and keeps its
+      // name; the spokes share "personajes", where only the hierarchy main
+      // (Ana, by the deterministic tiebreak) shows its name.
+      expect(screen.getByText("Centro")).toBeInTheDocument();
+      expect(screen.getByText("Ana")).toBeInTheDocument();
+      expect(screen.queryByText("Bran")).not.toBeInTheDocument();
     });
 
     // Hovering the hub reveals its neighbourhood's names.
@@ -624,6 +628,88 @@ describe("GraphView", () => {
     );
     await waitFor(() => expect(screen.getByText("Ana")).toBeInTheDocument());
     expect(screen.getByText("Bran")).toBeInTheDocument();
+  });
+
+  it("labels only the folder main when several nodes clear the hub threshold", async () => {
+    // Alfa (6 links) and Zeta (5) are both hubs, so the old per-node rule
+    // labelled both; the hierarchy picks Alfa as the folder main and Zeta is
+    // revealed only on focus (L22).
+    const peers = ["n1", "n2", "n3", "n4", "n5", "n6"];
+    const ALFA_ENTITY: GraphEntity = {
+      id: "Fam::Alfa",
+      name: "Alfa",
+      type: "concepto",
+      path: "familia/Alfa.md",
+      status: "stable",
+      content: "",
+      forward_links: peers,
+      backlinks: [],
+      relaciones: [],
+    };
+    const ZETA_ENTITY: GraphEntity = {
+      id: "Fam::Zeta",
+      name: "Zeta",
+      type: "concepto",
+      path: "familia/Zeta.md",
+      status: "draft",
+      content: "",
+      forward_links: peers.slice(0, 5),
+      backlinks: [],
+      relaciones: [],
+    };
+    const PEERS: GraphEntity[] = peers.map((name) => ({
+      id: `Fam::${name}`,
+      name,
+      type: "concepto",
+      path: `familia/${name}.md`,
+      status: "draft" as const,
+      content: "",
+      forward_links: [],
+      backlinks: ["familia/Alfa.md"],
+      relaciones: [],
+    }));
+    const links: EntityLink[] = [
+      ...peers.map((name) => ({
+        source: "Fam::Alfa",
+        target: `Fam::${name}`,
+        kind: "forward" as const,
+      })),
+      ...peers.slice(0, 5).map((name) => ({
+        source: "Fam::Zeta",
+        target: `Fam::${name}`,
+        kind: "forward" as const,
+      })),
+    ];
+    mockFetch.mockResolvedValue({
+      entities: [ALFA_ENTITY, ZETA_ENTITY, ...PEERS],
+      links,
+    });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(8));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+    const instance = mockFlowInstance.instance!;
+
+    await act(async () => {
+      await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Alfa")).toBeInTheDocument();
+      expect(screen.queryByText("Zeta")).not.toBeInTheDocument();
+      expect(screen.queryByText("n1")).not.toBeInTheDocument();
+    });
+
+    // Focusing Zeta reveals its name as a floating tag and lifts the node so
+    // the tag is not painted under the neighbour cards.
+    fireEvent.mouseEnter(document.querySelector('[data-id="Fam::Zeta"]')!);
+    await waitFor(() => expect(screen.getByText("Zeta")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        instance.getNodes().find((node) => node.id === "Fam::Zeta")?.zIndex,
+      ).toBe(1000),
+    );
+    expect(
+      instance.getNodes().find((node) => node.id === "Fam::Alfa")?.zIndex,
+    ).toBe(0);
   });
 
   it("collapses nodes to status dots below the semantic-zoom threshold", async () => {

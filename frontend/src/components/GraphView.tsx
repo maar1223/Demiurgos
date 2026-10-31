@@ -213,13 +213,16 @@ interface GraphNodeData extends Record<string, unknown> {
   type?: string;
   status?: FichaStatus;
   tier: NodeTier;
+  /** Whether the compact zoom band shows this node's name inline: only the
+   *  folder group's hierarchy main does (S11), not every hub. */
+  compactLabel: boolean;
 }
 
 /**
  * Presentation tier shared with the node components:
  * - `dot`: far away, a canon-coloured dot (S8);
- * - `compact`: close enough to see the cards, only hubs (and the focused
- *   neighbourhood) carry a name;
+ * - `compact`: close enough to see the cards, only each folder group's main
+ *   node (and the focused neighbourhood) carries a name (S11);
  * - `labels`: fully zoomed in, every card shows its name.
  */
 type ZoomTier = "dot" | "compact" | "labels";
@@ -382,10 +385,11 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
     );
   }
 
-  // Progressive labels: hubs always, everything else only when the map is
-  // fully zoomed in or the node belongs to the focused neighbourhood.
+  // Progressive labels: the folder group's main node keeps its name in the
+  // compact band; everything else appears when fully zoomed in or while it
+  // belongs to the focused neighbourhood.
   const inlineLabel =
-    zoomTier === "labels" || (zoomTier === "compact" && data.tier === "hub");
+    zoomTier === "labels" || (zoomTier === "compact" && data.compactLabel);
   // Focused nodes that are not showing their name inline get a FLOATING label.
   // Growing the card on hover changed its measured box and painted over the
   // neighbouring cards (the "blip"); a floating tag never touches geometry.
@@ -813,6 +817,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
       : layout.step(INITIAL_LIVE_TICKS);
     positionsRef.current = positions;
 
+    const mainIds = layout.mainIds();
     const nextNodes: GraphNodeType[] = visible.map((entity) => {
       const degree = entity.forward_links.length + entity.backlinks.length;
       const key = nodeKey(entity);
@@ -826,6 +831,13 @@ export default function GraphView({ mundo }: GraphViewProps) {
           type: entity.type ?? undefined,
           status: entity.status ?? undefined,
           tier: nodeTier(degree),
+          // One name per folder group in the compact band: the hierarchy main
+          // (S11). If the layout ever runs without hierarchy, fall back to the
+          // hub tier so the band is never blank.
+          compactLabel:
+            mainIds.size > 0
+              ? mainIds.has(key)
+              : nodeTier(degree) === "hub",
         },
       };
     });
@@ -941,6 +953,21 @@ export default function GraphView({ mundo }: GraphViewProps) {
     }
     return { hovered: hoveredNodeId, focus: focusNodeId, neighbours };
   }, [hoveredNodeId, focusNodeId, edges]);
+
+  // Raise the focused node above the rest: the floating name is a child of the
+  // node wrapper, so without this the tag is painted under the cards that come
+  // later in the DOM and becomes unreadable in dense areas (L22). Focus changes
+  // are the only writes here; positions keep their per-frame path.
+  useEffect(() => {
+    const instance = rf.current;
+    if (!instance) return;
+    instance.setNodes((current) =>
+      current.map((node) => {
+        const zIndex = node.id === focusNodeId ? 1000 : 0;
+        return node.zIndex === zIndex ? node : { ...node, zIndex };
+      }),
+    );
+  }, [focusNodeId, nodes]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {

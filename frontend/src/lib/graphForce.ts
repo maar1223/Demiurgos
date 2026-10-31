@@ -75,6 +75,9 @@ export interface LiveForceLayout {
   /** Refresh the collision radii with measured card sizes. */
   updateSizes(sizes: ReadonlyMap<string, NodeSize>): void;
   positions(): ForcePositions;
+  /** The node the radial hierarchy chose to lead each folder group (S10).
+   *  Empty when the hierarchy is disabled. */
+  mainIds(): ReadonlySet<string>;
   isSettled(): boolean;
   /** Drive the simulation through the ticker until it settles. */
   start(): void;
@@ -637,6 +640,9 @@ export function createLiveForceLayout(
       linkForce.initialize?.(simNodes, Math.random);
     },
     positions,
+    mainIds() {
+      return hierarchy.mainIds;
+    },
     isSettled() {
       return simulation.alpha() <= simulation.alphaMin();
     },
