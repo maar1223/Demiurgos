@@ -61,6 +61,7 @@ import {
   saveFileConfirmed,
   setStatus,
 } from "@/api/wiki";
+import { fetchRelationQuality } from "@/api/graph";
 import { downloadBlob } from "@/lib/downloadBlob";
 import type {
   ApiError,
@@ -70,6 +71,14 @@ import type {
   FileContent,
 } from "@/api/types";
 import { useEditReview } from "@/hooks/useEditReview";
+import type { MessageKey } from "@/i18n/messages";
+
+/** P5 — one message per relation-health tag (same copy the importer shows). */
+const QUALITY_MESSAGES: Record<string, MessageKey> = {
+  "false-orphan": "importer.candidate.quality.false-orphan",
+  standalone: "importer.candidate.quality.standalone",
+  "non-entity": "importer.candidate.quality.non-entity",
+};
 
 // CodeMirror is heavy (~300KB) — load the live diff editor only when the
 // preview is actually opened, keeping the initial bundle lean.
@@ -121,6 +130,7 @@ export default function WikiEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [qualityTags, setQualityTags] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pendingNewFile, setPendingNewFile] = useState<{ path: string } | null>(
     null,
@@ -812,6 +822,7 @@ export default function WikiEditor() {
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
+    setQualityTags([]);
     try {
       const confirmation = await review.requestConfirmation(proposal.proposal_id, kind);
       const request = {
@@ -827,6 +838,12 @@ export default function WikiEditor() {
       } else {
         await saveFileConfirmed(mundo, section, reviewPath, request);
         await retryContent();
+      }
+      try {
+        const report = await fetchRelationQuality(mundo, reviewPath);
+        setQualityTags(report.tags);
+      } catch {
+        setQualityTags([]);
       }
       review.reset();
       setPendingNewFile(null);
@@ -1436,6 +1453,25 @@ export default function WikiEditor() {
       {saveError && (
         <ErrorBanner message={saveError} className="mb-4" />
       )}
+
+      {/* P5 — relation-health report for the ficha just saved */}
+      {qualityTags.length > 0 ? (
+        <div
+          data-testid="relation-quality"
+          className="mb-4 rounded-xl border border-edge bg-surface-raised px-4 py-3"
+        >
+          <p className="text-small font-medium text-primary">
+            {t("relaciones.quality.title")}
+          </p>
+          <ul className="mt-1 text-small text-muted">
+            {qualityTags.map((tag) => (
+              <li key={tag}>
+                {QUALITY_MESSAGES[tag] ? t(QUALITY_MESSAGES[tag]) : tag}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* Content area: section cards (no file / directory selected),
           live diff preview, textarea editor, or viewer */}

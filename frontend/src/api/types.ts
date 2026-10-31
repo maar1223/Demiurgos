@@ -2206,6 +2206,12 @@ export interface RelationReconcileApply {
   removals: number;
 }
 
+/** P5 — relation-health tags for one saved ficha. */
+export interface RelationQualityReport {
+  path: string;
+  tags: string[];
+}
+
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
  *  Telegram webhook/getUpdates conflict, or `import.job_not_found` for the

@@ -447,6 +447,42 @@ QUALITY_STANDALONE = "standalone"
 QUALITY_NON_ENTITY = "non-entity"
 
 
+def ficha_quality(
+    *,
+    body: str,
+    relaciones: Iterable[str],
+    graph: bool,
+    source_id: str,
+    source_path: str,
+    targets: Sequence[RelationTarget],
+) -> list[str]:
+    """Relation-health tags for ONE saved ficha (P5).
+
+    Same tags the importer review shows, computed against the whole world:
+
+    * ``non-entity`` — the document opted out of the graph (``graph: false``);
+    * ``false-orphan`` — no declared relation, yet the body names another ficha;
+    * ``standalone`` — no declared relation and no mention at all.
+
+    A ficha with at least one declared relation is healthy and returns ``[]``.
+    """
+
+    if graph is False:
+        return [QUALITY_NON_ENTITY]
+    if any(isinstance(entry, str) and entry.strip() for entry in relaciones):
+        return []
+    grounded = grounded_relations(
+        body=body or "",
+        source_id=source_id,
+        source_path=source_path,
+        targets=targets,
+    )
+    mentions = [
+        relation for relation in grounded if relation.evidence != "folder-index"
+    ]
+    return [QUALITY_FALSE_ORPHAN if mentions else QUALITY_STANDALONE]
+
+
 def relation_quality(candidates: Iterable[object]) -> dict[str, list[str]]:
     """Classify every candidate's relation health for the review screen.
 

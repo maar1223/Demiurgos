@@ -5,6 +5,7 @@ import type {
   GraphStatus,
   RelationCandidatesResponse,
   RelationProposalsResponse,
+  RelationQualityReport,
   RelationReconcileApply,
   RelationReconcilePreview,
   RelationResponse,
@@ -252,5 +253,15 @@ export async function applyRelationReconcile(
   return apiFetch<RelationReconcileApply>(
     apiUrl(["api", mundo, "relations", "reconcile"]),
     { method: "POST" },
+  );
+}
+
+/** GET /api/{mundo}/relations/quality?path= — tags for one saved ficha. */
+export async function fetchRelationQuality(
+  mundo: string,
+  path: string,
+): Promise<RelationQualityReport> {
+  return apiFetch<RelationQualityReport>(
+    apiUrl(["api", mundo, "relations", "quality"], { path }),
   );
 }
