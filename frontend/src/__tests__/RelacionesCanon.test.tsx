@@ -191,7 +191,7 @@ describe("RelacionesCanon", () => {
     await user.click(screen.getByTestId("reconcile-apply"));
     const dialog = await screen.findByRole("dialog");
     await user.click(
-      within(dialog).getByRole("button", { name: "Aplicar reconciliación" }),
+      within(dialog).getByRole("button", { name: "Sincronizar ahora" }),
     );
 
     expect(applyRelationReconcile).toHaveBeenCalledWith("vibrantes");
