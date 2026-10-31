@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -46,9 +46,15 @@ _FRONTMATTER = re.compile(r"^---\r?\n([\s\S]*?)^---[ \t]*(?=\r?\n|$)", re.MULTIL
 
 @dataclass(frozen=True)
 class RelationPlan:
-    """Grounded relation ids per mundo-relative ficha path."""
+    """Grounded relation ids per mundo-relative ficha path.
+
+    ``structural`` holds the subset of each ficha's ids justified by folder
+    membership. They are exact truth (the tree itself), so the applier never
+    charges them against the textual relation cap.
+    """
 
     relations: dict[str, tuple[str, ...]]
+    structural: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
         return bool(self.relations)
@@ -112,10 +118,12 @@ def build_relation_plan(
     sources = list(changed_fichas)
     if changed_targets:
         for ficha in fichas.values():
-            if ficha.path in changed_set or not ficha.body:
+            if ficha.path in changed_set:
                 continue
             # Reverse pass: only a ficha that actually names a changed entity
             # is worth recomputing, so the cost stays O(k) in the common case.
+            # An empty body still matters: a folder index belongs to its
+            # folder through the path, not through its text.
             if grounded_relations(
                 body=ficha.body,
                 source_id=ficha.canonical_id,
@@ -125,18 +133,28 @@ def build_relation_plan(
                 sources.append(ficha)
 
     plan: dict[str, tuple[str, ...]] = {}
+    structural: dict[str, frozenset[str]] = {}
     for source in sources:
         relations = grounded_relations(
             body=source.body,
             source_id=source.canonical_id,
             source_path=source.path,
             targets=targets,
+            structural_uncapped=True,
         )
-        if relations:
-            plan[source.path] = tuple(
-                relation.canonical_id for relation in relations
-            )
-    return RelationPlan(plan)
+        if not relations:
+            continue
+        plan[source.path] = tuple(
+            relation.canonical_id for relation in relations
+        )
+        folder_ids = frozenset(
+            relation.canonical_id
+            for relation in relations
+            if relation.evidence == "folder-index"
+        )
+        if folder_ids:
+            structural[source.path] = folder_ids
+    return RelationPlan(plan, structural)
 
 
 def _indexed_fichas(index: Any) -> dict[str, _Ficha]:

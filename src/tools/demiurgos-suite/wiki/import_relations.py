@@ -144,12 +144,19 @@ def grounded_relations(
     source_path: str,
     targets: Sequence[RelationTarget],
     max_relations: int = MAX_RELATIONS,
+    structural_uncapped: bool = False,
 ) -> list[GroundedRelation]:
     """Return the relations the body itself justifies.
 
     Deterministic: the same body, source and targets always produce the same
     list (evidence priority, then canonical id). No relation is invented from
     batch membership, and a ficha never links to itself.
+
+    ``structural_uncapped`` keeps every ``folder-index`` relation (the folder's
+    own index and each member's belonging edge) outside ``max_relations``. The
+    cap exists to keep an LLM response small and an index page readable; folder
+    membership is exact truth bounded by the folder itself, and truncating it
+    silently loses part of the map.
     """
 
     body_norm = _normalize(body or "")
@@ -158,6 +165,7 @@ def grounded_relations(
     index_path = _folder_index_path(source_folder)
     # The folder index lists its members and each member points back at it.
     source_is_index = bool(source_path) and source_path == index_path
+    ambiguous = _ambiguous_identity_keys(targets)
 
     best: dict[str, tuple[int, str]] = {}
     for target in targets:
@@ -166,7 +174,7 @@ def grounded_relations(
         if target.path and source_path and target.path == source_path:
             continue
 
-        evidence = _match_target(target, body_norm, generic)
+        evidence = _match_target(target, body_norm, generic, ambiguous)
         if evidence is not None:
             _keep(best, target.canonical_id, evidence)
         if index_path and target.path == index_path:
@@ -182,10 +190,42 @@ def grounded_relations(
         best.items(),
         key=lambda item: (_EVIDENCE_PRIORITY[item[1][1]], item[0]),
     )
+    if structural_uncapped:
+        textual = [item for item in ordered if item[1][1] != "folder-index"]
+        structural = [item for item in ordered if item[1][1] == "folder-index"]
+        selected = textual[:max_relations] + structural
+    else:
+        selected = ordered[:max_relations]
     return [
         GroundedRelation(canonical_id=canonical_id, evidence=evidence)
-        for canonical_id, (_priority, evidence) in ordered[:max_relations]
+        for canonical_id, (_priority, evidence) in selected
     ]
+
+
+def _ambiguous_identity_keys(
+    targets: Sequence[RelationTarget],
+) -> frozenset[tuple[str, str]]:
+    """Identity keys (evidence kind, value) claimed by more than one entity.
+
+    Two fichas that share a normalized title, alias or filename stem make that
+    key unusable as proof: the body names *one* of them, not necessarily the
+    other. Such keys are dropped instead of linking both.
+    """
+
+    owners: dict[tuple[str, str], set[str]] = {}
+    for target in targets:
+        if not target.canonical_id:
+            continue
+        name = _normalize(target.name)
+        if name:
+            owners.setdefault(("name", name), set()).add(target.canonical_id)
+        for segment in _alias_segments(target.name):
+            owners.setdefault(("alias", segment), set()).add(target.canonical_id)
+        for token in _stem_tokens(target.path):
+            if token in GENERIC_WORDS:
+                continue
+            owners.setdefault(("stem", token), set()).add(target.canonical_id)
+    return frozenset(key for key, ids in owners.items() if len(ids) > 1)
 
 
 def _keep(best: dict[str, tuple[int, str]], canonical_id: str, evidence: str) -> None:
@@ -196,25 +236,40 @@ def _keep(best: dict[str, tuple[int, str]], canonical_id: str, evidence: str) ->
 
 
 def _match_target(
-    target: RelationTarget, body_norm: str, generic: set[str]
+    target: RelationTarget,
+    body_norm: str,
+    generic: set[str],
+    ambiguous: frozenset[tuple[str, str]] = frozenset(),
 ) -> str | None:
     name_norm = _normalize(target.name)
     # A title made only of words shared with the source's own identity/folder
     # names the family, not the ficha; the folder index carries that belonging.
-    if name_norm and not _is_generic_phrase(name_norm, generic):
+    if (
+        name_norm
+        and ("name", name_norm) not in ambiguous
+        and not _is_generic_phrase(name_norm, generic)
+    ):
         if _phrase_in(name_norm, body_norm):
             return "full-name"
 
     for segment in _alias_segments(target.name):
-        if segment and _phrase_in(segment, body_norm):
+        if (
+            segment
+            and ("alias", segment) not in ambiguous
+            and _phrase_in(segment, body_norm)
+        ):
             return "alias"
 
     for token in _stem_tokens(target.path):
         if token in generic or token in GENERIC_WORDS:
             continue
+        if ("stem", token) in ambiguous:
+            continue
         if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", body_norm):
             return "stem"
 
+    if ("name", name_norm) in ambiguous:
+        return None
     if _has_ordinal_evidence(name_norm, body_norm):
         return "ordinal"
     return None
@@ -410,9 +465,10 @@ def _names_another(
     )
     body_norm = _normalize(body or "")
     generic = _generic_tokens(source_path)
+    ambiguous = _ambiguous_identity_keys(targets)
     for target in targets:
         if target.canonical_id == source_id:
             continue
-        if _match_target(target, body_norm, generic) is not None:
+        if _match_target(target, body_norm, generic, ambiguous) is not None:
             return True
     return False

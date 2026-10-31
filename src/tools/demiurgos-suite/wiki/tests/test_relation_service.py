@@ -180,3 +180,94 @@ def test_plan_is_deterministic(tmp_path: Path) -> None:
     )
 
     assert first == second
+
+
+def test_index_keeps_every_member_beyond_the_textual_cap(tmp_path: Path) -> None:
+    """A folder index is exact hierarchy: 20 members must yield 20 relations."""
+    world = tmp_path / "mundos" / "world"
+    _write(
+        world / "lore" / "regions" / "m00.md",
+        "type: region\nid: lore::regions::m00\ntitle: Member 0\n",
+        "A member.",
+    )
+    entities = []
+    for n in range(20):
+        name = f"m{n:02d}"
+        _write(
+            world / "lore" / "regions" / f"{name}.md",
+            f"type: region\nid: lore::regions::{name}\ntitle: Member {n}\n",
+            "A member.",
+        )
+        entities.append(
+            _entity(
+                f"lore/regions/{name}.md", f"lore::regions::{name}", f"Member {n}"
+            )
+        )
+    _write(
+        world / "lore" / "regions" / "regions.md",
+        "type: region\nid: lore::regions::regions\ntitle: Regions\n",
+        "Index.",
+    )
+    entities.append(
+        _entity("lore/regions/regions.md", "lore::regions::regions", "Regions")
+    )
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/regions/m00.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=FakeIndex(entities),
+    )
+
+    index_relations = plan.relations["lore/regions/regions.md"]
+    assert len(index_relations) == 20
+    assert plan.structural["lore/regions/regions.md"] == frozenset(index_relations)
+
+
+def test_a_hub_ficha_keeps_the_textual_cap(tmp_path: Path) -> None:
+    world = tmp_path / "mundos" / "world"
+    body = " ".join(f"Target {n}." for n in range(20))
+    _write(
+        world / "lore" / "hub.md",
+        "type: region\nid: lore::hub\ntitle: Hub\n",
+        body,
+    )
+    entities = [
+        _entity(f"lore/t{n:02d}.md", f"lore::t{n:02d}", f"Target {n}")
+        for n in range(20)
+    ]
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/hub.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=FakeIndex(entities),
+    )
+
+    assert len(plan.relations["lore/hub.md"]) == 12
+    assert "lore/hub.md" not in plan.structural
+
+
+def test_ambiguous_name_is_not_linked(tmp_path: Path) -> None:
+    """Two fichas sharing a title or stem: the body names one, not both."""
+    world = tmp_path / "mundos" / "world"
+    _write(
+        world / "lore" / "page.md",
+        "type: personaje\nid: lore::page\ntitle: Page\n",
+        "Alpha appears here.",
+    )
+    index = FakeIndex(
+        [
+            _entity("lore/north/alpha.md", "lore::north::alpha", "Alpha"),
+            _entity("lore/south/alpha.md", "lore::south::alpha", "Alpha"),
+        ]
+    )
+
+    plan = build_relation_plan(
+        mundo="world",
+        changed_paths=["lore/page.md"],
+        mundos_dir=tmp_path / "mundos",
+        index=index,
+    )
+
+    assert plan.relations == {}

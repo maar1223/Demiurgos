@@ -237,3 +237,72 @@ def test_rejected_save_leaves_world_byte_identical(client, monkeypatch):  # inva
                           "token": "not-the-token", "base_revision": base})
     assert r.status_code == 403, r.text
     assert _dir_hash(root) == before
+
+
+def test_folder_index_beyond_the_cap_through_the_save_route(client, monkeypatch):  # S2
+    """A folder index with more members than the textual cap keeps them all."""
+    _principal(monkeypatch)
+    w = _world()
+    regions = w / "regions"
+    regions.mkdir(parents=True, exist_ok=True)
+    (regions / "regions.md").write_text(
+        "---\ntype: region\nid: lore::regions::regions\ntitle: Regions\n---\nIndex.\n",
+        encoding="utf-8",
+    )
+    for n in range(13):
+        (regions / f"m{n:02d}.md").write_text(
+            f"---\ntype: region\nid: lore::regions::m{n:02d}\n"
+            f"title: Member {n}\n---\nA member.\n",
+            encoding="utf-8",
+        )
+    api_server._graph_indices.clear()
+
+    content = "---\ntype: region\nid: lore::regions::m00\ntitle: Member 0\n---\nA member.\n"
+    assert _save(client, "regions/m00.md", content).status_code == 200
+
+    index = (regions / "regions.md").read_text(encoding="utf-8")
+    assert index.count("lore::regions::m") == 13, index
+
+
+def test_restore_stays_byte_exact_without_relations(client, monkeypatch):  # S4
+    _principal(monkeypatch)
+    w = _world()
+    _add(w, "beta.md", "type: personaje\nid: lore::beta\ntitle: Beta\n", "Beta.\n")
+
+    quiet = "---\ntype: criatura\ntitle: Inicio\n---\nNothing here.\n"
+    noisy = "---\ntype: criatura\ntitle: Inicio\n---\nBeta arrives.\n"
+    assert _save(client, "00_inicio.md", quiet).status_code == 200
+    assert _save(client, "00_inicio.md", noisy, edit_id="e2").status_code == 200
+    assert "lore::beta" in (w / "00_inicio.md").read_text(encoding="utf-8")
+
+    entries = client.get("/api/test_mundo/history?path=lore/00_inicio.md").json()["entries"]
+    entry = entries[0]
+    assert entry["content"] == quiet
+
+    current = (w / "00_inicio.md").read_bytes()
+    current_revision = hashlib.sha256(current).hexdigest()
+    confirmation = client.post(
+        "/api/test_mundo/lore/edit-confirmation?path=00_inicio.md",
+        json={
+            "edit_id": "restore-1",
+            "kind": "restore",
+            "base_revision": current_revision,
+            "snapshot_id": entry["snapshot_id"],
+            "proposed_content": entry["content"],
+        },
+    )
+    assert confirmation.status_code == 200, confirmation.text
+    restored = client.post(
+        "/api/test_mundo/history/restore",
+        json={
+            "path": "lore/00_inicio.md",
+            "snapshot_id": entry["snapshot_id"],
+            "edit_id": "restore-1",
+            "base_revision": current_revision,
+            "content": entry["content"],
+            "proposed_digest": confirmation.json()["proposed_digest"],
+            "token": confirmation.json()["token"],
+        },
+    )
+    assert restored.status_code == 200, restored.text
+    assert (w / "00_inicio.md").read_text(encoding="utf-8") == quiet

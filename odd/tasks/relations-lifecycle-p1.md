@@ -35,7 +35,9 @@ model never decides which pairs exist in P1. Evidence kinds reuse
 S4 — Triggers. Quoted from the design: "Disparadores: importación de mundo (ya
 existe), guardado de ficha del Asistente, materialización desde ideas, guardado
 manual del editor". P1 hooks the three save flows; the importer already grounds
-relations in its funnel.
+relations in its funnel. Restore is deliberately NOT a trigger: a restore must
+hand back exactly the snapshot the Author chose, so it stays byte-exact and the
+next normal save grows relations again.
 
 S5 — Incremental and bounded. Quoted from the design: "Incremental: al guardar
 solo se tocan la ficha cambiada, sus menciones y las fichas que la mencionan
@@ -60,6 +62,21 @@ the ficha format yet), and destructive cleanup is explicitly P4's job
 ("reconciliación global con backup"). Documented as an assumption; revisit when
 P2 persists provenance.
 
+S9 — Structural relations are uncapped (Owner decision, L5). Folder membership
+(`folder-index` evidence) is exact truth bounded by the folder itself, so it
+never consumes the textual `MAX_RELATIONS` budget: an index page with 20 members
+keeps 20 relations and a member keeps its one belonging edge. The cap applies
+only to inferred evidence (name/alias/stem/ordinal), where a hub ficha stays at
+12. `MAX_RELATIONS` was a size limit for the importer's LLM response; that reason
+does not exist at save time, and silently truncating the hierarchy loses part of
+the map.
+
+S10 — Ambiguous identity keys are not evidence (Owner decision, L5). When two
+entities share a normalized title, an alias segment or a filename stem, that key
+is dropped instead of linking every owner: the body names one entity, not all of
+them. `import_relations._ambiguous_identity_keys` owns the rule, and the quality
+report uses the same guard.
+
 ## Tasks
 
 - [x] T1 — `relation_service.py`: catalog projection, forward + reverse + folder
@@ -79,6 +96,11 @@ P2 persists provenance.
   (`scripts/derive_payload_manifest.py`), so the installer/PowerShell jobs keep
   passing. Route: inline. Evidence: manifest now lists
   `src/tools/demiurgos-suite/wiki/relation_service.py` (174 payload files).
+- [x] T5 — Close the three risks found while reviewing P1: structural relations
+  uncapped (S9), ambiguous identity keys dropped (S10), restore left byte-exact
+  (S4). Route: inline. Evidence: unit tests for a 20-member index, the 12-cap on
+  a hub and the ambiguous-name skip; API tests for a 13-member index through the
+  save route and a byte-exact restore; full backend suite 4343 passed.
 
 ## Log
 
@@ -109,3 +131,16 @@ recorded as follow-ups, not blockers:
    disk reads, not for the in-memory body scan.
 4. A legacy `[[Display Name]]` wikilink plus the new canonical id shows two
    entries for the same target; consistent with the stated dedupe key.
+
+L5 (verbatim Owner request): "aplica los 3 y re verifica"
+
+L6 Evidence for L5:
+- The 12-relation cap truncated a folder index silently: a 20-member folder
+  proposed only 12, and the additive applier then refused every later member
+  because `room` counted the structural entries. Fixed by S9 (structural ids
+  bypass the textual budget, in both `grounded_relations` and the applier).
+- A folder index with an empty body was skipped by the reverse pass (`not
+  ficha.body`); membership comes from the path, not the text. Fixed and pinned.
+- Two fichas sharing a title or stem were both linked from one mention. Fixed by
+  S10.
+- `restore_history` no longer reconciles, so a restore is byte-exact.

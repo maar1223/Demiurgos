@@ -5840,11 +5840,13 @@ def restore_history(mundo: str, body: dict, request: Request):
         "snapshot_id": snapshot_id,
         "proposed_digest": record["content_digest"],
     })
-    result = _write_content(
+    # Restore stays byte-exact: no relation reconciliation here. Adding
+    # relations after a restore would hand back content that differs from the
+    # snapshot the Author chose. The next normal save (or the global
+    # reconciliation) grows them.
+    return _write_content(
         mundo, section, relative_path, payload, request, kind="restore"
     )
-    _reconcile_relations_after_write(mundo, [f"{section}/{relative_path}"])
-    return result
 
 
 @app.post("/api/{mundo}/{section}/file")
@@ -6463,25 +6465,32 @@ def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> st
     return content[: m.start(1)] + updated_inner + content[m.end(1):]
 
 
-def _relacion_count(content: str) -> int:
-    """Count the entries already in the frontmatter ``relaciones:`` block."""
+def _relacion_keys(content: str) -> list[str]:
+    """Return the dedupe keys already in the frontmatter ``relaciones:`` block."""
     m = _RE_FRONTMATTER.match(content)
     if m is None:
-        return 0
+        return []
     lines = m.group(1).splitlines()
     rel_idx = next(
         (i for i, line in enumerate(lines) if _RE_FM_RELACIONES_HEADER.match(line)),
         None,
     )
     if rel_idx is None:
-        return 0
+        return []
+    keys: list[str] = []
     rest = lines[rel_idx].split(":", 1)[1]
-    count = len([part for part in rest.split(",") if _relaciones_entry_key(part)])
+    for part in rest.split(","):
+        key = _relaciones_entry_key(part)
+        if key and key not in keys:
+            keys.append(key)
     for line in lines[rel_idx + 1:]:
-        if _RE_FM_RELACIONES_ITEM.match(line) is None:
+        item = _RE_FM_RELACIONES_ITEM.match(line)
+        if item is None:
             break
-        count += 1
-    return count
+        key = _relaciones_entry_key(item.group("body"))
+        if key and key not in keys:
+            keys.append(key)
+    return keys
 
 
 def _apply_relation_plan(mundo: str, plan) -> None:
@@ -6489,6 +6498,10 @@ def _apply_relation_plan(mundo: str, plan) -> None:
 
     Additive on purpose: existing entries (hand-edited or Hermes-authored) are
     never removed. Destructive reconciliation belongs to the global pass.
+
+    Folder membership is exact truth bounded by the folder itself, so structural
+    ids never consume the textual ``MAX_RELATIONS`` budget; only inferred
+    (name/alias/stem/ordinal) relations are capped.
     """
     for rel_path, target_ids in plan.relations.items():
         full = _resolve_mundo_path(mundo, rel_path)
@@ -6496,18 +6509,26 @@ def _apply_relation_plan(mundo: str, plan) -> None:
             continue
         with _target_lock_for(full):
             content = full.read_text(encoding="utf-8")
-            room = max(0, MAX_RELATIONS - _relacion_count(content))
-            if room == 0:
-                continue
+            existing = _relacion_keys(content)
+            existing_set = set(existing)
+            structural = plan.structural.get(rel_path, frozenset())
+            structural_present = len([key for key in existing if key in structural])
+            room = max(0, MAX_RELATIONS - (len(existing) - structural_present))
             updated = content
+            added: set[str] = set()
             for target_id in target_ids:
-                if room == 0:
-                    break
+                if target_id in existing_set or target_id in added:
+                    continue
+                is_structural = target_id in structural
+                if not is_structural and room == 0:
+                    continue
                 try:
                     updated = _set_frontmatter_relaciones(updated, "create", target_id)
                 except RelationConflict:
                     continue
-                room -= 1
+                added.add(target_id)
+                if not is_structural:
+                    room -= 1
             if updated != content:
                 _atomic_write(full, updated)
 
