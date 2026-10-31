@@ -144,54 +144,54 @@ Object.defineProperty(globalThis.HTMLElement.prototype, "offsetHeight", {
   },
 });
 
-/** Three linked entities (2 edges) — Dottua receives a backlink from Vael. */
+/** Three linked entities (2 edges) — Gamma receives a backlink from Bravo. */
 const LINKED: GraphEntity[] = [
   {
-    id: "Stal::Rhyz",
-    name: "Rhyz",
+    id: "Grupo::Alfa",
+    name: "Alfa",
     type: "personaje",
-    path: "personajes/Rhyz.md",
+    path: "personajes/Alfa.md",
     status: "stable",
     content: "",
-    forward_links: ["Vael"],
+    forward_links: ["Bravo"],
     backlinks: [],
     relaciones: [],
   },
   {
-    id: "Stal::Vael",
-    name: "Vael",
+    id: "Grupo::Bravo",
+    name: "Bravo",
     type: "personaje",
-    path: "personajes/Vael.md",
+    path: "personajes/Bravo.md",
     status: "draft",
     content: "",
-    forward_links: ["Dottua"],
-    backlinks: ["personajes/Rhyz.md"],
+    forward_links: ["Gamma"],
+    backlinks: ["personajes/Alfa.md"],
     relaciones: [],
   },
   {
-    id: "Origen::Dottua",
-    name: "Dottua",
+    id: "Lugar::Gamma",
+    name: "Gamma",
     type: "lugar",
-    path: "lore/Dottua.md",
+    path: "lore/Gamma.md",
     status: "stable",
     content: "",
     forward_links: [],
-    backlinks: ["personajes/Vael.md"],
+    backlinks: ["personajes/Bravo.md"],
     relaciones: [],
   },
 ];
 
 const LINKS: EntityLink[] = [
-  { source: "Stal::Rhyz", target: "Stal::Vael", kind: "forward" },
-  { source: "Stal::Vael", target: "Origen::Dottua", kind: "forward" },
+  { source: "Grupo::Alfa", target: "Grupo::Bravo", kind: "forward" },
+  { source: "Grupo::Bravo", target: "Lugar::Gamma", kind: "forward" },
 ];
 
-/** Search API result for Rhyz — matches LINKED[0] by path and name. */
-const RHYZ_RESULT: SearchResult = {
-  name: "Rhyz",
+/** Search API result for Alfa — matches LINKED[0] by path and name. */
+const ALFA_RESULT: SearchResult = {
+  name: "Alfa",
   type: "personaje",
-  path: "personajes/Rhyz.md",
-  title: "Rhyz",
+  path: "personajes/Alfa.md",
+  title: "Alfa",
   description: "Un personaje de prueba",
   tags: [],
   link_count: 1,
@@ -202,10 +202,10 @@ const RHYZ_RESULT: SearchResult = {
 const WITH_ORPHAN: GraphEntity[] = [
   ...LINKED,
   {
-    id: "Cultura::Ecos",
-    name: "Ecos",
+    id: "Grupo::Epsilon",
+    name: "Epsilon",
     type: "cultura",
-    path: "lore/Ecos.md",
+    path: "lore/Epsilon.md",
     status: "draft",
     content: "",
     forward_links: [],
@@ -217,19 +217,19 @@ const WITH_ORPHAN: GraphEntity[] = [
 /** Self-contained fixture for the empty-section scenario: a "lore" folder
  *  whose ONLY entity is an orphan (no forward AND no back links). Selecting
  *  "lore" therefore renders zero visible nodes (orphans hidden by default)
- *  and must show the empty-section message. Dottua lives in "lugares" so it
+ *  and must show the empty-section message. Gamma lives in "lugares" so it
  *  never leaks into the lore selection. */
 const WITH_FOLDER_ONLY_ORPHAN: GraphEntity[] = [
   ...LINKED.map((entity) =>
-    entity.id === "Origen::Dottua"
-      ? { ...entity, path: "lugares/Dottua.md" }
+    entity.id === "Lugar::Gamma"
+      ? { ...entity, path: "lugares/Gamma.md" }
       : entity,
   ),
   {
-    id: "Sombra::Umbra",
-    name: "Umbra",
+    id: "Grupo::Zeta",
+    name: "Zeta",
     type: "cultura",
-    path: "lore/Umbra.md",
+    path: "lore/Zeta.md",
     status: "draft",
     content: "",
     forward_links: [],
@@ -240,18 +240,18 @@ const WITH_FOLDER_ONLY_ORPHAN: GraphEntity[] = [
 
 /** LINKED plus a nested entity under lore/historia — exercises the tree's
  *  nested rendering and the folder filter's prefix reach into subfolders.
- *  Historia carries a backlink so it is never hidden as an orphan. */
+ *  Delta carries a backlink so it is never hidden as an orphan. */
 const WITH_NESTED: GraphEntity[] = [
   ...LINKED,
   {
-    id: "Lore::Historia",
-    name: "Historia",
+    id: "Lugar::Delta",
+    name: "Delta",
     type: "lugar",
-    path: "lore/historia/Historia.md",
+    path: "lore/historia/Delta.md",
     status: "draft",
     content: "",
     forward_links: [],
-    backlinks: ["personajes/Rhyz.md"],
+    backlinks: ["personajes/Alfa.md"],
     relaciones: [],
   },
 ];
@@ -342,9 +342,9 @@ describe("GraphView", () => {
     await waitFor(() => expect(countNodes()).toBe(3));
     // Edges render after React Flow measures the nodes (async observer).
     await waitFor(() => expect(countEdges()).toBe(2));
-    expect(screen.getByText("Rhyz")).toBeInTheDocument();
-    expect(screen.getByText("Vael")).toBeInTheDocument();
-    expect(screen.getByText("Dottua")).toBeInTheDocument();
+    expect(screen.getByText("Alfa")).toBeInTheDocument();
+    expect(screen.getByText("Bravo")).toBeInTheDocument();
+    expect(screen.getByText("Gamma")).toBeInTheDocument();
   });
 
   it("cools the layout down through the React Flow instance when motion is allowed", async () => {
@@ -427,7 +427,7 @@ describe("GraphView", () => {
       within(surface).getByLabelText("Filtrar por estado"),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
     expect(
       within(canvas).getByTestId("node-inspector-panel"),
@@ -450,13 +450,13 @@ describe("GraphView", () => {
     const drag = dragHandler("onNodeDrag");
     const stop = dragHandler("onNodeDragStop");
     act(() => {
-      start!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
-      drag!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
-      stop!(null, { id: "Stal::Rhyz", position: { x: 9000, y: 7000 } });
+      start!(null, { id: "Grupo::Alfa", position: { x: 9000, y: 7000 } });
+      drag!(null, { id: "Grupo::Alfa", position: { x: 9000, y: 7000 } });
+      stop!(null, { id: "Grupo::Alfa", position: { x: 9000, y: 7000 } });
     });
     const dropped = instance
       .getNodes()
-      .find((node) => node.id === "Stal::Rhyz")!;
+      .find((node) => node.id === "Grupo::Alfa")!;
     expect(dropped.position.x).toBeGreaterThan(8000);
     expect(dropped.position.y).toBeGreaterThan(6000);
   });
@@ -483,20 +483,20 @@ describe("GraphView", () => {
     expect(drag).toBeTypeOf("function");
 
     act(() => {
-      start!(null, { id: "Stal::Rhyz", position: { x: 40, y: 40 } });
-      drag!(null, { id: "Stal::Rhyz", position: { x: 40, y: 40 } });
+      start!(null, { id: "Grupo::Alfa", position: { x: 40, y: 40 } });
+      drag!(null, { id: "Grupo::Alfa", position: { x: 40, y: 40 } });
       flush(6);
     });
 
     const after = instance.getNodes();
     // The dragged node stays exactly where the author dropped it…
-    expect(after.find((node) => node.id === "Stal::Rhyz")?.position).toEqual({
+    expect(after.find((node) => node.id === "Grupo::Alfa")?.position).toEqual({
       x: 40,
       y: 40,
     });
     // …and its neighbours react to the new pin.
     const neighbourMoved = after.some((node) => {
-      if (node.id === "Stal::Rhyz") return false;
+      if (node.id === "Grupo::Alfa") return false;
       const startPosition = before.get(node.id);
       return (
         !!startPosition &&
@@ -518,7 +518,7 @@ describe("GraphView", () => {
     await act(async () => {
       await instance.setViewport({ x: 0, y: 0, zoom: 0.7 });
     });
-    // personajes holds Rhyz + Vael → one cluster; lore holds only Dottua, so
+    // personajes holds Alfa + Bravo → one cluster; lore holds only Gamma, so
     // a lone entity never reads as a section (S7).
     await waitFor(() => {
       const labels = screen.getAllByTestId("graph-cluster");
@@ -558,15 +558,15 @@ describe("GraphView", () => {
     });
     const before = positions();
 
-    fireEvent.mouseEnter(document.querySelector('[data-id="Stal::Rhyz"]')!);
-    await waitFor(() => expect(screen.getByText("Rhyz")).toBeInTheDocument());
+    fireEvent.mouseEnter(document.querySelector('[data-id="Grupo::Alfa"]')!);
+    await waitFor(() => expect(screen.getByText("Alfa")).toBeInTheDocument());
     // The card got wider to fit the name; the layout must not react.
     await new Promise((resolve) => setTimeout(resolve, 60));
     expectStable(before);
 
-    fireEvent.mouseLeave(document.querySelector('[data-id="Stal::Rhyz"]')!);
+    fireEvent.mouseLeave(document.querySelector('[data-id="Grupo::Alfa"]')!);
     await waitFor(() =>
-      expect(screen.queryByText("Rhyz")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Alfa")).not.toBeInTheDocument(),
     );
     await new Promise((resolve) => setTimeout(resolve, 60));
     expectStable(before);
@@ -791,13 +791,13 @@ describe("GraphView", () => {
   });
 
   it("thickens a pair with more than one relation and highlights it on hover", async () => {
-    // Rhyz ↔ Vael has two relation records (forward + back), so it must read
-    // heavier than Vael → Dottua, which has one.
+    // Alfa ↔ Bravo has two relation records (forward + back), so it must read
+    // heavier than Bravo → Gamma, which has one.
     mockFetch.mockResolvedValue({
       entities: LINKED,
       links: [
         ...LINKS,
-        { source: "Stal::Vael", target: "Stal::Rhyz", kind: "forward" },
+        { source: "Grupo::Bravo", target: "Grupo::Alfa", kind: "forward" },
       ],
     });
     renderGraphView();
@@ -811,8 +811,8 @@ describe("GraphView", () => {
       Number(lighter.style.strokeWidth),
     );
 
-    // Hovering Rhyz lights its curve and lets the unrelated one recede.
-    fireEvent.mouseEnter(screen.getByText("Rhyz").closest(".react-flow__node")!);
+    // Hovering Alfa lights its curve and lets the unrelated one recede.
+    fireEvent.mouseEnter(screen.getByText("Alfa").closest(".react-flow__node")!);
     await waitFor(() => {
       const [highlighted, dimmed] = paths();
       expect(highlighted.style.opacity).toBe("0.85");
@@ -822,8 +822,8 @@ describe("GraphView", () => {
     // Its neighbour stays legible; the unrelated card recedes too.
     const card = (name: string) =>
       screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
-    expect(card("Vael")).not.toHaveClass("opacity-30");
-    expect(card("Dottua")).toHaveClass("opacity-30");
+    expect(card("Bravo")).not.toHaveClass("opacity-30");
+    expect(card("Gamma")).toHaveClass("opacity-30");
   });
 
   it("reads canon through fill, ring and a status dot, never border colour alone", async () => {
@@ -835,7 +835,7 @@ describe("GraphView", () => {
       screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
 
     // S6: canon is fill + ring + dot; the border stays neutral on purpose.
-    const rhyz = card("Rhyz");
+    const rhyz = card("Alfa");
     expect(rhyz).toHaveAttribute("data-canon", "stable");
     expect(rhyz).toHaveClass("ring-emerald-500/60", "bg-emerald-500/10");
     expect(rhyz).toHaveClass("border-edge");
@@ -843,7 +843,7 @@ describe("GraphView", () => {
       "bg-emerald-500",
     );
 
-    const vael = card("Vael");
+    const vael = card("Bravo");
     expect(vael).toHaveAttribute("data-canon", "draft");
     expect(vael).toHaveClass("ring-amber-400/60", "bg-amber-400/10");
     expect(vael.querySelector('[data-testid="canon-dot"]')).toHaveClass(
@@ -939,12 +939,12 @@ describe("GraphView", () => {
     renderGraphView();
 
     await waitFor(() => expect(countNodes()).toBe(3));
-    expect(screen.queryByText("Ecos")).not.toBeInTheDocument();
+    expect(screen.queryByText("Epsilon")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Mostrar nodos aislados"));
 
     await waitFor(() => expect(countNodes()).toBe(4));
-    expect(screen.getByText("Ecos")).toBeInTheDocument();
+    expect(screen.getByText("Epsilon")).toBeInTheDocument();
   });
 
   it("selects a node and opens the inspector panel instead of navigating", async () => {
@@ -955,13 +955,13 @@ describe("GraphView", () => {
     // fireEvent.click dispatches ONLY "click" — userEvent's full pointer
     // sequence trips React Flow's d3-drag mousedown handler, which reads
     // event.view.document and crashes in jsdom (event.view is null).
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
 
-    // Selection opens the panel with Rhyz's data…
+    // Selection opens the panel with Alfa's data…
     await waitFor(() =>
       expect(screen.getByTestId("node-inspector-panel")).toBeInTheDocument(),
     );
-    expect(screen.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Alfa" })).toBeInTheDocument();
     // …and the URL does NOT change (no navigation on node click).
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -998,19 +998,19 @@ describe("GraphView", () => {
 
   // ── Connection UI + gated write flow (graph-connections-editor PR2) ──
 
-  /** Connect Rhyz → Vael via React Flow click-to-connect: click the source
-   *  handle (bottom) of Rhyz, then the target handle (top) of Vael. */
-  async function connectRhyzToVael() {
+  /** Connect Alfa → Bravo via React Flow click-to-connect: click the source
+   *  handle (bottom) of Alfa, then the target handle (top) of Bravo. */
+  async function connectAlfaToBravo() {
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(countEdges()).toBe(2));
     fireEvent.click(
       document.querySelector(
-        '.react-flow__handle[data-nodeid="Stal::Rhyz"][data-handlepos="bottom"]',
+        '.react-flow__handle[data-nodeid="Grupo::Alfa"][data-handlepos="bottom"]',
       ) as Element,
     );
     fireEvent.click(
       document.querySelector(
-        '.react-flow__handle[data-nodeid="Stal::Vael"][data-handlepos="top"]',
+        '.react-flow__handle[data-nodeid="Grupo::Bravo"][data-handlepos="top"]',
       ) as Element,
     );
   }
@@ -1019,10 +1019,10 @@ describe("GraphView", () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
 
-    await connectRhyzToVael();
+    await connectAlfaToBravo();
 
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent('Conectar "Rhyz" con "Vael"');
+    expect(dialog).toHaveTextContent('Conectar "Alfa" con "Bravo"');
     // A connect start on a handle must never navigate to the ficha.
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -1032,13 +1032,13 @@ describe("GraphView", () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     mockCreateRelation.mockResolvedValue({
       success: true,
-      path: "personajes/Rhyz.md",
+      path: "personajes/Alfa.md",
       action: "create",
-      target_id: "Stal::Vael",
+      target_id: "Grupo::Bravo",
     });
     renderGraphView();
 
-    await connectRhyzToVael();
+    await connectAlfaToBravo();
     await screen.findByRole("dialog");
 
     await user.click(screen.getByRole("button", { name: "Crear" }));
@@ -1046,8 +1046,8 @@ describe("GraphView", () => {
     await waitFor(() =>
       expect(mockCreateRelation).toHaveBeenCalledWith(
         "vibrantes",
-        "personajes/Rhyz.md",
-        "Stal::Vael",
+        "personajes/Alfa.md",
+        "Grupo::Bravo",
       ),
     );
     // Initial fetch + post-write re-fetch (load()).
@@ -1066,13 +1066,13 @@ describe("GraphView", () => {
 
     fireEvent.click(
       document.querySelector(
-        '[data-testid="rf__edge-Stal::Rhyz->Stal::Vael"]',
+        '[data-testid="rf__edge-Grupo::Alfa->Grupo::Bravo"]',
       ) as Element,
     );
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(
-      'Romper la conexión entre "Rhyz" y "Vael"',
+      'Romper la conexión entre "Alfa" y "Bravo"',
     );
   });
 
@@ -1081,9 +1081,9 @@ describe("GraphView", () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     mockBreakRelation.mockResolvedValue({
       success: true,
-      path: "personajes/Rhyz.md",
+      path: "personajes/Alfa.md",
       action: "break",
-      target_id: "Stal::Vael",
+      target_id: "Grupo::Bravo",
     });
     renderGraphView();
 
@@ -1092,7 +1092,7 @@ describe("GraphView", () => {
 
     fireEvent.click(
       document.querySelector(
-        '[data-testid="rf__edge-Stal::Rhyz->Stal::Vael"]',
+        '[data-testid="rf__edge-Grupo::Alfa->Grupo::Bravo"]',
       ) as Element,
     );
     await screen.findByRole("dialog");
@@ -1102,8 +1102,8 @@ describe("GraphView", () => {
     await waitFor(() =>
       expect(mockBreakRelation).toHaveBeenCalledWith(
         "vibrantes",
-        "personajes/Rhyz.md",
-        "Stal::Vael",
+        "personajes/Alfa.md",
+        "Grupo::Bravo",
       ),
     );
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
@@ -1117,7 +1117,7 @@ describe("GraphView", () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
 
-    await connectRhyzToVael();
+    await connectAlfaToBravo();
     await screen.findByRole("dialog");
 
     await user.click(screen.getByRole("button", { name: "Cancelar" }));
@@ -1136,7 +1136,7 @@ describe("GraphView", () => {
     mockCreateRelation.mockRejectedValue(new Error("La relación ya existe"));
     renderGraphView();
 
-    await connectRhyzToVael();
+    await connectAlfaToBravo();
     await screen.findByRole("dialog");
 
     await user.click(screen.getByRole("button", { name: "Crear" }));
@@ -1158,7 +1158,7 @@ describe("GraphView", () => {
   it("debounces the searchEntities call as the author types a node query", async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
-    mockSearchEntities.mockResolvedValue([RHYZ_RESULT]);
+    mockSearchEntities.mockResolvedValue([ALFA_RESULT]);
     renderGraphView();
 
     await waitFor(() => expect(countNodes()).toBe(3));
@@ -1175,24 +1175,24 @@ describe("GraphView", () => {
   it("centers the selected search result in the viewport via fitView", async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
-    mockSearchEntities.mockResolvedValue([RHYZ_RESULT]);
+    mockSearchEntities.mockResolvedValue([ALFA_RESULT]);
     renderGraphView();
 
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
 
     await user.type(screen.getByLabelText("Buscar nodo"), "Rhy");
-    await screen.findByRole("option", { name: /Rhyz/ });
+    await screen.findByRole("option", { name: /Alfa/ });
 
     // Ignore the initial auto-fit calls (layout settle) — only the
     // search-driven fitView matters.
     const fitViewSpy = vi.spyOn(mockFlowInstance.instance!, "fitView");
     fitViewSpy.mockClear();
 
-    await user.click(screen.getByRole("option", { name: /Rhyz/ }));
+    await user.click(screen.getByRole("option", { name: /Alfa/ }));
 
     expect(fitViewSpy).toHaveBeenCalledWith({
-      nodes: [{ id: "Stal::Rhyz" }],
+      nodes: [{ id: "Grupo::Alfa" }],
       duration: 300,
     });
     // Picking a result closes the dropdown.
@@ -1258,13 +1258,13 @@ describe("GraphView", () => {
 
     await user.click(screen.getByRole("checkbox", { name: "personajes" }));
 
-    // Dottua (lore/) is hidden along with the Vael→Dottua edge; Rhyz→Vael
+    // Gamma (lore/) is hidden along with the Bravo→Gamma edge; Alfa→Bravo
     // survives because both endpoints share the selected folder.
     await waitFor(() => expect(countNodes()).toBe(2));
     await waitFor(() => expect(countEdges()).toBe(1));
-    expect(screen.getByText("Rhyz")).toBeInTheDocument();
-    expect(screen.getByText("Vael")).toBeInTheDocument();
-    expect(screen.queryByText("Dottua")).not.toBeInTheDocument();
+    expect(screen.getByText("Alfa")).toBeInTheDocument();
+    expect(screen.getByText("Bravo")).toBeInTheDocument();
+    expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
     // A filter that still has nodes is never an empty section.
     expect(
       screen.queryByText("Esta sección no tiene nodos para mostrar."),
@@ -1282,14 +1282,14 @@ describe("GraphView", () => {
     // entity (prefix semantics reach into subfolders).
     await user.click(screen.getByRole("checkbox", { name: "lore" }));
     await waitFor(() => expect(countNodes()).toBe(2));
-    expect(screen.getByText("Dottua")).toBeInTheDocument();
-    expect(screen.getByText("Historia")).toBeInTheDocument();
+    expect(screen.getByText("Gamma")).toBeInTheDocument();
+    expect(screen.getByText("Delta")).toBeInTheDocument();
 
     // Adding "personajes" is a union: entities from both folders show.
     await user.click(screen.getByRole("checkbox", { name: "personajes" }));
     await waitFor(() => expect(countNodes()).toBe(4));
-    expect(screen.getByText("Rhyz")).toBeInTheDocument();
-    expect(screen.getByText("Vael")).toBeInTheDocument();
+    expect(screen.getByText("Alfa")).toBeInTheDocument();
+    expect(screen.getByText("Bravo")).toBeInTheDocument();
   });
 
   it('restores every node and edge via "Todas las secciones"', async () => {
@@ -1309,7 +1309,7 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(countEdges()).toBe(2));
-    expect(screen.getByText("Dottua")).toBeInTheDocument();
+    expect(screen.getByText("Gamma")).toBeInTheDocument();
   });
 
   it("shows the empty-section message when the folder has no visible nodes", async () => {
@@ -1324,7 +1324,7 @@ describe("GraphView", () => {
 
     await user.click(screen.getByRole("checkbox", { name: "lore" }));
 
-    // Umbra is the only lore/ entity and it is an orphan (hidden by default),
+    // Zeta is the only lore/ entity and it is an orphan (hidden by default),
     // so the section renders no nodes and shows the empty-section message.
     await waitFor(() => expect(countNodes()).toBe(0));
     expect(
@@ -1362,7 +1362,7 @@ describe("GraphView", () => {
     // A click on a handle is click-to-connect, never selection.
     fireEvent.click(
       document.querySelector(
-        '.react-flow__handle[data-nodeid="Stal::Rhyz"][data-handlepos="bottom"]',
+        '.react-flow__handle[data-nodeid="Grupo::Alfa"][data-handlepos="bottom"]',
       ) as Element,
     );
 
@@ -1378,31 +1378,31 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
-    expect(screen.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Alfa" })).toBeInTheDocument();
 
-    // Click the Vael NODE (the panel already renders a "Vael" neighbor link,
+    // Click the Bravo NODE (the panel already renders a "Bravo" neighbor link,
     // so the click must target the graph node label, not the panel).
     fireEvent.click(
       document.querySelector(
-        '.react-flow__node[data-id="Stal::Vael"] span',
+        '.react-flow__node[data-id="Grupo::Bravo"] span',
       ) as Element,
     );
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "Vael" }),
+        screen.getByRole("heading", { name: "Bravo" }),
       ).toBeInTheDocument(),
     );
     expect(
-      screen.queryByRole("heading", { name: "Rhyz" }),
+      screen.queryByRole("heading", { name: "Alfa" }),
     ).not.toBeInTheDocument();
   });
 
   it("renders the selected entity's metadata in the panel", async () => {
     const WITH_CONTENT: GraphEntity[] = [
-      { ...LINKED[0], content: "Rhyz es un cazador de la estepa." },
+      { ...LINKED[0], content: "Alfa es un cazador de la estepa." },
       ...LINKED.slice(1),
     ];
     mockFetch.mockResolvedValue({ entities: WITH_CONTENT, links: LINKS });
@@ -1410,21 +1410,21 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
     // Scope to the panel: the sidebar's status select also renders "Canon".
     const panel = within(screen.getByTestId("node-inspector-panel"));
 
-    expect(panel.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+    expect(panel.getByRole("heading", { name: "Alfa" })).toBeInTheDocument();
     expect(panel.getByText("Personaje")).toBeInTheDocument();
     // Status chip via STATUS_META (stable → "Canon").
     expect(panel.getByText("Canon")).toBeInTheDocument();
-    expect(panel.getByText("personajes/Rhyz.md")).toBeInTheDocument();
+    expect(panel.getByText("personajes/Alfa.md")).toBeInTheDocument();
     expect(
-      panel.getByText("Rhyz es un cazador de la estepa."),
+      panel.getByText("Alfa es un cazador de la estepa."),
     ).toBeInTheDocument();
-    // Rhyz's forward link "Vael" resolves to a clickable neighbor link.
-    expect(panel.getByRole("button", { name: "Vael" })).toBeInTheDocument();
+    // Alfa's forward link "Bravo" resolves to a clickable neighbor link.
+    expect(panel.getByRole("button", { name: "Bravo" })).toBeInTheDocument();
   });
 
   it("centers a visible neighbor via fitView when its panel link is clicked", async () => {
@@ -1434,23 +1434,23 @@ describe("GraphView", () => {
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
 
     const fitViewSpy = vi.spyOn(mockFlowInstance.instance!, "fitView");
     fitViewSpy.mockClear();
 
-    fireEvent.click(screen.getByRole("button", { name: "Vael" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bravo" }));
 
     expect(fitViewSpy).toHaveBeenCalledWith({
-      nodes: [{ id: "Stal::Vael" }],
+      nodes: [{ id: "Grupo::Bravo" }],
       duration: 300,
     });
   });
 
   it("renders a status-filtered neighbor as plain text (not a link)", async () => {
     const user = userEvent.setup();
-    // First fetch: all three. Stable refetch drops Vael (draft) entirely.
+    // First fetch: all three. Stable refetch drops Bravo (draft) entirely.
     mockFetch
       .mockResolvedValueOnce({ entities: LINKED, links: LINKS })
       .mockResolvedValueOnce({
@@ -1461,29 +1461,29 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
-    expect(screen.getByRole("button", { name: "Vael" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bravo" })).toBeInTheDocument();
 
     await user.selectOptions(
       screen.getByLabelText("Filtrar por estado"),
       "stable",
     );
 
-    // Rhyz is still stable → selection survives the refetch…
+    // Alfa is still stable → selection survives the refetch…
     await waitFor(() => expect(countNodes()).toBe(2));
     expect(screen.getByTestId("node-inspector-panel")).toBeInTheDocument();
-    // …but Vael is no longer loaded → its entry degrades to plain text.
-    const vaelEntry = screen.getByText("Vael");
+    // …but Bravo is no longer loaded → its entry degrades to plain text.
+    const vaelEntry = screen.getByText("Bravo");
     expect(vaelEntry.tagName).toBe("SPAN");
     expect(
-      screen.queryByRole("button", { name: "Vael" }),
+      screen.queryByRole("button", { name: "Bravo" }),
     ).not.toBeInTheDocument();
   });
 
   it("clears the selection when the selected entity leaves the loaded set", async () => {
     const user = userEvent.setup();
-    // First fetch: all three. Stable refetch drops Vael (draft) entirely.
+    // First fetch: all three. Stable refetch drops Bravo (draft) entirely.
     mockFetch
       .mockResolvedValueOnce({ entities: LINKED, links: LINKS })
       .mockResolvedValueOnce({
@@ -1494,16 +1494,16 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Vael"));
+    fireEvent.click(screen.getByText("Bravo"));
     await screen.findByTestId("node-inspector-panel");
-    expect(screen.getByRole("heading", { name: "Vael" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bravo" })).toBeInTheDocument();
 
     await user.selectOptions(
       screen.getByLabelText("Filtrar por estado"),
       "stable",
     );
 
-    // Vael (draft) is gone after the stable refetch → the panel closes.
+    // Bravo (draft) is gone after the stable refetch → the panel closes.
     await waitFor(() =>
       expect(screen.queryByTestId("node-inspector-panel")).not.toBeInTheDocument(),
     );
@@ -1515,13 +1515,13 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
 
     fireEvent.click(screen.getByRole("button", { name: "Abrir ficha" }));
 
     expect(navigate).toHaveBeenCalledWith(
-      "/wiki/vibrantes/entity/Rhyz",
+      "/wiki/vibrantes/entity/Alfa",
     );
   });
 
@@ -1531,7 +1531,7 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
 
     fireEvent.click(
@@ -1548,7 +1548,7 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
 
     // jsdom viewport is 1024px → limits [205, 410]. Drag far left (600px of
@@ -1572,7 +1572,7 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    fireEvent.click(screen.getByText("Rhyz"));
+    fireEvent.click(screen.getByText("Alfa"));
     await screen.findByTestId("node-inspector-panel");
 
     // Activate focus mode → panel AND divider disappear (canvas expands).
