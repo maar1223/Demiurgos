@@ -13,6 +13,7 @@ from import_relations import (
     RelationTarget,
     build_relation_targets,
     grounded_relations,
+    relation_quality,
 )
 
 HUB_A = RelationTarget(
@@ -271,3 +272,31 @@ def test_build_targets_from_candidate_like_objects():
         RelationTarget("X::Uno", "Uno", "lore/uno.md"),
         RelationTarget("X::Dos", "Dos", "lore/dos.md"),
     ]
+
+
+def test_relation_quality_classifies_orphans():
+    class Candidate:
+        def __init__(self, cid, preview, relaciones, graph=True):
+            self.candidate_id = cid
+            self.canonical_id = cid
+            self.normalized_identity = cid
+            self.display_title = cid
+            self.materialized_path = f"lore/{cid}.md"
+            self.content_preview = preview
+            self.frontmatter = {
+                "relaciones": relaciones,
+                "graph": graph,
+            }
+
+    candidates = [
+        Candidate("lore/alfa.md", "Alfa menciona a Bravo.", ["lore/bravo.md"]),
+        Candidate("lore/bravo.md", "Bravo no menciona a nadie.", []),
+        Candidate("lore/charlie.md", "Charlie menciona a Bravo.", []),
+        Candidate("lore/meta.md", "Una nota de trabajo.", [], graph=False),
+    ]
+    report = relation_quality(candidates)
+
+    assert report["lore/alfa.md"] == []
+    assert report["lore/bravo.md"] == ["standalone"]
+    assert report["lore/charlie.md"] == ["false-orphan"]
+    assert report["lore/meta.md"] == ["non-entity"]

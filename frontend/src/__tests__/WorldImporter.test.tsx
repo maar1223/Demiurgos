@@ -1469,6 +1469,18 @@ describe("WorldImporter — structured frontmatter review (Phase 4)", () => {
     ).toBeInTheDocument();
   });
 
+  it("surfaces the relation-quality report on the candidate", async () => {
+    mockAnalyzeToReview([
+      candidate({ relation_quality: ["standalone"] }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    const block = screen.getByTestId("relation-quality-c1");
+    expect(block).toHaveTextContent("Relación con el grafo");
+    expect(block).toHaveTextContent("Sin relaciones ni menciones");
+  });
+
   it("renders the generated frontmatter state badge and canonical identity", async () => {
     mockAnalyzeToReview([
       candidate({

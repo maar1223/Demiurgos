@@ -335,3 +335,84 @@ def _dict_get(candidate: object, key: str) -> str:
         value = candidate.get(key)
         return str(value) if value else ""
     return ""
+
+
+#: Report tags (S8). ``false-orphan`` is a safety net: after grounding, a
+#: ficha with no relation should not name another ficha of the same job.
+QUALITY_FALSE_ORPHAN = "false-orphan"
+QUALITY_STANDALONE = "standalone"
+QUALITY_NON_ENTITY = "non-entity"
+
+
+def relation_quality(candidates: Iterable[object]) -> dict[str, list[str]]:
+    """Classify every candidate's relation health for the review screen.
+
+    * ``non-entity`` — the document opted out of the graph (``graph: false``).
+    * ``false-orphan`` — no relation, yet the body names another ficha of the
+      same import (the extraction should have linked it; this catches a miss).
+    * ``standalone`` — no relation and no mention: nothing in the text connects
+      it, so the author decides.
+
+    Job-local on purpose: the cross-world targets already participate in the
+    extraction, so this report only audits the generated result.
+    """
+
+    candidate_list = list(candidates)
+    targets = build_relation_targets(candidate_list)
+    report: dict[str, list[str]] = {}
+    for candidate in candidate_list:
+        candidate_id = str(
+            getattr(candidate, "candidate_id", "")
+            or _dict_get(candidate, "candidate_id")
+        )
+        if not candidate_id:
+            continue
+        frontmatter = getattr(candidate, "frontmatter", None) or _dict_get(
+            candidate, "frontmatter"
+        )
+        graph = True
+        relations: list[str] = []
+        if frontmatter is not None:
+            graph = getattr(frontmatter, "graph", True)
+            relations = list(getattr(frontmatter, "relaciones", []) or [])
+            if isinstance(frontmatter, dict):
+                graph = bool(frontmatter.get("graph", True))
+                relations = list(frontmatter.get("relaciones") or [])
+        if graph is False:
+            report[candidate_id] = [QUALITY_NON_ENTITY]
+            continue
+        if relations:
+            report[candidate_id] = []
+            continue
+        body = str(
+            getattr(candidate, "content_preview", "")
+            or _dict_get(candidate, "content_preview")
+        )
+        named = _names_another(candidate, body, targets)
+        report[candidate_id] = [QUALITY_FALSE_ORPHAN if named else QUALITY_STANDALONE]
+    return report
+
+
+def _names_another(
+    candidate: object, body: str, targets: Sequence[RelationTarget]
+) -> bool:
+    source_id = str(
+        getattr(candidate, "canonical_id", "")
+        or getattr(candidate, "normalized_identity", "")
+        or _dict_get(candidate, "canonical_id")
+        or _dict_get(candidate, "id")
+    )
+    source_path = str(
+        getattr(candidate, "materialized_path", "")
+        or _dict_get(candidate, "materialized_path")
+        or getattr(candidate, "path", "")
+        or _dict_get(candidate, "path")
+    )
+    body_norm = _normalize(body or "")
+    generic = _generic_tokens(source_path)
+    for target in targets:
+        if target.canonical_id == source_id:
+            continue
+        if _match_target(target, body_norm, generic) is not None:
+            return True
+    return False
