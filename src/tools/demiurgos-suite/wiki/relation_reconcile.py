@@ -206,19 +206,31 @@ def create_preimage_backup(
     *,
     counts: dict[str, int] | None = None,
     moment: datetime | None = None,
-) -> Path:
-    """Copy every affected file under ``.relations/preimages/<stamp>/``."""
+) -> tuple[Path, tuple[str, ...]]:
+    """Copy every affected file under ``.relations/preimages/<stamp>/``.
+
+    Per-file fail-open: a file that cannot be copied is returned as skipped so
+    the caller reports it instead of aborting the whole pass. Only a failure to
+    write the manifest (the backup itself) raises.
+    """
     stamp = (moment or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%S%fZ")
     root = Path(world_dir) / ".relations" / PREIMAGES_DIR / stamp
     files_root = root / "files"
     copied: list[str] = []
+    skipped: list[str] = []
     for relative in sorted(set(paths)):
         source = Path(world_dir) / relative
         if not source.is_file():
+            skipped.append(relative)
             continue
         destination = files_root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            logger.warning("relations: cannot back up %s: %s", relative, exc)
+            skipped.append(relative)
+            continue
         copied.append(relative)
     manifest = {
         "version": SCHEMA_VERSION,
@@ -237,4 +249,4 @@ def create_preimage_backup(
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
-    return root
+    return root, tuple(skipped)

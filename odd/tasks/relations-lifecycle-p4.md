@@ -78,3 +78,16 @@ L3 Evidence: a second pass on a reconciled world yields an empty plan and create
 no backup; a muted ficha and a `graph: false` ficha are untouched; a rejected
 pair is removed rather than re-added. The apply recomputes the plan server-side,
 so a client can never supply the changes.
+
+L4 Independent verification found two blockers and a CRLF advisory, all fixed:
+- an unreadable affected file aborted the whole apply with a 500 before the
+  fail-open loop; the pre-image backup is now per-file fail-open and the skipped
+  files are reported in `failed`, with only a manifest failure aborting;
+- a mute recorded through an accepted spelling (`lore/./alpha.md`) was stored raw
+  and reconcile compared the index path; the mute endpoint now stores the
+  canonical world-relative path;
+- the appliers read with universal newlines and rewrote CRLF fichas as LF; the
+  three writers now read with `newline=""`.
+The verifier's ten probes are committed as
+`tests/test_relations_lifecycle_p4_verifier.py`. Final evidence: backend 4428
+passed / 8 skipped; frontend 1658 passed; build green.

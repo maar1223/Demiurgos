@@ -200,12 +200,14 @@ def test_preimage_backup_copies_files_and_writes_a_manifest(tmp_path: Path) -> N
     (world / "lore" / "beta.md").write_text("beta\n", encoding="utf-8")
     moment = datetime(2026, 10, 31, 22, 0, 0, tzinfo=timezone.utc)
 
-    root = create_preimage_backup(
+    root, skipped = create_preimage_backup(
         world,
         ["lore/alpha.md", "lore/beta.md", "lore/missing.md"],
         counts={"additions": 2, "removals": 1},
         moment=moment,
     )
+
+    assert skipped == ("lore/missing.md",)
 
     assert (root / "files" / "lore" / "alpha.md").read_text(encoding="utf-8") == "alpha\n"
     assert (root / "files" / "lore" / "beta.md").read_text(encoding="utf-8") == "beta\n"

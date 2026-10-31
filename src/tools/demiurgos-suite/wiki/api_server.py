@@ -6515,7 +6515,8 @@ def _apply_relation_plan(mundo: str, plan) -> bool:
         if full is None or not full.is_file():
             continue
         with _target_lock_for(full):
-            content = full.read_text(encoding="utf-8")
+            with open(full, "r", encoding="utf-8", newline="") as handle:
+                content = handle.read()
             existing = _relacion_keys(content)
             existing_set = set(existing)
             structural = plan.structural.get(rel_path, frozenset())
@@ -6673,12 +6674,16 @@ def _set_relation_mute(mundo: str, body: dict, *, muted: bool) -> dict:
     full = _resolve_mundo_path(mundo, path)
     if full is None or not full.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    # Store the canonical world-relative path: the same file can be requested
+    # with an accepted spelling (``lore/./alpha.md``) and the reconcile pass
+    # compares against the index path.
+    canonical = full.relative_to(mundo_dir).as_posix()
     changed = (
-        mute_relation_candidate(mundo_dir, path)
+        mute_relation_candidate(mundo_dir, canonical)
         if muted
-        else unmute_relation_candidate(mundo_dir, path)
+        else unmute_relation_candidate(mundo_dir, canonical)
     )
-    return {"success": True, "path": path, "muted": muted, "changed": changed}
+    return {"success": True, "path": canonical, "muted": muted, "changed": changed}
 
 
 @app.post("/api/{mundo}/relations/mute")
@@ -6756,7 +6761,8 @@ def relations_proposal_accept(mundo: str, proposal_id: str):
     if full is None or not full.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     with _target_lock_for(full):
-        content = full.read_text(encoding="utf-8")
+        with open(full, "r", encoding="utf-8", newline="") as handle:
+            content = handle.read()
         try:
             updated = _set_frontmatter_relaciones(
                 content, "create", proposal.target_id
@@ -6840,7 +6846,7 @@ def relations_reconcile(mundo: str):
             "removals": 0,
         }
     try:
-        backup = create_preimage_backup(
+        backup, unreadable = create_preimage_backup(
             mundo_dir,
             [file_plan.path for file_plan in plan.files],
             counts={"additions": plan.additions, "removals": plan.removals},
@@ -6851,15 +6857,18 @@ def relations_reconcile(mundo: str):
             detail=f"No se pudo crear el respaldo previo: {exc}",
         )
     applied = 0
-    failed: list[str] = []
+    failed: list[str] = list(unreadable)
     for file_plan in plan.files:
+        if file_plan.path in unreadable:
+            continue
         full = _resolve_mundo_path(mundo, file_plan.path)
         if full is None or not full.is_file():
             failed.append(file_plan.path)
             continue
         try:
             with _target_lock_for(full):
-                content = full.read_text(encoding="utf-8")
+                with open(full, "r", encoding="utf-8", newline="") as handle:
+                    content = handle.read()
                 updated = content
                 for removal in file_plan.remove:
                     try:
@@ -6877,7 +6886,7 @@ def relations_reconcile(mundo: str):
                         continue
                 if updated != content:
                     _atomic_write(full, updated)
-            applied += 1
+                    applied += 1
         except Exception as exc:  # noqa: BLE001 — one file must not abort the pass
             logger.warning("relations: reconcile failed for %s: %s", file_plan.path, exc)
             failed.append(file_plan.path)
