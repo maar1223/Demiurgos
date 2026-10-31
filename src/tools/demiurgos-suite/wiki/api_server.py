@@ -71,6 +71,7 @@ from relation_candidates import scan_candidates
 from relation_proposals import load_proposals, remove_proposal
 from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
+from relation_state import load_state as load_relation_state
 from relation_state import mute as mute_relation_candidate
 from relation_state import unmute as unmute_relation_candidate
 from relation_sweep import sweep_next
@@ -6643,8 +6644,10 @@ def relations_candidates(mundo: str):
         mundos_dir=_mundos_dir(),
         index=_get_graph(mundo),
     )
+    state = load_relation_state(_mundos_dir() / mundo)
     return {
         "count": len(items),
+        "muted": sorted(state.muted),
         "items": [
             {
                 "path": candidate.path,

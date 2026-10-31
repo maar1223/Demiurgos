@@ -2135,6 +2135,47 @@ export interface ChatAttachment {
   truncated: boolean;
 }
 
+/** P3 — deterministic sweep candidate: a ficha the Author may review. */
+export interface RelationCandidate {
+  path: string;
+  id: string;
+  title: string;
+  digest: string;
+  mentions: string[];
+  missing: string[];
+}
+
+export interface RelationCandidatesResponse {
+  count: number;
+  items: RelationCandidate[];
+  muted: string[];
+}
+
+/** P3 — one semantic relationship awaiting the Author's verdict. */
+export interface RelationProposal {
+  id: string;
+  source_path: string;
+  source_key: string;
+  target_id: string;
+  relationship_type: string;
+  confidence: number;
+  evidence: string;
+  created_at: string;
+}
+
+export interface RelationProposalsResponse {
+  count: number;
+  items: RelationProposal[];
+}
+
+export interface RelationSweepResponse {
+  status: "swept" | "done" | "unavailable";
+  path: string;
+  created: number;
+  pending: number;
+  message: string;
+}
+
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
  *  Telegram webhook/getUpdates conflict, or `import.job_not_found` for the

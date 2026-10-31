@@ -63,8 +63,10 @@ Hermes bridge; the sweep owns only the propose-don't-write orchestration.
   endpoints. Route: inline. Evidence: `test_relation_proposals.py` (6),
   `test_relation_sweep.py` (6), P3 API tests (7); full backend suite 4404
   passed, 8 skipped. A silent provider leaves the ficha unswept.
-- [ ] T5 — Frontend "Propuestas" tab: badge, sweep progress, queue with
-  accept/reject/mute.
+- [x] T5 — Frontend "Propuestas" tab: badge, sweep progress, queue with
+  accept/reject/mute. Route: inline. Evidence: `ProposalsPanel.tsx`;
+  `RelacionesCanon.test.tsx` 5 passed; full frontend suite 1657 passed across
+  133 files; typecheck and build green.
 - [x] T6 — Ship the new modules in the runtime payload manifest. Route: inline.
   Evidence: 179 payload files, `relation_state.py`, `relation_candidates.py`,
   `relation_proposals.py` and `relation_sweep.py` listed.
@@ -81,3 +83,9 @@ recomendacion"
 L2 Decision: the reminder is a passive badge driven by real candidates, not a
 change counter, and it re-arms on body edits. A change counter would fire when
 nothing is actionable and stay silent when a whole imported world is pending.
+
+L3 Delivery: the panel sweeps exactly one ficha per click (one model call), so
+the cost is explicit and cancelable by simply not clicking again. Accept writes
+through the shared frontmatter writer, reject joins P2's memory, and a silent
+provider leaves the ficha reviewable instead of hiding it. Full evidence:
+backend 4404 passed / 8 skipped; frontend 1657 passed; build green.

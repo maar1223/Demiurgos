@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
+import ProposalsPanel from "@/components/organisms/ProposalsPanel";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Icon } from "@/components/atoms/Icon";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -20,8 +21,8 @@ const TABS: readonly { key: TabKey; label: MessageKey }[] = [
  * Relaciones y Canon page (`/taller-mundo/:mundo/relaciones-canon`) — W9/W12.
  *
  * Three-tab shell (BLOQUE 4 · Slice A): "Grafo" is active by default and
- * renders the GraphView; "Conflictos" and "Propuestas" are follow-up slices
- * and render a "Próximamente" placeholder (no data, no actions).
+ * renders the GraphView; "Propuestas" renders the on-demand semantic sweep;
+ * "Conflictos" is still a follow-up slice and renders a placeholder.
  */
 export default function RelacionesCanon() {
   const { t } = useAppLanguage();
@@ -65,6 +66,15 @@ export default function RelacionesCanon() {
         {activeTab === "grafo" ? (
           mundo ? (
             <GraphView mundo={mundo} />
+          ) : (
+            <EmptyState
+              icon="error"
+              message={t("relaciones.missingParams")}
+            />
+          )
+        ) : activeTab === "propuestas" ? (
+          mundo ? (
+            <ProposalsPanel mundo={mundo} />
           ) : (
             <EmptyState
               icon="error"

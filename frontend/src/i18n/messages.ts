@@ -1002,6 +1002,29 @@ export const messages = {
     "relaciones.missingParams":
       "Faltan parámetros de ruta. Selecciona un mundo desde la página principal.",
 
+    "relaciones.propuestas.badge": "{count} fichas con menciones para revisar",
+    "relaciones.propuestas.badgeNone": "No hay fichas para revisar",
+    "relaciones.propuestas.sweep": "Barrer siguiente",
+    "relaciones.propuestas.sweeping": "Barriendo…",
+    "relaciones.propuestas.hint":
+      "Una ficha por vez. El modelo solo propone: nada se escribe hasta que aceptes.",
+    "relaciones.propuestas.queue": "Propuestas pendientes",
+    "relaciones.propuestas.empty": "No hay propuestas pendientes.",
+    "relaciones.propuestas.candidates": "Fichas candidatas",
+    "relaciones.propuestas.muted": "Dejadas así",
+    "relaciones.propuestas.accept": "Aceptar",
+    "relaciones.propuestas.reject": "Rechazar",
+    "relaciones.propuestas.mute": "Dejar así",
+    "relaciones.propuestas.unmute": "Volver a sugerir",
+    "relaciones.propuestas.confidence": "confianza {value}%",
+    "relaciones.propuestas.swept":
+      "Revisada {path}: {count} propuestas nuevas.",
+    "relaciones.propuestas.done": "No quedan fichas por revisar.",
+    "relaciones.propuestas.unavailable":
+      "El proveedor semántico no respondió. Intenta de nuevo.",
+    "relaciones.propuestas.loadError": "No se pudieron cargar las propuestas.",
+    "relaciones.propuestas.actionError": "No se pudo completar la acción.",
+
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
     "backup.provider.googleDrive": "Google Drive",
@@ -3164,6 +3187,29 @@ export const messages = {
     "relaciones.tab.propuestas": "Proposals",
     "relaciones.missingParams":
       "Missing route parameters. Select a world from the main page.",
+
+    "relaciones.propuestas.badge": "{count} fiches with mentions to review",
+    "relaciones.propuestas.badgeNone": "Nothing to review",
+    "relaciones.propuestas.sweep": "Sweep next",
+    "relaciones.propuestas.sweeping": "Sweeping…",
+    "relaciones.propuestas.hint":
+      "One fiche at a time. The model only proposes: nothing is written until you accept.",
+    "relaciones.propuestas.queue": "Pending proposals",
+    "relaciones.propuestas.empty": "No pending proposals.",
+    "relaciones.propuestas.candidates": "Candidate fiches",
+    "relaciones.propuestas.muted": "Left as is",
+    "relaciones.propuestas.accept": "Accept",
+    "relaciones.propuestas.reject": "Reject",
+    "relaciones.propuestas.mute": "Leave as is",
+    "relaciones.propuestas.unmute": "Suggest again",
+    "relaciones.propuestas.confidence": "confidence {value}%",
+    "relaciones.propuestas.swept":
+      "Reviewed {path}: {count} new proposals.",
+    "relaciones.propuestas.done": "Nothing left to review.",
+    "relaciones.propuestas.unavailable":
+      "The semantic provider did not respond. Try again.",
+    "relaciones.propuestas.loadError": "Could not load proposals.",
+    "relaciones.propuestas.actionError": "Could not complete the action.",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
