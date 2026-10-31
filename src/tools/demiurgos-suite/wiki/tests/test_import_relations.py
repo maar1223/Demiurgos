@@ -1,0 +1,273 @@
+# -*- coding: utf-8 -*-
+"""Grounded relation extraction — importer relations must come from the body.
+
+The defect this covers (odd/tasks/importer-relaciones-grounding.md, L1/L4):
+relations used to be generated from batch summaries, producing complete graphs
+for batch mates and empty lists for single-ficha documents.
+"""
+
+from __future__ import annotations
+
+from import_relations import (
+    GroundedRelation,
+    RelationTarget,
+    build_relation_targets,
+    grounded_relations,
+)
+
+HUB_A = RelationTarget(
+    canonical_id="Familia A",
+    name="Familia A",
+    path="lore/familia-a/familia-a.md",
+)
+A_ONE = RelationTarget(
+    canonical_id="Familia A::Elemento 1",
+    name="Elemento 1",
+    path="lore/familia-a/elemento-1.md",
+)
+A_TWO = RelationTarget(
+    canonical_id="Familia A::Elemento 2",
+    name="Elemento 2",
+    path="lore/familia-a/elemento-2.md",
+)
+A_THREE = RelationTarget(
+    canonical_id="Familia A::Elemento 3",
+    name="Elemento 3",
+    path="lore/familia-a/elemento-3.md",
+)
+
+HUB_B = RelationTarget(
+    canonical_id="Familia B",
+    name="Familia B",
+    path="lore/familia-b/familia-b.md",
+)
+B_ONE = RelationTarget(
+    canonical_id="Familia B::Elemento 1 – Enlace",
+    name="Elemento 1 – Enlace",
+    path="lore/familia-b/elemento-1-enlace.md",
+)
+B_TWO = RelationTarget(
+    canonical_id="Familia B::Elemento 2 – Impulso",
+    name="Elemento 2 – Impulso",
+    path="lore/familia-b/elemento-2-impulso.md",
+)
+
+
+def test_siblings_without_mentions_produce_no_clique():
+    # The old defect: a batch of siblings linked every pair. Nothing in the
+    # body names the others, so nothing may be written.
+    relations = grounded_relations(
+        body="El Elemento 2 estabiliza las vibraciones de su entorno.",
+        source_id=A_TWO.canonical_id,
+        source_path=A_TWO.path,
+        targets=[HUB_A, A_ONE, A_THREE],
+        max_relations=12,
+    )
+
+    # Only the folder index (belonging), never the siblings.
+    assert relations == [
+        GroundedRelation(canonical_id=HUB_A.canonical_id, evidence="folder-index")
+    ]
+
+
+def test_only_the_mentioned_sibling_is_linked():
+    body = "Como el Elemento 3, este Elemento 2 canaliza la energía."
+    relations = grounded_relations(
+        body=body,
+        source_id=A_TWO.canonical_id,
+        source_path=A_TWO.path,
+        targets=[HUB_A, A_ONE, A_THREE],
+    )
+
+    assert relations == [
+        GroundedRelation(
+            canonical_id=A_THREE.canonical_id,
+            evidence="full-name",
+        ),
+        GroundedRelation(canonical_id=HUB_A.canonical_id, evidence="folder-index"),
+    ]
+
+
+def test_the_folder_index_is_derived_from_the_path():
+    relations = grounded_relations(
+        body="Un elemento cualquiera.",
+        source_id=A_TWO.canonical_id,
+        source_path=A_TWO.path,
+        targets=[HUB_A, A_ONE, A_THREE],
+    )
+
+    assert relations == [
+        GroundedRelation(canonical_id=HUB_A.canonical_id, evidence="folder-index")
+    ]
+
+
+def test_the_folder_index_lists_its_members():
+    other_folder = RelationTarget(
+        canonical_id="Otro::Fuera",
+        name="Fuera",
+        path="lore/otro/fuera.md",
+    )
+    relations = grounded_relations(
+        body="Índice de la familia.",
+        source_id=HUB_A.canonical_id,
+        source_path=HUB_A.path,
+        targets=[A_ONE, A_TWO, A_THREE, other_folder],
+    )
+
+    assert [relation.canonical_id for relation in relations] == [
+        A_ONE.canonical_id,
+        A_TWO.canonical_id,
+        A_THREE.canonical_id,
+    ]
+    assert all(relation.evidence == "folder-index" for relation in relations)
+
+
+def test_alias_after_a_dash_is_evidence():
+    body = "Su vínculo con el Enlace es profundo."
+    relations = grounded_relations(
+        body=body,
+        source_id=B_TWO.canonical_id,
+        source_path=B_TWO.path,
+        targets=[B_ONE],
+    )
+
+    assert relations == [
+        GroundedRelation(canonical_id=B_ONE.canonical_id, evidence="alias")
+    ]
+
+
+def test_filename_stem_token_is_evidence():
+    target = RelationTarget(
+        canonical_id="Grupo::Elemento Bravo",
+        name="Elemento Bravo",
+        path="lore/grupo/elemento-bravo.md",
+    )
+    body = "El término bravo busca autonomía."
+    relations = grounded_relations(
+        body=body,
+        source_id="Grupo::Elemento Alfa",
+        source_path="lore/grupo/elemento-alfa.md",
+        targets=[target],
+    )
+
+    assert relations == [
+        GroundedRelation(canonical_id=target.canonical_id, evidence="stem")
+    ]
+
+
+def test_generic_tokens_are_not_evidence():
+    # "elemento" is shared by the source folder; it must not link the whole
+    # family. Only a distinctive token can.
+    target = RelationTarget(
+        canonical_id="Grupo::Elemento Zeta",
+        name="Elemento Zeta",
+        path="lore/grupo/elemento-zeta.md",
+    )
+    relations = grounded_relations(
+        body="Este elemento describe un temperamento calmado.",
+        source_id="Grupo::Elemento Eta",
+        source_path="lore/grupo/elemento-eta.md",
+        targets=[target],
+    )
+
+    assert relations == []
+
+
+def test_ordinal_evidence():
+    target = RelationTarget(
+        canonical_id="Escala::3er Nivel – Ascendente",
+        name="3er Nivel – Ascendente",
+        path="lore/escala/3er-nivel.md",
+    )
+    relations = grounded_relations(
+        body="El 3er nivel proyecta la energía hacia el entorno.",
+        source_id="Escala::1er Nivel – Base",
+        source_path="lore/escala/1er-nivel.md",
+        targets=[target],
+    )
+
+    assert relations == [
+        GroundedRelation(canonical_id=target.canonical_id, evidence="ordinal")
+    ]
+
+
+def test_self_is_never_related():
+    relations = grounded_relations(
+        body="Elemento 2 habla de Elemento 2.",
+        source_id=A_TWO.canonical_id,
+        source_path=A_TWO.path,
+        targets=[A_TWO],
+    )
+
+    assert relations == []
+
+
+def test_result_is_capped_and_deterministic():
+    targets = [
+        RelationTarget(
+            canonical_id=f"C{i}",
+            name=f"Concepto {i}",
+            path=f"lore/c/concepto-{i}.md",
+        )
+        for i in range(20)
+    ]
+    body = " ".join(target.name for target in targets)
+    first = grounded_relations(
+        body=body,
+        source_id="source",
+        source_path="lore/c/source.md",
+        targets=targets,
+        max_relations=5,
+    )
+    second = grounded_relations(
+        body=body,
+        source_id="source",
+        source_path="lore/c/source.md",
+        targets=targets,
+        max_relations=5,
+    )
+
+    assert len(first) == 5
+    assert first == second
+    assert [relation.canonical_id for relation in first] == sorted(
+        relation.canonical_id for relation in first
+    )
+
+
+def test_accent_and_case_insensitive_name_match():
+    relations = grounded_relations(
+        body="El elemento 1 enlace aparece aquí.",
+        source_id="otro",
+        source_path="lore/otro.md",
+        targets=[B_ONE],
+    )
+
+    assert relations == [
+        GroundedRelation(
+            canonical_id=B_ONE.canonical_id, evidence="full-name"
+        )
+    ]
+
+
+def test_build_targets_from_candidate_like_objects():
+    class Candidate:
+        canonical_id = "X::Uno"
+        normalized_identity = "uno"
+        display_title = "Uno"
+        materialized_path = "lore/uno.md"
+
+    targets = build_relation_targets(
+        [
+            Candidate(),
+            {
+                "canonical_id": "X::Dos",
+                "name": "Dos",
+                "path": "lore/dos.md",
+            },
+        ]
+    )
+
+    assert targets == [
+        RelationTarget("X::Uno", "Uno", "lore/uno.md"),
+        RelationTarget("X::Dos", "Dos", "lore/dos.md"),
+    ]

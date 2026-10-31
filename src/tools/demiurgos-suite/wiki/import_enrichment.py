@@ -38,6 +38,7 @@ import os
 import re
 from typing import Any, Callable, Iterable
 
+from import_relations import build_relation_targets, grounded_relations
 from import_models import (
     Candidate,
     ClassificationSuggestion,
@@ -1565,6 +1566,51 @@ def _fail_open_runner(
     return wrapper
 
 
+def _apply_grounded_relations(
+    candidates: list[Candidate],
+    catalog: list[Candidate],
+    world_entities: Iterable[object] | None = None,
+) -> list[Candidate]:
+    """Replace model-authored ``relaciones`` with body-grounded ones.
+
+    The enrichment model still writes title, type, description and the typed
+    relationship suggestions; it no longer decides WHICH fichas are connected.
+    A model that enumerates its batch produced complete graphs (and an empty
+    list for single-ficha documents), so the final relation set comes from
+    ``import_relations.grounded_relations`` instead.
+    """
+
+    # Batch targets first, then existing world entities the batch does not
+    # carry: a single-ficha document must be able to link to the world (S6).
+    targets = build_relation_targets(catalog)
+    seen = {target.canonical_id for target in targets}
+    for target in build_relation_targets(world_entities or ()):
+        if target.canonical_id not in seen:
+            targets.append(target)
+            seen.add(target.canonical_id)
+    patched: list[Candidate] = []
+    for candidate in candidates:
+        frontmatter = candidate.frontmatter
+        if frontmatter is None:
+            patched.append(candidate)
+            continue
+        relations = grounded_relations(
+            body=candidate.content_preview or "",
+            source_id=candidate.canonical_id or candidate.normalized_identity,
+            source_path=candidate.materialized_path,
+            targets=targets,
+        )
+        frontmatter = frontmatter.model_copy(
+            update={
+                "relaciones": [
+                    relation.canonical_id for relation in relations
+                ]
+            }
+        )
+        patched.append(candidate.model_copy(update={"frontmatter": frontmatter}))
+    return patched
+
+
 def analyze_ficha_funnel(
     candidates: list[Candidate],
     hermes_runner: Callable[[str, str], str] | None,
@@ -1576,6 +1622,7 @@ def analyze_ficha_funnel(
     max_workers: int | None = None,
     chunk_budget: int | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    world_entities: Iterable[object] | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 of the enrichment funnel over complete-ficha candidates.
 
@@ -1717,10 +1764,12 @@ def analyze_ficha_funnel(
         # their chunk (the amplified pass now sees the WHOLE import's summaries).
         if on_phase is not None:
             on_phase("last_filter")
-        return _recover_types_document_wide(
-            final_flat, hermes_runner, f"{base_session_id}:type-recovery",
-            catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
-            should_cancel=should_cancel)
+        return _apply_grounded_relations(
+            _recover_types_document_wide(
+                final_flat, hermes_runner, f"{base_session_id}:type-recovery",
+                catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
+                should_cancel=should_cancel),
+            catalog, world_entities)
 
     # Parallel path: a bounde ThreadPoolExecutor over independent chunks. Each
     # chunk uses its OWN session_id (unique per chunk, see ``_run_chunk``) so
@@ -1809,10 +1858,12 @@ def analyze_ficha_funnel(
     # chunk (the amplified pass now sees the WHOLE import's summaries).
     if on_phase is not None:
         on_phase("last_filter")
-    return _recover_types_document_wide(
-        ordered, hermes_runner, f"{base_session_id}:type-recovery",
-        catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
-        should_cancel=should_cancel)
+    return _apply_grounded_relations(
+        _recover_types_document_wide(
+            ordered, hermes_runner, f"{base_session_id}:type-recovery",
+            catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
+            should_cancel=should_cancel),
+        catalog, world_entities)
 
 
 # ---------------------------------------------------------------------------

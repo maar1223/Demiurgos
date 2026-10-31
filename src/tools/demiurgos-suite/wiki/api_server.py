@@ -10357,9 +10357,21 @@ def _make_import_enricher():
     from import_enrichment import analyze_ficha_funnel as _funnel
 
     def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
+        # Existing world entities give the grounded relation extraction its
+        # world-wide targets (a single-ficha document can still link to the
+        # world). Fail-open: no index means batch-only targets.
+        world_entities: list = []
+        try:
+            world = candidates[0].world if candidates else ""
+            graph = _get_graph(world) if world else None
+            if graph is not None:
+                world_entities = graph.entities()
+        except Exception:  # noqa: BLE001 — relation targets are advisory
+            world_entities = []
         return _funnel(candidates, hermes_runner=_sync_hermes_enricher,
                        progress_cb=progress_cb, on_phase=on_phase,
-                       should_cancel=should_cancel)
+                       should_cancel=should_cancel,
+                       world_entities=world_entities)
 
     return enricher
 

@@ -331,6 +331,97 @@ class TestTypeFrontmatter:
 
 
 # ---------------------------------------------------------------------------
+# Grounded relations (odd/tasks/importer-relaciones-grounding.md, S1/S2)
+# ---------------------------------------------------------------------------
+
+
+class TestGroundedRelations:
+    def test_model_authored_relaciones_are_replaced_by_body_evidence(self):
+        """A model that enumerates its batch must not create a clique.
+
+        The old defect linked every pair of a chunk; only the ficha whose body
+        names the target keeps that relation.
+        """
+        alpha = _ficha(
+            "Alpha", canonical_id="G::Alpha",
+            preview="Alpha menciona a Beta en su texto.",
+        )
+        beta = _ficha(
+            "Beta", canonical_id="G::Beta", preview="Beta no nombra a nadie.",
+        )
+        gamma = _ficha(
+            "Gamma", canonical_id="G::Gamma", preview="Gamma no nombra a nadie.",
+        )
+        for candidate, name in (
+            (alpha, "alpha"), (beta, "beta"), (gamma, "gamma"),
+        ):
+            candidate.materialized_path = f"lore/grupo/{name}.md"
+
+        def runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            candidates = data["candidates"]
+            if candidates and "body" in candidates[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in candidates
+                ]})
+            # Steps 3+4: the model enumerates every batch mate (the defect).
+            return json.dumps({"frontmatter": [
+                {"candidate_id": c["candidate_id"],
+                 "title": c["display_title"], "type": "concepto",
+                 "description": "desc",
+                 "relaciones": [o["canonical_id"] for o in candidates
+                                if o["candidate_id"] != c["candidate_id"]]}
+                for c in candidates
+            ]})
+
+        out = analyze_ficha_funnel([alpha, beta, gamma], runner)
+        relations = {
+            candidate.canonical_id: candidate.frontmatter.relaciones
+            for candidate in out
+        }
+
+        assert relations["G::Alpha"] == ["G::Beta"]
+        assert relations["G::Beta"] == []
+        assert relations["G::Gamma"] == []
+
+
+    def test_world_entities_extend_the_relation_targets(self):
+        """A single-ficha document can link to an entity already in the world."""
+        ficha = _ficha(
+            "Nueva", canonical_id="G::Nueva",
+            preview="La Nueva region limita con Destino al sur.",
+        )
+        ficha.materialized_path = "lore/nueva/nueva.md"
+
+        def runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            candidates = data["candidates"]
+            if candidates and "body" in candidates[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"], "summary": "resumen"}
+                    for c in candidates
+                ]})
+            return json.dumps({"frontmatter": [
+                {"candidate_id": c["candidate_id"],
+                 "title": c["display_title"], "type": "lugar",
+                 "description": "desc", "relaciones": []}
+                for c in candidates
+            ]})
+
+        out = analyze_ficha_funnel(
+            [ficha], runner,
+            world_entities=[
+                {"id": "Grupo::Destino", "name": "Destino",
+                 "path": "lore/grupo/destino.md"}
+            ],
+        )
+
+        assert out[0].frontmatter.relaciones == ["Grupo::Destino"]
+
+
+# ---------------------------------------------------------------------------
 # Task 2.4 — extended-timeout fail-open (design risk 4)
 # ---------------------------------------------------------------------------
 
