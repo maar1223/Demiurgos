@@ -91,3 +91,8 @@ L4 Independent verification found two blockers and a CRLF advisory, all fixed:
 The verifier's ten probes are committed as
 `tests/test_relations_lifecycle_p4_verifier.py`. Final evidence: backend 4428
 passed / 8 skipped; frontend 1658 passed; build green.
+
+L5 The Owner rejected the user-facing name "reconciliar" as accounting jargon.
+The UI now says "Sincronizar relaciones" / "Sincronizar ahora" (English: "Sync
+relations" / "Sync now"); internal module, endpoints and i18n keys keep the
+`reconcile` name, which users never see.

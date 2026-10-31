@@ -1025,17 +1025,17 @@ export const messages = {
     "relaciones.propuestas.loadError": "No se pudieron cargar las propuestas.",
     "relaciones.propuestas.actionError": "No se pudo completar la acción.",
 
-    "relaciones.reconcile.title": "Reconciliar mundo",
+    "relaciones.reconcile.title": "Sincronizar relaciones",
     "relaciones.reconcile.hint":
-      "Agrega lo que el texto justifica y quita lo que ningún texto respalda. Antes de escribir se guarda un respaldo.",
+      "Alinea el grafo con lo que dice el texto: agrega lo que falta y quita lo que ningún texto respalda. Antes de escribir se guarda un respaldo.",
     "relaciones.reconcile.preview": "Previsualizar",
-    "relaciones.reconcile.apply": "Aplicar reconciliación",
-    "relaciones.reconcile.confirmTitle": "Aplicar reconciliación",
+    "relaciones.reconcile.apply": "Sincronizar ahora",
+    "relaciones.reconcile.confirmTitle": "Sincronizar relaciones",
     "relaciones.reconcile.confirmMessage":
       "Se modificarán {files} fichas: {additions} relaciones agregadas y {removals} quitadas. Se guarda un respaldo antes de escribir.",
-    "relaciones.reconcile.empty": "El mundo ya está reconciliado.",
+    "relaciones.reconcile.empty": "Las relaciones ya están sincronizadas con el texto.",
     "relaciones.reconcile.applied":
-      "Reconciliadas {files} fichas. Respaldo: {backup}",
+      "Sincronizadas {files} fichas. Respaldo: {backup}",
     "relaciones.reconcile.failed":
       "{count} fichas no se pudieron actualizar.",
     "relaciones.reconcile.files": "{count} fichas",
@@ -3228,17 +3228,17 @@ export const messages = {
     "relaciones.propuestas.loadError": "Could not load proposals.",
     "relaciones.propuestas.actionError": "Could not complete the action.",
 
-    "relaciones.reconcile.title": "Reconcile world",
+    "relaciones.reconcile.title": "Sync relations",
     "relaciones.reconcile.hint":
-      "Adds what the text justifies and removes what no text backs. A backup is written before any change.",
+      "Aligns the graph with what the text says: adds what is missing and removes what no text backs. A backup is written before any change.",
     "relaciones.reconcile.preview": "Preview",
-    "relaciones.reconcile.apply": "Apply reconciliation",
-    "relaciones.reconcile.confirmTitle": "Apply reconciliation",
+    "relaciones.reconcile.apply": "Sync now",
+    "relaciones.reconcile.confirmTitle": "Sync relations",
     "relaciones.reconcile.confirmMessage":
       "{files} fiches will change: {additions} relations added and {removals} removed. A backup is written first.",
-    "relaciones.reconcile.empty": "The world is already reconciled.",
+    "relaciones.reconcile.empty": "Relations are already in sync with the text.",
     "relaciones.reconcile.applied":
-      "Reconciled {files} fiches. Backup: {backup}",
+      "Synced {files} fiches. Backup: {backup}",
     "relaciones.reconcile.failed": "{count} fiches could not be updated.",
     "relaciones.reconcile.files": "{count} fiches",
     "relaciones.reconcile.additions": "+{count}",
