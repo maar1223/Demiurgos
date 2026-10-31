@@ -3,7 +3,10 @@ import type {
   EntityLink,
   GraphEntity,
   GraphStatus,
+  RelationCandidatesResponse,
+  RelationProposalsResponse,
   RelationResponse,
+  RelationSweepResponse,
   SearchResult,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
@@ -149,4 +152,80 @@ export async function breakRelation(
   targetId: string,
 ): Promise<RelationResponse> {
   return setRelation(mundo, "break", sourcePath, targetId);
+}
+
+// ---------------------------------------------------------------------------
+// P3 — on-demand relation sweep and its proposal queue
+// ---------------------------------------------------------------------------
+
+/** GET /api/{mundo}/relations/candidates — deterministic reviewable work. */
+export async function fetchRelationCandidates(
+  mundo: string,
+): Promise<RelationCandidatesResponse> {
+  return apiFetch<RelationCandidatesResponse>(
+    apiUrl(["api", mundo, "relations", "candidates"]),
+  );
+}
+
+/** POST /api/{mundo}/relations/mute — "leave as is": never a candidate again. */
+export async function muteRelationCandidate(
+  mundo: string,
+  path: string,
+): Promise<{ success: boolean; muted: boolean }> {
+  return apiFetch<{ success: boolean; muted: boolean }>(
+    apiUrl(["api", mundo, "relations", "mute"]),
+    { method: "POST", body: JSON.stringify({ path }) },
+  );
+}
+
+/** POST /api/{mundo}/relations/unmute — undo "leave as is". */
+export async function unmuteRelationCandidate(
+  mundo: string,
+  path: string,
+): Promise<{ success: boolean; muted: boolean }> {
+  return apiFetch<{ success: boolean; muted: boolean }>(
+    apiUrl(["api", mundo, "relations", "unmute"]),
+    { method: "POST", body: JSON.stringify({ path }) },
+  );
+}
+
+/** POST /api/{mundo}/relations/sweep — one candidate, one model call. */
+export async function sweepRelations(
+  mundo: string,
+): Promise<RelationSweepResponse> {
+  return apiFetch<RelationSweepResponse>(
+    apiUrl(["api", mundo, "relations", "sweep"]),
+    { method: "POST" },
+  );
+}
+
+/** GET /api/{mundo}/relations/proposals — the pending proposal queue. */
+export async function fetchRelationProposals(
+  mundo: string,
+): Promise<RelationProposalsResponse> {
+  return apiFetch<RelationProposalsResponse>(
+    apiUrl(["api", mundo, "relations", "proposals"]),
+  );
+}
+
+/** POST .../proposals/{id}/accept — write the relation. */
+export async function acceptRelationProposal(
+  mundo: string,
+  proposalId: string,
+): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(
+    apiUrl(["api", mundo, "relations", "proposals", proposalId, "accept"]),
+    { method: "POST" },
+  );
+}
+
+/** POST .../proposals/{id}/reject — remember the pair as rejected. */
+export async function rejectRelationProposal(
+  mundo: string,
+  proposalId: string,
+): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(
+    apiUrl(["api", mundo, "relations", "proposals", proposalId, "reject"]),
+    { method: "POST" },
+  );
 }
