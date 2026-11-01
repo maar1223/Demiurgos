@@ -527,6 +527,10 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   const layoutRef = useRef<LiveForceLayout | null>(null);
   const reducedMotionRef = useRef(prefersReducedMotion());
   const clusterRefs = useRef(new Map<string, HTMLDivElement>());
+  // Section labels are fixed-size in screen space, so measuring once is enough.
+  const labelSizesRef = useRef(
+    new Map<string, { width: number; height: number }>(),
+  );
   const clusterMembersRef = useRef<GraphCluster[]>([]);
   const nodeSizesRef = useRef<Map<string, NodeSize>>(new Map());
   const positionsRef = useRef<ForcePositions>(new Map());
@@ -752,6 +756,9 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
    *  imperatively, like node positions, so it follows the live layout without
    *  re-rendering. */
   const positionClusters = useCallback((positions: ForcePositions) => {
+    // Labels are placed one at a time; each must dodge the cards AND the
+    // labels already placed (two sections close together used to overlap).
+    const placed: { left: number; top: number; right: number; bottom: number }[] = [];
     for (const cluster of clusterMembersRef.current) {
       const element = clusterRefs.current.get(cluster.id);
       if (!element) continue;
@@ -787,17 +794,45 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
         const top = node.position.y * viewport.zoom + viewport.y;
         return { left, top, right: left + width, bottom: top + height };
       });
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const hit = cards.some(
-          (card) =>
-            screenX >= card.left &&
-            screenX <= card.right &&
-            screenY >= card.top - 14 &&
-            screenY <= card.bottom,
-        );
-        if (!hit) break;
-        screenY -= 18;
+      // Label size is constant (screen space, fixed font), so measure once.
+      const measured = labelSizesRef.current.get(cluster.id);
+      const width = measured?.width ?? element.offsetWidth;
+      const height = measured?.height ?? element.offsetHeight;
+      // Never cache a zero measure: a label rendered before its styles apply
+      // would keep a 0×0 box and stop dodging anything.
+      if (!measured && width > 0 && height > 0) {
+        labelSizesRef.current.set(cluster.id, { width, height });
       }
+
+      const overlaps = (left: number, top: number, right: number, bottom: number) =>
+        cards.some(
+          (card) =>
+            left < card.right &&
+            right > card.left &&
+            top < card.bottom &&
+            bottom > card.top,
+        ) ||
+        placed.some(
+          (other) =>
+            left < other.right &&
+            right > other.left &&
+            top < other.bottom &&
+            bottom > other.top,
+        );
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const left = screenX - width / 2;
+        const top = screenY - height;
+        if (!overlaps(left, top, left + width, top + height)) break;
+        screenY -= height + 6;
+      }
+
+      placed.push({
+        left: screenX - width / 2,
+        top: screenY - height,
+        right: screenX + width / 2,
+        bottom: screenY,
+      });
       element.style.transform =
         `translate(${screenX}px, ${screenY}px) translate(-50%, -100%)`;
     }
