@@ -16,6 +16,7 @@ import type {
   ReviewProgress,
   WorldConflict,
 } from "@/api/conflicts";
+import { ApiError } from "@/api/types";
 
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
 vi.mock("@/api/conflicts", () => ({
@@ -391,6 +392,23 @@ describe("ConflictsPanel — review progress", () => {
     const button = await screen.findByTestId("conflict-sweep");
     expect(button).toBeDisabled();
     expect(button).toHaveTextContent("Todo revisado");
+  });
+
+  it("says the provider is still working when the sweep times out", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([], { total: 5, reviewed: 2, pending: 3 }),
+    );
+    sweepConflictsMock.mockRejectedValue(
+      new ApiError(0, "timeout", undefined, "network.timeout"),
+    );
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByTestId("conflict-sweep"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recargá en unos segundos.",
+    );
   });
 
   it("never claims everything is reviewed when the backend has no review block", async () => {

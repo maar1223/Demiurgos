@@ -15,6 +15,7 @@ import type {
   WorldConflict,
 } from "@/api/conflicts";
 import { EmptyState } from "@/components/organisms/EmptyState";
+import { ApiError } from "@/api/types";
 import type { MessageKey } from "@/i18n/messages";
 
 interface ConflictsPanelProps {
@@ -156,8 +157,14 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
       const result = await sweepConflicts(mundo, { size: SWEEP_BATCH_SIZE });
       setSweepNotice(sweepMessage(result));
       setData(await fetchConflicts(mundo));
-    } catch {
-      setActionError(t("relaciones.conflictos.actionError"));
+    } catch (err) {
+      // A timeout is not a failure: the provider may still be working and the
+      // proposals can appear on the next load.
+      setActionError(
+        err instanceof ApiError && err.code === "network.timeout"
+          ? t("relaciones.conflictos.sweepTimeout")
+          : t("relaciones.conflictos.actionError"),
+      );
     } finally {
       setBusy(false);
     }

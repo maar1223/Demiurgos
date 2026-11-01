@@ -1,6 +1,13 @@
 import { apiFetch } from "@/api/client";
 import { API_BASE_URL } from "@/lib/constants";
 
+/**
+ * The sweep waits on the model (one call per ficha, 8-20s each on a real
+ * world), so the 5s default aborted the request while the server kept
+ * working: the UI reported a failure and the proposals appeared anyway.
+ */
+const MODEL_CALL_TIMEOUT_MS = 180_000;
+
 /** Severity of a deterministic conflict (S4): graph-breaking vs incomplete. */
 export type ConflictSeverity = "error" | "warning";
 
@@ -132,6 +139,7 @@ export async function sweepConflicts(
   return apiFetch<ConflictSweepResponse>(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    timeout: MODEL_CALL_TIMEOUT_MS,
     body: JSON.stringify(body),
   });
 }

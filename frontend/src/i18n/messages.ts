@@ -1112,6 +1112,8 @@ export const messages = {
     "relaciones.conflictos.sweepNone": "No hay fichas por revisar.",
     "relaciones.conflictos.sweepUnavailable":
       "El proveedor semántico no respondió; probá de nuevo.",
+    "relaciones.conflictos.sweepTimeout":
+      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recargá en unos segundos.",
     "relaciones.conflictos.code.semantic-contradiction":
       "Dos fichas afirman cosas que no pueden ser ciertas a la vez.",
     "relaciones.conflictos.entityBannerOne":
@@ -3402,6 +3404,8 @@ export const messages = {
     "relaciones.conflictos.sweepNone": "Nothing to review.",
     "relaciones.conflictos.sweepUnavailable":
       "The semantic provider did not answer; try again.",
+    "relaciones.conflictos.sweepTimeout":
+      "The provider is still working; proposals may appear shortly. Reload in a few seconds.",
     "relaciones.conflictos.code.semantic-contradiction":
       "Two fichas state things that cannot both be true at once.",
     "relaciones.conflictos.entityBannerOne":
