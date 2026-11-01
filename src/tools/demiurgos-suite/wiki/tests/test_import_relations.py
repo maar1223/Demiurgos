@@ -181,6 +181,75 @@ def test_filename_stem_token_is_evidence():
     ]
 
 
+def test_a_word_that_names_another_ficha_is_not_evidence():
+    """A word naming more than one ficha identifies a family, not a ficha.
+
+    Regression: a long descriptive filename ("...-naturaleza-y-biodiversidad")
+    is unique among FILENAMES, so every body containing the common noun
+    "naturaleza" linked to it. The word also names another ficha, so it proves
+    nothing.
+    """
+    planet = RelationTarget(
+        canonical_id="Mundo::Planeta Alfa Naturaleza y Diversidad",
+        name="Planeta Alfa | Naturaleza y Diversidad",
+        path="lore/planeta-alfa-naturaleza-y-diversidad/planeta-alfa-naturaleza-y-diversidad.md",
+    )
+    other = RelationTarget(
+        canonical_id="Mundo::Naturaleza de Beta",
+        name="Naturaleza de Beta",
+        path="lore/beta/naturaleza-de-beta.md",
+    )
+    relations = grounded_relations(
+        body="El guardián refleja la naturaleza creativa de su mundo.",
+        source_id="Mundo::Gamma",
+        source_path="lore/gamma/gamma.md",
+        targets=[planet, other],
+    )
+
+    assert relations == []
+
+
+def test_a_distinctive_filename_word_is_still_evidence():
+    """The rule is about ambiguity, not about dropping the stem rule."""
+    target = RelationTarget(
+        canonical_id="Mundo::Dvin del Umbral 5",
+        name="Dvin del Umbral 5",
+        path="lore/dvin/dvin-del-umbral-5.md",
+    )
+    relations = grounded_relations(
+        body="Los dvin llegaron del norte.",
+        source_id="Mundo::Gamma",
+        source_path="lore/gamma/gamma.md",
+        targets=[target],
+    )
+
+    assert relations == [
+        GroundedRelation(canonical_id=target.canonical_id, evidence="stem")
+    ]
+
+
+def test_an_ordinal_in_an_ambiguous_family_is_not_evidence():
+    """``1er Stal`` exists in two unrelated families, so it proves nothing."""
+    sistema = RelationTarget(
+        canonical_id="Mundo::Sistema Stal 1er Stal Director",
+        name="Sistema Stal | 1er Stal – Director",
+        path="lore/sistema/sistema-stal-1er-stal-director.md",
+    )
+    ayagar = RelationTarget(
+        canonical_id="Mundo::Ayagar 2do Stal Conector",
+        name="Ayagar del 2do Stal – Conector",
+        path="lore/ayagar/ayagar-2do-stal-conector.md",
+    )
+    relations = grounded_relations(
+        body="El 1er stal ordena y el 2do stal conecta.",
+        source_id="Mundo::Gamma",
+        source_path="lore/gamma/gamma.md",
+        targets=[sistema, ayagar],
+    )
+
+    assert relations == []
+
+
 def test_generic_tokens_are_not_evidence():
     # "elemento" is shared by the source folder; it must not link the whole
     # family. Only a distinctive token can.

@@ -247,11 +247,31 @@ def _ambiguous_identity_keys(
             owners.setdefault(("name", name), set()).add(target.canonical_id)
         for segment in _alias_segments(target.name):
             owners.setdefault(("alias", segment), set()).add(target.canonical_id)
-        for token in _stem_tokens(target.path):
-            if token in GENERIC_WORDS:
-                continue
+        # A word that NAMES more than one ficha identifies a family, not a
+        # ficha. Counting only filenames missed the real case: a long
+        # descriptive filename is unique among filenames while its words
+        # ("naturaleza", "cultura", "vibral") appear in many TITLES, so a
+        # prose common noun linked unrelated fichas. Titles and folder names
+        # count too, and the same key space feeds the ordinal noun below.
+        for token in _name_tokens(target):
             owners.setdefault(("stem", token), set()).add(target.canonical_id)
     return frozenset(key for key, ids in owners.items() if len(ids) > 1)
+
+
+def _name_tokens(target: RelationTarget) -> set[str]:
+    """Words that name one ficha: its title, its filename and its folder."""
+    folder = _folder(target.path)
+    parts = (
+        target.name or "",
+        target.path.rsplit("/", 1)[-1],
+        folder.rsplit("/", 1)[-1],
+    )
+    tokens: set[str] = set()
+    for part in parts:
+        for token in re.split(r"[-_.\s]+", _normalize(part)):
+            if len(token) >= 4 and token not in GENERIC_WORDS:
+                tokens.add(token)
+    return tokens
 
 
 def _keep(best: dict[str, tuple[int, str]], canonical_id: str, evidence: str) -> None:
@@ -296,8 +316,27 @@ def _match_target(
 
     if ("name", name_norm) in ambiguous:
         return None
+    # An ordinal names a POSITION inside a family ("1er Stal", "3er Nivel").
+    # When the family word itself names many fichas, the ordinal does not say
+    # which family: "1er Stal" exists in two unrelated families in one world.
+    noun = _ordinal_noun(name_norm)
+    if noun and ("stem", noun) in ambiguous:
+        return None
     if _has_ordinal_evidence(name_norm, body_norm):
         return "ordinal"
+    return None
+
+
+def _ordinal_noun(name_norm: str) -> str | None:
+    """The family word an ordinal position belongs to, in either word order."""
+    match = re.search(
+        r"(?<![a-z0-9])(\d)(?:er|ro|do|to|mo|vo|no)\s+([a-z]{3,})", name_norm
+    )
+    if match:
+        return match.group(2)
+    match = re.search(r"(?<![a-z0-9])([a-z]{3,})\s+(\d)(?!\d)", name_norm)
+    if match:
+        return match.group(1)
     return None
 
 
