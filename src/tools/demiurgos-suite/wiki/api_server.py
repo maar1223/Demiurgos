@@ -66,6 +66,7 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
+from conflict_detector import detect_conflicts, summarize
 from import_relations import (
     MAX_RELATIONS,
     build_relation_targets,
@@ -7310,6 +7311,33 @@ def graph_entities(
                         )
 
     return {"entities": entity_list, "links": link_list}
+
+
+@app.get("/api/{mundo}/conflicts")
+def world_conflicts(mundo: str):
+    """Deterministic conflicts of the whole world (Conflictos S1).
+
+    Read-only and model-free: computed from the graph index on every request,
+    never written. Each conflict is ``{id, code, severity, path, name,
+    message, field, reference}``; ``summary`` carries total/errors/warnings and
+    the per-code counts. Unknown world -> soft-empty payload, the same contract
+    as ``/graph/entities``.
+    """
+    idx = _get_graph(mundo)
+    if idx is None:
+        return {"indexed": False, "conflicts": [], "summary": summarize([])}
+
+    with idx._lock:
+        entities = list(idx._cache.get("entities", {}).values())
+        conflicts = detect_conflicts(
+            entities, resolve_candidates=idx._resolve_link_candidates
+        )
+
+    return {
+        "indexed": True,
+        "conflicts": [conflict.to_dict() for conflict in conflicts],
+        "summary": summarize(conflicts),
+    }
 
 
 @app.post("/api/{mundo}/graph/relation")

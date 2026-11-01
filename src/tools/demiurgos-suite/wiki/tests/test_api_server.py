@@ -9767,3 +9767,146 @@ def test_the_content_root_routes_are_mounted():
         "/api/data-root/pick-folder",
     ):
         assert route in paths, route
+
+
+# ---------------------------------------------------------------------------
+# Conflictos S1 — GET /api/{mundo}/conflicts (deterministic, read-only)
+# ---------------------------------------------------------------------------
+
+
+class TestWorldConflictsEndpoint:
+    """Deterministic conflicts: payload shape, counts, soft-empty, read-only."""
+
+    @staticmethod
+    def _index_with(entities: list[dict]) -> EntityGraphIndex:
+        idx = EntityGraphIndex(mundos_path=Path("/nonexistent"))
+        idx._cache["entities"] = {e["path"]: e for e in entities}
+        return idx
+
+    @staticmethod
+    def _entity(
+        path: str,
+        name: str,
+        *,
+        entity_id: str = "",
+        content: str = "",
+        relaciones: tuple = (),
+        status: str = "stable",
+        canon_state: str | None = None,
+    ) -> dict:
+        return {
+            "name": name,
+            "id": entity_id,
+            "type": "ficha",
+            "path": path,
+            "title": name,
+            "description": "",
+            "tags": [],
+            "status": status,
+            "canon_state": canon_state
+            if canon_state is not None
+            else ("propuesta" if status == "draft" else "canon"),
+            "forward_links": [],
+            "backlinks": [],
+            "content": content,
+            "relaciones": list(relaciones),
+            "okf_issues": [],
+        }
+
+    def test_conflicts_payload_shape_and_counts(self, client: TestClient, monkeypatch):
+        entities = [
+            self._entity(
+                "lore/alfa.md", "Alfa", entity_id="A", content="Amiga de [[Fantasma]]."
+            ),
+            self._entity("lore/beta.md", "Beta", entity_id="B", relaciones=("NoExiste",)),
+            self._entity(
+                "lore/gamma.md",
+                "Gamma",
+                entity_id="G",
+                status="draft",
+                canon_state="canon",
+            ),
+        ]
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: self._index_with(entities))
+
+        resp = client.get("/api/test_mundo/conflicts")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == {"indexed", "conflicts", "summary"}
+        assert body["indexed"] is True
+        assert set(body["conflicts"][0].keys()) == {
+            "id",
+            "code",
+            "severity",
+            "path",
+            "name",
+            "message",
+            "field",
+            "reference",
+        }
+        assert [c["code"] for c in body["conflicts"]] == [
+            "unresolved-reference",
+            "dangling-relation",
+            "canon-state-mismatch",
+        ]
+        assert body["summary"] == {
+            "total": 3,
+            "errors": 2,
+            "warnings": 1,
+            "by_code": {
+                "canon-state-mismatch": 1,
+                "dangling-relation": 1,
+                "unresolved-reference": 1,
+            },
+        }
+
+    def test_clean_world_returns_no_conflicts(self, client: TestClient, monkeypatch):
+        entities = [
+            self._entity("lore/alfa.md", "Alfa", entity_id="A"),
+            self._entity(
+                "lore/beta.md",
+                "Beta",
+                entity_id="B",
+                content="Aliada de [[Alfa]].",
+                relaciones=("A",),
+            ),
+        ]
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: self._index_with(entities))
+
+        body = client.get("/api/test_mundo/conflicts").json()
+
+        assert body["conflicts"] == []
+        assert body["summary"] == {
+            "total": 0,
+            "errors": 0,
+            "warnings": 0,
+            "by_code": {},
+        }
+
+    def test_unknown_world_is_soft_empty(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: None)
+
+        resp = client.get("/api/mundo_fantasma/conflicts")
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "indexed": False,
+            "conflicts": [],
+            "summary": {"total": 0, "errors": 0, "warnings": 0, "by_code": {}},
+        }
+
+    def test_endpoint_is_read_only(self, client: TestClient, monkeypatch):
+        entities = [
+            self._entity(
+                "lore/alfa.md", "Alfa", entity_id="A", content="Amiga de [[Fantasma]]."
+            )
+        ]
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: self._index_with(entities))
+        world = Path(api_server.MUNDOS_DIR) / "test_mundo"
+        before = sorted(p.relative_to(world).as_posix() for p in world.rglob("*"))
+
+        client.get("/api/test_mundo/conflicts")
+
+        after = sorted(p.relative_to(world).as_posix() for p in world.rglob("*"))
+        assert after == before
