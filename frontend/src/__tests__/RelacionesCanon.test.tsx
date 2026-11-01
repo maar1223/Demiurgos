@@ -204,6 +204,14 @@ describe("RelacionesCanon", () => {
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(/Se modificarán 1 fichas/);
     expect(within(dialog).getByText("Cambios por aplicar")).toBeInTheDocument();
+    // The per-ficha detail is expandable and lists the actual relations.
+    expect(within(dialog).getByText("Se agregan")).toBeInTheDocument();
+    expect(within(dialog).getByText("lore::beta")).toBeInTheDocument();
+    expect(within(dialog).getByText("Se quitan")).toBeInTheDocument();
+    expect(within(dialog).getByText(/lore::gamma/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/el texto no la respalda/),
+    ).toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: "Sincronizar ahora" }),
     );
