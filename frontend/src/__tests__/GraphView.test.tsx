@@ -13,6 +13,9 @@ import type { ComponentProps, ElementType } from "react";
 import type { ReactFlowInstance } from "@xyflow/react";
 import type { EntityLink, GraphEntity, SearchResult } from "@/api/types";
 import type { Mock } from "vitest";
+import { fetchConflicts } from "@/api/conflicts";
+
+const mockConflicts = vi.mocked(fetchConflicts);
 
 const navigate = vi.fn();
 
@@ -20,6 +23,8 @@ vi.mock("react-router-dom", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router-dom")>();
   return { ...actual, useNavigate: () => navigate };
 });
+
+vi.mock("@/api/conflicts", () => ({ fetchConflicts: vi.fn() }));
 
 vi.mock("@/api/graph", () => ({
   fetchGraphEntities: vi.fn(),
@@ -319,6 +324,19 @@ function dragHandler(name: "onNodeDragStart" | "onNodeDrag" | "onNodeDragStop"):
 describe("GraphView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConflicts.mockResolvedValue({
+      indexed: true,
+      conflicts: [],
+      summary: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        known: 0,
+        muted: 0,
+        proposed: 0,
+        by_code: {},
+      },
+    });
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     vi.stubGlobal("DOMMatrixReadOnly", DOMMatrixReadOnlyMock);
     vi.stubGlobal("DOMMatrix", DOMMatrixReadOnlyMock);
@@ -1636,3 +1654,51 @@ describe("GraphView", () => {
     ).toBeInTheDocument();
   });
 });
+  it("marks conflicted nodes and can show only them", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockConflicts.mockResolvedValue({
+      indexed: true,
+      conflicts: [
+        {
+          id: "unresolved-reference:personajes/Alfa.md:Fantasma",
+          code: "unresolved-reference",
+          severity: "error",
+          path: "personajes/Alfa.md",
+          name: "Alfa",
+          message: "",
+          field: null,
+          reference: "Fantasma",
+          decision: null,
+          state: "computed",
+          origin: "deterministic",
+          evidence_a: null,
+          evidence_b: null,
+          source_a: null,
+          source_b: null,
+        },
+      ],
+      summary: {
+        total: 1,
+        errors: 1,
+        warnings: 0,
+        known: 0,
+        muted: 0,
+        proposed: 0,
+        by_code: { "unresolved-reference": 1 },
+      },
+    });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("graph-node-conflict")).toHaveLength(1),
+    );
+
+    await user.click(
+      screen.getByRole("switch", { name: "Solo con conflictos" }),
+    );
+
+    await waitFor(() => expect(countNodes()).toBe(1));
+    expect(screen.getByText("Alfa")).toBeInTheDocument();
+  });

@@ -32,6 +32,7 @@ import {
   searchEntities,
   type GraphStatusFilter,
 } from "@/api/graph";
+import { fetchConflicts } from "@/api/conflicts";
 import {
   computeLayoutSize,
   createLiveForceLayout,
@@ -218,6 +219,9 @@ interface GraphNodeData extends Record<string, unknown> {
   /** Whether the compact zoom band shows this node's name inline: only the
    *  folder group's hierarchy main does (S11), not every hub. */
   compactLabel: boolean;
+  /** The ficha has a live conflict (deterministic or proposed). */
+  conflict?: boolean;
+  conflictLabel?: string;
 }
 
 /**
@@ -377,6 +381,13 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
             faded && "opacity-30",
           )}
         />
+        {data.conflict ? (
+          <span
+            data-testid="graph-node-conflict"
+            aria-label="conflict"
+            className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-danger"
+          />
+        ) : null}
         <Handle
           type="source"
           position={Position.Bottom}
@@ -435,6 +446,13 @@ function GraphNode({ id, data }: NodeProps<GraphNodeType>) {
             canon?.dot ?? "bg-muted",
           )}
         />
+        {data.conflict ? (
+          <span
+            data-testid="graph-node-conflict"
+            aria-label={data.conflictLabel}
+            className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
+          />
+        ) : null}
       </div>
       {floatingLabel && (
         <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-edge bg-surface-raised/95 px-2 py-0.5 text-xs font-medium text-primary shadow-lg backdrop-blur-sm">
@@ -489,6 +507,10 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   const [links, setLinks] = useState<EntityLink[]>([]);
   const [status, setStatus] = useState<GraphStatusFilter>("all");
   const [showOrphans, setShowOrphans] = useState(false);
+  const [onlyConflicts, setOnlyConflicts] = useState(false);
+  const [conflictedPaths, setConflictedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -556,9 +578,16 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchGraphEntities(mundo, status);
+      const [data, conflictData] = await Promise.all([
+        fetchGraphEntities(mundo, status),
+        // Conflicts are an overlay: a failed request never hides the graph.
+        fetchConflicts(mundo).catch(() => null),
+      ]);
       setEntities(data.entities);
       setLinks(data.links);
+      setConflictedPaths(
+        new Set((conflictData?.conflicts ?? []).map((conflict) => conflict.path)),
+      );
     } catch (err) {
       setError(
         err instanceof Error ? err.message : t("graph.loadError"),
@@ -576,9 +605,23 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   // only, arbitrary depth). Rebuilt whenever the entity set changes.
   const folderTree = useMemo(() => buildFolderTree(entities), [entities]);
 
+  // Node keys of the fichas with a live conflict, so the badge and the filter
+  // share one derivation (a node key is the canonical id, falling back to path).
+  const conflictedKeys = useMemo(() => {
+    if (conflictedPaths.size === 0) return new Set<string>();
+    return new Set(
+      entities
+        .filter((entity) => conflictedPaths.has(entity.path))
+        .map(nodeKey),
+    );
+  }, [entities, conflictedPaths]);
+
   // Entities inside the selected folders (prefix union). An empty selection
   // keeps every entity visible.
   const visibleEntities = useMemo(() => {
+    if (onlyConflicts) {
+      return entities.filter((entity) => conflictedKeys.has(nodeKey(entity)));
+    }
     if (isolatedNodeId) {
       // Isolation wins over the folder filter: a neighbour shows even when its
       // folder is unselected, because the point is to see the whole
@@ -587,7 +630,7 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       return entities.filter((entity) => keep.has(nodeKey(entity)));
     }
     return filterEntitiesByFolders(entities, selectedFolders);
-  }, [entities, selectedFolders, isolatedNodeId, links]);
+  }, [entities, selectedFolders, isolatedNodeId, links, onlyConflicts, conflictedKeys]);
 
   // Inspector lookups: the selected entity is re-derived from the loaded set
   // on every render, so it is never stale after a re-fetch. `entityByKey`
@@ -936,6 +979,8 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
           // One name per folder group in the compact band: the hierarchy main
           // (S11). If the layout ever runs without hierarchy, fall back to the
           // hub tier so the band is never blank.
+          conflict: conflictedKeys.has(key),
+          conflictLabel: t("graph.conflictNode"),
           compactLabel:
             mainIds.size > 0
               ? mainIds.has(key)
@@ -966,6 +1011,7 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     applyPositions,
     centreToTopLeft,
     isolatedNodeId,
+    conflictedKeys,
   ]);
 
   // Folder clusters (S7): entities from the same folder read as one group.
@@ -1624,6 +1670,8 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
             onSelectedFoldersChange={setSelectedFolders}
             showOrphans={showOrphans}
             onShowOrphansChange={setShowOrphans}
+            onlyConflicts={onlyConflicts}
+            onOnlyConflictsChange={setOnlyConflicts}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             searchResults={searchResults}

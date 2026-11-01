@@ -15,6 +15,8 @@ interface GraphControlsSidebarProps {
   onSelectedFoldersChange: (folders: string[]) => void;
   showOrphans: boolean;
   onShowOrphansChange: (show: boolean) => void;
+  onlyConflicts: boolean;
+  onOnlyConflictsChange: (only: boolean) => void;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
   searchResults: SearchResult[];
@@ -46,6 +48,8 @@ export function GraphControlsSidebar({
   onSelectedFoldersChange,
   showOrphans,
   onShowOrphansChange,
+  onlyConflicts,
+  onOnlyConflictsChange,
   searchQuery,
   onSearchQueryChange,
   searchResults,
@@ -205,6 +209,15 @@ export function GraphControlsSidebar({
             checked={showOrphans}
             onChange={onShowOrphansChange}
             aria-label={t("graph.showOrphans")}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 px-2 py-1">
+          <span className="text-small text-muted">{t("graph.onlyConflicts")}</span>
+          <Switch
+            checked={onlyConflicts}
+            onChange={onOnlyConflictsChange}
+            aria-label={t("graph.onlyConflicts")}
           />
         </div>
 

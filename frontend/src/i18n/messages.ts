@@ -1110,6 +1110,11 @@ export const messages = {
       "El proveedor semántico no respondió; probá de nuevo.",
     "relaciones.conflictos.code.semantic-contradiction":
       "Dos fichas afirman cosas que no pueden ser ciertas a la vez.",
+    "relaciones.conflictos.entityBannerOne":
+      "Esta ficha tiene 1 conflicto abierto.",
+    "relaciones.conflictos.entityBanner":
+      "Esta ficha tiene {count} conflictos abiertos.",
+    "relaciones.conflictos.entityBannerLink": "Ver en Conflictos",
 
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
@@ -2224,6 +2229,8 @@ export const messages = {
     "vision.noDescription": "(sin descripción)",
     "graph.filters": "Filtros",
     "graph.showFilters": "Mostrar filtros",
+    "graph.onlyConflicts": "Solo con conflictos",
+    "graph.conflictNode": "Esta ficha tiene un conflicto",
     "graph.hideFilters": "Ocultar filtros",
     "graph.search": "Buscar",
     "graph.searchPlaceholder": "Nombre o id del nodo…",
@@ -3387,6 +3394,11 @@ export const messages = {
       "The semantic provider did not answer; try again.",
     "relaciones.conflictos.code.semantic-contradiction":
       "Two fichas state things that cannot both be true at once.",
+    "relaciones.conflictos.entityBannerOne":
+      "This ficha has 1 open conflict.",
+    "relaciones.conflictos.entityBanner":
+      "This ficha has {count} open conflicts.",
+    "relaciones.conflictos.entityBannerLink": "Open Conflicts",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
@@ -4497,6 +4509,8 @@ export const messages = {
     "vision.noDescription": "(no description)",
     "graph.filters": "Filters",
     "graph.showFilters": "Show filters",
+    "graph.onlyConflicts": "Only with conflicts",
+    "graph.conflictNode": "This ficha has a conflict",
     "graph.hideFilters": "Hide filters",
     "graph.search": "Search",
     "graph.searchPlaceholder": "Node name or id…",
