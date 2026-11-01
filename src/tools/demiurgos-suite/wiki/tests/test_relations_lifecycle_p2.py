@@ -45,7 +45,10 @@ def test_break_records_the_pair_and_a_save_does_not_re_add_it(client, monkeypatc
     assert _relation(client, "break").status_code == 200
 
     # A legacy ficha without a canonical id keys the verdict by its path.
-    assert load_rejected(world) == {("lore/00_inicio.md", "lore::beta")}
+    assert load_rejected(world) == {
+        ("lore/00_inicio.md", "lore::beta"),
+        ("lore::beta", "lore/00_inicio.md"),
+    }
     assert "lore::beta" not in (world / "lore" / "00_inicio.md").read_text(encoding="utf-8")
 
     current = (world / "lore" / "00_inicio.md").read_text(encoding="utf-8")
@@ -62,7 +65,10 @@ def test_break_and_save_on_a_canonical_source_keeps_the_verdict(client, monkeypa
     assert "lore::beta" in (world / "lore" / "00_inicio.md").read_text(encoding="utf-8")
 
     assert _relation(client, "break").status_code == 200
-    assert load_rejected(world) == {("lore::inicio", "lore::beta")}
+    assert load_rejected(world) == {
+        ("lore::inicio", "lore::beta"),
+        ("lore::beta", "lore::inicio"),
+    }
 
     # Resaving the same body must not undo the Author's decision.
     current = (world / "lore" / "00_inicio.md").read_text(encoding="utf-8")
@@ -77,7 +83,10 @@ def test_create_clears_the_rejection(client, monkeypatch):
     content = "---\ntype: criatura\nid: lore::inicio\ntitle: Inicio\n---\nBeta arrives.\n"
     assert _save(client, content).status_code == 200
     assert _relation(client, "break").status_code == 200
-    assert load_rejected(world) == {("lore::inicio", "lore::beta")}
+    assert load_rejected(world) == {
+        ("lore::inicio", "lore::beta"),
+        ("lore::beta", "lore::inicio"),
+    }
 
     assert _relation(client, "create").status_code == 200
 

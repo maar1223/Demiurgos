@@ -46,6 +46,7 @@ function renderPanel(
     visibleEntityKeys: Set<string>;
     entityByKey: Map<string, GraphEntity>;
     mundo: string;
+    onRemoveRelation: (reference: string) => void;
   }> = {},
 ) {
   const onNeighborClick = vi.fn();
@@ -59,6 +60,7 @@ function renderPanel(
       onNeighborClick={onNeighborClick}
       onOpenFicha={onOpenFicha}
       onClose={onClose}
+      onRemoveRelation={overrides.onRemoveRelation}
       mundo={overrides.mundo ?? "vibrantes"}
     />,
   );
@@ -66,6 +68,33 @@ function renderPanel(
 }
 
 describe("NodeInspectorPanel", () => {
+  it("offers a per-relation remove action only when the handler is provided", () => {
+    const { unmount } = render(
+      <NodeInspectorPanel
+        entity={RHYZ}
+        visibleEntityKeys={VISIBLE}
+        entityByKey={KEYS}
+        onNeighborClick={vi.fn()}
+        onOpenFicha={vi.fn()}
+        onClose={vi.fn()}
+        mundo="vibrantes"
+      />,
+    );
+    expect(screen.queryAllByTestId("remove-relation")).toHaveLength(0);
+    unmount();
+  });
+
+  it("removes a relation by its node key", () => {
+    const onRemoveRelation = vi.fn();
+    renderPanel({ onRemoveRelation });
+
+    const buttons = screen.getAllByTestId("remove-relation");
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+
+    expect(onRemoveRelation).toHaveBeenCalledWith("Stal::Vael");
+  });
+
   it("renders name, type, status chip, and path from the entity", () => {
     renderPanel();
 

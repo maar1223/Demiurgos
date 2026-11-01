@@ -39,6 +39,10 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
   ordinal evidence are admissible only when the word names exactly one entity in
   the world (title + filename + folder). A family word (shared by several names)
   is never evidence for a member: the folder index carries the belonging.
+- **S13 — "This link is wrong" acts on the pair.** Breaking a relation records
+  the rejection in BOTH directions and removes the declared entry from both
+  fichas, so the edge disappears at once; creating clears both directions. The
+  inspector offers the action on each relation row.
 - **S9 — No regressions.** Backend and frontend suites stay green. No world lore in
   tests, fixtures, comments or commits.
 
@@ -171,3 +175,12 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
   lowercase occurrence (`eneatipo`, `historia`, `religion`, `niveles`, `estados`,
   `origen`). Requiring a capitalized occurrence would cut them, but it would also
   drop lowercase family references, so it stays a decision, not a default.
+- **L24** (S13 evidence, 2026-11-01): the graph already had a break flow on an
+  edge, and it recorded only the directed pair, so the reverse ficha kept the
+  edge alive until a sync. Break now records both directions, mirrors the removal
+  on the target ficha and unpins both curated sides; create clears both. The
+  inspector renders a per-relation action (`data-testid="remove-relation"`) only
+  when a handler is provided and the entry resolves to a node key, wired to the
+  existing `breakRelation` (no duplicate endpoint). Tests: backend bidirectional
+  break + P2 expectations updated to the pair semantics; inspector action test.
+  Suite 4736 passed / 26 skipped; frontend 1669 passed.

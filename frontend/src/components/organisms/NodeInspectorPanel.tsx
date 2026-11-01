@@ -23,6 +23,9 @@ export interface NodeInspectorPanelProps {
   onClose: () => void;
   /** Mundo name, shown for context in the metadata block. */
   mundo: string;
+  /** Called with a relation's reference when the Author says it does not
+   *  belong. The panel only renders the action when this is provided. */
+  onRemoveRelation?: (reference: string) => void;
 }
 
 /** One neighbor entry after resolution: what to show and whether it links. */
@@ -58,6 +61,7 @@ export function NodeInspectorPanel({
   onOpenFicha,
   onClose,
   mundo,
+  onRemoveRelation,
 }: NodeInspectorPanelProps) {
   const { t } = useAppLanguage();
   const statusMeta = entity.status ? STATUS_META[entity.status] : null;
@@ -139,6 +143,7 @@ export function NodeInspectorPanel({
           title={t("nodeInspector.relations")}
           entries={relacionEntries}
           onNeighborClick={onNeighborClick}
+          onRemove={onRemoveRelation}
         />
 
         {/* Content preview (truncated) */}
@@ -277,10 +282,12 @@ function LinkList({
   title,
   entries,
   onNeighborClick,
+  onRemove,
 }: {
   title: string;
   entries: LinkEntry[];
   onNeighborClick: (nodeKey: string) => void;
+  onRemove?: (reference: string) => void;
 }) {
   const { t } = useAppLanguage();
   return (
@@ -303,6 +310,18 @@ function LinkList({
               ) : (
                 <span className="text-primary">{entry.label}</span>
               )}
+              {onRemove && entry.key ? (
+                <button
+                  type="button"
+                  data-testid="remove-relation"
+                  aria-label={t("nodeInspector.removeRelation")}
+                  title={t("nodeInspector.removeRelation")}
+                  onClick={() => onRemove(entry.key!)}
+                  className="ml-1 rounded px-1 text-muted transition-colors hover:text-danger"
+                >
+                  ×
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
