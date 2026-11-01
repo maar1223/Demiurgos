@@ -89,7 +89,9 @@ export function NodeInspectorPanel({
       {/* Header: name + type + status chip + close */}
       <div className="flex items-start justify-between gap-2 border-b border-edge px-4 py-3">
         <div className="min-w-0">
-          <h2 className="truncate font-heading text-h3 text-primary">
+          {/* Wrap a long ficha name to a second line and only then ellipsize;
+              a single-line truncate cut it mid-word with no ellipsis. */}
+          <h2 className="line-clamp-2 break-words font-heading text-h3 text-primary">
             {entity.name}
           </h2>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-small text-muted">
@@ -298,12 +300,12 @@ function LinkList({
       ) : (
         <ul className="mt-0.5 space-y-0.5">
           {entries.map((entry, index) => (
-            <li key={`${title}-${index}`} className="text-small">
+            <li key={`${title}-${index}`} className="break-words text-small">
               {entry.clickable ? (
                 <button
                   type="button"
                   onClick={() => onNeighborClick(entry.key!)}
-                  className="text-action transition-colors hover:underline"
+                  className="text-left text-action transition-colors hover:underline"
                 >
                   {entry.label}
                 </button>
