@@ -7,6 +7,13 @@ justifies and which declared entries no text backs:
 * ``remove`` — declared entries that are not grounded, are dangling (the target
   no longer exists) or were rejected by the Author.
 
+"Grounded" composes the layers: the deterministic matcher, plus the evidence
+store's still-verified quotes, plus curated pairs (which are never removed but
+also never added). An ungrounded removal says ``redundant-folder`` when the
+target lives in the source's own folder — the folder index already carries the
+belonging, so the direct sibling link is the anti-clique case — and
+``ungrounded`` otherwise.
+
 Curation wins: a rejected pair (P2) is never added and is removed if present, and
 a muted ficha (P3 "leave as is") is skipped entirely.
 """
@@ -30,6 +37,7 @@ from import_relations import (
     relaciones_entry_key,
 )
 from relation_curation import load_curated
+from relation_evidence import load_evidence, verified_ids
 from relation_rejections import load_rejected
 from relation_state import SweepState, load_state
 
@@ -45,7 +53,7 @@ class Removal:
 
     key: str
     target_id: str
-    reason: str  # ungrounded | unresolved | rejected
+    reason: str  # redundant-folder | ungrounded | unresolved | rejected
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,12 @@ def build_global_plan(
 
     resolver = _Resolver(entities)
     targets = build_relation_targets(entities)
+    evidence = load_evidence(world_dir)
+    path_by_id = {
+        str(entity.get("id") or ""): str(entity.get("path") or "")
+        for entity in entities
+        if isinstance(entity, dict) and entity.get("id")
+    }
 
     files: list[FilePlan] = []
     for entity in entities:
@@ -126,6 +140,20 @@ def build_global_plan(
                 structural_uncapped=True,
             )
             if (source_key, relation.canonical_id) not in rejected
+        }
+        # Evidence memory is a second grounding layer: a quote the model copied
+        # from THIS body is still true. ``verified_ids`` re-checks the quote
+        # against the current body, so a rewritten ficha stops grounding it.
+        grounded |= {
+            target_id
+            for target_id in verified_ids(
+                world_dir,
+                source_key=source_key,
+                body=body,
+                evidence=evidence,
+            )
+            if target_id in path_by_id
+            and (source_key, target_id) not in rejected
         }
 
         declared_entries = [
@@ -150,7 +178,11 @@ def build_global_plan(
                     kept.add(resolved)
                 else:
                     removals.append(
-                        Removal(key=key, target_id=resolved, reason="ungrounded")
+                        Removal(
+                            key=key,
+                            target_id=resolved,
+                            reason=_removal_reason(path, path_by_id.get(resolved, "")),
+                        )
                     )
             else:
                 kept.add(resolved)
@@ -168,6 +200,26 @@ def build_global_plan(
 
     files.sort(key=lambda file_plan: file_plan.path)
     return GlobalPlan(tuple(files))
+
+
+def _removal_reason(source_path: str, target_path: str) -> str:
+    """Why an ungrounded declared entry is removed.
+
+    Same folder (the target is a sibling or the folder's own index) means the
+    folder index already connects the pair: the direct link is redundant, not
+    a mistake. Any other ungrounded pair is simply not backed by text.
+    """
+    return "redundant-folder" if _same_folder(source_path, target_path) else "ungrounded"
+
+
+def _same_folder(source_path: str, target_path: str) -> bool:
+    if not source_path or not target_path or source_path == target_path:
+        return False
+    return _folder_of(source_path) == _folder_of(target_path)
+
+
+def _folder_of(path: str) -> str:
+    return path.rsplit("/", 1)[0] if "/" in path else ""
 
 
 class _Resolver:
