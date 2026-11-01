@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
-import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import {
   acceptRelationProposal,
-  applyRelationReconcile,
-  fetchRelationReconcilePreview,
   fetchRelationCandidates,
   fetchRelationProposals,
   muteRelationCandidate,
@@ -12,11 +9,7 @@ import {
   sweepRelations,
   unmuteRelationCandidate,
 } from "@/api/graph";
-import type {
-  RelationCandidate,
-  RelationProposal,
-  RelationReconcilePreview,
-} from "@/api/types";
+import type { RelationCandidate, RelationProposal } from "@/api/types";
 
 interface ProposalsPanelProps {
   mundo: string;
@@ -40,9 +33,6 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [reconcilePreview, setReconcilePreview] =
-    useState<RelationReconcilePreview | null>(null);
-  const [confirmReconcile, setConfirmReconcile] = useState(false);
 
   const refresh = useCallback(async () => {
     const [candidateResponse, proposalResponse] = await Promise.all([
@@ -97,33 +87,6 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
       } else {
         setNotice(t("relaciones.propuestas.unavailable"));
       }
-    });
-
-  const previewReconcile = () =>
-    run(async () => {
-      const preview = await fetchRelationReconcilePreview(mundo);
-      setReconcilePreview(preview);
-      if (preview.files === 0) {
-        setNotice(t("relaciones.reconcile.empty"));
-      }
-    });
-
-  const applyReconcile = () =>
-    run(async () => {
-      const result = await applyRelationReconcile(mundo);
-      setConfirmReconcile(false);
-      setReconcilePreview(null);
-      if (result.failed.length > 0) {
-        setError(
-          t("relaciones.reconcile.failed", { count: result.failed.length }),
-        );
-      }
-      setNotice(
-        t("relaciones.reconcile.applied", {
-          files: result.applied,
-          backup: result.backup,
-        }),
-      );
     });
 
   const badge =
@@ -263,85 +226,6 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
             ))}
           </ul>
         </div>
-      ) : null}
-
-      <div className="rounded-xl border border-edge bg-surface-raised p-4">
-        <h2 className="text-small font-semibold uppercase tracking-wide text-muted">
-          {t("relaciones.reconcile.title")}
-        </h2>
-        <p className="mt-1 text-small text-muted">
-          {t("relaciones.reconcile.hint")}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            data-testid="reconcile-preview"
-            className={buttonClass}
-            disabled={busy}
-            onClick={previewReconcile}
-          >
-            {t("relaciones.reconcile.preview")}
-          </button>
-          <button
-            type="button"
-            data-testid="reconcile-apply"
-            className={buttonClass}
-            disabled={
-              busy || reconcilePreview === null || reconcilePreview.files === 0
-            }
-            onClick={() => setConfirmReconcile(true)}
-          >
-            {t("relaciones.reconcile.apply")}
-          </button>
-        </div>
-        {reconcilePreview ? (
-          <div className="mt-3">
-            <p data-testid="reconcile-summary" className="text-small text-primary">
-              {t("relaciones.reconcile.files", {
-                count: reconcilePreview.files,
-              })}
-              {" · "}
-              {t("relaciones.reconcile.additions", {
-                count: reconcilePreview.additions,
-              })}
-              {" · "}
-              {t("relaciones.reconcile.removals", {
-                count: reconcilePreview.removals,
-              })}
-            </p>
-            <ul className="mt-2 flex max-h-48 flex-col gap-1 overflow-auto text-small text-muted">
-              {reconcilePreview.items.map((item) => (
-                <li key={item.path}>
-                  {item.path}
-                  {" · "}
-                  {t("relaciones.reconcile.additions", {
-                    count: item.add.length,
-                  })}
-                  {" · "}
-                  {t("relaciones.reconcile.removals", {
-                    count: item.remove.length,
-                  })}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </div>
-
-      {confirmReconcile && reconcilePreview ? (
-        <ConfirmDialog
-          title={t("relaciones.reconcile.confirmTitle")}
-          message={t("relaciones.reconcile.confirmMessage", {
-            files: reconcilePreview.files,
-            additions: reconcilePreview.additions,
-            removals: reconcilePreview.removals,
-          })}
-          confirmLabel={t("relaciones.reconcile.apply")}
-          confirmVariant="danger"
-          isBusy={busy}
-          onConfirm={applyReconcile}
-          onClose={() => setConfirmReconcile(false)}
-        />
       ) : null}
 
       {muted.length > 0 ? (

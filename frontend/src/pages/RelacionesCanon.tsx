@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
 import ProposalsPanel from "@/components/organisms/ProposalsPanel";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Icon } from "@/components/atoms/Icon";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { applyRelationReconcile, fetchRelationReconcilePreview } from "@/api/graph";
+import type { RelationReconcilePreview } from "@/api/types";
 import type { MessageKey } from "@/i18n/messages";
 import { cn } from "@/lib/utils";
 
@@ -20,23 +23,110 @@ const TABS: readonly { key: TabKey; label: MessageKey }[] = [
 /**
  * Relaciones y Canon page (`/taller-mundo/:mundo/relaciones-canon`) — W9/W12.
  *
- * Three-tab shell (BLOQUE 4 · Slice A): "Grafo" is active by default and
- * renders the GraphView; "Propuestas" renders the on-demand semantic sweep;
- * "Conflictos" is still a follow-up slice and renders a placeholder.
+ * The header carries the world-wide "Sincronizar relaciones" action, visible in
+ * every tab because it belongs to the world, not to one panel: it aligns the
+ * graph with what the text says (adds what is missing, removes what no text
+ * backs) behind a preview and a pre-image backup.
+ *
+ * Tabs: "Grafo" renders the GraphView, "Propuestas" the on-demand semantic
+ * sweep, and "Conflictos" is still a follow-up slice.
  */
 export default function RelacionesCanon() {
   const { t } = useAppLanguage();
   const { mundo } = useParams<{ mundo: string }>();
   const [activeTab, setActiveTab] = useState<TabKey>("grafo");
+  const [preview, setPreview] = useState<RelationReconcilePreview | null>(null);
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
+  const [graphVersion, setGraphVersion] = useState(0);
+
+  const refreshPreview = useCallback(async () => {
+    if (!mundo) return;
+    try {
+      setPreview(await fetchRelationReconcilePreview(mundo));
+    } catch {
+      setPreview(null);
+    }
+  }, [mundo]);
+
+  useEffect(() => {
+    void refreshPreview();
+  }, [refreshPreview]);
+
+  const openSync = async () => {
+    if (!mundo) return;
+    if (preview === null) {
+      await refreshPreview();
+    }
+    setSyncNotice("");
+    setSyncOpen(true);
+  };
+
+  const applySync = async () => {
+    if (!mundo) return;
+    setSyncing(true);
+    setSyncError("");
+    try {
+      const result = await applyRelationReconcile(mundo);
+      setSyncOpen(false);
+      setGraphVersion((version) => version + 1);
+      await refreshPreview();
+      setSyncNotice(
+        t("relaciones.reconcile.applied", {
+          files: result.applied,
+          backup: result.backup,
+        }),
+      );
+      if (result.failed.length > 0) {
+        setSyncError(
+          t("relaciones.reconcile.failed", { count: result.failed.length }),
+        );
+      }
+    } catch {
+      setSyncError(t("relaciones.propuestas.actionError"));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const syncLabel = preview === null
+    ? t("relaciones.reconcile.button.base")
+    : preview.files === 0
+      ? t("relaciones.reconcile.button.zero")
+      : preview.files === 1
+        ? t("relaciones.reconcile.button.one")
+        : t("relaciones.reconcile.button.many", { count: preview.files });
 
   return (
     <WikiHomeLayout>
-      <div className="col-span-full">
-        <h1 className="font-heading text-h3 text-primary">
-          {t("relaciones.title")}
-        </h1>
-        <p className="mt-2 text-body text-muted">{t("relaciones.intro")}</p>
+      <div className="col-span-full flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-h3 text-primary">
+            {t("relaciones.title")}
+          </h1>
+          <p className="mt-2 text-body text-muted">{t("relaciones.intro")}</p>
+        </div>
+        <button
+          type="button"
+          data-testid="sync-button"
+          onClick={openSync}
+          disabled={syncing || (preview !== null && preview.files === 0)}
+          className="rounded-lg border border-edge px-4 py-2 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {syncing ? t("relaciones.reconcile.checking") : syncLabel}
+        </button>
       </div>
+
+      {syncNotice ? (
+        <p className="col-span-full text-small text-muted">{syncNotice}</p>
+      ) : null}
+      {syncError ? (
+        <p role="alert" className="col-span-full text-small text-danger">
+          {syncError}
+        </p>
+      ) : null}
 
       <div className="col-span-full">
         <div
@@ -65,7 +155,7 @@ export default function RelacionesCanon() {
 
         {activeTab === "grafo" ? (
           mundo ? (
-            <GraphView mundo={mundo} />
+            <GraphView key={graphVersion} mundo={mundo} />
           ) : (
             <EmptyState
               icon="error"
@@ -91,6 +181,41 @@ export default function RelacionesCanon() {
           </div>
         )}
       </div>
+
+      {syncOpen && preview ? (
+        <ConfirmDialog
+          title={t("relaciones.reconcile.confirmTitle")}
+          message={t("relaciones.reconcile.confirmMessage", {
+            files: preview.files,
+            additions: preview.additions,
+            removals: preview.removals,
+          })}
+          confirmLabel={t("relaciones.reconcile.apply")}
+          confirmVariant="danger"
+          isBusy={syncing}
+          onConfirm={applySync}
+          onClose={() => setSyncOpen(false)}
+        >
+          <p className="text-small font-medium text-primary">
+            {t("relaciones.reconcile.listTitle")}
+          </p>
+          <ul className="mt-1 flex max-h-48 flex-col gap-1 overflow-auto text-small text-muted">
+            {preview.items.map((item) => (
+              <li key={item.path}>
+                {item.path}
+                {" · "}
+                {t("relaciones.reconcile.additions", {
+                  count: item.add.length,
+                })}
+                {" · "}
+                {t("relaciones.reconcile.removals", {
+                  count: item.remove.length,
+                })}
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
+      ) : null}
     </WikiHomeLayout>
   );
 }

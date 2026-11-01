@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import RelacionesCanon from "@/pages/RelacionesCanon";
@@ -178,18 +178,32 @@ describe("RelacionesCanon", () => {
     );
   });
 
-  it("previews and applies the world reconciliation", async () => {
+  it("shows the sync action in the header on every tab", async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole("tab", { name: "Propuestas" }));
 
-    await user.click(await screen.findByTestId("reconcile-preview"));
-    expect(await screen.findByTestId("reconcile-summary")).toHaveTextContent(
-      "1 fichas · +1 · −1",
+    const syncButton = await screen.findByTestId("sync-button");
+    await waitFor(() =>
+      expect(syncButton).toHaveTextContent("Sincronizar · 1 cambio"),
     );
 
-    await user.click(screen.getByTestId("reconcile-apply"));
+    await user.click(screen.getByRole("tab", { name: "Propuestas" }));
+    expect(screen.getByTestId("sync-button")).toBeInTheDocument();
+  });
+
+  it("applies the world sync after confirmation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const syncButton = await screen.findByTestId("sync-button");
+    await waitFor(() =>
+      expect(syncButton).toHaveTextContent("Sincronizar · 1 cambio"),
+    );
+    await user.click(syncButton);
+
     const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/Se modificarán 1 fichas/);
+    expect(within(dialog).getByText("Cambios por aplicar")).toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: "Sincronizar ahora" }),
     );
