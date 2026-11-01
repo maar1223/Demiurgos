@@ -198,15 +198,25 @@ export async function unmuteRelationCandidate(
  * `size` is optional: the server defaults to 5 and clamps to 1..10, so callers
  * that omit it still get the batch behavior.
  */
+/** A sweep waits on the model: one batch takes 8-20s on a real world. */
+const MODEL_CALL_TIMEOUT_MS = 180_000;
+/** Preview/apply walk every ficha of the world. */
+const WORLD_SCAN_TIMEOUT_MS = 120_000;
+
 export async function sweepRelations(
   mundo: string,
   size?: number,
 ): Promise<RelationSweepResponse> {
   return apiFetch<RelationSweepResponse>(
     apiUrl(["api", mundo, "relations", "sweep"]),
-    size === undefined
-      ? { method: "POST" }
-      : { method: "POST", body: JSON.stringify({ size }) },
+    {
+      method: "POST",
+      // The sweep waits on the model (8-20s on a real world), so the 5s
+      // default aborted the request while the server kept working: the UI
+      // reported a failure and the proposals appeared anyway.
+      timeout: MODEL_CALL_TIMEOUT_MS,
+      ...(size === undefined ? {} : { body: JSON.stringify({ size }) }),
+    },
   );
 }
 
@@ -251,6 +261,8 @@ export async function fetchRelationReconcilePreview(
 ): Promise<RelationReconcilePreview> {
   return apiFetch<RelationReconcilePreview>(
     apiUrl(["api", mundo, "relations", "reconcile", "preview"]),
+    // Computes the plan for the whole world; a big world exceeds 5s.
+    { timeout: WORLD_SCAN_TIMEOUT_MS },
   );
 }
 
@@ -260,7 +272,7 @@ export async function applyRelationReconcile(
 ): Promise<RelationReconcileApply> {
   return apiFetch<RelationReconcileApply>(
     apiUrl(["api", mundo, "relations", "reconcile"]),
-    { method: "POST" },
+    { method: "POST", timeout: WORLD_SCAN_TIMEOUT_MS },
   );
 }
 
