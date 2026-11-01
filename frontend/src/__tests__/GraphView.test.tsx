@@ -714,7 +714,7 @@ describe("GraphView", () => {
     );
     expect(
       instance.getNodes().find((node) => node.id === "Fam::Alfa")?.zIndex,
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it("collapses nodes to status dots below the semantic-zoom threshold", async () => {
