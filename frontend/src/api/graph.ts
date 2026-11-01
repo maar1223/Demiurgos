@@ -192,13 +192,21 @@ export async function unmuteRelationCandidate(
   );
 }
 
-/** POST /api/{mundo}/relations/sweep — one candidate, one model call. */
+/**
+ * POST /api/{mundo}/relations/sweep — a bounded batch, one model call.
+ *
+ * `size` is optional: the server defaults to 5 and clamps to 1..10, so callers
+ * that omit it still get the batch behavior.
+ */
 export async function sweepRelations(
   mundo: string,
+  size?: number,
 ): Promise<RelationSweepResponse> {
   return apiFetch<RelationSweepResponse>(
     apiUrl(["api", mundo, "relations", "sweep"]),
-    { method: "POST" },
+    size === undefined
+      ? { method: "POST" }
+      : { method: "POST", body: JSON.stringify({ size }) },
   );
 }
 

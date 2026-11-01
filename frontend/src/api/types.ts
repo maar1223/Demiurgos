@@ -2168,19 +2168,30 @@ export interface RelationProposalsResponse {
   items: RelationProposal[];
 }
 
+/**
+ * One bounded sweep batch (S2/S8). The provider reviews up to `swept` fichas
+ * in a single call; `paths` is the deterministic batch order. `created` counts
+ * the proposals that created a new queue entry.
+ *
+ * `swept` and `paths` are optional only for compatibility with pre-batch
+ * callers; the server always sends them.
+ */
 export interface RelationSweepResponse {
   status: "swept" | "done" | "unavailable";
-  path: string;
+  swept?: number;
   created: number;
   pending: number;
+  paths?: string[];
   message: string;
+  /** @deprecated single-ficha path from the pre-batch sweep. */
+  path?: string;
 }
 
 /** P4 — one declared entry the reconciliation would remove. */
 export interface RelationReconcileRemoval {
   key: string;
   target_id: string;
-  reason: "ungrounded" | "unresolved" | "rejected";
+  reason: "ungrounded" | "redundant-folder" | "unresolved" | "rejected";
 }
 
 export interface RelationReconcileItem {
