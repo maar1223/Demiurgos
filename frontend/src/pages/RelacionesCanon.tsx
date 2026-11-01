@@ -23,8 +23,8 @@ const REASON_MESSAGES: Record<string, MessageKey> = {
 
 const TABS: readonly { key: TabKey; label: MessageKey }[] = [
   { key: "grafo", label: "relaciones.tab.grafo" },
-  { key: "conflictos", label: "relaciones.tab.conflictos" },
   { key: "propuestas", label: "relaciones.tab.propuestas" },
+  { key: "conflictos", label: "relaciones.tab.conflictos" },
 ];
 
 /**
@@ -35,8 +35,10 @@ const TABS: readonly { key: TabKey; label: MessageKey }[] = [
  * graph with what the text says (adds what is missing, removes what no text
  * backs) behind a preview and a pre-image backup.
  *
- * Tabs: "Grafo" renders the GraphView, "Propuestas" the on-demand semantic
- * sweep, and "Conflictos" is still a follow-up slice.
+ * Tabs read in workflow order: "Grafo" renders the GraphView, "Propuestas" the
+ * on-demand semantic sweep, and "Conflictos" the deterministic canon audit
+ * (still a follow-up slice). The world-wide sync belongs to the header, so the
+ * semantic sweep comes first and the audit looks at what the sweep produced.
  */
 export default function RelacionesCanon() {
   const { t } = useAppLanguage();

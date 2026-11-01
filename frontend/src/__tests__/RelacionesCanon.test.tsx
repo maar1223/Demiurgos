@@ -136,6 +136,16 @@ describe("RelacionesCanon", () => {
     expect(screen.getByTestId("graph-view")).toBeInTheDocument();
   });
 
+  it("orders Propuestas before Conflictos", () => {
+    // The deterministic sync is reachable from every tab, so the reading order
+    // is Grafo → Propuestas → Conflictos: generate with AI, then audit.
+    renderPage();
+
+    expect(
+      screen.getAllByRole("tab").map((tab) => tab.textContent),
+    ).toEqual(["Grafo", "Propuestas", "Conflictos"]);
+  });
+
   it("shows a Próximamente placeholder in the Conflictos tab", async () => {
     const user = userEvent.setup();
     renderPage();

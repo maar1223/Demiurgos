@@ -49,7 +49,7 @@ import type {
   GraphEntity,
   SearchResult,
 } from "@/api/types";
-import { estimateLabelWidth, spreadLabels } from "@/lib/graphLabels";
+import { estimateLabelWidth, placeLabels } from "@/lib/graphLabels";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -528,9 +528,16 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   const layoutRef = useRef<LiveForceLayout | null>(null);
   const reducedMotionRef = useRef(prefersReducedMotion());
   const clusterRefs = useRef(new Map<string, HTMLDivElement>());
+  // The label layer is the canvas-sized box the labels live in, so its size is
+  // the boundary placement must respect (a title pushed past it is clipped).
+  const labelLayerRef = useRef<HTMLDivElement | null>(null);
   const clusterMembersRef = useRef<GraphCluster[]>([]);
   const nodeSizesRef = useRef<Map<string, NodeSize>>(new Map());
   const positionsRef = useRef<ForcePositions>(new Map());
+  // The element the fullscreen button expands: the canvas surface, not the
+  // page, so the graph owns every pixel and the chrome disappears.
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   // Node inspector: selection state plus right-panel resize/focus. The
   // selected entity is DERIVED from the loaded set (by node key), so a status
@@ -622,6 +629,55 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     );
     return () => window.clearTimeout(timer);
   }, [isolatedNodeId, links]);
+
+  // Fullscreen: the browser owns the state, so follow its events (Escape exits
+  // there) and never keep a private copy that could drift from reality.
+  useEffect(() => {
+    const onChange = () =>
+      setFullscreen(document.fullscreenElement === surfaceRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Window-sized fallback for runtimes without the Fullscreen API (an embedded
+  // webview): Escape must still leave it, and only this mode needs the handler.
+  useEffect(() => {
+    if (!fullscreen || document.fullscreenElement) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  const toggleFullscreen = useCallback(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    if (fullscreen) {
+      setFullscreen(false);
+      if (document.fullscreenElement && document.exitFullscreen) {
+        void document.exitFullscreen().catch(() => {});
+      }
+      return;
+    }
+    // The element-wide fallback class is harmless even before the promise
+    // settles, and it is the only path left when the API is unavailable or the
+    // runtime refuses the request.
+    setFullscreen(true);
+    const request = surface.requestFullscreen?.bind(surface);
+    if (request) void request().catch(() => setFullscreen(true));
+  }, [fullscreen]);
+
+  // The canvas just changed size: let React Flow recompute its viewport and
+  // frame the map again, otherwise a fullscreen graph keeps its old zoom.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const timer = window.setTimeout(
+      () => rf.current?.fitView({ duration: 300, padding: 0.2 }),
+      120,
+    );
+    return () => window.clearTimeout(timer);
+  }, [fullscreen]);
 
   const selectedEntity = useMemo(
     () => entities.find((e) => nodeKey(e) === selectedNodeId) ?? null,
@@ -804,12 +860,25 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       });
     }
 
-    const placed = spreadLabels(
+    const placed = placeLabels(
       labels.map(({ x, y, width, height }) => ({ x, y, width, height })),
       cards,
+      {
+        bounds: labelLayerRef.current
+          ? {
+              width: labelLayerRef.current.offsetWidth,
+              height: labelLayerRef.current.offsetHeight,
+            }
+          : undefined,
+      },
     );
     placed.forEach((box, index) => {
-      labels[index].element.style.transform =
+      const element = labels[index].element;
+      // A label with no free slot is hidden instead of painted over a
+      // neighbour: two titles sharing pixels is exactly what this pass exists
+      // to prevent, and a half-read title is worse than none.
+      element.style.visibility = box.visible ? "" : "hidden";
+      element.style.transform =
         `translate(${box.x}px, ${box.y}px) translate(-50%, -100%)`;
     });
   }, []);
@@ -1390,10 +1459,15 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   return (
     <div className="flex h-full w-full flex-col">
       <div
+        ref={surfaceRef}
         className={
-          bleed
-            ? "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface"
-            : "relative flex h-[calc(100dvh-18rem)] min-h-[520px] w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface"
+          // Fullscreen covers everything with the same box the browser's own
+          // fullscreen API gives the element: one style path for both modes.
+          fullscreen
+            ? "fixed inset-0 z-50 flex h-screen w-screen flex-col overflow-hidden bg-surface"
+            : bleed
+              ? "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface"
+              : "relative flex h-[calc(100dvh-18rem)] min-h-[520px] w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface"
         }
         data-testid="graph-surface"
       >
@@ -1471,7 +1545,10 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
                   a constant pixel size, so the far view is readable without
                   zooming in (where the node names take over). */}
               {zoomTier !== "labels" ? (
-                <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+                <div
+                  ref={labelLayerRef}
+                  className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+                >
                   {clusters.map((cluster) => (
                     <div
                       key={cluster.id}
@@ -1512,35 +1589,50 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
                 </div>
               ) : null}
 
-              {/* Focus toggle: hide the inspector to give the canvas every pixel;
-                  toggling back restores the last width. It docks to the left edge
-                  of the floating panel while the panel is open. */}
-              {selectedEntity && (
+              {/* Canvas actions: fullscreen always, and the inspector focus
+                  toggle while a node is selected. The row docks left of the
+                  floating inspector panel when it is open. */}
+              <div
+                style={
+                  {
+                    "--inspector-offset": `${panelWidth + 8}px`,
+                  } as CSSProperties
+                }
+                className={cn(
+                  "absolute right-2 top-2 z-30 flex items-center gap-2",
+                  selectedEntity && !focusMode && "md:right-[var(--inspector-offset)]",
+                )}
+              >
+                {selectedEntity && (
+                  <button
+                    type="button"
+                    onClick={() => setFocusMode((prev) => !prev)}
+                    aria-label={
+                      focusMode
+                        ? "Mostrar panel de inspección"
+                        : "Ocultar panel de inspección"
+                    }
+                    aria-pressed={focusMode}
+                    className="rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary"
+                  >
+                    <Icon name={focusMode ? "minimize" : "expand"} size={16} />
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setFocusMode((prev) => !prev)}
+                  data-testid="graph-fullscreen"
+                  onClick={toggleFullscreen}
                   aria-label={
-                    focusMode
-                      ? "Mostrar panel de inspección"
-                      : "Ocultar panel de inspección"
+                    fullscreen
+                      ? t("graph.exitFullscreen")
+                      : t("graph.fullscreen")
                   }
-                  aria-pressed={focusMode}
-                  style={
-                    {
-                      "--inspector-offset": `${panelWidth + 8}px`,
-                    } as CSSProperties
-                  }
-                  className={cn(
-                    "absolute right-2 top-2 z-30 rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary",
-                    !focusMode && "md:right-[var(--inspector-offset)]",
-                  )}
+                  aria-pressed={fullscreen}
+                  className="rounded border border-edge bg-surface-raised/90 p-1.5 text-icon-muted shadow-sm backdrop-blur-sm transition-colors hover:text-primary"
                 >
-                  <Icon
-                    name={focusMode ? "minimize" : "expand"}
-                    size={16}
-                  />
+                  <Icon name={fullscreen ? "minimize" : "expand"} size={16} />
                 </button>
-              )}
+              </div>
 
               {/* Inspector floats over the canvas at a fixed width; the divider
                   on its left edge resizes it. Hidden on small screens and in

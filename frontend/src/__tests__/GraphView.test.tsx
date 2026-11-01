@@ -71,6 +71,7 @@ import {
   searchEntities,
 } from "@/api/graph";
 import GraphView from "@/components/GraphView";
+import { estimateLabelWidth } from "@/lib/graphLabels";
 
 const mockFetch = fetchGraphEntities as Mock;
 const mockCreateRelation = createRelation as Mock;
@@ -534,6 +535,87 @@ describe("GraphView", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("graph-cluster")).not.toBeInTheDocument(),
     );
+  });
+
+  it("never paints one section title on top of another when zoomed out", async () => {
+    // Eight long sections crowded in the same band is the real-world shape that
+    // the old pairwise relaxation failed to separate.
+    const folders = [
+      "politica-distribucion-y-territorios",
+      "sistema-central-de-poderes",
+      "eneagrama-de-la-corona",
+      "ayagars-reptiles",
+      "cultura-costumbres-populares",
+      "planeta-vibral-naturaleza",
+      "ayagars-reptiles-dvin",
+      "ayagars-reptiles-dvex",
+    ];
+    const entities: GraphEntity[] = folders.flatMap((folder, folderIndex) =>
+      ["Uno", "Dos"].map((suffix, memberIndex) => {
+        const next = folders[(folderIndex + 1) % folders.length];
+        return {
+          id: `${folder}::${suffix}`,
+          name: `${suffix} ${folderIndex}`,
+          type: "concepto",
+          path: `lore/${folder}/${suffix}.md`,
+          status: "stable" as const,
+          content: "",
+          forward_links: memberIndex === 0 ? [`${next}::Uno`] : [],
+          backlinks: memberIndex === 1 ? [`${folder}::Uno`] : [],
+          relaciones: [],
+        };
+      }),
+    );
+    const links: EntityLink[] = folders.map((folder) => ({
+      source: `${folder}::Uno`,
+      target: `${folder}::Dos`,
+      kind: "forward",
+    }));
+
+    mockFetch.mockResolvedValue({ entities, links });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(16));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+
+    await act(async () => {
+      await mockFlowInstance.instance!.setViewport({ x: 0, y: 0, zoom: 0.3 });
+    });
+
+    const labels = await screen.findAllByTestId("graph-cluster");
+    expect(labels).toHaveLength(8);
+
+    const boxes = labels.map((label) => {
+      const match = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(
+        (label as HTMLElement).style.transform,
+      );
+      expect(match).not.toBeNull();
+      return {
+        x: Number(match![1]),
+        y: Number(match![2]),
+        width: estimateLabelWidth(label.textContent ?? ""),
+        height: 16,
+        hidden: (label as HTMLElement).style.visibility === "hidden",
+      };
+    });
+
+    // Visible titles never share a pixel, at any zoom.
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.hidden || b.hidden) continue;
+        const overlap =
+          a.x - a.width / 2 < b.x + b.width / 2 &&
+          a.x + a.width / 2 > b.x - b.width / 2 &&
+          a.y - a.height < b.y &&
+          a.y > b.y - b.height;
+        expect(
+          overlap,
+          `${labels[i].textContent} overlaps ${labels[j].textContent}`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("never re-settles the map when a name is revealed or hidden", async () => {
@@ -1601,6 +1683,79 @@ describe("GraphView", () => {
     expect(screen.getByTestId("node-inspector")).toHaveStyle({
       width: "410px",
     });
+  });
+
+  it("expands the graph to the whole window and closes it again", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    const surface = screen.getByTestId("graph-surface");
+    expect(surface.className).not.toContain("fixed");
+
+    // jsdom has no Fullscreen API: the button still fills the window with the
+    // surface (the only path inside an embedded webview).
+    await user.click(screen.getByRole("button", { name: "Pantalla completa" }));
+    expect(screen.getByTestId("graph-surface")).toHaveClass("fixed", "h-screen");
+    expect(
+      screen.getByRole("button", { name: "Salir de pantalla completa" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // Escape leaves it, exactly like native fullscreen does.
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.getByTestId("graph-surface")).not.toHaveClass("fixed"),
+    );
+    expect(
+      screen.getByRole("button", { name: "Pantalla completa" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("delegates to the browser Fullscreen API when it exists", async () => {
+    const user = userEvent.setup();
+    const request = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+      configurable: true,
+      value: request,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exit,
+    });
+
+    try {
+      mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+      renderGraphView();
+      await waitFor(() => expect(countNodes()).toBe(3));
+      const surface = screen.getByTestId("graph-surface");
+
+      await user.click(
+        screen.getByRole("button", { name: "Pantalla completa" }),
+      );
+      expect(request).toHaveBeenCalledTimes(1);
+
+      // The browser owns the state: mimic its event so the button follows.
+      Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        get: () => surface,
+      });
+      fireEvent(document, new Event("fullscreenchange"));
+      expect(
+        screen.getByRole("button", { name: "Salir de pantalla completa" }),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: "Salir de pantalla completa" }),
+      );
+      expect(exit).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (HTMLElement.prototype as { requestFullscreen?: unknown })
+        .requestFullscreen;
+      delete (document as { exitFullscreen?: unknown }).exitFullscreen;
+      delete (document as { fullscreenElement?: unknown }).fullscreenElement;
+    }
   });
 
   it("hides and restores the inspector with the focus toggle", async () => {
