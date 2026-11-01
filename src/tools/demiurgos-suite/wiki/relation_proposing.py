@@ -40,7 +40,11 @@ class Source:
     key: str
     path: str = ""
     name: str = ""
+    #: Full body: the only source of truth for evidence verification.
     body: str = ""
+    #: Optional bounded copy sent to the model. Verification always uses
+    #: ``body``, so truncating the prompt loses recall, never correctness.
+    prompt_body: str = ""
 
 
 @dataclass(frozen=True)
@@ -140,7 +144,7 @@ def build_proposal_prompt(
             {
                 "canonical_id": source.key,
                 "display_title": source.name or source.key,
-                "body": source.body,
+                "body": source.prompt_body or source.body,
             }
             for source in sources
         ],
