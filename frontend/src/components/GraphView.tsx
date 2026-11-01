@@ -455,6 +455,9 @@ const edgeTypes: EdgeTypes = { graph: GraphEdge };
 
 interface GraphViewProps {
   mundo: string;
+  /** Fill the parent instead of the fixed card (rounded border + 18rem of
+   *  reserved height): used when the page gives the canvas the whole viewport. */
+  bleed?: boolean;
 }
 
 /**
@@ -478,7 +481,7 @@ interface GraphViewProps {
  *   folders (prefix union); edges touching hidden nodes vanish.
  * - Zoom/pan come from React Flow.
  */
-export default function GraphView({ mundo }: GraphViewProps) {
+export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   const { t } = useAppLanguage();
   const navigate = useNavigate();
   const [entities, setEntities] = useState<GraphEntity[]>([]);
@@ -1268,7 +1271,11 @@ export default function GraphView({ mundo }: GraphViewProps) {
   return (
     <div className="flex h-full w-full flex-col">
       <div
-        className="relative flex h-[calc(100dvh-18rem)] min-h-[520px] w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface"
+        className={
+          bleed
+            ? "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface"
+            : "relative flex h-[calc(100dvh-18rem)] min-h-[520px] w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface"
+        }
         data-testid="graph-surface"
       >
         {loading && (

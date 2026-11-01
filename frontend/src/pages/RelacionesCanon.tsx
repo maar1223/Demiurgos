@@ -106,14 +106,25 @@ export default function RelacionesCanon() {
         ? t("relaciones.reconcile.button.one")
         : t("relaciones.reconcile.button.many", { count: preview.files });
 
+  // The graph gets the whole viewport under the app header (3.5rem + 1px):
+  // a fixed 1280px container and 18rem of reserved height wasted both axes.
+  const isGraph = activeTab === "grafo";
+
   return (
-    <WikiHomeLayout>
-      <div className="col-span-full flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <WikiHomeLayout bleed={isGraph}>
+      <div
+        className={cn(
+          "col-span-full flex flex-wrap items-start justify-between gap-3",
+          isGraph && "border-b border-edge px-4 py-2",
+        )}
+      >
+        <div className={cn(isGraph && "flex items-baseline gap-3")}>
           <h1 className="font-heading text-h3 text-primary">
             {t("relaciones.title")}
           </h1>
-          <p className="mt-2 text-body text-muted">{t("relaciones.intro")}</p>
+          <p className={cn("mt-2 text-body text-muted", isGraph && "mt-0 hidden md:block")}>
+            {t("relaciones.intro")}
+          </p>
         </div>
         <button
           type="button"
@@ -136,11 +147,14 @@ export default function RelacionesCanon() {
         </p>
       ) : null}
 
-      <div className="col-span-full">
+      <div className={cn("col-span-full", isGraph && "flex min-h-0 flex-1 flex-col")}>
         <div
           role="tablist"
           aria-label={t("relaciones.tabsAria")}
-          className="mb-4 flex gap-2 border-b border-edge"
+          className={cn(
+            "mb-4 flex gap-2 border-b border-edge",
+            isGraph && "mb-0 px-4",
+          )}
         >
           {TABS.map((tab) => (
             <button
@@ -163,7 +177,9 @@ export default function RelacionesCanon() {
 
         {activeTab === "grafo" ? (
           mundo ? (
-            <GraphView key={graphVersion} mundo={mundo} />
+            <div className={cn(isGraph && "min-h-0 flex-1")}>
+              <GraphView key={graphVersion} mundo={mundo} bleed={isGraph} />
+            </div>
           ) : (
             <EmptyState
               icon="error"
