@@ -1029,6 +1029,8 @@ export const messages = {
       "El proveedor semántico no respondió. Intenta de nuevo.",
     "relaciones.propuestas.loadError": "No se pudieron cargar las propuestas.",
     "relaciones.propuestas.actionError": "No se pudo completar la acción.",
+    "relaciones.propuestas.timeout":
+      "El proveedor está tardando más de lo esperado. Intenta de nuevo en un momento.",
 
     "relaciones.quality.title": "Relación con el grafo",
     "relaciones.reconcile.title": "Sincronizar relaciones",
@@ -3255,6 +3257,8 @@ export const messages = {
       "The semantic provider did not respond. Try again.",
     "relaciones.propuestas.loadError": "Could not load proposals.",
     "relaciones.propuestas.actionError": "Could not complete the action.",
+    "relaciones.propuestas.timeout":
+      "The provider is taking longer than expected. Try again in a moment.",
 
     "relaciones.quality.title": "Relation health",
     "relaciones.reconcile.title": "Sync relations",

@@ -9,6 +9,7 @@ import {
   sweepRelations,
   unmuteRelationCandidate,
 } from "@/api/graph";
+import { ApiError } from "@/api/types";
 import type { RelationCandidate, RelationProposal } from "@/api/types";
 
 interface ProposalsPanelProps {
@@ -70,8 +71,14 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
     try {
       await action();
       await refresh();
-    } catch {
-      setError(t("relaciones.propuestas.actionError"));
+    } catch (err) {
+      // A timeout is not a generic failure: the provider may still be working,
+      // so say so instead of "no se pudo completar la acción".
+      setError(
+        err instanceof ApiError && err.code === "network.timeout"
+          ? t("relaciones.propuestas.timeout")
+          : t("relaciones.propuestas.actionError"),
+      );
     } finally {
       setBusy(false);
     }
