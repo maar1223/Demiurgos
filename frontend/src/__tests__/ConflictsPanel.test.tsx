@@ -5,18 +5,27 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConflictsPanel from "@/components/organisms/ConflictsPanel";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
-import { fetchConflicts, setConflictDecision } from "@/api/conflicts";
+import {
+  fetchConflicts,
+  rejectConflictProposal,
+  setConflictDecision,
+  sweepConflicts,
+} from "@/api/conflicts";
 import type { ConflictsResponse, WorldConflict } from "@/api/conflicts";
 
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
 vi.mock("@/api/conflicts", () => ({
   fetchConflicts: vi.fn(),
   setConflictDecision: vi.fn(),
+  sweepConflicts: vi.fn(),
+  rejectConflictProposal: vi.fn(),
 }));
 
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 const fetchConflictsMock = vi.mocked(fetchConflicts);
 const setConflictDecisionMock = vi.mocked(setConflictDecision);
+const sweepConflictsMock = vi.mocked(sweepConflicts);
+const rejectConflictProposalMock = vi.mocked(rejectConflictProposal);
 
 const lang = (language: "es" | "en") => ({
   language,
@@ -37,6 +46,12 @@ function conflict(overrides: Partial<WorldConflict> = {}): WorldConflict {
     field: null,
     reference: "Fantasma",
     decision: null,
+    state: "computed",
+    origin: "deterministic",
+    evidence_a: null,
+    evidence_b: null,
+    source_a: null,
+    source_b: null,
     ...overrides,
   };
 }
@@ -58,6 +73,7 @@ function response(conflicts: WorldConflict[]): ConflictsResponse {
       warnings: counted(null, "warning") + counted("structural", "warning"),
       known: counted("intentional"),
       muted: counted("muted"),
+      proposed: conflicts.filter((item) => item.state === "proposed").length,
       by_code: {},
     },
   };
@@ -107,7 +123,7 @@ describe("ConflictsPanel", () => {
 
     expect(await screen.findByTestId("conflicts-panel")).toBeInTheDocument();
     expect(screen.getByTestId("conflict-summary")).toHaveTextContent(
-      "Errores: 1 · Advertencias: 1 · Conocidos: 0 · Silenciados: 0",
+      "Errores: 1 · Advertencias: 1 · Propuestos: 0 · Conocidos: 0 · Silenciados: 0",
     );
     expect(screen.getByTestId("conflicts-errors")).toBeInTheDocument();
     expect(screen.getByTestId("conflicts-warnings")).toBeInTheDocument();
@@ -227,5 +243,107 @@ describe("ConflictsPanel", () => {
       "No se pudo guardar la decisión.",
     );
     expect(screen.getByTestId("conflict-item")).toBeInTheDocument();
+  });
+});
+
+function proposal(overrides: Partial<WorldConflict> = {}): WorldConflict {
+  return conflict({
+    id: "semantic:A:B:date",
+    code: "semantic-contradiction",
+    severity: "error",
+    path: "lore/alar.md",
+    name: "Alar",
+    message: "",
+    reference: "date",
+    state: "proposed",
+    origin: "semantic",
+    evidence_a: "nació en el año 120",
+    evidence_b: "nació en el año 145",
+    source_a: "A",
+    source_b: "B",
+    ...overrides,
+  });
+}
+
+describe("ConflictsPanel — semantic proposals (S3)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("shows both quotes of a proposal", async () => {
+    fetchConflictsMock.mockResolvedValue(response([proposal()]));
+
+    renderPanel();
+
+    expect(await screen.findByTestId("conflicts-proposed")).toBeInTheDocument();
+    expect(screen.getByTestId("conflict-quote-a")).toHaveTextContent(
+      "nació en el año 120",
+    );
+    expect(screen.getByTestId("conflict-quote-b")).toHaveTextContent(
+      "nació en el año 145",
+    );
+    expect(screen.getByTestId("conflict-summary")).toHaveTextContent(
+      "Propuestos: 1",
+    );
+  });
+
+  it("rejects a false positive", async () => {
+    fetchConflictsMock.mockResolvedValue(response([proposal()]));
+    rejectConflictProposalMock.mockResolvedValue(response([]));
+
+    renderPanel();
+
+    await screen.findByTestId("conflicts-proposed");
+    await userEvent.click(screen.getByTestId("reject-proposal"));
+
+    expect(rejectConflictProposalMock).toHaveBeenCalledWith(
+      "vibrantes",
+      "semantic:A:B:date",
+    );
+    expect(await screen.findByTestId("conflicts-empty")).toBeInTheDocument();
+  });
+
+  it("sweeps a bounded batch and reports the cost on the button", async () => {
+    fetchConflictsMock.mockResolvedValue(response([]));
+    sweepConflictsMock.mockResolvedValue({
+      status: "swept",
+      swept: 3,
+      created: 2,
+      pending: 2,
+      paths: [],
+      message: "",
+    });
+
+    renderPanel();
+
+    const button = await screen.findByTestId("conflict-sweep");
+    expect(button).toHaveTextContent("Revisar 3 fichas");
+    await userEvent.click(button);
+
+    expect(sweepConflictsMock).toHaveBeenCalledWith("vibrantes", { size: 3 });
+    expect(await screen.findByTestId("sweep-notice")).toHaveTextContent(
+      "Revisadas 3 fichas · 2 propuestas nuevas",
+    );
+  });
+
+  it("says when the provider did not answer", async () => {
+    fetchConflictsMock.mockResolvedValue(response([]));
+    sweepConflictsMock.mockResolvedValue({
+      status: "unavailable",
+      swept: 0,
+      created: 0,
+      pending: 0,
+      paths: [],
+      message: "",
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByTestId("conflict-sweep"));
+
+    expect(await screen.findByTestId("sweep-notice")).toHaveTextContent(
+      "El proveedor semántico no respondió; probá de nuevo.",
+    );
   });
 });

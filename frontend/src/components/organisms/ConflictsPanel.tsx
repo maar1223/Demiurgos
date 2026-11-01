@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
-import { fetchConflicts, setConflictDecision } from "@/api/conflicts";
+import {
+  fetchConflicts,
+  rejectConflictProposal,
+  setConflictDecision,
+  sweepConflicts,
+} from "@/api/conflicts";
 import type {
   ConflictCode,
   ConflictDecisionKind,
+  ConflictSweepResponse,
   ConflictsResponse,
   WorldConflict,
 } from "@/api/conflicts";
@@ -15,7 +21,10 @@ interface ConflictsPanelProps {
   mundo: string;
 }
 
-/** One user-facing sentence per deterministic code (S8). */
+/** Fichas reviewed per sweep call: the button names this number as its cost. */
+const SWEEP_BATCH_SIZE = 3;
+
+/** One user-facing sentence per conflict code (S8). */
 const CODE_MESSAGES: Record<ConflictCode, MessageKey> = {
   version: "relaciones.conflictos.code.version",
   "missing-minimum": "relaciones.conflictos.code.missing-minimum",
@@ -25,6 +34,8 @@ const CODE_MESSAGES: Record<ConflictCode, MessageKey> = {
   "dangling-relation": "relaciones.conflictos.code.dangling-relation",
   "self-relation": "relaciones.conflictos.code.self-relation",
   "canon-state-mismatch": "relaciones.conflictos.code.canon-state-mismatch",
+  "semantic-contradiction":
+    "relaciones.conflictos.code.semantic-contradiction",
 };
 
 const DECISION_ACTIONS: { kind: ConflictDecisionKind; label: MessageKey }[] = [
@@ -39,14 +50,13 @@ const actionClass =
   "rounded-lg border border-edge px-2 py-1 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
- * Conflictos — the deterministic conflict panel (S1) with the Author's
- * decisions (S2).
+ * Conflictos — the deterministic conflict panel (S1), the semantic proposals
+ * (S3) and the Author's decisions (S2).
  *
- * It shows what the world's own structure contradicts and lets the Author
- * decide what each conflict means: intentional (known, never an error),
- * muted (grouped apart, recoverable) or a structural rupture. Nothing here
- * edits a ficha or calls a model: the panel records the decision and links to
- * the ficha.
+ * The deterministic layer shows what the world's own structure contradicts. The
+ * semantic sweep proposes ficha-vs-ficha contradictions, each backed by a
+ * quote from both sides. Nothing here edits a ficha or decides canon: the panel
+ * records the decision and links to the ficha.
  */
 export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
   const { t } = useAppLanguage();
@@ -56,6 +66,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [sweepNotice, setSweepNotice] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,10 +87,12 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
   const groups = useMemo(() => {
     const items = data?.conflicts ?? [];
     const pending = (severity: string) => (conflict: WorldConflict) =>
+      conflict.state !== "proposed" &&
       conflict.decision !== "intentional" &&
       conflict.decision !== "muted" &&
       conflict.severity === severity;
     return {
+      proposed: items.filter((conflict) => conflict.state === "proposed"),
       errors: items.filter(pending("error")),
       warnings: items.filter(pending("warning")),
       known: items.filter((conflict) => conflict.decision === "intentional"),
@@ -107,6 +120,51 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     [mundo, t],
   );
 
+  const reject = useCallback(
+    async (conflict: WorldConflict) => {
+      setBusy(true);
+      setActionError("");
+      try {
+        setData(await rejectConflictProposal(mundo, conflict.id));
+      } catch {
+        setActionError(t("relaciones.conflictos.actionError"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [mundo, t],
+  );
+
+  const sweepMessage = (result: ConflictSweepResponse): string => {
+    if (result.status === "unavailable") {
+      return t("relaciones.conflictos.sweepUnavailable");
+    }
+    if (result.status === "done") {
+      return t("relaciones.conflictos.sweepNone");
+    }
+    return t("relaciones.conflictos.sweepDone", {
+      swept: result.swept,
+      created: result.created,
+    });
+  };
+
+  const sweep = useCallback(async () => {
+    setBusy(true);
+    setActionError("");
+    setSweepNotice("");
+    try {
+      const result = await sweepConflicts(mundo, { size: SWEEP_BATCH_SIZE });
+      setSweepNotice(sweepMessage(result));
+      setData(await fetchConflicts(mundo));
+    } catch {
+      setActionError(t("relaciones.conflictos.actionError"));
+    } finally {
+      setBusy(false);
+    }
+    // sweepMessage only reads `t`, which is stable per language.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mundo, t]);
+
   const openFicha = useCallback(
     (conflict: WorldConflict) => {
       const name = encodeURIComponent(conflict.name);
@@ -125,6 +183,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
   };
 
   const renderItem = (conflict: WorldConflict) => {
+    const proposal = conflict.state === "proposed";
     const decided = conflict.decision !== null;
     return (
       <li key={conflict.id} data-testid="conflict-item">
@@ -153,8 +212,55 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
               </span>
             ) : null}
           </button>
+          {proposal ? (
+            <div data-testid="conflict-evidence" className="mt-2 flex flex-col gap-1">
+              <p className="text-small font-medium text-muted">
+                {conflict.source_a}
+              </p>
+              <blockquote
+                data-testid="conflict-quote-a"
+                className="border-l-2 border-edge pl-2 text-small italic text-muted"
+              >
+                {conflict.evidence_a}
+              </blockquote>
+              <p className="text-small font-medium text-muted">
+                {conflict.source_b}
+              </p>
+              <blockquote
+                data-testid="conflict-quote-b"
+                className="border-l-2 border-edge pl-2 text-small italic text-muted"
+              >
+                {conflict.evidence_b}
+              </blockquote>
+            </div>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
-            {decided ? (
+            {proposal ? (
+              <>
+                {DECISION_ACTIONS.filter(
+                  (action) => action.kind !== "muted",
+                ).map((action) => (
+                  <button
+                    key={action.kind}
+                    type="button"
+                    className={actionClass}
+                    disabled={busy}
+                    onClick={() => void decide(conflict, action.kind)}
+                  >
+                    {t(action.label)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  data-testid="reject-proposal"
+                  className={actionClass}
+                  disabled={busy}
+                  onClick={() => void reject(conflict)}
+                >
+                  {t("relaciones.conflictos.decision.reject")}
+                </button>
+              </>
+            ) : decided ? (
               <button
                 type="button"
                 className={actionClass}
@@ -194,6 +300,20 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     );
   };
 
+  const sweepButton = (
+    <button
+      type="button"
+      data-testid="conflict-sweep"
+      className="rounded-lg border border-edge px-3 py-1.5 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={busy || loading}
+      onClick={() => void sweep()}
+    >
+      {busy
+        ? t("relaciones.conflictos.sweeping")
+        : t("relaciones.conflictos.sweep", { count: SWEEP_BATCH_SIZE })}
+    </button>
+  );
+
   if (loading && data === null) {
     return (
       <p data-testid="conflicts-loading" className="text-small text-muted">
@@ -220,43 +340,55 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     );
   }
 
-  if (data === null || data.summary.total === 0) {
-    return (
-      <div data-testid="conflicts-empty">
-        <EmptyState icon="check" message={t("relaciones.conflictos.empty")} />
-        <p className="text-center text-small text-muted">
-          {t("relaciones.conflictos.emptyHint")}
-        </p>
-      </div>
-    );
-  }
+  const empty = data === null || data.summary.total === 0;
 
   return (
     <section data-testid="conflicts-panel" className="flex flex-col gap-4">
-      <p data-testid="conflict-summary" className="text-small text-muted">
-        {t("relaciones.conflictos.summary", {
-          errors: data.summary.errors,
-          warnings: data.summary.warnings,
-          known: data.summary.known,
-          muted: data.summary.muted,
-        })}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised p-4">
+        <p data-testid="conflict-summary" className="text-small text-muted">
+          {t("relaciones.conflictos.summary", {
+            errors: data?.summary.errors ?? 0,
+            warnings: data?.summary.warnings ?? 0,
+            proposed: data?.summary.proposed ?? 0,
+            known: data?.summary.known ?? 0,
+            muted: data?.summary.muted ?? 0,
+          })}
+        </p>
+        {sweepButton}
+      </div>
+
       {actionError ? (
         <p role="alert" className="text-small text-danger">
           {actionError}
         </p>
       ) : null}
+      {sweepNotice ? (
+        <p data-testid="sweep-notice" className="text-small text-muted">
+          {sweepNotice}
+        </p>
+      ) : null}
+
+      {empty ? (
+        <div data-testid="conflicts-empty">
+          <EmptyState icon="check" message={t("relaciones.conflictos.empty")} />
+          <p className="text-center text-small text-muted">
+            {t("relaciones.conflictos.emptyHint")}
+          </p>
+        </div>
+      ) : null}
+
+      {renderGroup(
+        t("relaciones.conflictos.proposed"),
+        groups.proposed,
+        "conflicts-proposed",
+      )}
       {renderGroup(t("relaciones.conflictos.errors"), groups.errors, "conflicts-errors")}
       {renderGroup(
         t("relaciones.conflictos.warnings"),
         groups.warnings,
         "conflicts-warnings",
       )}
-      {renderGroup(
-        t("relaciones.conflictos.known"),
-        groups.known,
-        "conflicts-known",
-      )}
+      {renderGroup(t("relaciones.conflictos.known"), groups.known, "conflicts-known")}
       {groups.muted.length > 0 ? (
         <details data-testid="conflicts-muted">
           <summary className="cursor-pointer select-none text-small font-semibold uppercase tracking-wide text-muted">

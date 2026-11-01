@@ -165,6 +165,7 @@ describe("RelacionesCanon", () => {
         warnings: 0,
         known: 0,
         muted: 0,
+        proposed: 0,
         by_code: {},
       },
     });

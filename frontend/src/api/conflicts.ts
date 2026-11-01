@@ -13,10 +13,17 @@ export type ConflictCode =
   | "duplicate-id"
   | "dangling-relation"
   | "self-relation"
-  | "canon-state-mismatch";
+  | "canon-state-mismatch"
+  | "semantic-contradiction";
 
 /** The Author's answer to a conflict (S10). */
 export type ConflictDecisionKind = "intentional" | "muted" | "structural";
+
+/** Where the conflict comes from: computed structure or a semantic sweep. */
+export type ConflictOrigin = "deterministic" | "semantic";
+
+/** Review state of a conflict. */
+export type ConflictState = "computed" | "proposed" | "decided";
 
 /** One conflict attached to a ficha. */
 export interface WorldConflict {
@@ -29,6 +36,13 @@ export interface WorldConflict {
   field: string | null;
   reference: string | null;
   decision: ConflictDecisionKind | null;
+  state: ConflictState;
+  origin: ConflictOrigin;
+  /** Both sides of a semantic contradiction (null for deterministic ones). */
+  evidence_a: string | null;
+  evidence_b: string | null;
+  source_a: string | null;
+  source_b: string | null;
 }
 
 /** Counts the panel header shows. */
@@ -38,6 +52,7 @@ export interface ConflictSummary {
   warnings: number;
   known: number;
   muted: number;
+  proposed: number;
   by_code: Partial<Record<ConflictCode, number>>;
 }
 
@@ -77,5 +92,53 @@ export async function setConflictDecision(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+/** Body of POST /api/{mundo}/conflicts/sweep. */
+export interface ConflictSweepRequest {
+  size?: number;
+}
+
+/** Result of one semantic sweep batch. */
+export interface ConflictSweepResponse {
+  status: "swept" | "done" | "unavailable";
+  swept: number;
+  created: number;
+  pending: number;
+  paths: string[];
+  message: string;
+}
+
+/**
+ * POST /api/{mundo}/conflicts/sweep — reviews a bounded batch of fichas with
+ * the semantic provider. It only proposes; an outage marks nothing swept.
+ */
+export async function sweepConflicts(
+  mundo: string,
+  body: ConflictSweepRequest = {},
+): Promise<ConflictSweepResponse> {
+  const path = `/api/${encodeURIComponent(mundo)}/conflicts/sweep`;
+  return apiFetch<ConflictSweepResponse>(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * POST /api/{mundo}/conflicts/proposal/reject — marks a semantic proposal as a
+ * model mistake and answers the refreshed payload.
+ */
+export async function rejectConflictProposal(
+  mundo: string,
+  conflictId: string,
+  note = "",
+): Promise<ConflictsResponse> {
+  const path = `/api/${encodeURIComponent(mundo)}/conflicts/proposal/reject`;
+  return apiFetch<ConflictsResponse>(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conflict_id: conflictId, note }),
   });
 }

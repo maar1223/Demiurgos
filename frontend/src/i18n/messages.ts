@@ -1065,7 +1065,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
     "relaciones.conflictos.summary":
-      "Errores: {errors} · Advertencias: {warnings} · Conocidos: {known} · Silenciados: {muted}",
+      "Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
     "relaciones.conflictos.errors": "Errores",
     "relaciones.conflictos.warnings": "Advertencias",
     "relaciones.conflictos.loading": "Revisando el mundo…",
@@ -1091,6 +1091,7 @@ export const messages = {
       "La ficha declara una relación consigo misma.",
     "relaciones.conflictos.code.canon-state-mismatch":
       "El estado de borrador/canon y el estado de verdad se contradicen.",
+    "relaciones.conflictos.proposed": "Propuestos",
     "relaciones.conflictos.known": "Conocidos",
     "relaciones.conflictos.muted": "Silenciados",
     "relaciones.conflictos.actionError": "No se pudo guardar la decisión.",
@@ -1099,6 +1100,16 @@ export const messages = {
     "relaciones.conflictos.decision.structural": "Ruptura",
     "relaciones.conflictos.decision.structuralBadge": "Ruptura estructural",
     "relaciones.conflictos.decision.clear": "Quitar decisión",
+    "relaciones.conflictos.decision.reject": "Falso positivo",
+    "relaciones.conflictos.sweep": "Revisar {count} fichas",
+    "relaciones.conflictos.sweeping": "Revisando…",
+    "relaciones.conflictos.sweepDone":
+      "Revisadas {swept} fichas · {created} propuestas nuevas",
+    "relaciones.conflictos.sweepNone": "No hay fichas por revisar.",
+    "relaciones.conflictos.sweepUnavailable":
+      "El proveedor semántico no respondió; probá de nuevo.",
+    "relaciones.conflictos.code.semantic-contradiction":
+      "Dos fichas afirman cosas que no pueden ser ciertas a la vez.",
 
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
@@ -3331,7 +3342,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "you rejected it before",
 
     "relaciones.conflictos.summary":
-      "Errors: {errors} · Warnings: {warnings} · Known: {known} · Muted: {muted}",
+      "Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
     "relaciones.conflictos.errors": "Errors",
     "relaciones.conflictos.warnings": "Warnings",
     "relaciones.conflictos.loading": "Checking the world…",
@@ -3357,6 +3368,7 @@ export const messages = {
       "The ficha declares a relation to itself.",
     "relaciones.conflictos.code.canon-state-mismatch":
       "The draft/canon state and the world-truth state contradict each other.",
+    "relaciones.conflictos.proposed": "Proposed",
     "relaciones.conflictos.known": "Known",
     "relaciones.conflictos.muted": "Muted",
     "relaciones.conflictos.actionError": "The decision could not be saved.",
@@ -3365,6 +3377,16 @@ export const messages = {
     "relaciones.conflictos.decision.structural": "Rupture",
     "relaciones.conflictos.decision.structuralBadge": "Structural rupture",
     "relaciones.conflictos.decision.clear": "Clear decision",
+    "relaciones.conflictos.decision.reject": "False positive",
+    "relaciones.conflictos.sweep": "Review {count} fichas",
+    "relaciones.conflictos.sweeping": "Reviewing…",
+    "relaciones.conflictos.sweepDone":
+      "Reviewed {swept} fichas · {created} new proposals",
+    "relaciones.conflictos.sweepNone": "Nothing to review.",
+    "relaciones.conflictos.sweepUnavailable":
+      "The semantic provider did not answer; try again.",
+    "relaciones.conflictos.code.semantic-contradiction":
+      "Two fichas state things that cannot both be true at once.",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
