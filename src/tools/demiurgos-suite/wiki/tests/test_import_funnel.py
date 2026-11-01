@@ -422,6 +422,147 @@ class TestGroundedRelations:
 
 
 # ---------------------------------------------------------------------------
+# S6 — the funnel verifies model relations against the source body
+# ---------------------------------------------------------------------------
+
+
+def _relationship_runner(relationships):
+    """Return a funnel runner that emits fixed ``relationships`` (Steps 2+3+4).
+
+    The frontmatter half always types every candidate so the document-wide
+    type-recovery pass (which re-asks the model) never replaces the chunk's
+    ``enrichment_json``.
+    """
+
+    def runner(prompt: str, _session: str) -> str:
+        data = json.loads(prompt)
+        candidates = data["candidates"]
+        if candidates and "body" in candidates[0]:
+            return json.dumps({"summaries": [
+                {"candidate_id": c["candidate_id"],
+                 "summary": f"Resumen de {c['display_title']}."}
+                for c in candidates
+            ]})
+        return json.dumps({
+            "relationships": list(relationships),
+            "frontmatter": [
+                {"candidate_id": c["candidate_id"],
+                 "title": c["display_title"], "type": "concepto",
+                 "description": "desc", "relaciones": []}
+                for c in candidates
+            ],
+        })
+
+    return runner
+
+
+def _relationship_entry(source, target_canonical, quote):
+    return {
+        "source_candidate_id": source.candidate_id,
+        "target_canonical_id": target_canonical,
+        "relationship_type": "aliado-de",
+        "confidence": 0.9,
+        "evidence": quote,
+    }
+
+
+def _relationship_entries(candidate):
+    return [
+        entry for entry in (candidate.enrichment_json or [])
+        if entry.get("__type__") == "relationship"
+    ]
+
+
+class TestVerifiedModelRelations:
+    """A model claim survives only when it quotes the SOURCE body (S6).
+
+    The funnel annotates every validated relationship with ``verified``. Only
+    quote-backed entries are candidates for the evidence memory; none of them
+    ever changes the deterministic ``relaciones`` base.
+    """
+
+    def test_quote_in_body_marks_verified_without_touching_relaciones(self):
+        alpha = _ficha(
+            "Alpha", canonical_id="G::Alpha",
+            preview="Alpha reconoce a su aliada en el consejo.")
+        beta = _ficha(
+            "Beta", canonical_id="G::Beta",
+            preview="Beta no nombra a nadie.")
+        entries = [_relationship_entry(alpha, "G::Beta", "reconoce a su aliada")]
+
+        out = analyze_ficha_funnel(
+            [alpha, beta], _relationship_runner(entries), max_workers=1)
+        by_id = {c.candidate_id: c for c in out}
+        rels = _relationship_entries(by_id[alpha.candidate_id])
+
+        assert len(rels) == 1
+        assert rels[0]["verified"] is True
+        assert rels[0]["evidence"] == "reconoce a su aliada"
+        # The deterministic extraction stays the base: the body never names
+        # Beta, so the quote-backed claim does not add it to ``relaciones``.
+        assert "G::Beta" not in by_id[alpha.candidate_id].frontmatter.relaciones
+
+    def test_quote_absent_from_body_marks_unverified(self):
+        alpha = _ficha(
+            "Alpha", canonical_id="G::Alpha",
+            preview="Alpha no menciona a nadie.")
+        beta = _ficha(
+            "Beta", canonical_id="G::Beta",
+            preview="Beta no nombra a nadie.")
+        entries = [_relationship_entry(alpha, "G::Beta", "reconoce a su aliada")]
+
+        out = analyze_ficha_funnel(
+            [alpha, beta], _relationship_runner(entries), max_workers=1)
+        by_id = {c.candidate_id: c for c in out}
+        rels = _relationship_entries(by_id[alpha.candidate_id])
+
+        assert len(rels) == 1
+        assert rels[0]["verified"] is False
+        assert "G::Beta" not in by_id[alpha.candidate_id].frontmatter.relaciones
+
+    def test_batch_enumeration_produces_zero_verified_claims(self):
+        """A model that enumerates its batch cannot manufacture evidence."""
+        fichas = [
+            _ficha(name, canonical_id=f"G::{name}",
+                   preview=f"{name} describe su propio entorno.")
+            for name in ("Alpha", "Beta", "Gamma")
+        ]
+        entries = [
+            _relationship_entry(source, target.canonical_id,
+                                "mencionado en el resumen")
+            for source in fichas
+            for target in fichas
+            if source is not target
+        ]
+
+        out = analyze_ficha_funnel(
+            fichas, _relationship_runner(entries), max_workers=1)
+
+        rels = [entry for candidate in out
+                for entry in _relationship_entries(candidate)]
+        assert rels, "the model entries must still be kept as advisory"
+        assert all(entry["verified"] is False for entry in rels)
+        assert sum(1 for entry in rels if entry["verified"]) == 0
+
+    def test_verification_uses_the_full_body_not_the_prompt_window(self):
+        """A quote past the 1500-char prompt window still verifies."""
+        body = ("relleno " * 300) + "Alpha confia en Beta."
+        assert len(body) > 1500
+        alpha = _ficha("Alpha", canonical_id="G::Alpha", preview=body)
+        beta = _ficha("Beta", canonical_id="G::Beta",
+                      preview="Beta no nombra a nadie.")
+        entries = [_relationship_entry(alpha, "G::Beta", "confia en Beta")]
+
+        out = analyze_ficha_funnel(
+            [alpha, beta], _relationship_runner(entries), max_workers=1)
+        by_id = {c.candidate_id: c for c in out}
+
+        rels = _relationship_entries(by_id[alpha.candidate_id])
+        assert len(rels) == 1
+        assert rels[0]["verified"] is True
+
+
+# ---------------------------------------------------------------------------
 # Task 2.4 — extended-timeout fail-open (design risk 4)
 # ---------------------------------------------------------------------------
 

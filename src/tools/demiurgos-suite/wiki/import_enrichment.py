@@ -47,6 +47,10 @@ from import_models import (
     FrontmatterState,
     RelationshipSuggestion,
 )
+# S6 — the funnel's model relationships go through the SAME batch-safe
+# verification primitive as the sweep: only a quote that appears in the source
+# body survives. Batch membership is never evidence.
+from relation_proposing import CatalogEntry, Source, verify_claims
 
 logger = logging.getLogger("demiurgos-import-enrichment")
 
@@ -1396,6 +1400,147 @@ def _recover_types_document_wide(
     return out
 
 
+def _canonical_key(candidate: Candidate) -> str:
+    """The canonical identity a candidate contributes to a relation pair."""
+    return candidate.canonical_id or candidate.normalized_identity
+
+
+def _relation_catalog_entries(
+    candidates: Iterable[Candidate],
+) -> list[CatalogEntry]:
+    """Deduplicated catalog of valid targets, keyed by canonical id."""
+    entries: list[CatalogEntry] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        canonical = _canonical_key(candidate)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append(CatalogEntry(
+            canonical_id=canonical,
+            display_title=(
+                candidate.display_title or candidate.normalized_identity),
+        ))
+    return entries
+
+
+def _verification_catalog(
+    catalog: Iterable[Candidate],
+    batch: Iterable[Candidate],
+    world_entities: Iterable[object] | None,
+) -> list[CatalogEntry]:
+    """Batch + document + world entities, the target universe for verification."""
+    entries = _relation_catalog_entries(batch)
+    seen = {entry.canonical_id for entry in entries}
+    for candidate in catalog:
+        canonical = _canonical_key(candidate)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        entries.append(CatalogEntry(
+            canonical_id=canonical,
+            display_title=(
+                candidate.display_title or candidate.normalized_identity),
+        ))
+    for target in build_relation_targets(world_entities or ()):
+        if not target.canonical_id or target.canonical_id in seen:
+            continue
+        seen.add(target.canonical_id)
+        entries.append(CatalogEntry(
+            canonical_id=target.canonical_id,
+            display_title=target.name or target.canonical_id,
+        ))
+    return entries
+
+
+def _candidate_key_map(candidates: Iterable[Candidate]) -> dict[str, str]:
+    """Map candidate ids (and identities) to the canonical id used in pairs."""
+    mapping: dict[str, str] = {}
+    for candidate in candidates:
+        canonical = _canonical_key(candidate)
+        if not canonical:
+            continue
+        if candidate.candidate_id:
+            mapping[candidate.candidate_id] = canonical
+        if candidate.normalized_identity:
+            mapping.setdefault(candidate.normalized_identity, canonical)
+    return mapping
+
+
+def _verified_relation_keys(
+    rel_payload: dict[str, Any],
+    batch: list[Candidate],
+    catalog: list[Candidate],
+    world_entities: Iterable[object] | None,
+) -> set[tuple[str, str, str]]:
+    """Keys (source canonical, target canonical, quote) of quote-backed claims."""
+    raw_entries = (
+        rel_payload.get("relationships")
+        if isinstance(rel_payload, dict) else None
+    )
+    if not isinstance(raw_entries, list) or not raw_entries:
+        return set()
+    key_by_candidate = _candidate_key_map(batch)
+    key_by_candidate.update(_candidate_key_map(catalog))
+    sources = [
+        Source(
+            key=_canonical_key(candidate),
+            path=candidate.materialized_path,
+            name=candidate.display_title or candidate.normalized_identity,
+            # FULL body: the 1500-char window exists only for prompt budget.
+            body=candidate.content_preview or "",
+        )
+        for candidate in batch
+        if _canonical_key(candidate)
+    ]
+    normalized: list[dict[str, Any]] = []
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        source_raw = str(
+            entry.get("source_candidate_id")
+            or entry.get("source_canonical_id")
+            or entry.get("source_key")
+            or "")
+        target_raw = str(
+            entry.get("target_canonical_id")
+            or entry.get("target_candidate_id")
+            or entry.get("target_id")
+            or entry.get("target_name")
+            or "")
+        if not source_raw or not target_raw:
+            continue
+        normalized.append({
+            "source_canonical_id": key_by_candidate.get(source_raw, source_raw),
+            "target_canonical_id": key_by_candidate.get(target_raw, target_raw),
+            "relationship_type": entry.get("relationship_type") or "",
+            "confidence": entry.get("confidence"),
+            "evidence": entry.get("evidence") or entry.get("quote") or "",
+        })
+    claims = verify_claims(
+        normalized,
+        sources,
+        _verification_catalog(catalog, batch, world_entities),
+    )
+    return {
+        (claim.source_key, claim.target_id, claim.quote.strip())
+        for claim in claims
+    }
+
+
+def _suggestion_verified(
+    rel: RelationshipSuggestion,
+    key_by_candidate: dict[str, str],
+    verified: set[tuple[str, str, str]],
+) -> bool:
+    """True when the validated suggestion has a quote-backed counterpart."""
+    source_key = key_by_candidate.get(
+        rel.source_candidate_id, rel.source_candidate_id)
+    target_raw = rel.target_candidate_id or rel.target_name or ""
+    target_key = key_by_candidate.get(target_raw, target_raw)
+    return (source_key, target_key, (rel.evidence or "").strip()) in verified
+
+
 def _enrich_funnel_chunk(
     chunk: list[Candidate],
     hermes_runner: Callable[[str, str], str],
@@ -1406,6 +1551,7 @@ def _enrich_funnel_chunk(
     prov: dict[str, str],
     on_phase: Callable[[str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    world_entities: Iterable[object] | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 for ONE byte-bounded chunk (the unit of parallelism).
 
@@ -1431,6 +1577,11 @@ def _enrich_funnel_chunk(
     when it returns True the chunk stops launching NEW Hermes work and returns
     what it has produced so far fail-open (candidates fall back to reviewable
     fallback frontmatter). Nothing raises.
+
+    ``world_entities`` (optional) extends the verification catalog with
+    entities already in the world, so a model claim can target them exactly as
+    ``_apply_grounded_relations`` already allows. Verification always reads the
+    candidate's FULL body, never the bounded prompt window.
     """
     # Step 2 — per-ficha summaries from the full body (this chunk). Uses
     # fill-in: re-asks any candidate the model omitted in small groups, so a
@@ -1460,6 +1611,7 @@ def _enrich_funnel_chunk(
         on_phase("generando_metadata")
     relationships: list[RelationshipSuggestion] = []
     frontmatter: dict[str, dict[str, Any]] = {}
+    rel_payload: dict[str, Any] = {}
     if summarized and not (should_cancel is not None and should_cancel()):
         try:
             raw = hermes_runner(
@@ -1485,11 +1637,25 @@ def _enrich_funnel_chunk(
                 "funnel steps 3+4 (relationships/frontmatter) failed: %s",
                 type(exc).__name__, exc_info=True)
 
+    # S6 — validate the model's OWN relationship entries against each source
+    # candidate's FULL body. Only quote-backed claims are marked verified;
+    # unverified entries stay advisory in ``enrichment_json`` (they never
+    # influence ``relaciones``, which the deterministic pass owns).
+    verified_keys = _verified_relation_keys(
+        rel_payload, summarized, catalog, world_entities)
+    key_by_candidate = _candidate_key_map(summarized)
+    key_by_candidate.update(_candidate_key_map(catalog))
+
     rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
     for rel in relationships:
         rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
             rel.model_dump()
-            | {"provenance": dict(prov), "__type__": "relationship"})
+            | {
+                "provenance": dict(prov),
+                "__type__": "relationship",
+                "verified": _suggestion_verified(
+                    rel, key_by_candidate, verified_keys),
+            })
 
     out: list[Candidate] = []
     for c in chunk:
@@ -1706,6 +1872,8 @@ def analyze_ficha_funnel(
     # It is small (ids + display titles, ~1.1k tokens for 50+ fichas), so it
     # fits in a single Step 3 call. Sources stay limited per-chunk.
     catalog = list(candidates)
+    # Materialize once: every chunk verifies against the same world entities.
+    world_entities = list(world_entities or ())
 
     # Chunks bounded by BOTH body bytes AND candidate count (per ``_group_by_bytes``;
     # ``chunk_budget`` overrides only the byte bound for this call when the caller
@@ -1729,10 +1897,12 @@ def analyze_ficha_funnel(
             return idx, _enrich_funnel_chunk(
                 chunk, _fail_open_runner(hermes_runner), chunk_session,
                 catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                world_entities=world_entities,
                 should_cancel=should_cancel)
         return idx, _enrich_funnel_chunk(
             chunk, hermes_runner, chunk_session,
             catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+            world_entities=world_entities,
             on_phase=on_phase, should_cancel=should_cancel)
 
     workers = max_workers if max_workers is not None else _default_funnel_max_workers()
@@ -1749,6 +1919,7 @@ def analyze_ficha_funnel(
                         chunks[j], _fail_open_runner(hermes_runner),
                         f"{base_session_id}:chunk:{j}",
                         catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                        world_entities=world_entities,
                         should_cancel=should_cancel))
                 break
             _i, enriched = _run_chunk(idx)
@@ -1810,12 +1981,15 @@ def analyze_ficha_funnel(
                                 chunks[j], _fail_open_runner(hermes_runner),
                                 f"{base_session_id}:chunk:{j}",
                                 catalog=catalog, rel_vocab=rel_vocab,
-                                prov=prov, should_cancel=should_cancel)
+                                prov=prov,
+                                world_entities=world_entities,
+                                should_cancel=should_cancel)
                     else:
                         final[j] = _enrich_funnel_chunk(
                             chunks[j], _fail_open_runner(hermes_runner),
                             f"{base_session_id}:chunk:{j}",
                             catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                            world_entities=world_entities,
                             should_cancel=should_cancel)
                 break
             fut = future_by_idx.get(idx)
@@ -1825,6 +1999,7 @@ def analyze_ficha_funnel(
                     chunks[idx], _fail_open_runner(hermes_runner),
                     f"{base_session_id}:chunk:{idx}",
                     catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                    world_entities=world_entities,
                     should_cancel=should_cancel)
             else:
                 try:
@@ -1838,6 +2013,7 @@ def analyze_ficha_funnel(
                         chunks[idx], _fail_open_runner(hermes_runner),
                         f"{base_session_id}:chunk:{idx}",
                         catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                        world_entities=world_entities,
                         should_cancel=should_cancel)
             if final[idx] is None:
                 continue

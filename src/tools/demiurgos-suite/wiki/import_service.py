@@ -39,6 +39,10 @@ from import_intake import BoundedSpool
 from import_store import ImportJobStore
 from import_registry import _request_cancel
 from order_manifest import append_order, replace_prefix_order
+from relation_evidence import (
+    record as record_evidence,
+    record_many as record_evidence_many,
+)
 
 if TYPE_CHECKING:
     # Only needed for the type annotation; graph_indexer uses package-relative
@@ -875,6 +879,60 @@ class ImportService:
                 f"graph_reconcile_partial:{len(result.failed)}",
             )
 
+    def _record_verified_relations(self, job: ImportJob,
+                                   candidate: Candidate) -> None:
+        """Persist quote-backed model relations in the world evidence store.
+
+        S6: the funnel marks only body-quoted model relations ``verified``. The
+        importer feeds those to the SAME evidence memory the sweep uses, so a
+        later sync can keep the declared relation while the quote survives.
+        Unverified entries never reach this point. Best-effort: an ``OSError``
+        (unwritable store) is logged and the import continues.
+        """
+        source_key = candidate.canonical_id or candidate.normalized_identity
+        if not source_key:
+            return
+        verified = [
+            entry for entry in (candidate.enrichment_json or [])
+            if isinstance(entry, dict)
+            and entry.get("__type__") == "relationship"
+            and entry.get("verified") is True
+        ]
+        if not verified:
+            return
+        # ``enrichment_json`` carries the target's candidate id; the evidence
+        # store keys canonical ids, so resolve them from this job's candidates.
+        try:
+            canonical_by_candidate = {
+                item.candidate_id: (item.canonical_id or item.normalized_identity)
+                for item in self.store.candidates_for(job.job_id)
+            }
+        except Exception:  # noqa: BLE001 — evidence recording is best-effort
+            canonical_by_candidate = {}
+        records: list[tuple[str, str, str, str]] = []
+        for entry in verified:
+            target_candidate_id = str(entry.get("target_candidate_id") or "")
+            right = (canonical_by_candidate.get(target_candidate_id)
+                     or str(entry.get("target_canonical_id") or ""))
+            quote = str(entry.get("evidence") or "").strip()
+            if not right or right == source_key or not quote:
+                continue
+            records.append((source_key, right, source_key, quote))
+        if not records:
+            return
+        world_dir = self._mundo_dir(job.world)
+        try:
+            if len(records) == 1:
+                left, right, side, quote = records[0]
+                record_evidence(
+                    world_dir, left=left, right=right, side=side, quote=quote)
+            else:
+                record_evidence_many(world_dir, records)
+        except OSError as exc:
+            logger.warning(
+                "relations: could not record verified evidence for %s: %s",
+                candidate.candidate_id, exc)
+
     def _execute_candidate(self, job: ImportJob, candidate: Candidate,
                            vision_by_path: dict[str, dict] | None = None,
                            approved_vision_ids: set[str] | None = None,
@@ -974,6 +1032,11 @@ class ImportService:
             )
         else:
             document = preview
+
+        # S6 — verified model relations feed the shared evidence memory at
+        # materialization (same primitive the sweep uses). Unverified entries
+        # were annotated ``verified: false`` and are ignored here.
+        self._record_verified_relations(job, candidate)
 
         # Explicit replacement (candidate carries a replacement record): the
         # prior ficha is snapshotted to .papelera, then the new content is
