@@ -218,3 +218,23 @@ def test_claim_anchor_is_order_independent() -> None:
     right = Claim(source_key="alpha", target_id="zed", quote="q")
     assert left.pair == right.pair == ("alpha", "zed")
     assert left.anchor == right.anchor == "alpha"
+
+
+def test_outcome_distinguishes_nothing_found_from_no_answer() -> None:
+    from relation_proposing import propose_relations_outcome
+
+    source = _source("alpha", "Alpha mentions Beta.")
+    catalog = _catalog("alpha", "beta")
+    empty = propose_relations_outcome(
+        sources=[source],
+        catalog=catalog,
+        runner=lambda prompt, session_id: json.dumps({"relationships": []}),
+    )
+    assert empty.provider_ok is True
+    assert empty.claims == ()
+    silent = propose_relations_outcome(
+        sources=[source],
+        catalog=catalog,
+        runner=lambda prompt, session_id: "",
+    )
+    assert silent.provider_ok is False

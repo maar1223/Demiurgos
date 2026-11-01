@@ -222,6 +222,50 @@ def verify_claims(
     )
 
 
+@dataclass(frozen=True)
+class ProposalOutcome:
+    """Claims plus whether the provider actually answered.
+
+    ``provider_ok`` separates "the model found nothing" (a legitimate result
+    that may mark a ficha as swept) from "the model never answered" (an outage
+    that must NOT hide reviewable work).
+    """
+
+    claims: tuple[Claim, ...] = ()
+    provider_ok: bool = False
+
+
+def propose_relations_outcome(
+    *,
+    sources: Sequence[Source],
+    catalog: Sequence[CatalogEntry],
+    runner: ModelRunner,
+    rel_vocab: Iterable[str] | None = None,
+    known_pairs: Iterable[tuple[str, str]] | None = None,
+    session_id: str = "",
+) -> ProposalOutcome:
+    """Ask the model once, then keep only quote-backed claims."""
+    if not sources or not catalog:
+        return ProposalOutcome()
+    prompt = json.dumps(
+        build_proposal_prompt(sources, catalog, rel_vocab=rel_vocab),
+        ensure_ascii=False,
+    )
+    try:
+        raw = runner(prompt, session_id)
+    except Exception:  # noqa: BLE001 — a provider outage is not a crash
+        return ProposalOutcome()
+    if _parse_json_object(raw) is None:
+        return ProposalOutcome()
+    claims = verify_claims(
+        parse_proposal_response(raw),
+        sources,
+        catalog,
+        known_pairs=known_pairs,
+    )
+    return ProposalOutcome(claims=tuple(claims), provider_ok=True)
+
+
 def propose_relations(
     *,
     sources: Sequence[Source],
@@ -236,21 +280,15 @@ def propose_relations(
     Fail-open: a provider that raises or answers with garbage yields no
     proposals, so an outage can never invent a relation either.
     """
-    if not sources or not catalog:
-        return []
-    prompt = json.dumps(
-        build_proposal_prompt(sources, catalog, rel_vocab=rel_vocab),
-        ensure_ascii=False,
-    )
-    try:
-        raw = runner(prompt, session_id)
-    except Exception:  # noqa: BLE001 — a provider outage is not a crash
-        return []
-    return verify_claims(
-        parse_proposal_response(raw),
-        sources,
-        catalog,
-        known_pairs=known_pairs,
+    return list(
+        propose_relations_outcome(
+            sources=sources,
+            catalog=catalog,
+            runner=runner,
+            rel_vocab=rel_vocab,
+            known_pairs=known_pairs,
+            session_id=session_id,
+        ).claims
     )
 
 
