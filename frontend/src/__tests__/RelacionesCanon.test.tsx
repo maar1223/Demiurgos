@@ -49,6 +49,18 @@ function renderPage() {
 }
 
 describe("RelacionesCanon", () => {
+  it("gives the graph tab a definite viewport height and no width cap", () => {
+    // Regression: the bleed page used min-height, so every ``h-full`` below it
+    // resolved to zero and the canvas rendered empty.
+    const { container } = renderPage();
+    const main = container.querySelector("main")!;
+    expect(main.className).not.toContain("max-w-7xl");
+
+    const page = main.parentElement!;
+    expect(page.className).toContain("h-[calc(100vh-3.5rem-1px)]");
+    expect(page.className).not.toContain("min-h-[calc(100vh-3.5rem-1px)]");
+  });
+
   beforeEach(() => {
     (useWorlds as Mock).mockReturnValue({
       worlds: [],
