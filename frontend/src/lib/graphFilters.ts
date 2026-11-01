@@ -86,3 +86,22 @@ export function filterEntitiesByFolders(
     ),
   );
 }
+
+/**
+ * Node keys of one node and its direct neighbours, from the loaded link list.
+ *
+ * Used by "isolate neighbourhood": the view keeps exactly this set, so every
+ * connection of the focused node fits on screen and its name stays readable
+ * (the graph drops labels when zoomed out to show the whole world).
+ */
+export function neighborhoodKeys(
+  links: { source: string; target: string }[],
+  focusKey: string,
+): Set<string> {
+  const keys = new Set<string>([focusKey]);
+  for (const link of links) {
+    if (link.source === focusKey) keys.add(link.target);
+    if (link.target === focusKey) keys.add(link.source);
+  }
+  return keys;
+}

@@ -26,6 +26,9 @@ export interface NodeInspectorPanelProps {
   /** Called with a relation's reference when the Author says it does not
    *  belong. The panel only renders the action when this is provided. */
   onRemoveRelation?: (reference: string) => void;
+  /** Called when the Author wants to see only this node and its neighbours.
+   *  The action only renders when this is provided. */
+  onIsolate?: () => void;
 }
 
 /** One neighbor entry after resolution: what to show and whether it links. */
@@ -62,6 +65,7 @@ export function NodeInspectorPanel({
   onClose,
   mundo,
   onRemoveRelation,
+  onIsolate,
 }: NodeInspectorPanelProps) {
   const { t } = useAppLanguage();
   const statusMeta = entity.status ? STATUS_META[entity.status] : null;
@@ -173,6 +177,16 @@ export function NodeInspectorPanel({
         >
           {t("nodeInspector.openFicha")}
         </button>
+        {onIsolate ? (
+          <button
+            type="button"
+            data-testid="isolate-neighborhood"
+            onClick={onIsolate}
+            className="w-full rounded border border-edge px-3 py-1.5 text-small font-medium text-primary transition-colors hover:border-action hover:text-action"
+          >
+            {t("nodeInspector.isolateNeighborhood")}
+          </button>
+        ) : null}
       </div>
     </aside>
   );
