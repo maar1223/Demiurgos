@@ -82,6 +82,12 @@ class Conflict:
             "message": self.message,
             "field": self.field,
             "reference": self.reference,
+            "state": "computed",
+            "origin": "deterministic",
+            "evidence_a": None,
+            "evidence_b": None,
+            "source_a": None,
+            "source_b": None,
         }
 
 

@@ -15,7 +15,7 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 - **S8 — i18n.** Every new user-facing string exists in `es` and `en`.
 - **S9 — Tests.** Backend: one unit test per code plus a clean-world zero case, and endpoint tests (populated world, unknown world). Frontend: panel renders items, empty state, error state.
 - **S10 — S2 (W11).** Decisions and history. Closed decision set: `intentional` (known conflict, never an error), `muted` (hidden), `structural` (escalated rupture, stays an error). "Resolved" is not a decision: it is what happens when the data stops contradicting, and the record stays as history. Each decision is one Markdown record under `mundos/<mundo>/conflictos/<slug>-<hash8>.md` with YAML frontmatter (`conflict_id`, `code`, `decision`, `path`, `name`, `reference`, `field`, `decided_at`, `note`) and a readable body; records are not entities and never enter the graph. `POST /api/{mundo}/conflicts/decision` with `{conflict_id, decision, note?}` records or updates one decision (`decision: "clear"` removes it); the conflict must currently be computed (404 otherwise) and an unknown decision is 422. The panel never edits a ficha: it records the Author's decision and links to the ficha.
-- **S11 — S3.** Semantic ficha-vs-ficha detector with textual evidence from both fichas, on demand and in a bounded batch with its cost visible. Never writes. Detailed specs are added when S3 starts.
+- **S11 — S3.** Semantic ficha-vs-ficha detector. One model call reviews ONE ficha against a bounded shortlist of related fichas (declared `relaciones`, resolved wikilinks, backlinks; max 8 targets, 4000/1500-char excerpts). The prompt asks only for contradictions of world truth (dates, statuses, names, relationships, membership) and forbids reporting perspectives, legends, beliefs and deliberate ambiguity. A claim survives only when it quotes a fragment that appears in the source body AND a fragment that appears in the target body (`quote_in_body`). Candidates are stored as `state: proposed` records with both quotes and the pair, and are re-verified against the current text on every read: a contradiction fixed by editing stops being shown and the record stays as history. `POST /api/{mundo}/conflicts/sweep` with `{size?}` (default 3, clamped 1..5) reviews one batch; `.conflicts/swept.json` remembers each ficha's body digest, so an unchanged ficha is never paid for twice; an outage marks nothing swept. `POST /api/{mundo}/conflicts/proposal/reject` marks a model mistake and remembers the pair so it is never proposed again. The panel never edits a ficha.
 - **S12 — S4.** Graph integration: badge on conflicted nodes, focus, filter, and a ficha indicator. Detailed specs are added when S4 starts.
 
 ## Tasks
@@ -29,7 +29,8 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 | T5 | S1 | inline | done | 551 backend tests, 1688 frontend tests, `tsc` clean, 2 commits |
 | T6 | S10 | inline | done | `conflict_decisions.py`; 9 unit tests; 6 endpoint tests (RED: 6/6 failed, then 12/12) |
 | T9 | S10, S7, S8 | inline | done | panel actions + known/muted groups; 9 panel tests |
-| T7 | S11 | pending | pending | S3 |
+| T7 | S11 | inline | done | `conflict_proposing.py` + `conflict_sweep.py`; 18 + 11 unit tests; 6 endpoint tests |
+| T10 | S11, S7, S8 | inline | done | sweep button (cost visible), proposed group with both quotes, reject; 4 panel tests |
 | T8 | S12 | pending | pending | S4 |
 
 ## Log
@@ -57,3 +58,7 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 **L11 — Spec revision (S5, second pass).** `muted` conflicts stay in the payload with `decision: "muted"` instead of disappearing. Reason: hiding them from the payload left no way to undo a mute from the UI (the Author would have to delete the record file). The panel renders them in a collapsed "Silenciados" group with "Quitar decisión", the same pattern the proposals panel already uses for muted candidates. `total` counts every computed conflict; `errors`/`warnings` exclude `intentional` and `muted`.
 
 **L12 — S2 verification (observed).** Backend: 9 decision unit tests (RED: `ModuleNotFoundError`), 6 endpoint tests (RED: 6/6 failed with the S1 server), full touched suite 566/566. Frontend: panel 9/9 (RED: 5 failed against the S1 component), `RelacionesCanon` 8/8, full suite 1692/1692 across 136 files, `tsc --noEmit` clean.
+
+**L13 — Spec revision (S5, third pass).** Every conflict now carries `state` (`computed|proposed|decided`) and `origin` (`deterministic|semantic`), plus `evidence_a`/`evidence_b`/`source_a`/`source_b` (null for deterministic ones). The summary adds `proposed`; proposed items are counted apart and never as errors. The closed code set grows by `semantic-contradiction`. Rationale: the panel must distinguish "the structure contradicts itself" from "the model suggests a contradiction", and the two have different lifecycles.
+
+**L14 — S3 verification (observed).** Backend: 18 proposing unit tests (RED: `ModuleNotFoundError`), 11 sweep unit tests (RED: `ModuleNotFoundError`), 6 endpoint tests, full touched suite 607/607. Frontend: panel 13/13 (RED: the 4 S3 tests failed against the S2 component), `RelacionesCanon` 9/9, full suite 1697/1697 across 136 files, `tsc --noEmit` clean.

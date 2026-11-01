@@ -11,8 +11,13 @@ from conflict_decisions import (
     DECISIONS,
     apply_decisions,
     clear_decision,
+    known_semantic_keys,
     load_decisions,
+    load_records,
     record_decision,
+    record_proposal,
+    reject_proposal,
+    semantic_conflicts,
 )
 
 
@@ -157,5 +162,99 @@ def test_apply_decisions_without_any_record_is_identity(tmp_path: Path) -> None:
         "warnings": 0,
         "known": 0,
         "muted": 0,
+        "proposed": 0,
         "by_code": {"unresolved-reference": 1},
     }
+
+
+def _proposal(world: Path, conflict_id: str = "semantic:A:B:date"):
+    return record_proposal(
+        world,
+        conflict_id=conflict_id,
+        source_a="A",
+        source_b="B",
+        path="lore/alar.md",
+        name="Alar",
+        quote_a="nació en el año 120",
+        quote_b="nació en el año 145",
+        conflict_type="date",
+        confidence=0.8,
+        pair_left="A",
+        pair_right="B",
+    )
+
+
+def test_record_proposal_writes_a_proposed_record_with_both_quotes(
+    tmp_path: Path,
+) -> None:
+    world = _world(tmp_path)
+
+    record = _proposal(world)
+
+    assert record.state == "proposed"
+    assert record.file
+    text = (world / record.file).read_text(encoding="utf-8")
+    assert "state: proposed" in text
+    assert "nació en el año 120" in text
+    assert "nació en el año 145" in text
+
+
+def test_load_decisions_ignores_proposals(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+
+    assert load_decisions(world) == {}
+    assert len(load_records(world)) == 1
+
+
+def test_reject_proposal_remembers_the_pair(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+
+    assert reject_proposal(world, "semantic:A:B:date") is True
+    records = load_records(world)
+    assert records["semantic:A:B:date"].state == "rejected"
+    assert known_semantic_keys(records) == {("A", "B", "date")}
+    assert semantic_conflicts(records) == []
+    assert reject_proposal(world, "semantic:A:B:date") is False
+
+
+def test_semantic_conflicts_projects_proposed_and_decided(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world, "semantic:A:B:date")
+    record_decision(world, {"id": "semantic:A:B:date"}, "intentional")
+
+    payload = semantic_conflicts(load_records(world))
+
+    assert len(payload) == 1
+    assert payload[0]["code"] == "semantic-contradiction"
+    assert payload[0]["state"] == "decided"
+    assert payload[0]["decision"] == "intentional"
+    assert payload[0]["evidence_a"] == "nació en el año 120"
+    assert payload[0]["source_b"] == "B"
+
+
+def test_decision_on_a_proposal_keeps_its_evidence(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+
+    record_decision(world, {"id": "semantic:A:B:date"}, "structural", note="Regla base.")
+
+    record = load_records(world)["semantic:A:B:date"]
+    assert record.state == "decided"
+    assert record.decision == "structural"
+    assert record.quote_a == "nació en el año 120"
+    assert record.pair_left == "A"
+
+
+def test_apply_decisions_counts_proposals_apart(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+    proposed = semantic_conflicts(load_records(world))
+
+    payload, summary = apply_decisions(proposed, load_decisions(world))
+
+    assert payload[0]["state"] == "proposed"
+    assert payload[0]["decision"] is None
+    assert summary["proposed"] == 1
+    assert summary["errors"] == 0
