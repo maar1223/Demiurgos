@@ -66,7 +66,7 @@ import {
   neighborhoodKeys,
   type FolderNode,
 } from "@/lib/graphFilters";
-import { cn } from "@/lib/utils";
+import { cn, encodePathSegment } from "@/lib/utils";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Default inspector panel width (desktop). */
@@ -1284,17 +1284,14 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     }
   }, [isolatedNodeId]);
 
-  /** "Abrir ficha" in the inspector — navigate by the entity NAME (the same
-   *  identifier WikiLink uses). The entity page resolves a name, not a file
-   *  path; passing the path left the backend unable to resolve it and the
-   *  page rendered a blank screen (crash on a malformed entity). */
+  /** "Abrir ficha" in the inspector — open the EDITABLE ficha in the Taller
+   *  de Mundo (the editor route, keyed by the ficha path), not the read-only
+   *  entity page: the Author opens a ficha to work on it. */
   const handleOpenFicha = useCallback(() => {
-    if (!selectedEntity) return;
-    const encoded = selectedEntity.name
-      .split("/")
-      .map((s) => encodeURIComponent(s))
-      .join("/");
-    navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${encoded}`);
+    if (!selectedEntity?.path) return;
+    navigate(
+      `/wiki/${encodeURIComponent(mundo)}/${encodePathSegment(selectedEntity.path)}`,
+    );
   }, [selectedEntity, mundo, navigate]);
 
   /** Neighbor link clicked in the inspector: center the neighbor node in the

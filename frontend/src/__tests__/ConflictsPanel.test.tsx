@@ -97,7 +97,7 @@ function renderPanel() {
           element={<ConflictsPanel mundo="vibrantes" />}
         />
         <Route
-          path="/wiki/:mundo/entity/:name"
+          path="/wiki/:mundo/:section/*"
           element={<div data-testid="ficha-page">ficha</div>}
         />
       </Routes>

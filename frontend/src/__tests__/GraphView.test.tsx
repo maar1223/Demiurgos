@@ -1660,7 +1660,7 @@ describe("GraphView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir ficha" }));
 
     expect(navigate).toHaveBeenCalledWith(
-      "/wiki/vibrantes/entity/Alfa",
+      "/wiki/vibrantes/personajes/Alfa.md",
     );
   });
 

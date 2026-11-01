@@ -16,6 +16,7 @@ import type {
 } from "@/api/conflicts";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ApiError } from "@/api/types";
+import { encodePathSegment } from "@/lib/utils";
 import type { MessageKey } from "@/i18n/messages";
 
 interface ConflictsPanelProps {
@@ -172,10 +173,13 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mundo, t]);
 
+  // Open the EDITABLE ficha in the Taller de Mundo: the Author clicks a
+  // conflict to fix it, not to read it.
   const openFicha = useCallback(
     (conflict: WorldConflict) => {
-      const name = encodeURIComponent(conflict.name);
-      navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${name}`);
+      navigate(
+        `/wiki/${encodeURIComponent(mundo)}/${encodePathSegment(conflict.path)}`,
+      );
     },
     [mundo, navigate],
   );
