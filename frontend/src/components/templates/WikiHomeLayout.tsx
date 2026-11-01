@@ -5,18 +5,42 @@ interface WikiHomeLayoutProps {
    *  AppLayout, so pages no longer pass it here. */
   header?: ReactNode;
   children: ReactNode;
+  /** Drop the max-width container and the page padding: the page manages its
+   *  own full-bleed area (the graph canvas needs the whole viewport). */
+  bleed?: boolean;
 }
 
 /**
  * Layout for the Wiki Home page.
  * Renders the optional global header slot and a responsive card grid.
  */
-export function WikiHomeLayout({ header, children }: WikiHomeLayoutProps) {
+export function WikiHomeLayout({ header, children, bleed }: WikiHomeLayoutProps) {
   return (
-    <div className="flex min-h-screen flex-col bg-surface">
+    <div
+      className={
+        bleed
+          ? // The Navbar is 3.5rem + 1px tall and lives outside this layout,
+            // so a full-viewport page must subtract it (EditorLayout does the
+            // same) or the document always scrolls by the header height.
+            "flex min-h-[calc(100vh-3.5rem-1px)] flex-col bg-surface supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem-1px)]"
+          : "flex min-h-screen flex-col bg-surface"
+      }
+    >
       {header}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
-        <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
+      <main
+        className={
+          bleed
+            ? "flex w-full flex-1 flex-col"
+            : "mx-auto w-full max-w-7xl flex-1 px-4 py-8"
+        }
+      >
+        <div
+          className={
+            bleed
+              ? "flex min-h-0 flex-1 flex-col"
+              : "grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3"
+          }
+        >
           {children}
         </div>
       </main>
