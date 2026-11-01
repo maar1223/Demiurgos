@@ -7012,6 +7012,7 @@ def relations_proposal_reject(mundo: str, proposal_id: str):
     }
 
 
+
 @app.post("/api/worlds/{world_id}/relationships/reconcile")
 def relationships_reconcile(world_id: str):
     """Manually run the inter-document relationship post-process for a world.
@@ -7351,7 +7352,10 @@ def set_graph_relation(mundo: str, body: dict):
         if source_entity is None:
             raise HTTPException(status_code=404, detail="Entidad origen no encontrada")
         source_id = str(source_entity.get("id") or "")
-        if not any(ent.get("id") == target_id for ent in entities.values()):
+        if not any(
+            ent.get("id") == target_id or ent.get("path") == target_id
+            for ent in entities.values()
+        ):
             raise HTTPException(status_code=404, detail="Entidad destino no encontrada")
 
     try:
@@ -7377,16 +7381,51 @@ def set_graph_relation(mundo: str, body: dict):
     source_key = source_id or rel_source
     try:
         if action == "break":
+            # The graph is shown UNDIRECTED: "this link is wrong" must not
+            # depend on which ficha happened to declare it, so both directions
+            # are remembered (the sync also removes the other side).
             record_rejection(mundo_dir, source_key, target_id)
+            record_rejection(mundo_dir, target_id, source_key)
             unpin_curated_relation(mundo_dir, source_key, target_id)
+            unpin_curated_relation(mundo_dir, target_id, source_key)
         else:
+            # Break remembers both directions, so create must clear both: an
+            # explicit re-create is the Author overriding the earlier "no".
             clear_rejection(mundo_dir, source_key, target_id)
+            clear_rejection(mundo_dir, target_id, source_key)
             pin_curated_relation(mundo_dir, source_key, target_id)
     except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
         logger.warning(
             "relations: cannot record rejection for %s/%s in %s: %s",
             source_key, target_id, mundo, exc,
         )
+
+    if action == "break":
+        # The pair may also be declared on the OTHER side. Removing it there
+        # too is what makes the edge disappear now instead of after a sync.
+        with idx._lock:
+            entities = idx._cache.get("entities", {})
+            target_entity = next(
+                (ent for ent in entities.values() if ent.get("id") == target_id),
+                None,
+            )
+        target_path = str((target_entity or {}).get("path") or "")
+        if target_path:
+            full_target = Path(mundo_dir) / target_path
+            try:
+                with open(full_target, "r", encoding="utf-8", newline="") as fh:
+                    target_content = fh.read()
+                updated_target = _set_frontmatter_relaciones(
+                    target_content, "break", source_key)
+                if updated_target != target_content:
+                    with open(full_target, "w", encoding="utf-8", newline="") as fh:
+                        fh.write(updated_target)
+            except RelationConflict:
+                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort mirror removal
+                logger.warning(
+                    "relations: cannot mirror the break on %s: %s", target_path, exc)
+
     return {"success": True, "path": rel_source, "action": action, "target_id": target_id}
 
 

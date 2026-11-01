@@ -1374,6 +1374,26 @@ export default function GraphView({ mundo }: GraphViewProps) {
                       onNeighborClick={handleNeighborClick}
                       onOpenFicha={handleOpenFicha}
                       onClose={() => setSelectedNodeId(null)}
+                      onRemoveRelation={(targetKey) => {
+                        const sourcePath = selectedEntity?.path;
+                        if (!sourcePath) return;
+                        void (async () => {
+                          try {
+                            await breakRelation(mundo, sourcePath, targetKey);
+                            await load();
+                            setToast({
+                              message: t("graph.relationRemoved"),
+                              kind: "success",
+                            });
+                          } catch (err) {
+                            const message =
+                              err instanceof Error
+                                ? err.message
+                                : t("graph.connectionError");
+                            setToast({ message, kind: "error" });
+                          }
+                        })();
+                      }}
                       mundo={mundo}
                     />
                   </div>

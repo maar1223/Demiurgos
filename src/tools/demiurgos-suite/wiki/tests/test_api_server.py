@@ -1497,6 +1497,38 @@ class TestGraphRelationEndpoint:
         assert "relaciones:" not in saved
         assert "test_mundo" not in api_server._graph_indices
 
+    def test_break_also_clears_the_other_side_and_remembers_both(self, client: TestClient):
+        """The graph is undirected: one "no" must remove both arrows.
+
+        Regression: breaking only the source side left the edge rendering from
+        the other ficha, and the rejection was remembered one way, so a sync
+        could keep the reverse pair alive.
+        """
+        from relation_rejections import load_rejected
+
+        self._seed_with_relation()
+        (self._personajes() / "Vael.md").write_text(
+            "---\ntype: Personaje\ntitle: Vael\nid: Stal::Vael\n"
+            "relaciones:\n  - Rhyz::Vael\n---\n# Vael\n",
+            encoding="utf-8",
+        )
+
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={
+                "action": "break",
+                "source_path": "personajes/Rhyz.md",
+                "target_id": "Stal::Vael",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert "relaciones:" not in (self._personajes() / "Rhyz.md").read_text(encoding="utf-8")
+        assert "relaciones:" not in (self._personajes() / "Vael.md").read_text(encoding="utf-8")
+        rejected = load_rejected(api_server.MUNDOS_DIR / "test_mundo")
+        assert ("Rhyz::Vael", "Stal::Vael") in rejected
+        assert ("Stal::Vael", "Rhyz::Vael") in rejected
+
     def test_source_not_found_returns_404(self, client: TestClient):
         self._seed()
         resp = client.post(
