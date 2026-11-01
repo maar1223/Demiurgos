@@ -1029,7 +1029,9 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
               : EDGE_BASE_OPACITY,
           transition: "opacity 150ms ease",
         },
-        zIndex: highlighted ? 1 : 0,
+        // Always below the nodes: a highlighted edge used to rise to z-index 1
+        // and paint over the cards, cutting through their text.
+        zIndex: 0,
       });
     }
     return result;
@@ -1055,7 +1057,9 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     if (!instance) return;
     instance.setNodes((current) =>
       current.map((node) => {
-        const zIndex = node.id === focusNodeId ? 1000 : 0;
+        // Every node sits above every edge; the focused one above the rest so
+        // its floating name is never painted under a neighbour card.
+        const zIndex = node.id === focusNodeId ? 1000 : 1;
         return node.zIndex === zIndex ? node : { ...node, zIndex };
       }),
     );
