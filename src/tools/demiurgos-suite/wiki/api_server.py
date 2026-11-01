@@ -82,7 +82,7 @@ from relation_service import build_relation_plan
 from relation_state import load_state as load_relation_state
 from relation_state import mute as mute_relation_candidate
 from relation_state import unmute as unmute_relation_candidate
-from relation_sweep import sweep_next
+from relation_sweep import clamp_batch_size, sweep_batch
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
@@ -6783,21 +6783,30 @@ def relations_proposals(mundo: str):
 
 
 @app.post("/api/{mundo}/relations/sweep")
-def relations_sweep(mundo: str):
-    """Sweep exactly one candidate: one model call, proposals only."""
+def relations_sweep(mundo: str, body: dict | None = None):
+    """Sweep a bounded batch of candidates in one model call (S2/S8).
+
+    Optional JSON body: ``{"size": int}`` (default 5, clamped 1..10). The batch
+    only decides how many fichas share the call; the target universe stays the
+    whole world and each source is verified against its own body, so splitting
+    or joining batches cannot change which pairs survive.
+    """
     if _resolve_mundo_dir(mundo) is None:
         raise problem("world.not_found")
-    result = sweep_next(
+    size = clamp_batch_size((body or {}).get("size"))
+    result = sweep_batch(
         mundo=mundo,
         mundos_dir=_mundos_dir(),
         index=_get_graph(mundo),
         runner=_sync_hermes_enricher,
+        batch_size=size,
     )
     return {
         "status": result.status,
-        "path": result.path,
+        "swept": result.swept,
         "created": result.created,
         "pending": result.pending,
+        "paths": result.paths,
         "message": result.message,
     }
 

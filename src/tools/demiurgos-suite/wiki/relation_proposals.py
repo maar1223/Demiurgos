@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
+from relation_proposing import pair_key
+
 logger = logging.getLogger(__name__)
 
 STORE_DIR = ".relations"
@@ -44,9 +46,28 @@ class Proposal:
 
 
 def proposal_id(source_key: str, target_id: str, relationship_type: str = "") -> str:
-    """Stable id: the same pair and type always dedupe to one proposal."""
-    raw = f"{source_key}\x1f{target_id}\x1f{relationship_type}"
+    """Stable id keyed by the UNORDERED pair plus type (S4).
+
+    ``A -> B`` and ``B -> A`` must collapse into one queue entry, so the pair is
+    normalized before hashing. The stored ``source_key`` still says which side
+    holds the quote, and accepting writes there.
+    """
+    left, right = pair_key(source_key, target_id)
+    raw = f"{left}\x1f{right}\x1f{relationship_type}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _preferred(candidate: Proposal, current: Proposal) -> bool:
+    """Deterministic winner for the two directions of the same pair.
+
+    Higher confidence wins; a tie is broken by the lexicographically smaller
+    source key. The comparison is commutative, so the winner never depends on
+    which batch (or which call) saw it first — batch composition cannot change
+    the stored side.
+    """
+    if candidate.confidence != current.confidence:
+        return candidate.confidence > current.confidence
+    return candidate.source_key < current.source_key
 
 
 def _path(world_dir: Path) -> Path:
@@ -70,7 +91,10 @@ def load_proposals(world_dir: Path) -> list[Proposal]:
     entries = data.get("proposals") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         return []
-    proposals: list[Proposal] = []
+    # Re-key every entry with the unordered identity: a pre-S4 store may hold
+    # both directions (or old directional ids), and loading must collapse them
+    # without losing the side that holds the evidence.
+    by_key: dict[str, Proposal] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -80,30 +104,59 @@ def load_proposals(world_dir: Path) -> list[Proposal]:
         if not all(isinstance(v, str) and v for v in (source_path, source_key, target_id)):
             continue
         confidence = entry.get("confidence")
-        proposals.append(
-            Proposal(
-                id=str(entry.get("id") or proposal_id(source_key, target_id)),
-                source_path=source_path,
-                source_key=source_key,
-                target_id=target_id,
-                relationship_type=str(entry.get("relationship_type") or ""),
-                confidence=float(confidence) if isinstance(confidence, (int, float)) else 0.0,
-                evidence=str(entry.get("evidence") or ""),
-                created_at=str(entry.get("created_at") or ""),
-            )
+        relationship_type = str(entry.get("relationship_type") or "")
+        key = proposal_id(source_key, target_id, relationship_type)
+        proposal = Proposal(
+            # Keep the stored id so an in-flight accept/reject keeps working;
+            # pre-S4 ids are directional but still address one queue entry.
+            id=str(entry.get("id") or key),
+            source_path=source_path,
+            source_key=source_key,
+            target_id=target_id,
+            relationship_type=relationship_type,
+            confidence=float(confidence) if isinstance(confidence, (int, float)) else 0.0,
+            evidence=str(entry.get("evidence") or ""),
+            created_at=str(entry.get("created_at") or ""),
         )
-    return proposals
+        current = by_key.get(key)
+        if current is None or _preferred(proposal, current):
+            by_key[key] = proposal
+    return [by_key[key] for key in sorted(by_key)]
 
 
 def add_proposals(world_dir: Path, proposals: Iterable[Proposal]) -> list[Proposal]:
-    """Append proposals, deduped by id. Returns the ones actually added."""
+    """Append proposals, deduped by the unordered pair + type.
+
+    Returns only the proposals that created a new queue entry. When a new
+    proposal describes the same pair from the other direction, the deterministic
+    winner keeps its own ``source_path``/``source_key``/``target_id`` so the
+    accept path always writes on the side that holds the quote.
+    """
     with _LOCK:
         existing = load_proposals(world_dir)
-        known = {proposal.id for proposal in existing}
-        added = [proposal for proposal in proposals if proposal.id not in known]
-        if not added:
+        by_key = {
+            proposal_id(
+                proposal.source_key, proposal.target_id, proposal.relationship_type
+            ): proposal
+            for proposal in existing
+        }
+        added: list[Proposal] = []
+        changed = False
+        for proposal in proposals:
+            key = proposal_id(
+                proposal.source_key, proposal.target_id, proposal.relationship_type
+            )
+            current = by_key.get(key)
+            if current is None:
+                by_key[key] = proposal
+                added.append(proposal)
+                changed = True
+            elif _preferred(proposal, current):
+                by_key[key] = proposal
+                changed = True
+        if not changed:
             return []
-        _write(world_dir, existing + added)
+        _write(world_dir, list(by_key.values()))
         return added
 
 
