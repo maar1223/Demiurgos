@@ -22,7 +22,10 @@ export function WikiHomeLayout({ header, children, bleed }: WikiHomeLayoutProps)
           ? // The Navbar is 3.5rem + 1px tall and lives outside this layout,
             // so a full-viewport page must subtract it (EditorLayout does the
             // same) or the document always scrolls by the header height.
-            "flex min-h-[calc(100vh-3.5rem-1px)] flex-col bg-surface supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem-1px)]"
+            // A definite HEIGHT, not min-height: everything below uses
+            // ``h-full``/``flex-1`` and a percentage height needs a resolved
+            // ancestor, otherwise the canvas collapses to zero.
+            "flex h-[calc(100vh-3.5rem-1px)] flex-col overflow-hidden bg-surface supports-[height:100dvh]:h-[calc(100dvh-3.5rem-1px)]"
           : "flex min-h-screen flex-col bg-surface"
       }
     >
