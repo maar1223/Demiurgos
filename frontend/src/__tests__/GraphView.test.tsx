@@ -560,9 +560,14 @@ describe("GraphView", () => {
 
     fireEvent.mouseEnter(document.querySelector('[data-id="Grupo::Alfa"]')!);
     await waitFor(() => expect(screen.getByText("Alfa")).toBeInTheDocument());
-    // The card got wider to fit the name; the layout must not react.
+    // The card got wider to fit the name; the focused node itself must not
+    // move. The hover magnet does move its NEIGHBOURS (deliberate), and the
+    // assertion after mouseLeave proves they return exactly.
     await new Promise((resolve) => setTimeout(resolve, 60));
-    expectStable(before);
+    expect(positions().get("Grupo::Alfa")).toEqual(before.get("Grupo::Alfa"));
+    expect(positions().get("Grupo::Bravo")).not.toEqual(
+      before.get("Grupo::Bravo"),
+    );
 
     fireEvent.mouseLeave(document.querySelector('[data-id="Grupo::Alfa"]')!);
     await waitFor(() =>
@@ -824,6 +829,22 @@ describe("GraphView", () => {
       screen.getByText(name).closest('[data-testid="graph-node-card"]')!;
     expect(card("Bravo")).not.toHaveClass("opacity-30");
     expect(card("Gamma")).toHaveClass("opacity-30");
+  });
+
+  it("gathers a node's neighbours on hover and restores them on leave", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    const nodeEl = (name: string) =>
+      screen.getByText(name).closest(".react-flow__node") as HTMLElement;
+    const before = nodeEl("Bravo").style.transform;
+
+    fireEvent.mouseEnter(nodeEl("Alfa"));
+    await waitFor(() => expect(nodeEl("Bravo").style.transform).not.toBe(before));
+
+    fireEvent.mouseLeave(nodeEl("Alfa"));
+    await waitFor(() => expect(nodeEl("Bravo").style.transform).toBe(before));
   });
 
   it("isolates a neighbourhood and leaves it with Escape", async () => {
