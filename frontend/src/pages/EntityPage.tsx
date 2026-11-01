@@ -14,6 +14,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { decodePathSegment, encodePathSegment } from "@/lib/utils";
+import { fetchConflicts } from "@/api/conflicts";
 
 /**
  * Entity detail page (`/wiki/:mundo/entity/*path`).
@@ -60,6 +61,30 @@ export default function EntityPage() {
 
   // Entity connections for Contexto tab
   const { links, isLoading: linksLoading } = useBacklinks(mundo, entityName);
+
+  // S4 — a ficha carries its own conflict indicator. The world scan is
+  // deterministic and model-free; a failure simply shows no banner.
+  const [conflictCount, setConflictCount] = useState(0);
+  useEffect(() => {
+    if (!mundo || !entityName) {
+      setConflictCount(0);
+      return;
+    }
+    let alive = true;
+    fetchConflicts(mundo)
+      .then((data) => {
+        if (!alive) return;
+        setConflictCount(
+          data.conflicts.filter((conflict) => conflict.name === entityName).length,
+        );
+      })
+      .catch(() => {
+        if (alive) setConflictCount(0);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mundo, entityName]);
 
   // Right panel content — always visible
   const rightPanelContent = (
@@ -126,7 +151,30 @@ export default function EntityPage() {
           onAction={() => navigate("/wiki")}
         />
       ) : (
-        <EntityDetail mundo={mundo} entityName={entityName} />
+        <>
+          {conflictCount > 0 ? (
+            <div
+              data-testid="entity-conflict-banner"
+              role="status"
+              className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-small text-danger"
+            >
+              <span>
+                {conflictCount === 1
+                  ? t("relaciones.conflictos.entityBannerOne")
+                  : t("relaciones.conflictos.entityBanner", {
+                      count: conflictCount,
+                    })}
+              </span>
+              <Link
+                to={`/taller-mundo/${encodeURIComponent(mundo)}/relaciones-canon`}
+                className="font-medium underline"
+              >
+                {t("relaciones.conflictos.entityBannerLink")}
+              </Link>
+            </div>
+          ) : null}
+          <EntityDetail mundo={mundo} entityName={entityName} />
+        </>
       )}
     </EditorLayout>
   );

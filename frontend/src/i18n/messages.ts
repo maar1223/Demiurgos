@@ -1064,6 +1064,58 @@ export const messages = {
     "relaciones.reconcile.reason.unresolved": "la ficha destino ya no existe",
     "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
+    "relaciones.conflictos.summary":
+      "Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
+    "relaciones.conflictos.errors": "Errores",
+    "relaciones.conflictos.warnings": "Advertencias",
+    "relaciones.conflictos.loading": "Revisando el mundo…",
+    "relaciones.conflictos.loadError": "No se pudieron cargar los conflictos.",
+    "relaciones.conflictos.retry": "Reintentar",
+    "relaciones.conflictos.openFicha": "Abrir ficha",
+    "relaciones.conflictos.empty": "Este mundo no tiene conflictos estructurales.",
+    "relaciones.conflictos.emptyHint":
+      "Las referencias, los identificadores y las relaciones resuelven correctamente.",
+    "relaciones.conflictos.code.version":
+      "La ficha declara una versión OKF no soportada.",
+    "relaciones.conflictos.code.missing-minimum":
+      "Falta un campo mínimo obligatorio: {field}.",
+    "relaciones.conflictos.code.unresolved-reference":
+      "La referencia [[{reference}]] no resuelve a ninguna ficha.",
+    "relaciones.conflictos.code.ambiguous-reference":
+      "La referencia [[{reference}]] es ambigua: coincide con varias fichas.",
+    "relaciones.conflictos.code.duplicate-id":
+      "El id canónico «{reference}» también lo usa otra ficha.",
+    "relaciones.conflictos.code.dangling-relation":
+      "La relación apunta a «{reference}», que ya no existe.",
+    "relaciones.conflictos.code.self-relation":
+      "La ficha declara una relación consigo misma.",
+    "relaciones.conflictos.code.canon-state-mismatch":
+      "El estado de borrador/canon y el estado de verdad se contradicen.",
+    "relaciones.conflictos.proposed": "Propuestos",
+    "relaciones.conflictos.known": "Conocidos",
+    "relaciones.conflictos.muted": "Silenciados",
+    "relaciones.conflictos.actionError": "No se pudo guardar la decisión.",
+    "relaciones.conflictos.decision.intentional": "Intencional",
+    "relaciones.conflictos.decision.muted": "Silenciar",
+    "relaciones.conflictos.decision.structural": "Ruptura",
+    "relaciones.conflictos.decision.structuralBadge": "Ruptura estructural",
+    "relaciones.conflictos.decision.clear": "Quitar decisión",
+    "relaciones.conflictos.decision.reject": "Falso positivo",
+    "relaciones.conflictos.sweep": "Revisar {count} fichas",
+    "relaciones.conflictos.sweeping": "Revisando…",
+    "relaciones.conflictos.sweepDone":
+      "Revisadas {swept} fichas · {created} propuestas nuevas",
+    "relaciones.conflictos.sweepNone": "No hay fichas por revisar.",
+    "relaciones.conflictos.sweepUnavailable":
+      "El proveedor semántico no respondió; probá de nuevo.",
+    "relaciones.conflictos.code.semantic-contradiction":
+      "Dos fichas afirman cosas que no pueden ser ciertas a la vez.",
+    "relaciones.conflictos.entityBannerOne":
+      "Esta ficha tiene 1 conflicto abierto.",
+    "relaciones.conflictos.entityBanner":
+      "Esta ficha tiene {count} conflictos abiertos.",
+    "relaciones.conflictos.entityBannerLink": "Ver en Conflictos",
+
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
     "backup.provider.googleDrive": "Google Drive",
@@ -2177,6 +2229,8 @@ export const messages = {
     "vision.noDescription": "(sin descripción)",
     "graph.filters": "Filtros",
     "graph.showFilters": "Mostrar filtros",
+    "graph.onlyConflicts": "Solo con conflictos",
+    "graph.conflictNode": "Esta ficha tiene un conflicto",
     "graph.hideFilters": "Ocultar filtros",
     "graph.fullscreen": "Pantalla completa",
     "graph.exitFullscreen": "Salir de pantalla completa",
@@ -3296,6 +3350,58 @@ export const messages = {
     "relaciones.reconcile.reason.unresolved": "the target ficha no longer exists",
     "relaciones.reconcile.reason.rejected": "you rejected it before",
 
+    "relaciones.conflictos.summary":
+      "Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
+    "relaciones.conflictos.errors": "Errors",
+    "relaciones.conflictos.warnings": "Warnings",
+    "relaciones.conflictos.loading": "Checking the world…",
+    "relaciones.conflictos.loadError": "The conflicts could not be loaded.",
+    "relaciones.conflictos.retry": "Retry",
+    "relaciones.conflictos.openFicha": "Open ficha",
+    "relaciones.conflictos.empty": "This world has no structural conflicts.",
+    "relaciones.conflictos.emptyHint":
+      "References, identifiers and relations all resolve.",
+    "relaciones.conflictos.code.version":
+      "The ficha declares an unsupported OKF version.",
+    "relaciones.conflictos.code.missing-minimum":
+      "A required minimum field is missing: {field}.",
+    "relaciones.conflictos.code.unresolved-reference":
+      "The reference [[{reference}]] does not resolve to any ficha.",
+    "relaciones.conflictos.code.ambiguous-reference":
+      "The reference [[{reference}]] is ambiguous: it matches several fichas.",
+    "relaciones.conflictos.code.duplicate-id":
+      "The canonical id «{reference}» is also used by another ficha.",
+    "relaciones.conflictos.code.dangling-relation":
+      "The relation points to «{reference}», which no longer exists.",
+    "relaciones.conflictos.code.self-relation":
+      "The ficha declares a relation to itself.",
+    "relaciones.conflictos.code.canon-state-mismatch":
+      "The draft/canon state and the world-truth state contradict each other.",
+    "relaciones.conflictos.proposed": "Proposed",
+    "relaciones.conflictos.known": "Known",
+    "relaciones.conflictos.muted": "Muted",
+    "relaciones.conflictos.actionError": "The decision could not be saved.",
+    "relaciones.conflictos.decision.intentional": "Intentional",
+    "relaciones.conflictos.decision.muted": "Mute",
+    "relaciones.conflictos.decision.structural": "Rupture",
+    "relaciones.conflictos.decision.structuralBadge": "Structural rupture",
+    "relaciones.conflictos.decision.clear": "Clear decision",
+    "relaciones.conflictos.decision.reject": "False positive",
+    "relaciones.conflictos.sweep": "Review {count} fichas",
+    "relaciones.conflictos.sweeping": "Reviewing…",
+    "relaciones.conflictos.sweepDone":
+      "Reviewed {swept} fichas · {created} new proposals",
+    "relaciones.conflictos.sweepNone": "Nothing to review.",
+    "relaciones.conflictos.sweepUnavailable":
+      "The semantic provider did not answer; try again.",
+    "relaciones.conflictos.code.semantic-contradiction":
+      "Two fichas state things that cannot both be true at once.",
+    "relaciones.conflictos.entityBannerOne":
+      "This ficha has 1 open conflict.",
+    "relaciones.conflictos.entityBanner":
+      "This ficha has {count} open conflicts.",
+    "relaciones.conflictos.entityBannerLink": "Open Conflicts",
+
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
     "backup.provider.googleDrive": "Google Drive",
@@ -4405,6 +4511,8 @@ export const messages = {
     "vision.noDescription": "(no description)",
     "graph.filters": "Filters",
     "graph.showFilters": "Show filters",
+    "graph.onlyConflicts": "Only with conflicts",
+    "graph.conflictNode": "This ficha has a conflict",
     "graph.hideFilters": "Hide filters",
     "graph.fullscreen": "Fullscreen",
     "graph.exitFullscreen": "Exit fullscreen",

@@ -66,6 +66,19 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
+from conflict_decisions import (
+    DECISIONS,
+    apply_decisions,
+    clear_decision,
+    load_decisions,
+    load_records,
+    record_decision,
+    reject_proposal,
+    semantic_conflicts,
+)
+from conflict_detector import detect_conflicts
+from conflict_sweep import clamp_batch_size as clamp_conflict_batch_size
+from conflict_sweep import sweep_conflicts_batch
 from import_relations import (
     MAX_RELATIONS,
     build_relation_targets,
@@ -73,6 +86,7 @@ from import_relations import (
     relaciones_entry_key,
 )
 from relation_candidates import scan_candidates
+from relation_proposing import quote_in_body
 from relation_proposals import load_proposals, remove_proposal
 from relation_curation import pin as pin_curated_relation
 from relation_curation import unpin as unpin_curated_relation
@@ -7310,6 +7324,185 @@ def graph_entities(
                         )
 
     return {"entities": entity_list, "links": link_list}
+
+
+def _semantic_verifier(entities: list[dict]):
+    """Re-check a semantic record against the current bodies (self-invalidating)."""
+    by_key = {
+        str(entity.get("id") or entity.get("path") or ""): entity
+        for entity in entities
+        if isinstance(entity, dict)
+    }
+
+    def verify(record) -> bool:
+        source = by_key.get(record.pair_left)
+        target = by_key.get(record.pair_right)
+        if source is None or target is None:
+            return False
+        return quote_in_body(
+            str(source.get("content") or ""), record.quote_a
+        ) and quote_in_body(str(target.get("content") or ""), record.quote_b)
+
+    return verify
+
+
+@app.get("/api/{mundo}/conflicts")
+def world_conflicts(mundo: str):
+    """Deterministic conflicts of the whole world (Conflictos S1).
+
+    Read-only and model-free: computed from the graph index on every request,
+    never written. Each conflict is ``{id, code, severity, path, name,
+    message, field, reference}``; ``summary`` carries total/errors/warnings and
+    the per-code counts. Unknown world -> soft-empty payload, the same contract
+    as ``/graph/entities``.
+    """
+    idx = _get_graph(mundo)
+    world_dir = _resolve_mundo_dir(mundo)
+    if idx is None or world_dir is None:
+        payload, summary = apply_decisions([], {})
+        return {"indexed": False, "conflicts": payload, "summary": summary}
+
+    with idx._lock:
+        entities = list(idx._cache.get("entities", {}).values())
+        conflicts = detect_conflicts(
+            entities, resolve_candidates=idx._resolve_link_candidates
+        )
+
+    with idx._lock:
+        live_entities = list(idx._cache.get("entities", {}).values())
+    records = load_records(world_dir)
+    payload, summary = apply_decisions(
+        [conflict.to_dict() for conflict in conflicts]
+        + semantic_conflicts(records, verify=_semantic_verifier(live_entities)),
+        load_decisions(world_dir),
+    )
+    return {"indexed": True, "conflicts": payload, "summary": summary}
+
+
+@app.post("/api/{mundo}/conflicts/sweep")
+def conflicts_sweep(mundo: str, body: dict | None = None):
+    """Review a bounded batch of fichas with the semantic provider (S3).
+
+    Optional JSON body: ``{"size": int}`` (default 3, clamped 1..5). The sweep
+    only proposes: each candidate needs a verbatim quote from both fichas, and
+    the Author decides what to do with it. An outage marks nothing swept.
+    """
+    if _resolve_mundo_dir(mundo) is None:
+        raise problem("world.not_found")
+    result = sweep_conflicts_batch(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=_get_graph(mundo),
+        runner=_sync_hermes_enricher,
+        batch_size=clamp_conflict_batch_size((body or {}).get("size")),
+    )
+    return {
+        "status": result.status,
+        "swept": result.swept,
+        "created": result.created,
+        "pending": result.pending,
+        "paths": result.paths,
+        "message": result.message,
+    }
+
+
+@app.post("/api/{mundo}/conflicts/proposal/reject")
+def conflict_proposal_reject(mundo: str, body: dict):
+    """Mark a semantic proposal as a model mistake (S3).
+
+    Body: ``{conflict_id, note?}``. The pair is remembered so the sweep never
+    proposes it again. Only ``state: proposed`` records can be rejected.
+    """
+    world_dir = _resolve_mundo_dir(mundo)
+    if world_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    conflict_id = str(body.get("conflict_id") or "")
+    if not conflict_id:
+        raise HTTPException(status_code=422, detail="Falta conflict_id")
+    if not reject_proposal(world_dir, conflict_id, note=str(body.get("note") or "")):
+        raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+
+    idx = _get_graph(mundo)
+    conflicts = []
+    entities: list[dict] = []
+    if idx is not None:
+        with idx._lock:
+            entities = list(idx._cache.get("entities", {}).values())
+            conflicts = [
+                conflict.to_dict()
+                for conflict in detect_conflicts(
+                    entities, resolve_candidates=idx._resolve_link_candidates
+                )
+            ]
+    records = load_records(world_dir)
+    payload, summary = apply_decisions(
+        conflicts + semantic_conflicts(records, verify=_semantic_verifier(entities)),
+        load_decisions(world_dir),
+    )
+    return {"indexed": idx is not None, "conflicts": payload, "summary": summary}
+
+
+@app.post("/api/{mundo}/conflicts/decision")
+def set_conflict_decision(mundo: str, body: dict):
+    """Record, update or clear the Author's decision on one conflict (S2).
+
+    Body: ``{conflict_id, decision, note?}`` where ``decision`` is one of
+    ``intentional|muted|structural``, or ``clear`` to remove the record. The
+    conflict must currently be computed, so a stale id is rejected instead of
+    leaving an orphan record. Writes one W11 record; canon is never touched.
+    """
+    world_dir = _resolve_mundo_dir(mundo)
+    if world_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+
+    conflict_id = str(body.get("conflict_id") or "")
+    decision = str(body.get("decision") or "")
+    note = str(body.get("note") or "")
+    if not conflict_id:
+        raise HTTPException(status_code=422, detail="Falta conflict_id")
+    if decision != "clear" and decision not in DECISIONS:
+        raise HTTPException(
+            status_code=422, detail=f"Decisión inválida: '{decision}'"
+        )
+
+    idx = _get_graph(mundo)
+    deterministic: dict[str, dict] = {}
+    entities: list[dict] = []
+    if idx is not None:
+        with idx._lock:
+            entities = list(idx._cache.get("entities", {}).values())
+            conflicts = detect_conflicts(
+                entities, resolve_candidates=idx._resolve_link_candidates
+            )
+        deterministic = {conflict.id: conflict.to_dict() for conflict in conflicts}
+
+    if decision == "clear":
+        clear_decision(world_dir, conflict_id)
+    else:
+        # Semantic proposals are stored records, not computed ones: they are
+        # decidable too, and their payload already carries the evidence.
+        decidable = dict(deterministic)
+        decidable.update(
+            {
+                item["id"]: item
+                for item in semantic_conflicts(
+                    load_records(world_dir), verify=_semantic_verifier(entities)
+                )
+            }
+        )
+        conflict = decidable.get(conflict_id)
+        if conflict is None:
+            raise HTTPException(status_code=404, detail="Conflicto no encontrado")
+        record_decision(world_dir, conflict, decision, note=note)
+
+    payload, summary = apply_decisions(
+        list(deterministic.values())
+        + semantic_conflicts(
+            load_records(world_dir), verify=_semantic_verifier(entities)
+        ),
+        load_decisions(world_dir),
+    )
+    return {"indexed": idx is not None, "conflicts": payload, "summary": summary}
 
 
 @app.post("/api/{mundo}/graph/relation")
