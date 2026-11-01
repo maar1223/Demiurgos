@@ -61,7 +61,7 @@ export function NodeInspectorPanel({
 }: NodeInspectorPanelProps) {
   const { t } = useAppLanguage();
   const statusMeta = entity.status ? STATUS_META[entity.status] : null;
-  const preview = truncateContent(entity.content);
+  const preview = truncateContent(stripMarkdownPreview(entity.content));
 
   const forwardEntries = entity.forward_links.map((ref) =>
     buildLinkEntry(ref, entityByKey, visibleEntityKeys),
@@ -233,6 +233,28 @@ export function relacionEntry(entry: unknown): {
     return { label, reference };
   }
   return { label: String(entry), reference: String(entry) };
+}
+
+/**
+ * Reduce Markdown to readable text for the inspector preview.
+ *
+ * The panel deliberately renders plain text (zero data fetching, no wikilink
+ * resolution), so raw `#`, `**` and `[[...]]` markers only add noise. Truncating
+ * before stripping could cut a token in half, so callers strip first.
+ */
+export function stripMarkdownPreview(content: string): string {
+  let text = content.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/\[\[([\s\S]+?)\]\]/g, (_match, inner: string) =>
+    inner.split("][")[0].split("|")[0].trim(),
+  );
+  text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  text = text.replace(/^#{1,6}\s*/gm, "");
+  text = text.replace(/(\*\*|__)(.*?)\1/g, "$2");
+  text = text.replace(/(\*|_)(.*?)\1/g, "$2");
+  text = text.replace(/^[-*+]\s+/gm, "• ");
+  text = text.replace(/^>\s?/gm, "");
+  text = text.replace(/^---+$/gm, "");
+  return text.trim();
 }
 
 /** Truncate long content to the preview limit with an ellipsis suffix. */

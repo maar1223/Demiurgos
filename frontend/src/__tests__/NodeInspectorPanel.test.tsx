@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import type { GraphEntity } from "@/api/types";
 import {
   NodeInspectorPanel,
+  stripMarkdownPreview,
   truncateContent,
 } from "@/components/organisms/NodeInspectorPanel";
 
@@ -167,6 +168,16 @@ describe("NodeInspectorPanel", () => {
       screen.getByRole("button", { name: "Cerrar panel de inspección" }),
     );
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("strips markdown markers from the content preview", () => {
+    expect(stripMarkdownPreview("# **Vibristal | Niveles**")).toBe(
+      "Vibristal | Niveles",
+    );
+    expect(
+      stripMarkdownPreview("[[Vibrastal-Estados-y-Niveles][media/x]]"),
+    ).toBe("Vibrastal-Estados-y-Niveles");
+    expect(stripMarkdownPreview("- uno\n- dos")).toBe("• uno\n• dos");
   });
 
   it("truncateContent keeps short content untouched", () => {
