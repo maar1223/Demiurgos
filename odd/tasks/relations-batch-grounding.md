@@ -29,6 +29,12 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
   already connects the pair) from `ungrounded` (no text backs it).
 - **S8 — Batch UI.** The sweep processes a bounded batch (default 5) with visible
   progress and a summary, and states its cost as a number; no paragraph of instructions.
+- **S10 — Import reads the text.** The importer's relationship pass sends each
+  source's bounded body, not only its summary, so the model can quote what it
+  read. The quote is verified against the FULL body; the excerpt bounds cost only.
+- **S11 — Importing is reviewing.** A ficha whose text pass actually answered is
+  recorded as reviewed at its written digest, so the sweep does not read the same
+  text twice. A provider outage marks `error` and leaves the ficha for the sweep.
 - **S9 — No regressions.** Backend and frontend suites stay green. No world lore in
   tests, fixtures, comments or commits.
 
@@ -42,6 +48,9 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
 | T4 | S6 | delegated | done | `eb7c60f` — funnel verification + evidence at materialization |
 | T5 | S7 | delegated | done | `958909d` — evidence union + removal reasons |
 | T6 | S9 | inline | done | backend 4725 passed / 26 skipped; frontend 1667 passed; typecheck + build green |
+| T7 | S10 | inline | done | `aee83c5` — body in the relationship prompt + harness discriminators |
+| T8 | S11 | inline | done | `f141448` — reviewed marking, `error` on outage, sweep-skip test |
+| T9 | S9 | inline | done | `d7cfcb1` — explicit suite paths; 4730 passed / 26 skipped |
 
 ## Log
 
@@ -107,3 +116,21 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
 - **L15** (gap): the sweep was NOT executed against the real world (it costs
   model calls and mutates `.relations/`); the first real batch and the sync
   application remain the Owner's decision.
+- **L16** (verbatim, 2026-10-31): "deberia hacerse de una vez, porque seria mejor
+  hacer doble trabajo y doble gasto?"
+- **L17** (verbatim, 2026-10-31): "ok pero el importador no hace barrido tambien?"
+- **L18** (T7/T8 evidence): the relationship prompt now carries
+  `_RELATIONSHIP_BODY_BUDGET` (4000) chars of each source's body and demands the
+  quote come from `body`, never the summary; the request stays one independent
+  read per ficha. The chunk budget is unchanged (8 fichas / 40k chars of body, so
+  the excerpt fits). Materialization marks a ficha swept at
+  `body_digest(_body_after_frontmatter(document))` only when the enrichment
+  status is `ok`/`no_suggestions`; `error` and `disabled` never mark. New tests:
+  prompt carries the body; reviewed ficha is not a sweep candidate; an unanswered
+  pass stays a candidate (verified through the file on disk split the same way the
+  indexer splits it). Commits `aee83c5`, `f141448`.
+- **L19** (test-infra evidence): the wiki suite depended on whichever module had
+  inserted `src/tools` and the suite root into `sys.path` first, so an isolated
+  run of `test_import_lifecycle` failed on a lazy `sync_lore` import. The conftest
+  now inserts both explicitly. Full suite 4730 passed / 26 skipped. Commit
+  `d7cfcb1`.
