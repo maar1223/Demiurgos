@@ -61,7 +61,8 @@ export interface ConflictSummary {
   muted: number;
   proposed: number;
   by_code: Partial<Record<ConflictCode, number>>;
-  review: ReviewProgress;
+  /** Absent on a backend older than S13: the panel must not claim "reviewed". */
+  review?: ReviewProgress;
 }
 
 /** GET /api/{mundo}/conflicts payload (S5). */

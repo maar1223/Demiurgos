@@ -1066,6 +1066,8 @@ export const messages = {
 
     "relaciones.conflictos.summary":
       "Por revisar: {pending} de {total} · Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
+    "relaciones.conflictos.summaryNoReview":
+      "Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
     "relaciones.conflictos.errors": "Errores",
     "relaciones.conflictos.warnings": "Advertencias",
     "relaciones.conflictos.loading": "Revisando el mundo…",
@@ -1102,6 +1104,7 @@ export const messages = {
     "relaciones.conflictos.decision.clear": "Quitar decisión",
     "relaciones.conflictos.decision.reject": "Falso positivo",
     "relaciones.conflictos.sweep": "Revisar {count} fichas · quedan {pending}",
+    "relaciones.conflictos.sweepBase": "Revisar {count} fichas",
     "relaciones.conflictos.sweepAllDone": "Todo revisado",
     "relaciones.conflictos.sweeping": "Revisando…",
     "relaciones.conflictos.sweepDone":
@@ -3353,6 +3356,8 @@ export const messages = {
 
     "relaciones.conflictos.summary":
       "To review: {pending} of {total} · Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
+    "relaciones.conflictos.summaryNoReview":
+      "Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
     "relaciones.conflictos.errors": "Errors",
     "relaciones.conflictos.warnings": "Warnings",
     "relaciones.conflictos.loading": "Checking the world…",
@@ -3389,6 +3394,7 @@ export const messages = {
     "relaciones.conflictos.decision.clear": "Clear decision",
     "relaciones.conflictos.decision.reject": "False positive",
     "relaciones.conflictos.sweep": "Review {count} fichas · {pending} left",
+    "relaciones.conflictos.sweepBase": "Review {count} fichas",
     "relaciones.conflictos.sweepAllDone": "All reviewed",
     "relaciones.conflictos.sweeping": "Reviewing…",
     "relaciones.conflictos.sweepDone":

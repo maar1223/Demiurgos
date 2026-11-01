@@ -300,12 +300,9 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     );
   };
 
-  const review = data?.summary.review ?? {
-    total: 0,
-    reviewed: 0,
-    pending: 0,
-  };
-  const allReviewed = review.pending === 0;
+  // A missing `review` means an older backend, not "everything reviewed".
+  const review = data?.summary.review ?? null;
+  const allReviewed = review !== null && review.pending === 0;
 
   const sweepButton = (
     <button
@@ -319,10 +316,14 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
         ? t("relaciones.conflictos.sweeping")
         : allReviewed
           ? t("relaciones.conflictos.sweepAllDone")
-          : t("relaciones.conflictos.sweep", {
-              count: SWEEP_BATCH_SIZE,
-              pending: review.pending,
-            })}
+          : review
+            ? t("relaciones.conflictos.sweep", {
+                count: SWEEP_BATCH_SIZE,
+                pending: review.pending,
+              })
+            : t("relaciones.conflictos.sweepBase", {
+                count: SWEEP_BATCH_SIZE,
+              })}
     </button>
   );
 
@@ -358,15 +359,23 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     <section data-testid="conflicts-panel" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised p-4">
         <p data-testid="conflict-summary" className="text-small text-muted">
-          {t("relaciones.conflictos.summary", {
-            pending: review.pending,
-            total: review.total,
-            errors: data?.summary.errors ?? 0,
-            warnings: data?.summary.warnings ?? 0,
-            proposed: data?.summary.proposed ?? 0,
-            known: data?.summary.known ?? 0,
-            muted: data?.summary.muted ?? 0,
-          })}
+          {review
+            ? t("relaciones.conflictos.summary", {
+                pending: review.pending,
+                total: review.total,
+                errors: data?.summary.errors ?? 0,
+                warnings: data?.summary.warnings ?? 0,
+                proposed: data?.summary.proposed ?? 0,
+                known: data?.summary.known ?? 0,
+                muted: data?.summary.muted ?? 0,
+              })
+            : t("relaciones.conflictos.summaryNoReview", {
+                errors: data?.summary.errors ?? 0,
+                warnings: data?.summary.warnings ?? 0,
+                proposed: data?.summary.proposed ?? 0,
+                known: data?.summary.known ?? 0,
+                muted: data?.summary.muted ?? 0,
+              })}
         </p>
         {sweepButton}
       </div>

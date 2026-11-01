@@ -392,4 +392,20 @@ describe("ConflictsPanel — review progress", () => {
     expect(button).toBeDisabled();
     expect(button).toHaveTextContent("Todo revisado");
   });
+
+  it("never claims everything is reviewed when the backend has no review block", async () => {
+    const legacy = response([conflict()]);
+    delete (legacy.summary as { review?: unknown }).review;
+    fetchConflictsMock.mockResolvedValue(legacy);
+
+    renderPanel();
+
+    const button = await screen.findByTestId("conflict-sweep");
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveTextContent("Revisar 3 fichas");
+    expect(button).not.toHaveTextContent("Todo revisado");
+    expect(screen.getByTestId("conflict-summary")).not.toHaveTextContent(
+      "Por revisar",
+    );
+  });
 });
