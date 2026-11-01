@@ -38,6 +38,7 @@ import {
   createLiveForceLayout,
   nodeKey,
   SETTLE_TICKS,
+  ringPositions,
   type ForcePosition,
   type ForcePositions,
   type LiveForceLayout,
@@ -800,6 +801,9 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
    *  (S2) while React Flow still re-renders the node it owns. */
   const applyPositions = useCallback(
     (positions: ForcePositions) => {
+      // While the hover magnet holds the ring, a late layout tick must not
+      // undo it (the simulation is stopped, but a scheduled frame can land).
+      if (magnetRef.current) return;
       positionsRef.current = positions;
       rf.current?.setNodes((current) =>
         current.map((node) => {
@@ -1039,16 +1043,86 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
     [],
   );
 
+  // Hover magnet: while the pointer rests on a node, its neighbours gather in
+  // a ring around it so every connection is visible at the current zoom; on
+  // leave they return to the exact positions they had.
+  const hoverSnapshotRef = useRef<Map<string, { x: number; y: number }> | null>(
+    null,
+  );
+  const magnetRef = useRef(false);
+
   const handleNodeMouseEnter = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       setHoveredNodeId(node.id);
+
+      const neighbourKeys = [...neighborhoodKeys(links, node.id)].filter(
+        (key) => key !== node.id,
+      );
+      if (neighbourKeys.length === 0) return;
+      // Uncontrolled canvas: the live positions live in the instance, not in
+      // the React state that seeded the first mount.
+      const current = rf.current?.getNodes() ?? nodes;
+      const byId = new Map(current.map((item) => [item.id, item]));
+      const centreNode = byId.get(node.id);
+      if (!centreNode) return;
+
+      // The live simulation would overwrite the ring on its next tick.
+      magnetRef.current = true;
+      layoutRef.current?.stop();
+
+      const sizeOf = (key: string) => nodeSizesRef.current.get(key);
+      const centreSize = sizeOf(node.id);
+      const centre = {
+        x: centreNode.position.x + (centreSize?.width ?? 0) / 2,
+        y: centreNode.position.y + (centreSize?.height ?? 0) / 2,
+      };
+      // Keep the ring inside the viewport: the visible side in screen pixels
+      // converted to flow units by the live zoom.
+      const zoom = Math.max(rf.current?.getViewport().zoom ?? 1, 0.05);
+      const radius =
+        (Math.min(window.innerWidth, window.innerHeight) * 0.34) / zoom;
+      const ring = ringPositions(centre, neighbourKeys, radius);
+
+      const snapshot = new Map<string, { x: number; y: number }>();
+      const next = current.map((item) => {
+        snapshot.set(item.id, { ...item.position });
+        const target = ring.get(item.id);
+        if (!target) return item;
+        const size = sizeOf(item.id);
+        return {
+          ...item,
+          position: {
+            x: target.x - (size?.width ?? 0) / 2,
+            y: target.y - (size?.height ?? 0) / 2,
+          },
+        };
+      });
+      hoverSnapshotRef.current = snapshot;
+      // React Flow runs uncontrolled (defaultNodes): the canvas owns the live
+      // positions, so the ring must be written through the instance.
+      rf.current?.setNodes(next);
     },
-    [],
+    [links, nodes],
   );
 
   const handleNodeMouseLeave = useCallback(() => {
     setHoveredNodeId(null);
-  }, []);
+    magnetRef.current = false;
+    const snapshot = hoverSnapshotRef.current;
+    hoverSnapshotRef.current = null;
+    if (snapshot) {
+      rf.current?.setNodes((current) =>
+        current.map((item) => {
+          const original = snapshot.get(item.id);
+          return original ? { ...item, position: original } : item;
+        }),
+      );
+    }
+    // Resume where it stopped; an isolated neighbourhood stays settled.
+    if (!isolatedNodeId && !prefersReducedMotion()) {
+      layoutRef.current?.start();
+    }
+  }, [isolatedNodeId]);
 
   /** "Abrir ficha" in the inspector — navigate by the entity NAME (the same
    *  identifier WikiLink uses). The entity page resolves a name, not a file

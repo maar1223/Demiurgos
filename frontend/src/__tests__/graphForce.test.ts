@@ -3,6 +3,7 @@ import {
   computeForcePositions,
   computeLayoutSize,
   createLiveForceLayout,
+  ringPositions,
 } from "@/lib/graphForce";
 import type { EntityLink, GraphEntity } from "@/api/types";
 
@@ -440,5 +441,28 @@ describe("createLiveForceLayout", () => {
       expect(x).toBeLessThanOrEqual(size);
       expect(y).toBeLessThanOrEqual(size);
     }
+  });
+});
+
+describe("ringPositions", () => {
+  it("places every key at the same radius, starting at the top", () => {
+    const ring = ringPositions({ x: 0, y: 0 }, ["a", "b", "c", "d"], 100);
+    expect([...ring.keys()]).toEqual(["a", "b", "c", "d"]);
+    for (const point of ring.values()) {
+      expect(Math.hypot(point.x, point.y)).toBeCloseTo(100, 6);
+    }
+    const top = ring.get("a")!;
+    expect(top.x).toBeCloseTo(0, 6);
+    expect(top.y).toBeCloseTo(-100, 6);
+  });
+
+  it("is deterministic regardless of input order", () => {
+    const left = ringPositions({ x: 5, y: 5 }, ["b", "a"], 50);
+    const right = ringPositions({ x: 5, y: 5 }, ["a", "b"], 50);
+    expect([...left.entries()]).toEqual([...right.entries()]);
+  });
+
+  it("returns an empty map when there is nothing to place", () => {
+    expect(ringPositions({ x: 0, y: 0 }, [], 100).size).toBe(0);
   });
 });

@@ -683,3 +683,29 @@ export function computeForcePositions(
 ): ForcePositions {
   return createLiveForceLayout({ entities, links, size }).settle();
 }
+
+/**
+ * Positions for a temporary ring around one node (hover magnet).
+ *
+ * Every neighbour gets an evenly spaced angle, starting at the top, so the
+ * result is deterministic for the same set. ``radius`` is in FLOW units: the
+ * caller converts the viewport into flow space so the ring fits the screen at
+ * the current zoom.
+ */
+export function ringPositions(
+  centre: ForcePosition,
+  keys: string[],
+  radius: number,
+): Map<string, ForcePosition> {
+  const positions = new Map<string, ForcePosition>();
+  const ordered = [...keys].sort();
+  const step = ordered.length > 0 ? (2 * Math.PI) / ordered.length : 0;
+  ordered.forEach((key, index) => {
+    const angle = index * step - Math.PI / 2;
+    positions.set(key, {
+      x: centre.x + Math.cos(angle) * radius,
+      y: centre.y + Math.sin(angle) * radius,
+    });
+  });
+  return positions;
+}
