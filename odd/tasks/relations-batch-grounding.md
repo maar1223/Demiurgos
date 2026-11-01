@@ -35,6 +35,10 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
 - **S11 — Importing is reviewing.** A ficha whose text pass actually answered is
   recorded as reviewed at its written digest, so the sweep does not read the same
   text twice. A provider outage marks `error` and leaves the ficha for the sweep.
+- **S12 — A word that names many fichas identifies none.** Filename-stem and
+  ordinal evidence are admissible only when the word names exactly one entity in
+  the world (title + filename + folder). A family word (shared by several names)
+  is never evidence for a member: the folder index carries the belonging.
 - **S9 — No regressions.** Backend and frontend suites stay green. No world lore in
   tests, fixtures, comments or commits.
 
@@ -153,3 +157,17 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
   takes any word longer than three characters from the filename, so a long
   descriptive title becomes a magnet. This is what makes the graph a hairball,
   not the sync.
+- **L22** (S12 evidence, 2026-11-01): `_ambiguous_identity_keys` now counts
+  title and folder words, not only filenames, and the ordinal noun must also be
+  distinctive. Real-world effect: 326 directed edges -> 207 (unique pairs 263 ->
+  166, average degree 8.12 -> 5.75). `stem` 133 -> 63; `ordinal` 49 -> 0 (every
+  ordinal match was cross-family); `full-name` 41 and `folder-index` 103
+  untouched. The cleanup sync applied 59 files / 119 removals (118 of them added
+  by the previous sync; the single pre-existing link was preserved in
+  `.relations/curated.json`), backup `.relations/preimages/20261101T044737784768Z`,
+  and the preview converges to 0/0/0 with zero malformed entries. Suite 4735
+  passed / 26 skipped.
+- **L23** (open, not applied): of the 63 surviving `stem` edges, 37 match only a
+  lowercase occurrence (`eneatipo`, `historia`, `religion`, `niveles`, `estados`,
+  `origen`). Requiring a capitalized occurrence would cut them, but it would also
+  drop lowercase family references, so it stays a decision, not a default.
