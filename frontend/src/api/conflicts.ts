@@ -15,6 +15,9 @@ export type ConflictCode =
   | "self-relation"
   | "canon-state-mismatch";
 
+/** The Author's answer to a conflict (S10). */
+export type ConflictDecisionKind = "intentional" | "muted" | "structural";
+
 /** One conflict attached to a ficha. */
 export interface WorldConflict {
   id: string;
@@ -25,6 +28,7 @@ export interface WorldConflict {
   message: string;
   field: string | null;
   reference: string | null;
+  decision: ConflictDecisionKind | null;
 }
 
 /** Counts the panel header shows. */
@@ -32,6 +36,8 @@ export interface ConflictSummary {
   total: number;
   errors: number;
   warnings: number;
+  known: number;
+  muted: number;
   by_code: Partial<Record<ConflictCode, number>>;
 }
 
@@ -42,6 +48,13 @@ export interface ConflictsResponse {
   summary: ConflictSummary;
 }
 
+/** Body of POST /api/{mundo}/conflicts/decision. */
+export interface ConflictDecisionRequest {
+  conflict_id: string;
+  decision: ConflictDecisionKind | "clear";
+  note?: string;
+}
+
 /**
  * GET /api/{mundo}/conflicts — deterministic, read-only, model-free.
  * An unknown world answers the soft-empty payload, never an error.
@@ -49,4 +62,20 @@ export interface ConflictsResponse {
 export async function fetchConflicts(mundo: string): Promise<ConflictsResponse> {
   const path = `/api/${encodeURIComponent(mundo)}/conflicts`;
   return apiFetch<ConflictsResponse>(`${API_BASE_URL}${path}`);
+}
+
+/**
+ * POST /api/{mundo}/conflicts/decision — records, updates or clears one
+ * decision and answers the refreshed payload.
+ */
+export async function setConflictDecision(
+  mundo: string,
+  body: ConflictDecisionRequest,
+): Promise<ConflictsResponse> {
+  const path = `/api/${encodeURIComponent(mundo)}/conflicts/decision`;
+  return apiFetch<ConflictsResponse>(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

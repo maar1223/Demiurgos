@@ -1065,7 +1065,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
     "relaciones.conflictos.summary":
-      "Errores: {errors} · Advertencias: {warnings}",
+      "Errores: {errors} · Advertencias: {warnings} · Conocidos: {known} · Silenciados: {muted}",
     "relaciones.conflictos.errors": "Errores",
     "relaciones.conflictos.warnings": "Advertencias",
     "relaciones.conflictos.loading": "Revisando el mundo…",
@@ -1091,6 +1091,14 @@ export const messages = {
       "La ficha declara una relación consigo misma.",
     "relaciones.conflictos.code.canon-state-mismatch":
       "El estado de borrador/canon y el estado de verdad se contradicen.",
+    "relaciones.conflictos.known": "Conocidos",
+    "relaciones.conflictos.muted": "Silenciados",
+    "relaciones.conflictos.actionError": "No se pudo guardar la decisión.",
+    "relaciones.conflictos.decision.intentional": "Intencional",
+    "relaciones.conflictos.decision.muted": "Silenciar",
+    "relaciones.conflictos.decision.structural": "Ruptura",
+    "relaciones.conflictos.decision.structuralBadge": "Ruptura estructural",
+    "relaciones.conflictos.decision.clear": "Quitar decisión",
 
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
@@ -3323,7 +3331,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "you rejected it before",
 
     "relaciones.conflictos.summary":
-      "Errors: {errors} · Warnings: {warnings}",
+      "Errors: {errors} · Warnings: {warnings} · Known: {known} · Muted: {muted}",
     "relaciones.conflictos.errors": "Errors",
     "relaciones.conflictos.warnings": "Warnings",
     "relaciones.conflictos.loading": "Checking the world…",
@@ -3349,6 +3357,14 @@ export const messages = {
       "The ficha declares a relation to itself.",
     "relaciones.conflictos.code.canon-state-mismatch":
       "The draft/canon state and the world-truth state contradict each other.",
+    "relaciones.conflictos.known": "Known",
+    "relaciones.conflictos.muted": "Muted",
+    "relaciones.conflictos.actionError": "The decision could not be saved.",
+    "relaciones.conflictos.decision.intentional": "Intentional",
+    "relaciones.conflictos.decision.muted": "Mute",
+    "relaciones.conflictos.decision.structural": "Rupture",
+    "relaciones.conflictos.decision.structuralBadge": "Structural rupture",
+    "relaciones.conflictos.decision.clear": "Clear decision",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",

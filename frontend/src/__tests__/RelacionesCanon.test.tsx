@@ -13,7 +13,10 @@ vi.mock("@/components/GraphView", () => ({
   default: () => <div data-testid="graph-view">GraphView</div>,
 }));
 
-vi.mock("@/api/conflicts", () => ({ fetchConflicts: vi.fn() }));
+vi.mock("@/api/conflicts", () => ({
+  fetchConflicts: vi.fn(),
+  setConflictDecision: vi.fn(),
+}));
 
 vi.mock("@/api/graph", () => ({
   fetchRelationCandidates: vi.fn(),
@@ -146,7 +149,14 @@ describe("RelacionesCanon", () => {
     fetchConflictsMock.mockResolvedValue({
       indexed: true,
       conflicts: [],
-      summary: { total: 0, errors: 0, warnings: 0, by_code: {} },
+      summary: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        known: 0,
+        muted: 0,
+        by_code: {},
+      },
     });
     renderPage();
 

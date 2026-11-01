@@ -28,7 +28,7 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 | T4 | S7, S8, S9 | inline | done | `ConflictsPanel` + `api/conflicts.ts` + es/en; 5 panel tests |
 | T5 | S1 | inline | done | 551 backend tests, 1688 frontend tests, `tsc` clean, 2 commits |
 | T6 | S10 | inline | done | `conflict_decisions.py`; 9 unit tests; 6 endpoint tests (RED: 6/6 failed, then 12/12) |
-| T9 | S10, S7, S8 | pending | pending | S2 frontend: decision actions + known/muted groups |
+| T9 | S10, S7, S8 | inline | done | panel actions + known/muted groups; 9 panel tests |
 | T7 | S11 | pending | pending | S3 |
 | T8 | S12 | pending | pending | S4 |
 
@@ -53,3 +53,7 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 **L9 — Spec change (S5/S10).** S2 extends the payload: each conflict carries `decision`, and the summary adds `known` and `muted`. The three S1 endpoint tests were updated to the new shape. Rationale: a decided conflict must stay visible as known (W5) or disappear when muted, and the header has to say how many of each.
 
 **L10 — S2 backend verification (observed).** RED first: with `api_server.py` and `conflict_detector.py` reverted to S1, all 6 new decision tests failed. GREEN after the change: `test_api_server.py -k Conflict` 12/12; full `test_api_server.py` + both conflict test modules 566/566.
+
+**L11 — Spec revision (S5, second pass).** `muted` conflicts stay in the payload with `decision: "muted"` instead of disappearing. Reason: hiding them from the payload left no way to undo a mute from the UI (the Author would have to delete the record file). The panel renders them in a collapsed "Silenciados" group with "Quitar decisión", the same pattern the proposals panel already uses for muted candidates. `total` counts every computed conflict; `errors`/`warnings` exclude `intentional` and `muted`.
+
+**L12 — S2 verification (observed).** Backend: 9 decision unit tests (RED: `ModuleNotFoundError`), 6 endpoint tests (RED: 6/6 failed with the S1 server), full touched suite 566/566. Frontend: panel 9/9 (RED: 5 failed against the S1 component), `RelacionesCanon` 8/8, full suite 1692/1692 across 136 files, `tsc --noEmit` clean.

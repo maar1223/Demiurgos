@@ -1,18 +1,22 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConflictsPanel from "@/components/organisms/ConflictsPanel";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
-import { fetchConflicts } from "@/api/conflicts";
+import { fetchConflicts, setConflictDecision } from "@/api/conflicts";
 import type { ConflictsResponse, WorldConflict } from "@/api/conflicts";
 
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
-vi.mock("@/api/conflicts", () => ({ fetchConflicts: vi.fn() }));
+vi.mock("@/api/conflicts", () => ({
+  fetchConflicts: vi.fn(),
+  setConflictDecision: vi.fn(),
+}));
 
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 const fetchConflictsMock = vi.mocked(fetchConflicts);
+const setConflictDecisionMock = vi.mocked(setConflictDecision);
 
 const lang = (language: "es" | "en") => ({
   language,
@@ -32,18 +36,28 @@ function conflict(overrides: Partial<WorldConflict> = {}): WorldConflict {
     message: "Wikilink [[Fantasma]] does not resolve to any entity.",
     field: null,
     reference: "Fantasma",
+    decision: null,
     ...overrides,
   };
 }
 
 function response(conflicts: WorldConflict[]): ConflictsResponse {
+  const counted = (decision: WorldConflict["decision"], severity?: string) =>
+    conflicts.filter(
+      (item) =>
+        item.decision === decision &&
+        (severity === undefined || item.severity === severity),
+    ).length;
   return {
     indexed: true,
     conflicts,
     summary: {
       total: conflicts.length,
-      errors: conflicts.filter((item) => item.severity === "error").length,
-      warnings: conflicts.filter((item) => item.severity === "warning").length,
+      errors:
+        counted(null, "error") + counted("structural", "error"),
+      warnings: counted(null, "warning") + counted("structural", "warning"),
+      known: counted("intentional"),
+      muted: counted("muted"),
       by_code: {},
     },
   };
@@ -93,7 +107,7 @@ describe("ConflictsPanel", () => {
 
     expect(await screen.findByTestId("conflicts-panel")).toBeInTheDocument();
     expect(screen.getByTestId("conflict-summary")).toHaveTextContent(
-      "Errores: 1 · Advertencias: 1",
+      "Errores: 1 · Advertencias: 1 · Conocidos: 0 · Silenciados: 0",
     );
     expect(screen.getByTestId("conflicts-errors")).toBeInTheDocument();
     expect(screen.getByTestId("conflicts-warnings")).toBeInTheDocument();
@@ -145,5 +159,73 @@ describe("ConflictsPanel", () => {
     await userEvent.click(item.querySelector("button")!);
 
     expect(await screen.findByTestId("ficha-page")).toBeInTheDocument();
+  });
+
+  it("records an intentional decision and moves the conflict to known", async () => {
+    fetchConflictsMock.mockResolvedValue(response([conflict()]));
+    setConflictDecisionMock.mockResolvedValue(
+      response([conflict({ decision: "intentional" })]),
+    );
+
+    renderPanel();
+
+    await screen.findByTestId("conflict-item");
+    await userEvent.click(screen.getByRole("button", { name: "Intencional" }));
+
+    expect(setConflictDecisionMock).toHaveBeenCalledWith("vibrantes", {
+      conflict_id: "unresolved-reference:lore/alfa.md:Fantasma",
+      decision: "intentional",
+    });
+    expect(await screen.findByTestId("conflicts-known")).toBeInTheDocument();
+    expect(screen.queryByTestId("conflicts-errors")).not.toBeInTheDocument();
+  });
+
+  it("keeps muted conflicts recoverable", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([conflict({ decision: "muted" })]),
+    );
+    setConflictDecisionMock.mockResolvedValue(response([conflict()]));
+
+    renderPanel();
+
+    const muted = await screen.findByTestId("conflicts-muted");
+    expect(within(muted).getByTestId("conflict-item")).toBeInTheDocument();
+    await userEvent.click(
+      within(muted).getByRole("button", { name: "Quitar decisión" }),
+    );
+
+    expect(setConflictDecisionMock).toHaveBeenCalledWith("vibrantes", {
+      conflict_id: "unresolved-reference:lore/alfa.md:Fantasma",
+      decision: "clear",
+    });
+    expect(await screen.findByTestId("conflicts-errors")).toBeInTheDocument();
+  });
+
+  it("shows a structural decision as an error with its badge", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([conflict({ decision: "structural" })]),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByTestId("structural-badge")).toHaveTextContent(
+      "Ruptura estructural",
+    );
+    expect(screen.getByTestId("conflicts-errors")).toBeInTheDocument();
+  });
+
+  it("keeps the panel and reports an action failure", async () => {
+    fetchConflictsMock.mockResolvedValue(response([conflict()]));
+    setConflictDecisionMock.mockRejectedValue(new Error("boom"));
+
+    renderPanel();
+
+    await screen.findByTestId("conflict-item");
+    await userEvent.click(screen.getByRole("button", { name: "Silenciar" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo guardar la decisión.",
+    );
+    expect(screen.getByTestId("conflict-item")).toBeInTheDocument();
   });
 });
