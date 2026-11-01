@@ -16,7 +16,6 @@ import {
   ReactFlow,
   useReactFlow,
   useStore,
-  ViewportPortal,
   type Connection,
   type Edge,
   type EdgeTypes,
@@ -767,9 +766,14 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
         count += 1;
       }
       if (count === 0) continue;
+      // Screen space, not flow space: the section label must stay legible from
+      // far away, where it is the only wayfinding cue. Projecting the cluster
+      // centre through the viewport keeps a constant pixel size at any zoom.
+      const viewport = rf.current?.getViewport() ?? { x: 0, y: 0, zoom: 1 };
+      const screenX = (sumX / count) * viewport.zoom + viewport.x;
+      const screenY = (sumY / count) * viewport.zoom + viewport.y;
       element.style.transform =
-        `translate(${sumX / count}px, ${sumY / count - 16}px) ` +
-        "translate(-50%, -100%)";
+        `translate(${screenX}px, ${screenY - 8}px) translate(-50%, -100%)`;
     }
   }, []);
 
@@ -1397,6 +1401,7 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
                 onNodeDragStop={handleNodeDragStop}
                 onConnect={handleConnect}
                 onEdgeClick={handleEdgeClick}
+                onMove={() => positionClusters(positionsRef.current)}
                 onInit={(inst) => {
                   rf.current = inst;
                   // Measurements may have re-settled the layout before the
@@ -1418,27 +1423,32 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
                 />
                 {/* Section clusters (S7): they orient the far view; close up
                     they would only add noise over the cards, so they hide. */}
-                {zoomTier !== "labels" && (
-                  <ViewportPortal>
-                    {clusters.map((cluster) => (
-                      <div
-                        key={cluster.id}
-                        ref={(element) => {
-                          if (element) {
-                            clusterRefs.current.set(cluster.id, element);
-                          } else {
-                            clusterRefs.current.delete(cluster.id);
-                          }
-                        }}
-                        data-testid="graph-cluster"
-                        className="pointer-events-none absolute left-0 top-0 whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-muted/50"
-                      >
-                        {cluster.label}
-                      </div>
-                    ))}
-                  </ViewportPortal>
-                )}
+
               </ReactFlow>
+
+              {/* Section labels live OUTSIDE the viewport transform: they keep
+                  a constant pixel size, so the far view is readable without
+                  zooming in (where the node names take over). */}
+              {zoomTier !== "labels" ? (
+                <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+                  {clusters.map((cluster) => (
+                    <div
+                      key={cluster.id}
+                      ref={(element) => {
+                        if (element) {
+                          clusterRefs.current.set(cluster.id, element);
+                        } else {
+                          clusterRefs.current.delete(cluster.id);
+                        }
+                      }}
+                      data-testid="graph-cluster"
+                      className="absolute left-0 top-0 whitespace-nowrap text-sm font-semibold uppercase tracking-[0.14em] text-muted/80 [text-shadow:0_1px_3px_rgba(0,0,0,0.95)]"
+                    >
+                      {cluster.label}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               {isolatedNodeId ? (
                 <div
