@@ -756,9 +756,25 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
    *  imperatively, like node positions, so it follows the live layout without
    *  re-rendering. */
   const positionClusters = useCallback((positions: ForcePositions) => {
-    // Labels are placed one at a time; each must dodge the cards AND the
-    // labels already placed (two sections close together used to overlap).
-    const placed: { left: number; top: number; right: number; bottom: number }[] = [];
+    type Box = { left: number; top: number; right: number; bottom: number };
+    const viewport = rf.current?.getViewport() ?? { x: 0, y: 0, zoom: 1 };
+    const cards: Box[] = (rf.current?.getNodes() ?? []).map((node) => {
+      const size = nodeSizesRef.current.get(node.id);
+      const width = (size?.width ?? NODE_MIN_WIDTH) * viewport.zoom;
+      const height = (size?.height ?? NODE_MIN_HEIGHT) * viewport.zoom;
+      const left = node.position.x * viewport.zoom + viewport.x;
+      const top = node.position.y * viewport.zoom + viewport.y;
+      return { left, top, right: left + width, bottom: top + height };
+    });
+
+    const labels: {
+      element: HTMLDivElement;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }[] = [];
+
     for (const cluster of clusterMembersRef.current) {
       const element = clusterRefs.current.get(cluster.id);
       if (!element) continue;
@@ -778,23 +794,7 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       if (count === 0) continue;
 
       // Screen space, not flow space: the section label must stay legible from
-      // far away, where it is the only wayfinding cue. Projecting through the
-      // viewport keeps a constant pixel size at any zoom.
-      const viewport = rf.current?.getViewport() ?? { x: 0, y: 0, zoom: 1 };
-      const screenX = (sumX / count) * viewport.zoom + viewport.x;
-      let screenY = topY * viewport.zoom + viewport.y - 10;
-
-      // A card from a neighbouring group can still sit where the header goes.
-      // Nudge it up instead of drawing the two on top of each other.
-      const cards = (rf.current?.getNodes() ?? []).map((node) => {
-        const size = nodeSizesRef.current.get(node.id);
-        const width = (size?.width ?? NODE_MIN_WIDTH) * viewport.zoom;
-        const height = (size?.height ?? NODE_MIN_HEIGHT) * viewport.zoom;
-        const left = node.position.x * viewport.zoom + viewport.x;
-        const top = node.position.y * viewport.zoom + viewport.y;
-        return { left, top, right: left + width, bottom: top + height };
-      });
-      // Label size is constant (screen space, fixed font), so measure once.
+      // far away, where it is the only wayfinding cue.
       const measured = labelSizesRef.current.get(cluster.id);
       const width = measured?.width ?? element.offsetWidth;
       const height = measured?.height ?? element.offsetHeight;
@@ -803,38 +803,63 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       if (!measured && width > 0 && height > 0) {
         labelSizesRef.current.set(cluster.id, { width, height });
       }
-
-      const overlaps = (left: number, top: number, right: number, bottom: number) =>
-        cards.some(
-          (card) =>
-            left < card.right &&
-            right > card.left &&
-            top < card.bottom &&
-            bottom > card.top,
-        ) ||
-        placed.some(
-          (other) =>
-            left < other.right &&
-            right > other.left &&
-            top < other.bottom &&
-            bottom > other.top,
-        );
-
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const left = screenX - width / 2;
-        const top = screenY - height;
-        if (!overlaps(left, top, left + width, top + height)) break;
-        screenY -= height + 6;
-      }
-
-      placed.push({
-        left: screenX - width / 2,
-        top: screenY - height,
-        right: screenX + width / 2,
-        bottom: screenY,
+      labels.push({
+        element,
+        x: (sumX / count) * viewport.zoom + viewport.x,
+        y: topY * viewport.zoom + viewport.y - 10,
+        width,
+        height,
       });
-      element.style.transform =
-        `translate(${screenX}px, ${screenY}px) translate(-50%, -100%)`;
+    }
+
+    const boxes = () =>
+      labels.map((label) => ({
+        left: label.x - label.width / 2,
+        top: label.y - label.height,
+        right: label.x + label.width / 2,
+        bottom: label.y,
+      }));
+    const hits = (a: Box, b: Box) =>
+      a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+
+    // Two sections can share a height (their groups sit side by side). Pushing
+    // one UP produced a tight stack of titles; separating them SIDEWAYS keeps
+    // each label over its own group and spreads them evenly.
+    for (let pass = 0; pass < 12; pass += 1) {
+      let moved = false;
+      const current = boxes();
+      for (let i = 0; i < labels.length; i += 1) {
+        for (let j = i + 1; j < labels.length; j += 1) {
+          if (!hits(current[i], current[j])) continue;
+          const overlap =
+            Math.min(current[i].right, current[j].right) -
+            Math.max(current[i].left, current[j].left);
+          const push = overlap / 2 + 6;
+          const left = labels[i].x <= labels[j].x ? i : j;
+          const right = left === i ? j : i;
+          labels[left].x -= push;
+          labels[right].x += push;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+
+    // A card can still sit where the header goes: lift the label instead of
+    // drawing the two on top of each other.
+    for (const label of labels) {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const box: Box = {
+          left: label.x - label.width / 2,
+          top: label.y - label.height,
+          right: label.x + label.width / 2,
+          bottom: label.y,
+        };
+        if (!cards.some((card) => hits(box, card))) break;
+        label.y -= label.height + 6;
+      }
+      label.element.style.transform =
+        `translate(${label.x}px, ${label.y}px) translate(-50%, -100%)`;
     }
   }, []);
 
