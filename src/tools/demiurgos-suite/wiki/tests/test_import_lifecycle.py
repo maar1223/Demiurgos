@@ -463,7 +463,8 @@ def _scripted_funnel_runner():
     def runner(prompt: str, _session: str) -> str:
         data = json.loads(prompt)
         cands = data["candidates"]
-        if cands and "body" in cands[0]:
+        # Both passes now carry the body; the instruction identifies the summary.
+        if "'summaries' array" in data.get("instructions", ""):
             return json.dumps({"summaries": [
                 {"candidate_id": c["candidate_id"],
                  "summary": f"Resumen denso de {c['display_title']}."}
