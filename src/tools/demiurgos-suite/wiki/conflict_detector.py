@@ -280,24 +280,3 @@ def detect_conflicts(
         )
     )
     return conflicts
-
-
-def summarize(conflicts: Iterable[Conflict]) -> dict[str, Any]:
-    """Counts the panel header shows: total, by severity, by code."""
-    by_code: dict[str, int] = {}
-    errors = 0
-    warnings = 0
-    total = 0
-    for conflict in conflicts:
-        total += 1
-        by_code[conflict.code] = by_code.get(conflict.code, 0) + 1
-        if conflict.severity == ERROR:
-            errors += 1
-        else:
-            warnings += 1
-    return {
-        "total": total,
-        "errors": errors,
-        "warnings": warnings,
-        "by_code": dict(sorted(by_code.items())),
-    }

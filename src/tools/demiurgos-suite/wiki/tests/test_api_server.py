@@ -9844,6 +9844,7 @@ class TestWorldConflictsEndpoint:
             "message",
             "field",
             "reference",
+            "decision",
         }
         assert [c["code"] for c in body["conflicts"]] == [
             "unresolved-reference",
@@ -9854,6 +9855,8 @@ class TestWorldConflictsEndpoint:
             "total": 3,
             "errors": 2,
             "warnings": 1,
+            "known": 0,
+            "muted": 0,
             "by_code": {
                 "canon-state-mismatch": 1,
                 "dangling-relation": 1,
@@ -9881,6 +9884,8 @@ class TestWorldConflictsEndpoint:
             "total": 0,
             "errors": 0,
             "warnings": 0,
+            "known": 0,
+            "muted": 0,
             "by_code": {},
         }
 
@@ -9893,7 +9898,14 @@ class TestWorldConflictsEndpoint:
         assert resp.json() == {
             "indexed": False,
             "conflicts": [],
-            "summary": {"total": 0, "errors": 0, "warnings": 0, "by_code": {}},
+            "summary": {
+                "total": 0,
+                "errors": 0,
+                "warnings": 0,
+                "known": 0,
+                "muted": 0,
+                "by_code": {},
+            },
         }
 
     def test_endpoint_is_read_only(self, client: TestClient, monkeypatch):
@@ -9910,3 +9922,125 @@ class TestWorldConflictsEndpoint:
 
         after = sorted(p.relative_to(world).as_posix() for p in world.rglob("*"))
         assert after == before
+
+
+class TestConflictDecisionsEndpoint:
+    """POST /api/{mundo}/conflicts/decision — W11 records, never canon."""
+
+    @staticmethod
+    def _index_with(entities: list[dict]) -> EntityGraphIndex:
+        idx = EntityGraphIndex(mundos_path=Path("/nonexistent"))
+        idx._cache["entities"] = {e["path"]: e for e in entities}
+        return idx
+
+    @staticmethod
+    def _world(monkeypatch, entities: list[dict]) -> None:
+        idx = TestConflictDecisionsEndpoint._index_with(entities)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: idx)
+
+    @staticmethod
+    def _entity(path: str, name: str, *, entity_id: str = "", content: str = "") -> dict:
+        return {
+            "name": name,
+            "id": entity_id,
+            "type": "ficha",
+            "path": path,
+            "title": name,
+            "description": "",
+            "tags": [],
+            "status": "stable",
+            "canon_state": "canon",
+            "forward_links": [],
+            "backlinks": [],
+            "content": content,
+            "relaciones": [],
+            "okf_issues": [],
+        }
+
+    CONFLICT_ID = "unresolved-reference:lore/alfa.md:Fantasma"
+
+    def _entities(self) -> list[dict]:
+        return [
+            self._entity(
+                "lore/alfa.md", "Alfa", entity_id="A", content="Amiga de [[Fantasma]]."
+            )
+        ]
+
+    def test_intentional_decision_is_recorded_as_known(
+        self, client: TestClient, monkeypatch
+    ):
+        self._world(monkeypatch, self._entities())
+
+        resp = client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "intentional"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["conflicts"][0]["decision"] == "intentional"
+        assert body["summary"]["known"] == 1
+        assert body["summary"]["errors"] == 0
+        records = list((Path(api_server.MUNDOS_DIR) / "test_mundo" / "conflictos").glob("*.md"))
+        assert len(records) == 1
+        assert "intentional" in records[0].read_text(encoding="utf-8")
+
+    def test_muted_decision_hides_the_conflict(self, client: TestClient, monkeypatch):
+        self._world(monkeypatch, self._entities())
+
+        resp = client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "muted"},
+        )
+
+        body = resp.json()
+        assert body["conflicts"] == []
+        assert body["summary"]["muted"] == 1
+        assert body["summary"]["total"] == 0
+
+    def test_clear_decision_restores_the_conflict(self, client: TestClient, monkeypatch):
+        self._world(monkeypatch, self._entities())
+        client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "muted"},
+        )
+
+        resp = client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "clear"},
+        )
+
+        body = resp.json()
+        assert body["conflicts"][0]["decision"] is None
+        assert body["summary"]["errors"] == 1
+        assert not (Path(api_server.MUNDOS_DIR) / "test_mundo" / "conflictos").exists() or not list(
+            (Path(api_server.MUNDOS_DIR) / "test_mundo" / "conflictos").glob("*.md")
+        )
+
+    def test_unknown_conflict_is_404(self, client: TestClient, monkeypatch):
+        self._world(monkeypatch, self._entities())
+
+        resp = client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": "no-such-conflict", "decision": "intentional"},
+        )
+
+        assert resp.status_code == 404
+
+    def test_invalid_decision_is_422(self, client: TestClient, monkeypatch):
+        self._world(monkeypatch, self._entities())
+
+        resp = client.post(
+            "/api/test_mundo/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "resolved"},
+        )
+
+        assert resp.status_code == 422
+
+    def test_unknown_world_is_404(self, client: TestClient):
+        resp = client.post(
+            "/api/mundo_fantasma/conflicts/decision",
+            json={"conflict_id": self.CONFLICT_ID, "decision": "intentional"},
+        )
+
+        assert resp.status_code == 404

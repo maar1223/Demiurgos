@@ -66,7 +66,14 @@ from chat_attachments import (
     validate_attachment_size,
 )
 from chat_vision import describe_chat_image
-from conflict_detector import detect_conflicts, summarize
+from conflict_decisions import (
+    DECISIONS,
+    apply_decisions,
+    clear_decision,
+    load_decisions,
+    record_decision,
+)
+from conflict_detector import detect_conflicts
 from import_relations import (
     MAX_RELATIONS,
     build_relation_targets,
@@ -7324,8 +7331,10 @@ def world_conflicts(mundo: str):
     as ``/graph/entities``.
     """
     idx = _get_graph(mundo)
-    if idx is None:
-        return {"indexed": False, "conflicts": [], "summary": summarize([])}
+    world_dir = _resolve_mundo_dir(mundo)
+    if idx is None or world_dir is None:
+        payload, summary = apply_decisions([], {})
+        return {"indexed": False, "conflicts": payload, "summary": summary}
 
     with idx._lock:
         entities = list(idx._cache.get("entities", {}).values())
@@ -7333,11 +7342,58 @@ def world_conflicts(mundo: str):
             entities, resolve_candidates=idx._resolve_link_candidates
         )
 
-    return {
-        "indexed": True,
-        "conflicts": [conflict.to_dict() for conflict in conflicts],
-        "summary": summarize(conflicts),
-    }
+    payload, summary = apply_decisions(
+        [conflict.to_dict() for conflict in conflicts],
+        load_decisions(world_dir),
+    )
+    return {"indexed": True, "conflicts": payload, "summary": summary}
+
+
+@app.post("/api/{mundo}/conflicts/decision")
+def set_conflict_decision(mundo: str, body: dict):
+    """Record, update or clear the Author's decision on one conflict (S2).
+
+    Body: ``{conflict_id, decision, note?}`` where ``decision`` is one of
+    ``intentional|muted|structural``, or ``clear`` to remove the record. The
+    conflict must currently be computed, so a stale id is rejected instead of
+    leaving an orphan record. Writes one W11 record; canon is never touched.
+    """
+    world_dir = _resolve_mundo_dir(mundo)
+    if world_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+
+    conflict_id = str(body.get("conflict_id") or "")
+    decision = str(body.get("decision") or "")
+    note = str(body.get("note") or "")
+    if not conflict_id:
+        raise HTTPException(status_code=422, detail="Falta conflict_id")
+    if decision != "clear" and decision not in DECISIONS:
+        raise HTTPException(
+            status_code=422, detail=f"Decisión inválida: '{decision}'"
+        )
+
+    idx = _get_graph(mundo)
+    current: dict[str, dict] = {}
+    if idx is not None:
+        with idx._lock:
+            entities = list(idx._cache.get("entities", {}).values())
+            conflicts = detect_conflicts(
+                entities, resolve_candidates=idx._resolve_link_candidates
+            )
+        current = {conflict.id: conflict.to_dict() for conflict in conflicts}
+
+    if decision == "clear":
+        clear_decision(world_dir, conflict_id)
+    else:
+        conflict = current.get(conflict_id)
+        if conflict is None:
+            raise HTTPException(status_code=404, detail="Conflicto no encontrado")
+        record_decision(world_dir, conflict, decision, note=note)
+
+    payload, summary = apply_decisions(
+        list(current.values()), load_decisions(world_dir)
+    )
+    return {"indexed": idx is not None, "conflicts": payload, "summary": summary}
 
 
 @app.post("/api/{mundo}/graph/relation")

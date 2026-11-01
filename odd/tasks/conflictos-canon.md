@@ -9,12 +9,12 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 - **S2 — S1 is deterministic and read-only.** No model call, no write, no file creation. Detection is computed on request from the graph index.
 - **S3 — S1 conflict codes (closed set).** `identity`, `version`, `missing-minimum`, `unresolved-reference`, `ambiguous-reference`, `duplicate-id`, `dangling-relation`, `self-relation`, `canon-state-mismatch`.
 - **S4 — Severity.** `error` = the world graph cannot be trusted (`identity`, `version`, `unresolved-reference`, `ambiguous-reference`, `duplicate-id`, `dangling-relation`, `self-relation`). `warning` = incomplete or incoherent but resolvable (`missing-minimum`, `canon-state-mismatch`).
-- **S5 — Endpoint.** `GET /api/{mundo}/conflicts` returns `{ indexed, conflicts, summary }`. Unknown world returns `{ "indexed": false, "conflicts": [], "summary": <zeros> }`, the same soft-empty contract as `/graph/entities`. Each conflict: `id`, `code`, `severity`, `path`, `name`, `message`, `field`, `reference`.
+- **S5 — Endpoint.** `GET /api/{mundo}/conflicts` returns `{ indexed, conflicts, summary }`. Unknown world returns `{ "indexed": false, "conflicts": [], "summary": <zeros> }`, the same soft-empty contract as `/graph/entities`. Each conflict: `id`, `code`, `severity`, `path`, `name`, `message`, `field`, `reference`, `decision` (`null` when undecided). Summary: `{ total, errors, warnings, known, muted, by_code }`; `muted` conflicts never appear in `conflicts`, and `intentional` ones are counted in `known` instead of `errors`/`warnings`.
 - **S6 — Read source.** Reads only the graph index (constitution §4.3: the filesystem is forbidden for entity queries) and never writes.
 - **S7 — Panel.** Lists conflicts grouped by severity, shows the ficha path and the message, and opens the ficha on click. Empty state states the world has no conflicts; a failed request shows a retryable error.
 - **S8 — i18n.** Every new user-facing string exists in `es` and `en`.
 - **S9 — Tests.** Backend: one unit test per code plus a clean-world zero case, and endpoint tests (populated world, unknown world). Frontend: panel renders items, empty state, error state.
-- **S10 — S2 (W11).** Decisions and history: `resolver` (gated ficha write), `intencional` (known conflict, not an error), `silenciar`, `ruptura estructural`. Records live under `mundos/<mundo>/conflictos/` as Markdown with YAML frontmatter plus a readable body; they are not entities and never enter the graph. Detailed specs are added when S2 starts.
+- **S10 — S2 (W11).** Decisions and history. Closed decision set: `intentional` (known conflict, never an error), `muted` (hidden), `structural` (escalated rupture, stays an error). "Resolved" is not a decision: it is what happens when the data stops contradicting, and the record stays as history. Each decision is one Markdown record under `mundos/<mundo>/conflictos/<slug>-<hash8>.md` with YAML frontmatter (`conflict_id`, `code`, `decision`, `path`, `name`, `reference`, `field`, `decided_at`, `note`) and a readable body; records are not entities and never enter the graph. `POST /api/{mundo}/conflicts/decision` with `{conflict_id, decision, note?}` records or updates one decision (`decision: "clear"` removes it); the conflict must currently be computed (404 otherwise) and an unknown decision is 422. The panel never edits a ficha: it records the Author's decision and links to the ficha.
 - **S11 — S3.** Semantic ficha-vs-ficha detector with textual evidence from both fichas, on demand and in a bounded batch with its cost visible. Never writes. Detailed specs are added when S3 starts.
 - **S12 — S4.** Graph integration: badge on conflicted nodes, focus, filter, and a ficha indicator. Detailed specs are added when S4 starts.
 
@@ -27,7 +27,8 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 | T3 | S5, S9 | inline | done | `GET /api/{mundo}/conflicts`; 4 endpoint tests (RED: 404, then 4/4) |
 | T4 | S7, S8, S9 | inline | done | `ConflictsPanel` + `api/conflicts.ts` + es/en; 5 panel tests |
 | T5 | S1 | inline | done | 551 backend tests, 1688 frontend tests, `tsc` clean, 2 commits |
-| T6 | S10 | pending | pending | S2 |
+| T6 | S10 | inline | done | `conflict_decisions.py`; 9 unit tests; 6 endpoint tests (RED: 6/6 failed, then 12/12) |
+| T9 | S10, S7, S8 | pending | pending | S2 frontend: decision actions + known/muted groups |
 | T7 | S11 | pending | pending | S3 |
 | T8 | S12 | pending | pending | S4 |
 
@@ -48,3 +49,7 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 **L7 — S1 verification (observed).** Backend: `pytest test_conflict_detector.py` 13/13 (RED observed first: `ModuleNotFoundError: conflict_detector`); `pytest test_api_server.py -k TestWorldConflictsEndpoint` 4/4 after observing RED (3 failed against the route-less server, 1 trivially passing read-only test); full `test_api_server.py` + `test_conflict_detector.py` 551/551. Frontend: `vitest run` 1688/1688 across 136 files; `tsc --noEmit` clean.
 
 **L8 — Isolation (working tree).** A concurrent OpenCode session was editing the main working tree (`RelacionesCanon.tsx`, `messages.ts`, graph files) and running its own vitest while S1 was being written. To avoid racing, S1 was moved to the sibling worktree `../demiurgos-worktrees/conflictos-canon` (branch `feat/conflictos-canon`, `frontend/node_modules` symlinked to the main checkout). The main tree was restored to master with none of this feature's changes. Expect a trivial conflict on `RelacionesCanon.tsx` (tab order) when merging, and none on `messages.ts` (different regions).
+
+**L9 — Spec change (S5/S10).** S2 extends the payload: each conflict carries `decision`, and the summary adds `known` and `muted`. The three S1 endpoint tests were updated to the new shape. Rationale: a decided conflict must stay visible as known (W5) or disappear when muted, and the header has to say how many of each.
+
+**L10 — S2 backend verification (observed).** RED first: with `api_server.py` and `conflict_detector.py` reverted to S1, all 6 new decision tests failed. GREEN after the change: `test_api_server.py -k Conflict` 12/12; full `test_api_server.py` + both conflict test modules 566/566.
