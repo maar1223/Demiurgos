@@ -73,6 +73,11 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # never blow up the LLM context window. The total bound guards against an
 # accidental "thousands of candidates" batch.
 _PREVIEW_CHAR_BUDGET = 1500
+#: Body excerpt sent with each source in the relationship pass. The model must
+#: quote THIS text, and the quote is verified against the full body, so the
+#: excerpt only bounds cost: it can lose recall, never correctness. Sized to
+#: match the sweep so an import and a sweep read the same amount of ficha.
+_RELATIONSHIP_BODY_BUDGET = 4000
 _MAX_CANDIDATES_PER_BATCH = 100
 # Funnel chunking (importador-auto-frontmatter): keep each Hermes call's prompt
 # AND expected output small enough to avoid response truncation on large
@@ -891,18 +896,24 @@ def build_frontmatter_and_relationships_prompt(
             "canonical_id": c.canonical_id or c.normalized_identity,
             "display_title": c.display_title or c.normalized_identity,
             "summary": c.summary or "",
+            # The relationship half must be able to QUOTE the ficha, so each
+            # source travels with a bounded excerpt of its own body.
+            "body": _bounded_preview(c.content_preview, budget=_RELATIONSHIP_BODY_BUDGET),
         }
         for c in candidates
     ]
     instructions = (
-        "You are enriching imported worldbuilding fichas from their summaries. "
+        "You are enriching imported worldbuilding fichas from their summaries "
+        "and their bodies. "
         "Return a single JSON object with TWO arrays: 'relationships' and "
         "'frontmatter'. "
         "'relationships': each entry needs 'source_candidate_id' (one of the "
         "supplied candidate_ids), 'target_canonical_id' (an EXACT canonical_id "
         "from the supplied catalog, never a bare or ambiguous title), "
         "'relationship_type' (from the vocabulary), 'confidence' in [0,1], and "
-        "a short 'evidence' quote. NEVER invent targets outside the catalog. "
+        "'evidence': a short quote copied VERBATIM from that source's own "
+        "'body' (never from its summary). A claim whose quote does not appear "
+        "in the body is discarded. NEVER invent targets outside the catalog. "
         "'frontmatter': each entry needs 'candidate_id', 'title' (match the "
         "display_title unless the body clearly implies a better canonical "
         "title), 'type' (one of the entity types or null), a concise "
@@ -1612,6 +1623,10 @@ def _enrich_funnel_chunk(
     relationships: list[RelationshipSuggestion] = []
     frontmatter: dict[str, dict[str, Any]] = {}
     rel_payload: dict[str, Any] = {}
+    # S10 — did the combined pass actually answer? A provider outage must not
+    # let the import mark these fichas as reviewed, or the sweep would skip
+    # text nobody ever read.
+    relationships_answered = False
     if summarized and not (should_cancel is not None and should_cancel()):
         try:
             raw = hermes_runner(
@@ -1623,6 +1638,7 @@ def _enrich_funnel_chunk(
                 session_id,
             )
             fm_out, rel_payload = parse_frontmatter_and_relationships_response(raw)
+            relationships_answered = True
             frontmatter = fm_out
             relationships = validate_relationship_batch(
                 rel_payload, summarized, rel_vocab=rel_vocab, catalog=catalog)
@@ -1687,8 +1703,15 @@ def _enrich_funnel_chunk(
             sc or c,
             frontmatter=candidate_fm,
             enrichment_json=own or None,
-            enrichment_status=(EnrichmentStatus.OK.value if own
-                               else EnrichmentStatus.NO_SUGGESTIONS.value),
+            enrichment_status=(
+                EnrichmentStatus.OK.value
+                if own
+                else (
+                    EnrichmentStatus.NO_SUGGESTIONS.value
+                    if relationships_answered
+                    else EnrichmentStatus.ERROR.value
+                )
+            ),
         ))
     return out
 

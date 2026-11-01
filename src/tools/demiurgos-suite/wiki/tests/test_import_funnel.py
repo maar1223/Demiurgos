@@ -120,7 +120,7 @@ def _scripted_funnel_runner():
     def runner(prompt: str, _session: str) -> str:
         data = json.loads(prompt)
         cands = data["candidates"]
-        if cands and "body" in cands[0]:
+        if "'summaries' array" in data.get("instructions", ""):
             return json.dumps({"summaries": [
                 {"candidate_id": c["candidate_id"],
                  "summary": f"Resumen denso de {c['display_title']}."}
@@ -360,7 +360,7 @@ class TestGroundedRelations:
         def runner(prompt: str, _session: str) -> str:
             data = json.loads(prompt)
             candidates = data["candidates"]
-            if candidates and "body" in candidates[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -398,7 +398,7 @@ class TestGroundedRelations:
         def runner(prompt: str, _session: str) -> str:
             data = json.loads(prompt)
             candidates = data["candidates"]
-            if candidates and "body" in candidates[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"], "summary": "resumen"}
                     for c in candidates
@@ -437,7 +437,9 @@ def _relationship_runner(relationships):
     def runner(prompt: str, _session: str) -> str:
         data = json.loads(prompt)
         candidates = data["candidates"]
-        if candidates and "body" in candidates[0]:
+        # Both the summary pass and the relationship pass now carry the ficha
+        # body, so the prompt's own instruction is the stable discriminator.
+        if "'summaries' array" in data.get("instructions", ""):
             return json.dumps({"summaries": [
                 {"candidate_id": c["candidate_id"],
                  "summary": f"Resumen de {c['display_title']}."}
@@ -501,6 +503,18 @@ class TestVerifiedModelRelations:
         # The deterministic extraction stays the base: the body never names
         # Beta, so the quote-backed claim does not add it to ``relaciones``.
         assert "G::Beta" not in by_id[alpha.candidate_id].frontmatter.relaciones
+
+    def test_prompt_sends_each_source_body_not_only_its_summary(self):
+        """The relationship half must be able to quote the ficha (S10)."""
+        alpha = _ficha(
+            "Alpha", canonical_id="G::Alpha",
+            preview="Alpha reconoce a su aliada en el consejo.")
+        prompt = build_frontmatter_and_relationships_prompt([alpha])
+        entry = prompt["candidates"][0]
+
+        assert "reconoce a su aliada" in entry["body"]
+        assert "VERBATIM" in prompt["instructions"]
+        assert "'body'" in prompt["instructions"]
 
     def test_quote_absent_from_body_marks_unverified(self):
         alpha = _ficha(
@@ -585,7 +599,8 @@ class TestTimeoutAndFailOpen:
         assert cand.frontmatter.state == FrontmatterState.FALLBACK
         assert cand.frontmatter.title == "Ayagares"  # reviewable fallback
         assert cand.content_preview == "Cuerpo original que no se pierde."
-        assert cand.enrichment_status == EnrichmentStatus.NO_SUGGESTIONS.value
+        # A timeout is not "reviewed": the sweep must still visit this ficha.
+        assert cand.enrichment_status == EnrichmentStatus.ERROR.value
 
     def test_unavailable_runner_fails_open_to_fallback(self):
         a = _ficha("Ayagares")
@@ -596,11 +611,14 @@ class TestTimeoutAndFailOpen:
         out = analyze_ficha_funnel([a], boom)
         assert out[0].frontmatter.state == FrontmatterState.FALLBACK
         assert out[0].content_preview == a.content_preview
+        # A silent provider is NOT "reviewed": the sweep must still visit it.
+        assert out[0].enrichment_status == EnrichmentStatus.ERROR.value
 
     def test_malformed_runner_fails_open_to_fallback(self):
         a = _ficha("Ayagares")
         out = analyze_ficha_funnel([a], lambda _p, _s: "not-json-at-all")
         assert out[0].frontmatter.state == FrontmatterState.FALLBACK
+        assert out[0].enrichment_status == EnrichmentStatus.ERROR.value
 
     def test_no_runner_leaves_manual_state(self):
         a = _ficha("Ayagares")
@@ -728,7 +746,7 @@ class TestFichaFunnel:
         def counting_runner(prompt: str, _session: str) -> str:
             data = json.loads(prompt)
             cands = data["candidates"]
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 steps_called.append("summary")
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
@@ -784,7 +802,7 @@ class TestFichaFunnel:
         def partial_runner(prompt: str, _session: str) -> str:
             data = json.loads(prompt)
             cands = data["candidates"]
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 # First summary call summarizes ONLY the first candidate; the
                 # fill-in call (small group) summarizes whatever it is asked.
                 return json.dumps({"summaries": [{
@@ -828,7 +846,7 @@ class TestFichaFunnel:
         def failing_runner(prompt: str, _session: str) -> str:
             data = json.loads(prompt)
             cands = data["candidates"]
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 summary_calls["n"] += 1
                 if summary_calls["n"] > 1:
                     raise TimeoutError("chunk 2 timed out")
@@ -951,7 +969,7 @@ class TestTypeDisambiguationFunnel:
                     types.append({"candidate_id": cid, "type": v})
                 return json.dumps({"types": types})
             cands = data.get("candidates", [])
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1105,7 +1123,7 @@ class TestRecoverTypesDocumentWide:
             data = json.loads(prompt)
             cands = data.get("candidates", [])
             # Combined-style prompt (no body, has rel_vocab + entity_vocab).
-            if cands and "body" not in cands[0] and "rel_vocab" in data and "entity_vocab" in data:
+            if "rel_vocab" in data and "entity_vocab" in data:
                 return json.dumps({
                     "frontmatter": [
                         {"candidate_id": c["candidate_id"],
@@ -1170,7 +1188,7 @@ class TestFichaFunnelParallelism:
             sessions.append(session)
             data = json.loads(prompt)
             cands = data["candidates"]
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1222,7 +1240,7 @@ class TestFichaFunnelParallelism:
             finally:
                 with overlap_guard["lock"]:
                     overlap_guard["in_flight"] -= 1
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1260,7 +1278,7 @@ class TestFichaFunnelParallelism:
             # would be reversed.
             if session.endswith(":chunk:0"):
                 _time.sleep(0.9)
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1294,9 +1312,10 @@ class TestFichaFunnelParallelism:
             data = json.loads(prompt)
             cands = data["candidates"]
             # Fail only on the SECOND chunk's summary step.
-            if session.endswith(":chunk:1") and cands and "body" in cands[0]:
+            if (session.endswith(":chunk:1")
+                    and "'summaries' array" in data.get("instructions", "")):
                 raise RuntimeError("worker died")
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1337,7 +1356,7 @@ class TestFichaFunnelParallelism:
             sessions.append(session)
             data = json.loads(prompt)
             cands = data["candidates"]
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1378,7 +1397,7 @@ class TestFunnelCooperativeCancel:
             data = json.loads(prompt)
             cands = data["candidates"]
             calls["n"] += 1
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1436,13 +1455,13 @@ class TestFunnelCooperativeCancel:
                     # Chunk 0 finished BOTH runner calls (summary + combined).
                     chunk0_done.set()
             else:
-                if cands and "body" in cands[0]:
+                if "'summaries' array" in data.get("instructions", ""):
                     # Block the first summary call of any non-zero chunk until
                     # the test raises the cancel signal, so the funnel is
                     # deterministically mid-flight when the cancel lands.
                     chunk1_entered.set()
                     gate.wait(timeout=10)
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
@@ -1512,7 +1531,7 @@ class TestFunnelCooperativeCancel:
                 finally:
                     with lock:
                         in_flight["n"] -= 1
-            if cands and "body" in cands[0]:
+            if "'summaries' array" in data.get("instructions", ""):
                 return json.dumps({"summaries": [
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
