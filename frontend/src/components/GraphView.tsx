@@ -49,6 +49,7 @@ import type {
   GraphEntity,
   SearchResult,
 } from "@/api/types";
+import { estimateLabelWidth, spreadLabels } from "@/lib/graphLabels";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -527,10 +528,6 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
   const layoutRef = useRef<LiveForceLayout | null>(null);
   const reducedMotionRef = useRef(prefersReducedMotion());
   const clusterRefs = useRef(new Map<string, HTMLDivElement>());
-  // Section labels are fixed-size in screen space, so measuring once is enough.
-  const labelSizesRef = useRef(
-    new Map<string, { width: number; height: number }>(),
-  );
   const clusterMembersRef = useRef<GraphCluster[]>([]);
   const nodeSizesRef = useRef<Map<string, NodeSize>>(new Map());
   const positionsRef = useRef<ForcePositions>(new Map());
@@ -793,74 +790,28 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       }
       if (count === 0) continue;
 
-      // Screen space, not flow space: the section label must stay legible from
-      // far away, where it is the only wayfinding cue.
-      const measured = labelSizesRef.current.get(cluster.id);
-      const width = measured?.width ?? element.offsetWidth;
-      const height = measured?.height ?? element.offsetHeight;
-      // Never cache a zero measure: a label rendered before its styles apply
-      // would keep a 0×0 box and stop dodging anything.
-      if (!measured && width > 0 && height > 0) {
-        labelSizesRef.current.set(cluster.id, { width, height });
-      }
       labels.push({
         element,
+        // Screen space, not flow space: the label keeps a constant pixel size
+        // at any zoom, which is what makes it readable from far away.
         x: (sumX / count) * viewport.zoom + viewport.x,
         y: topY * viewport.zoom + viewport.y - 10,
-        width,
-        height,
+        // Width from the TEXT, not from the DOM: a label can be read before it
+        // has layout, and jsdom always reports 0 — that is why the first
+        // separation pass silently did nothing.
+        width: estimateLabelWidth(cluster.label),
+        height: 16,
       });
     }
 
-    const boxes = () =>
-      labels.map((label) => ({
-        left: label.x - label.width / 2,
-        top: label.y - label.height,
-        right: label.x + label.width / 2,
-        bottom: label.y,
-      }));
-    const hits = (a: Box, b: Box) =>
-      a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-
-    // Two sections can share a height (their groups sit side by side). Pushing
-    // one UP produced a tight stack of titles; separating them SIDEWAYS keeps
-    // each label over its own group and spreads them evenly.
-    for (let pass = 0; pass < 12; pass += 1) {
-      let moved = false;
-      const current = boxes();
-      for (let i = 0; i < labels.length; i += 1) {
-        for (let j = i + 1; j < labels.length; j += 1) {
-          if (!hits(current[i], current[j])) continue;
-          const overlap =
-            Math.min(current[i].right, current[j].right) -
-            Math.max(current[i].left, current[j].left);
-          const push = overlap / 2 + 6;
-          const left = labels[i].x <= labels[j].x ? i : j;
-          const right = left === i ? j : i;
-          labels[left].x -= push;
-          labels[right].x += push;
-          moved = true;
-        }
-      }
-      if (!moved) break;
-    }
-
-    // A card can still sit where the header goes: lift the label instead of
-    // drawing the two on top of each other.
-    for (const label of labels) {
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        const box: Box = {
-          left: label.x - label.width / 2,
-          top: label.y - label.height,
-          right: label.x + label.width / 2,
-          bottom: label.y,
-        };
-        if (!cards.some((card) => hits(box, card))) break;
-        label.y -= label.height + 6;
-      }
-      label.element.style.transform =
-        `translate(${label.x}px, ${label.y}px) translate(-50%, -100%)`;
-    }
+    const placed = spreadLabels(
+      labels.map(({ x, y, width, height }) => ({ x, y, width, height })),
+      cards,
+    );
+    placed.forEach((box, index) => {
+      labels[index].element.style.transform =
+        `translate(${box.x}px, ${box.y}px) translate(-50%, -100%)`;
+    });
   }, []);
 
   /** The engine lays nodes out by their CENTRE; React Flow positions a node
