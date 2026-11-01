@@ -37,7 +37,9 @@ from import_relations import (
 )
 from import_service import ImportService
 from import_store import ImportJobStore
+from relation_candidates import scan_candidates
 from relation_evidence import load_evidence
+from relation_state import load_state
 
 HUB_A = RelationTarget(
     canonical_id="Familia A",
@@ -344,6 +346,7 @@ def _evidence_candidate(
     canonical_id: str,
     body: str,
     enrichment_json: list[dict] | None = None,
+    status: str = "ok",
 ) -> Candidate:
     return Candidate(
         candidate_id=candidate_id,
@@ -362,7 +365,7 @@ def _evidence_candidate(
             title=identity, type="concepto", description="desc",
             relaciones=[], state=FrontmatterState.GENERATED),
         enrichment_json=enrichment_json,
-        enrichment_status="ok",
+        enrichment_status=status,
     )
 
 
@@ -451,3 +454,114 @@ def test_evidence_store_oserror_does_not_fail_the_import(tmp_path, monkeypatch):
 
     assert outcome.written is True
     assert (tmp_path / "world1" / "lore" / "Alpha.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# S10 — importing reads the text, so the ficha is already reviewed
+# ---------------------------------------------------------------------------
+
+
+def test_materialization_marks_the_ficha_reviewed(tmp_path):
+    """A pass that answered marks the ficha swept: the sweep must not re-read it."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    outcome = service._execute_candidate(job, alpha)
+
+    assert outcome.written is True
+    assert "lore/Alpha.md" in load_state(tmp_path / "world1").swept
+
+
+def test_an_unanswered_pass_does_not_mark_the_ficha(tmp_path):
+    """A provider outage leaves the ficha for the sweep instead of hiding it."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.",
+        status="error")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    service._execute_candidate(job, alpha)
+
+    assert "lore/Alpha.md" not in load_state(tmp_path / "world1").swept
+
+
+class _DiskIndex:
+    """Index built from the written files, split exactly like the indexer.
+
+    ``graph_indexer`` cannot be imported from this flat test harness (it uses
+    package-relative imports), so this reproduces its body split. The import
+    path uses the same expression, which is what makes the digests agree.
+    """
+
+    def __init__(self, entities: list[dict]) -> None:
+        self._entities = entities
+
+    def entities(self) -> list[dict]:
+        return self._entities
+
+
+def _sweep_paths(tmp_path) -> list[str]:
+    world = tmp_path / "world1"
+    entities = []
+    for md in sorted(world.rglob("*.md")):
+        body = import_service._body_after_frontmatter(md.read_text(encoding="utf-8"))
+        entities.append({
+            "path": md.relative_to(world).as_posix(),
+            "id": f"G::{md.stem}",
+            "name": md.stem,
+            "content": body,
+            "relaciones": [],
+        })
+    index = _DiskIndex(entities)
+    return [
+        candidate.path
+        for candidate in scan_candidates(
+            mundo="world1", mundos_dir=tmp_path, index=index)
+    ]
+
+
+def test_a_reviewed_ficha_is_not_a_sweep_candidate(tmp_path):
+    """End to end through the real indexer: no double work after an import."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+    service._execute_candidate(job, alpha)
+    service._execute_candidate(job, beta)
+
+    assert "lore/Alpha.md" not in _sweep_paths(tmp_path)
+
+
+def test_an_unreviewed_ficha_stays_a_sweep_candidate(tmp_path):
+    """The guard for the guard: an unanswered pass must remain reviewable."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.",
+        status="error")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+    service._execute_candidate(job, alpha)
+    service._execute_candidate(job, beta)
+
+    assert "lore/Alpha.md" in _sweep_paths(tmp_path)

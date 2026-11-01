@@ -39,10 +39,12 @@ from import_intake import BoundedSpool
 from import_store import ImportJobStore
 from import_registry import _request_cancel
 from order_manifest import append_order, replace_prefix_order
+from relation_candidates import body_digest
 from relation_evidence import (
     record as record_evidence,
     record_many as record_evidence_many,
 )
+from relation_state import mark_swept
 
 if TYPE_CHECKING:
     # Only needed for the type annotation; graph_indexer uses package-relative
@@ -134,6 +136,26 @@ def _strip_frontmatter(content: str) -> str:
         if lines[i].rstrip() == "---":
             return "\n".join(lines[i + 1:]).lstrip("\n")
     return content  # no closing --- -> not a valid frontmatter block
+
+
+#: Enrichment outcomes that mean the text pass actually ran. ``disabled`` and
+#: ``error`` never mark a ficha reviewed, so the sweep still visits it.
+_REVIEWED_STATUSES = frozenset({"ok", "no_suggestions"})
+
+
+def _body_after_frontmatter(content: str) -> str:
+    """The body exactly as the graph indexer splits it.
+
+    Mirrors ``graph_indexer``'s split so the sweep digest taken at import time
+    matches the digest the index computes later; a mismatch would only cost a
+    redundant sweep pass, never a wrong mark.
+    """
+    start = content.find("---\n", 4)
+    if start == -1:
+        start = content.find("---\r\n", 4)
+    if start == -1:
+        return content
+    return content[start + 4:]
 
 
 def plan_merge(current_content: str, incoming_content: str) -> MergeDecision:
@@ -1051,6 +1073,8 @@ class ImportService:
                 current, job.world)
             target.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(target, document)
+            self._mark_relations_reviewed(
+                job, target, document, candidate.enrichment_status)
             self._register_placements(job.world, job.job_id, placements)
             if self._graph_reconcile_many is None and self._graph_reconcile is not None:
                 rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -1074,6 +1098,8 @@ class ImportService:
                 job.world, candidate.source_hash, candidate.normalized_identity)
         if prior is not None:
             if _strip_frontmatter(current) == _strip_frontmatter(document):
+                self._mark_relations_reviewed(
+                    job, target, current, candidate.enrichment_status)
                 return ExecutionOutcome(
                     candidate_id=candidate.candidate_id, target=str(target),
                     action="keep", written=False, detail="ficha unchanged",
@@ -1081,6 +1107,7 @@ class ImportService:
             return self._write_ficha(
                 target, document, job, candidate.candidate_id,
                 placements, media_warnings, action="add",
+                candidate_status=candidate.enrichment_status,
             )
 
         # Layer C — standard merge: body-only comparison (REQ-A). Frontmatter
@@ -1088,6 +1115,8 @@ class ImportService:
         decision = plan_merge(
             _strip_frontmatter(current), _strip_frontmatter(document))
         if decision.action == "keep":
+            self._mark_relations_reviewed(
+                job, target, current, candidate.enrichment_status)
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="keep", written=False, detail="ficha unchanged",
@@ -1102,6 +1131,7 @@ class ImportService:
         return self._write_ficha(
             target, document, job, candidate.candidate_id,
             placements, media_warnings, action=decision.action,
+            candidate_status=candidate.enrichment_status,
         )
 
     def _register_placements(self, world: str, job_id: str,
@@ -1130,9 +1160,33 @@ class ImportService:
             if src.is_file():
                 self._register_gallery(world, src, clean)
 
+    def _mark_relations_reviewed(self, job: ImportJob, target: Path,
+                                 document: str, status: str) -> None:
+        """Record that the text pass already read this ficha (S10).
+
+        Importing now reads each ficha body with the same primitive the sweep
+        uses, so a later sweep would only re-read what was just read. Marking
+        the ficha reviewed is what stops the product from charging twice.
+        Best-effort: an unwritable store never fails an import.
+        """
+        if status not in _REVIEWED_STATUSES:
+            return
+        world_dir = self._mundo_dir(job.world)
+        try:
+            relative = str(target.relative_to(world_dir)).replace("\\", "/")
+        except ValueError:
+            return
+        try:
+            mark_swept(
+                world_dir, relative, body_digest(_body_after_frontmatter(document)))
+        except OSError as exc:
+            logger.warning(
+                "relations: could not mark %s reviewed: %s", relative, exc)
+
     def _write_ficha(self, target: Path, document: str, job: ImportJob,
                      candidate_id: str, placements: list[dict],
-                     media_warnings: list[str], action: str) -> ExecutionOutcome:
+                     media_warnings: list[str], action: str,
+                     candidate_status: str = "") -> ExecutionOutcome:
         """Write one ficha through the canonical write pipeline.
 
         Shared by the normal ``add`` path and the self-transformation
@@ -1145,6 +1199,7 @@ class ImportService:
         """
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(target, document)
+        self._mark_relations_reviewed(job, target, document, candidate_status)
         self._register_placements(job.world, job.job_id, placements)
         if self._graph_reconcile_many is None and self._graph_reconcile is not None:
             rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
