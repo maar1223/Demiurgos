@@ -74,6 +74,8 @@ from import_relations import (
 )
 from relation_candidates import scan_candidates
 from relation_proposals import load_proposals, remove_proposal
+from relation_curation import pin as pin_curated_relation
+from relation_curation import unpin as unpin_curated_relation
 from relation_reconcile import build_global_plan, create_preimage_backup
 from relation_rejections import clear_rejection, record_rejection
 from relation_service import build_relation_plan
@@ -6826,8 +6828,9 @@ def relations_proposal_accept(mundo: str, proposal_id: str):
     _graph_indices.pop(mundo, None)
     try:
         clear_rejection(mundo_dir, proposal.source_key, proposal.target_id)
+        pin_curated_relation(mundo_dir, proposal.source_key, proposal.target_id)
     except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
-        logger.warning("relations: cannot clear rejection on accept: %s", exc)
+        logger.warning("relations: cannot record curation on accept: %s", exc)
     remove_proposal(mundo_dir, proposal.id)
     return {
         "success": True,
@@ -7341,8 +7344,10 @@ def set_graph_relation(mundo: str, body: dict):
     try:
         if action == "break":
             record_rejection(mundo_dir, source_key, target_id)
+            unpin_curated_relation(mundo_dir, source_key, target_id)
         else:
             clear_rejection(mundo_dir, source_key, target_id)
+            pin_curated_relation(mundo_dir, source_key, target_id)
     except Exception as exc:  # noqa: BLE001 — post-write metadata is best-effort
         logger.warning(
             "relations: cannot record rejection for %s/%s in %s: %s",
