@@ -862,9 +862,13 @@ export default function GraphView({ mundo }: GraphViewProps) {
     reducedMotionRef.current = reducedMotion;
     // Reduced motion jumps to the settled layout in the same frame; otherwise
     // a couple of ticks let the initial spiral centre before the first paint.
-    const positions = reducedMotion
-      ? layout.settle()
-      : layout.step(INITIAL_LIVE_TICKS);
+    // An ISOLATED neighbourhood settles too: it is a reading mode, and a
+    // drifting layout pushed the neighbours out of the framed viewport right
+    // after the fit.
+    const positions =
+      reducedMotion || isolatedNodeId
+        ? layout.settle()
+        : layout.step(INITIAL_LIVE_TICKS);
     positionsRef.current = positions;
 
     const mainIds = layout.mainIds();
@@ -898,7 +902,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
     // clamp the zoom to minZoom and never recover).
     rf.current?.setNodes(nextNodes);
 
-    if (!reducedMotion) {
+    if (!reducedMotion && !isolatedNodeId) {
       layout.onPositions = applyPositions;
       layout.reheat(DATASET_REHEAT_ALPHA);
       layout.start();
@@ -913,6 +917,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
     error,
     applyPositions,
     centreToTopLeft,
+    isolatedNodeId,
   ]);
 
   // Folder clusters (S7): entities from the same folder read as one group.
