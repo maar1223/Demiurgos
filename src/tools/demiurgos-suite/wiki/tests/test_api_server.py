@@ -1386,6 +1386,31 @@ class TestSetFrontmatterRelaciones:
         out = self._set(content, "create", "Stal::Vael")
         assert out == "---\nrelaciones:\n  - Stal::Vael\n---\n# Plain\n"
 
+    def test_an_id_with_a_colon_round_trips_as_a_string(self):
+        """Regression: a bare ``Eneatipo 8: El Desafiante`` parsed as a MAPPING.
+
+        The sync then never converged: every run re-planned the same addition,
+        wrote nothing and reported zero applied files.
+        """
+        content = "---\ntype: concepto\ntitle: Canon\n---\n# Cuerpo\n"
+        out = self._set(content, "create", "Eneatipo 8: El Desafiante")
+
+        assert '  - "Eneatipo 8: El Desafiante"' in out
+        frontmatter = out.split("---")[1]
+        assert api_server.yaml.safe_load(frontmatter)["relaciones"] == [
+            "Eneatipo 8: El Desafiante"
+        ]
+        # Idempotent: the second create is a conflict, not a silent duplicate.
+        with pytest.raises(api_server.RelationConflict):
+            self._set(out, "create", "Eneatipo 8: El Desafiante")
+
+    def test_a_plain_id_keeps_its_existing_bytes(self):
+        """Only values that would not round-trip get quoted (no diff churn)."""
+        content = "---\ntype: Personaje\ntitle: Rhyz\n---\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert "  - Stal::Vael" in out
+        assert '"' not in out
+
     def test_duplicate_create_raises_conflict(self):
         content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Vael\n---\n"
         with pytest.raises(api_server.RelationConflict):

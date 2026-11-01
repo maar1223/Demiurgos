@@ -134,3 +134,22 @@ Delivery: work-unit commits; PR at the end. Runner: `python3 -m pytest src/tools
   run of `test_import_lifecycle` failed on a lazy `sync_lore` import. The conftest
   now inserts both explicitly. Full suite 4730 passed / 26 skipped. Commit
   `d7cfcb1`.
+- **L20** (bugfix evidence, 2026-11-01): applying the sync on the real world left
+  `Sincronizar · 3 cambios` forever and reported `Sincronizadas 0 fichas`. Cause:
+  the frontmatter writer emitted bare scalars, and a canonical id containing
+  `": "` (`Eneatipo 8: El Desafiante`) is valid YAML as a MAPPING, so the entry
+  was parsed as a dict and dropped by every `isinstance(entry, str)` filter; the
+  plan re-added it, the writer saw the text already present and changed nothing.
+  9 of 72 ids in the world are affected. Fix: `_yaml_relation_scalar` quotes only
+  values that do not round-trip as the same string (simple ids keep their bytes).
+  4 corrupted entries repaired in 3 files (backup
+  `/tmp/opencode/relations-yaml-repair-backup`); the preview converges to
+  0/0/0 after an index reload. Suite 4732 passed / 26 skipped.
+- **L21** (finding, 2026-11-01, open): 133 of 326 directed edges (41%) come from
+  `stem` evidence, and only 41 from a full name. `Planeta Vibral | Naturaleza y
+  Biodiversidad` has 36 edges because its FILENAME contains `vibral` (24 fichas),
+  `naturaleza` (12), `planeta` (10) and `biodiversidad` (6); the matches are the
+  common noun ("refleja la naturaleza empática de su vibrante"). The stem rule
+  takes any word longer than three characters from the filename, so a long
+  descriptive title becomes a magnet. This is what makes the graph a hairball,
+  not the sync.
