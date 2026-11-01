@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildFolderTree, filterEntitiesByFolders } from "@/lib/graphFilters";
+import {
+  buildFolderTree,
+  filterEntitiesByFolders,
+  neighborhoodKeys,
+} from "@/lib/graphFilters";
 import type { GraphEntity } from "@/api/types";
 
 /** Minimal GraphEntity factory for tests (only `path` matters here). */
@@ -126,5 +130,26 @@ describe("filterEntitiesByFolders", () => {
     // Selecting a file path exactly includes only that file.
     const result = filterEntitiesByFolders(entities, ["lore/a.md"]);
     expect(result.map((e) => e.path)).toEqual(["lore/a.md"]);
+  });
+});
+
+describe("neighborhoodKeys", () => {
+  const links = [
+    { source: "a", target: "b" },
+    { source: "a", target: "c" },
+    { source: "d", target: "a" },
+    { source: "e", target: "f" },
+  ];
+
+  it("keeps the node and every direct neighbour in both directions", () => {
+    expect([...neighborhoodKeys(links, "a")].sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("returns only the node when it has no connections", () => {
+    expect([...neighborhoodKeys(links, "z")]).toEqual(["z"]);
+  });
+
+  it("does not walk two hops", () => {
+    expect(neighborhoodKeys(links, "b").has("c")).toBe(false);
   });
 });

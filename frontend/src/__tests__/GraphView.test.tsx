@@ -826,6 +826,23 @@ describe("GraphView", () => {
     expect(card("Gamma")).toHaveClass("opacity-30");
   });
 
+  it("isolates a neighbourhood and leaves it with Escape", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Alfa"));
+    fireEvent.click(await screen.findByTestId("isolate-neighborhood"));
+
+    // Alfa + Bravo only: Gamma is two hops away.
+    await waitFor(() => expect(countNodes()).toBe(2));
+    expect(screen.getByTestId("isolation-pill")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(countNodes()).toBe(3));
+    expect(screen.queryByTestId("isolation-pill")).not.toBeInTheDocument();
+  });
+
   it("reads canon through fill, ring and a status dot, never border colour alone", async () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();

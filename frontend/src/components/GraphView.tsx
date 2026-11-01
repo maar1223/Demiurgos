@@ -61,6 +61,7 @@ import { NodeInspectorPanel } from "@/components/organisms/NodeInspectorPanel";
 import {
   buildFolderTree,
   filterEntitiesByFolders,
+  neighborhoodKeys,
   type FolderNode,
 } from "@/lib/graphFilters";
 import { cn } from "@/lib/utils";
@@ -541,6 +542,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
     clampPanel(RIGHT_DEFAULT),
   );
   const [focusMode, setFocusMode] = useState(false);
+  // "Isolate neighbourhood": the canvas keeps only this node and its direct
+  // neighbours, so every connection fits on screen and names stay readable.
+  const [isolatedNodeId, setIsolatedNodeId] = useState<string | null>(null);
   const [draggingPanel, setDraggingPanel] = useState(false);
   const panelDragRef = useRef<{ startX: number; startW: number } | null>(null);
 
@@ -570,16 +574,51 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
   // Entities inside the selected folders (prefix union). An empty selection
   // keeps every entity visible.
-  const visibleEntities = useMemo(
-    () => filterEntitiesByFolders(entities, selectedFolders),
-    [entities, selectedFolders],
-  );
+  const visibleEntities = useMemo(() => {
+    if (isolatedNodeId) {
+      // Isolation wins over the folder filter: a neighbour shows even when its
+      // folder is unselected, because the point is to see the whole
+      // neighbourhood of the node being inspected.
+      const keep = neighborhoodKeys(links, isolatedNodeId);
+      return entities.filter((entity) => keep.has(nodeKey(entity)));
+    }
+    return filterEntitiesByFolders(entities, selectedFolders);
+  }, [entities, selectedFolders, isolatedNodeId, links]);
 
   // Inspector lookups: the selected entity is re-derived from the loaded set
   // on every render, so it is never stale after a re-fetch. `entityByKey`
   // covers ALL loaded entities (neighbor resolution still works for
   // filtered-out neighbors, which then render as plain text); the visible
   // key set is exactly the rendered node set (orphan/folder filtered).
+  const exitIsolation = useCallback(() => {
+    setIsolatedNodeId(null);
+    window.setTimeout(
+      () => rf.current?.fitView({ duration: 350, padding: 0.2 }),
+      120,
+    );
+  }, []);
+
+  // Escape leaves the isolated view; the whole world comes back.
+  useEffect(() => {
+    if (!isolatedNodeId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") exitIsolation();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isolatedNodeId, exitIsolation]);
+
+  // Frame the neighbourhood once the layout has the reduced node set.
+  useEffect(() => {
+    if (!isolatedNodeId) return;
+    const ids = [...neighborhoodKeys(links, isolatedNodeId)].map((id) => ({ id }));
+    const timer = window.setTimeout(
+      () => rf.current?.fitView({ nodes: ids, duration: 350, padding: 0.35 }),
+      140,
+    );
+    return () => window.clearTimeout(timer);
+  }, [isolatedNodeId, links]);
+
   const selectedEntity = useMemo(
     () => entities.find((e) => nodeKey(e) === selectedNodeId) ?? null,
     [entities, selectedNodeId],
@@ -638,6 +677,15 @@ export default function GraphView({ mundo }: GraphViewProps) {
     const stillLoaded = entities.some((e) => nodeKey(e) === selectedNodeId);
     if (!stillLoaded) setSelectedNodeId(null);
   }, [entities, selectedNodeId]);
+
+  // The isolated node must exist in the loaded set (status re-fetch, mundo
+  // switch); otherwise the canvas would render an empty neighbourhood.
+  useEffect(() => {
+    if (!isolatedNodeId) return;
+    if (!entities.some((e) => nodeKey(e) === isolatedNodeId)) {
+      setIsolatedNodeId(null);
+    }
+  }, [entities, isolatedNodeId]);
 
   // When the loaded entity set no longer contains a selected folder (status
   // re-fetch, mundo switch, empty result), prune it so the tree never shows
@@ -786,9 +834,11 @@ export default function GraphView({ mundo }: GraphViewProps) {
         .map(nodeKey),
     );
     // Orphans hidden by default (W12); the toggle reveals them.
-    const visible = showOrphans
-      ? visibleEntities
-      : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
+    // An isolated node may be an orphan: the toggle must not hide it.
+    const visible =
+      isolatedNodeId || showOrphans
+        ? visibleEntities
+        : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
     // One deterministic footprint per node for the whole dataset: stable under
@@ -1304,6 +1354,27 @@ export default function GraphView({ mundo }: GraphViewProps) {
                 )}
               </ReactFlow>
 
+              {isolatedNodeId ? (
+                <div
+                  data-testid="isolation-pill"
+                  className="absolute left-2 top-2 z-30 flex items-center gap-2 rounded-full border border-edge bg-surface-raised/95 px-3 py-1 text-small shadow-sm backdrop-blur-sm"
+                >
+                  <span className="max-w-[16rem] truncate text-primary">
+                    {t("graph.isolatedHint", {
+                      name:
+                        entityByKey.get(isolatedNodeId)?.name ?? isolatedNodeId,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={exitIsolation}
+                    className="rounded-full border border-edge px-2 py-0.5 text-xs text-action transition-colors hover:border-action"
+                  >
+                    {t("graph.exitIsolation")}
+                  </button>
+                </div>
+              ) : null}
+
               {/* Focus toggle: hide the inspector to give the canvas every pixel;
                   toggling back restores the last width. It docks to the left edge
                   of the floating panel while the panel is open. */}
@@ -1374,6 +1445,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
                       onNeighborClick={handleNeighborClick}
                       onOpenFicha={handleOpenFicha}
                       onClose={() => setSelectedNodeId(null)}
+                      onIsolate={() =>
+                        selectedNodeId && setIsolatedNodeId(selectedNodeId)
+                      }
                       onRemoveRelation={(targetKey) => {
                         const sourcePath = selectedEntity?.path;
                         if (!sourcePath) return;
