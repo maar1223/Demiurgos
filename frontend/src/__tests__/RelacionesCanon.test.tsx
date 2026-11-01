@@ -13,6 +13,8 @@ vi.mock("@/components/GraphView", () => ({
   default: () => <div data-testid="graph-view">GraphView</div>,
 }));
 
+vi.mock("@/api/conflicts", () => ({ fetchConflicts: vi.fn() }));
+
 vi.mock("@/api/graph", () => ({
   fetchRelationCandidates: vi.fn(),
   fetchRelationReconcilePreview: vi.fn(),
@@ -25,6 +27,7 @@ vi.mock("@/api/graph", () => ({
   unmuteRelationCandidate: vi.fn(),
 }));
 
+import { fetchConflicts } from "@/api/conflicts";
 import { useWorlds } from "@/hooks/useWorlds";
 import {
   applyRelationReconcile,
@@ -34,6 +37,8 @@ import {
   muteRelationCandidate,
   sweepRelations,
 } from "@/api/graph";
+
+const fetchConflictsMock = vi.mocked(fetchConflicts);
 
 function renderPage() {
   return render(
@@ -136,18 +141,18 @@ describe("RelacionesCanon", () => {
     expect(screen.getByTestId("graph-view")).toBeInTheDocument();
   });
 
-  it("shows a Próximamente placeholder in the Conflictos tab", async () => {
+  it("renders the deterministic conflicts panel in the Conflictos tab", async () => {
     const user = userEvent.setup();
+    fetchConflictsMock.mockResolvedValue({
+      indexed: true,
+      conflicts: [],
+      summary: { total: 0, errors: 0, warnings: 0, by_code: {} },
+    });
     renderPage();
 
     await user.click(screen.getByRole("tab", { name: "Conflictos" }));
 
-    // Navbar also renders a "Próximamente" teaser — scope to the panel.
-    expect(
-      within(screen.getByTestId("placeholder-panel")).getByText(
-        "Próximamente",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("conflicts-empty")).toBeInTheDocument();
     expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
   });
 

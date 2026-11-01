@@ -3,9 +3,9 @@ import { useParams } from "react-router-dom";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
 import ProposalsPanel from "@/components/organisms/ProposalsPanel";
+import ConflictsPanel from "@/components/organisms/ConflictsPanel";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { EmptyState } from "@/components/organisms/EmptyState";
-import { Icon } from "@/components/atoms/Icon";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { applyRelationReconcile, fetchRelationReconcilePreview } from "@/api/graph";
 import type { RelationReconcilePreview } from "@/api/types";
@@ -36,7 +36,7 @@ const TABS: readonly { key: TabKey; label: MessageKey }[] = [
  * backs) behind a preview and a pre-image backup.
  *
  * Tabs: "Grafo" renders the GraphView, "Propuestas" the on-demand semantic
- * sweep, and "Conflictos" is still a follow-up slice.
+ * sweep, and "Conflictos" the deterministic, read-only conflict panel.
  */
 export default function RelacionesCanon() {
   const { t } = useAppLanguage();
@@ -195,14 +195,13 @@ export default function RelacionesCanon() {
               message={t("relaciones.missingParams")}
             />
           )
+        ) : mundo ? (
+          <ConflictsPanel mundo={mundo} />
         ) : (
-          <div
-            data-testid="placeholder-panel"
-            className="flex flex-col items-center justify-center gap-2 rounded-xl border border-edge bg-surface-raised py-24"
-          >
-            <Icon name="lightbulb" size={32} className="text-muted" />
-            <p className="text-body text-muted">{t("nav.soon")}</p>
-          </div>
+          <EmptyState
+            icon="error"
+            message={t("relaciones.missingParams")}
+          />
         )}
       </div>
 

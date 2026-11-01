@@ -1064,6 +1064,34 @@ export const messages = {
     "relaciones.reconcile.reason.unresolved": "la ficha destino ya no existe",
     "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
+    "relaciones.conflictos.summary":
+      "Errores: {errors} · Advertencias: {warnings}",
+    "relaciones.conflictos.errors": "Errores",
+    "relaciones.conflictos.warnings": "Advertencias",
+    "relaciones.conflictos.loading": "Revisando el mundo…",
+    "relaciones.conflictos.loadError": "No se pudieron cargar los conflictos.",
+    "relaciones.conflictos.retry": "Reintentar",
+    "relaciones.conflictos.openFicha": "Abrir ficha",
+    "relaciones.conflictos.empty": "Este mundo no tiene conflictos estructurales.",
+    "relaciones.conflictos.emptyHint":
+      "Las referencias, los identificadores y las relaciones resuelven correctamente.",
+    "relaciones.conflictos.code.version":
+      "La ficha declara una versión OKF no soportada.",
+    "relaciones.conflictos.code.missing-minimum":
+      "Falta un campo mínimo obligatorio: {field}.",
+    "relaciones.conflictos.code.unresolved-reference":
+      "La referencia [[{reference}]] no resuelve a ninguna ficha.",
+    "relaciones.conflictos.code.ambiguous-reference":
+      "La referencia [[{reference}]] es ambigua: coincide con varias fichas.",
+    "relaciones.conflictos.code.duplicate-id":
+      "El id canónico «{reference}» también lo usa otra ficha.",
+    "relaciones.conflictos.code.dangling-relation":
+      "La relación apunta a «{reference}», que ya no existe.",
+    "relaciones.conflictos.code.self-relation":
+      "La ficha declara una relación consigo misma.",
+    "relaciones.conflictos.code.canon-state-mismatch":
+      "El estado de borrador/canon y el estado de verdad se contradicen.",
+
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
     "backup.provider.googleDrive": "Google Drive",
@@ -3293,6 +3321,34 @@ export const messages = {
     "relaciones.reconcile.reason.ungrounded": "no text backs it",
     "relaciones.reconcile.reason.unresolved": "the target ficha no longer exists",
     "relaciones.reconcile.reason.rejected": "you rejected it before",
+
+    "relaciones.conflictos.summary":
+      "Errors: {errors} · Warnings: {warnings}",
+    "relaciones.conflictos.errors": "Errors",
+    "relaciones.conflictos.warnings": "Warnings",
+    "relaciones.conflictos.loading": "Checking the world…",
+    "relaciones.conflictos.loadError": "The conflicts could not be loaded.",
+    "relaciones.conflictos.retry": "Retry",
+    "relaciones.conflictos.openFicha": "Open ficha",
+    "relaciones.conflictos.empty": "This world has no structural conflicts.",
+    "relaciones.conflictos.emptyHint":
+      "References, identifiers and relations all resolve.",
+    "relaciones.conflictos.code.version":
+      "The ficha declares an unsupported OKF version.",
+    "relaciones.conflictos.code.missing-minimum":
+      "A required minimum field is missing: {field}.",
+    "relaciones.conflictos.code.unresolved-reference":
+      "The reference [[{reference}]] does not resolve to any ficha.",
+    "relaciones.conflictos.code.ambiguous-reference":
+      "The reference [[{reference}]] is ambiguous: it matches several fichas.",
+    "relaciones.conflictos.code.duplicate-id":
+      "The canonical id «{reference}» is also used by another ficha.",
+    "relaciones.conflictos.code.dangling-relation":
+      "The relation points to «{reference}», which no longer exists.",
+    "relaciones.conflictos.code.self-relation":
+      "The ficha declares a relation to itself.",
+    "relaciones.conflictos.code.canon-state-mismatch":
+      "The draft/canon state and the world-truth state contradict each other.",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
