@@ -1442,7 +1442,7 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
                         }
                       }}
                       data-testid="graph-cluster"
-                      className="absolute left-0 top-0 whitespace-nowrap text-sm font-semibold uppercase tracking-[0.14em] text-muted/80 [text-shadow:0_1px_3px_rgba(0,0,0,0.95)]"
+                      className="absolute left-0 top-0 whitespace-nowrap text-xs font-semibold uppercase tracking-[0.14em] text-muted/80 [text-shadow:0_1px_3px_rgba(0,0,0,0.95)]"
                     >
                       {cluster.label}
                     </div>
