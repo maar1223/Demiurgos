@@ -61,9 +61,53 @@ class ConflictSweepResult:
     status: str  # swept | done | unavailable
     swept: int = 0
     created: int = 0
-    pending: int = 0
+    #: Semantic proposals waiting for the Author (not fichas left to review).
+    proposals: int = 0
     paths: list[str] = field(default_factory=list)
     message: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewProgress:
+    """How much of the world has been reviewed at its current text."""
+
+    total: int = 0
+    reviewed: int = 0
+    pending: int = 0
+
+
+def review_progress(
+    *,
+    mundo: str,
+    mundos_dir: Path,
+    index: Any,
+) -> ReviewProgress:
+    """Coverage of the semantic review, by body digest.
+
+    A ficha counts as reviewed only when its CURRENT text is the one the sweep
+    saw: editing it puts it back in the queue, because the new text may
+    contradict something else.
+    """
+    world_dir = Path(mundos_dir) / mundo
+    entities = index.entities() if index is not None else []
+    by_path = {
+        str(entity.get("path") or ""): entity
+        for entity in entities
+        if isinstance(entity, dict)
+    }
+    if not by_path:
+        return ReviewProgress()
+    swept = _load_swept(world_dir)
+    pending = sum(
+        1
+        for path, entity in by_path.items()
+        if swept.get(path) != body_digest(str(entity.get("content") or ""))
+    )
+    return ReviewProgress(
+        total=len(by_path),
+        reviewed=len(by_path) - pending,
+        pending=pending,
+    )
 
 
 def clamp_batch_size(size: Any) -> int:
@@ -211,7 +255,7 @@ def sweep_conflicts_batch(
     if not candidates:
         return ConflictSweepResult(
             status="done",
-            pending=_pending(world_dir),
+            proposals=_pending(world_dir),
             message="No hay fichas por revisar.",
         )
 
@@ -246,7 +290,7 @@ def sweep_conflicts_batch(
                 status="unavailable",
                 swept=reviewed,
                 created=created,
-                pending=_pending(world_dir),
+                proposals=_pending(world_dir),
                 paths=[item[0] for item in batch],
                 message="El proveedor semántico no respondió; probá de nuevo.",
             )
@@ -275,6 +319,6 @@ def sweep_conflicts_batch(
         status="swept",
         swept=reviewed,
         created=created,
-        pending=_pending(world_dir),
+        proposals=_pending(world_dir),
         paths=[item[0] for item in batch],
     )

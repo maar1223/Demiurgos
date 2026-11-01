@@ -11,7 +11,11 @@ import {
   setConflictDecision,
   sweepConflicts,
 } from "@/api/conflicts";
-import type { ConflictsResponse, WorldConflict } from "@/api/conflicts";
+import type {
+  ConflictsResponse,
+  ReviewProgress,
+  WorldConflict,
+} from "@/api/conflicts";
 
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
 vi.mock("@/api/conflicts", () => ({
@@ -56,7 +60,10 @@ function conflict(overrides: Partial<WorldConflict> = {}): WorldConflict {
   };
 }
 
-function response(conflicts: WorldConflict[]): ConflictsResponse {
+function response(
+  conflicts: WorldConflict[],
+  review: ReviewProgress = { total: 0, reviewed: 0, pending: 0 },
+): ConflictsResponse {
   const counted = (decision: WorldConflict["decision"], severity?: string) =>
     conflicts.filter(
       (item) =>
@@ -75,6 +82,7 @@ function response(conflicts: WorldConflict[]): ConflictsResponse {
       muted: counted("muted"),
       proposed: conflicts.filter((item) => item.state === "proposed").length,
       by_code: {},
+      review,
     },
   };
 }
@@ -123,7 +131,7 @@ describe("ConflictsPanel", () => {
 
     expect(await screen.findByTestId("conflicts-panel")).toBeInTheDocument();
     expect(screen.getByTestId("conflict-summary")).toHaveTextContent(
-      "Errores: 1 · Advertencias: 1 · Propuestos: 0 · Conocidos: 0 · Silenciados: 0",
+      "Por revisar: 0 de 0 · Errores: 1 · Advertencias: 1 · Propuestos: 0 · Conocidos: 0 · Silenciados: 0",
     );
     expect(screen.getByTestId("conflicts-errors")).toBeInTheDocument();
     expect(screen.getByTestId("conflicts-warnings")).toBeInTheDocument();
@@ -305,12 +313,14 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
   });
 
   it("sweeps a bounded batch and reports the cost on the button", async () => {
-    fetchConflictsMock.mockResolvedValue(response([]));
+    fetchConflictsMock.mockResolvedValue(
+      response([], { total: 5, reviewed: 2, pending: 3 }),
+    );
     sweepConflictsMock.mockResolvedValue({
       status: "swept",
       swept: 3,
       created: 2,
-      pending: 2,
+      proposals: 2,
       paths: [],
       message: "",
     });
@@ -318,7 +328,7 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
     renderPanel();
 
     const button = await screen.findByTestId("conflict-sweep");
-    expect(button).toHaveTextContent("Revisar 3 fichas");
+    expect(button).toHaveTextContent("Revisar 3 fichas · quedan 3");
     await userEvent.click(button);
 
     expect(sweepConflictsMock).toHaveBeenCalledWith("vibrantes", { size: 3 });
@@ -328,12 +338,14 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
   });
 
   it("says when the provider did not answer", async () => {
-    fetchConflictsMock.mockResolvedValue(response([]));
+    fetchConflictsMock.mockResolvedValue(
+      response([], { total: 5, reviewed: 2, pending: 3 }),
+    );
     sweepConflictsMock.mockResolvedValue({
       status: "unavailable",
       swept: 0,
       created: 0,
-      pending: 0,
+      proposals: 0,
       paths: [],
       message: "",
     });
@@ -345,5 +357,39 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
     expect(await screen.findByTestId("sweep-notice")).toHaveTextContent(
       "El proveedor semántico no respondió; probá de nuevo.",
     );
+  });
+});
+
+describe("ConflictsPanel — review progress", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("shows how much of the world is still to review", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([conflict()], { total: 68, reviewed: 3, pending: 65 }),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByTestId("conflict-summary")).toHaveTextContent(
+      "Por revisar: 65 de 68",
+    );
+    expect(screen.getByTestId("conflict-sweep")).toHaveTextContent(
+      "Revisar 3 fichas · quedan 65",
+    );
+  });
+
+  it("disables the sweep and says so when everything was reviewed", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([], { total: 68, reviewed: 68, pending: 0 }),
+    );
+
+    renderPanel();
+
+    const button = await screen.findByTestId("conflict-sweep");
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Todo revisado");
   });
 });

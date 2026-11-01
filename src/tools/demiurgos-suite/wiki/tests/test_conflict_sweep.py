@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from conflict_decisions import load_records, record_proposal
-from conflict_sweep import clamp_batch_size, sweep_conflicts_batch
+from conflict_sweep import clamp_batch_size, review_progress, sweep_conflicts_batch
 from relation_candidates import body_digest
 
 
@@ -267,3 +267,40 @@ def test_swept_state_records_the_body_digest(tmp_path: Path) -> None:
     state = json.loads((world / ".conflicts" / "swept.json").read_text(encoding="utf-8"))
 
     assert state["swept"]["lore/alar.md"] == body_digest("El rey Alar nació en el año 120.")
+
+
+def test_review_progress_counts_by_current_text(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _sweep(tmp_path, _pair(), lambda _p, _s: _contradiction())
+
+    progress = review_progress(
+        mundo="mundo", mundos_dir=tmp_path / "mundos", index=FakeIndex(_pair())
+    )
+
+    assert progress.total == 2
+    assert progress.reviewed == 2
+    assert progress.pending == 0
+
+
+def test_editing_a_ficha_puts_it_back_in_the_queue(tmp_path: Path) -> None:
+    _world(tmp_path)
+    _sweep(tmp_path, _pair(), lambda _p, _s: _contradiction())
+    entities = _pair()
+    entities[0]["content"] += " Reinó durante treinta años."
+
+    progress = review_progress(
+        mundo="mundo", mundos_dir=tmp_path / "mundos", index=FakeIndex(entities)
+    )
+
+    assert progress.reviewed == 1
+    assert progress.pending == 1
+
+
+def test_review_progress_of_an_empty_world_is_zero(tmp_path: Path) -> None:
+    _world(tmp_path)
+
+    progress = review_progress(
+        mundo="mundo", mundos_dir=tmp_path / "mundos", index=FakeIndex([])
+    )
+
+    assert (progress.total, progress.reviewed, progress.pending) == (0, 0, 0)

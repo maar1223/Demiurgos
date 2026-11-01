@@ -167,6 +167,7 @@ describe("RelacionesCanon", () => {
         muted: 0,
         proposed: 0,
         by_code: {},
+        review: { total: 0, reviewed: 0, pending: 0 },
       },
     });
     renderPage();

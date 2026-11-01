@@ -300,17 +300,29 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     );
   };
 
+  const review = data?.summary.review ?? {
+    total: 0,
+    reviewed: 0,
+    pending: 0,
+  };
+  const allReviewed = review.pending === 0;
+
   const sweepButton = (
     <button
       type="button"
       data-testid="conflict-sweep"
       className="rounded-lg border border-edge px-3 py-1.5 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={busy || loading}
+      disabled={busy || loading || allReviewed}
       onClick={() => void sweep()}
     >
       {busy
         ? t("relaciones.conflictos.sweeping")
-        : t("relaciones.conflictos.sweep", { count: SWEEP_BATCH_SIZE })}
+        : allReviewed
+          ? t("relaciones.conflictos.sweepAllDone")
+          : t("relaciones.conflictos.sweep", {
+              count: SWEEP_BATCH_SIZE,
+              pending: review.pending,
+            })}
     </button>
   );
 
@@ -347,6 +359,8 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised p-4">
         <p data-testid="conflict-summary" className="text-small text-muted">
           {t("relaciones.conflictos.summary", {
+            pending: review.pending,
+            total: review.total,
             errors: data?.summary.errors ?? 0,
             warnings: data?.summary.warnings ?? 0,
             proposed: data?.summary.proposed ?? 0,

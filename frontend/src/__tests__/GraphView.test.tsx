@@ -336,6 +336,7 @@ describe("GraphView", () => {
         muted: 0,
         proposed: 0,
         by_code: {},
+        review: { total: 0, reviewed: 0, pending: 0 },
       },
     });
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
@@ -1841,6 +1842,7 @@ describe("GraphView", () => {
         muted: 0,
         proposed: 0,
         by_code: { "unresolved-reference": 1 },
+        review: { total: 3, reviewed: 0, pending: 3 },
       },
     });
     renderGraphView();

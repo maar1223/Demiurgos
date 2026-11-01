@@ -78,6 +78,7 @@ from conflict_decisions import (
 )
 from conflict_detector import detect_conflicts
 from conflict_sweep import clamp_batch_size as clamp_conflict_batch_size
+from conflict_sweep import review_progress
 from conflict_sweep import sweep_conflicts_batch
 from import_relations import (
     MAX_RELATIONS,
@@ -7326,6 +7327,16 @@ def graph_entities(
     return {"entities": entity_list, "links": link_list}
 
 
+def _review_block(mundo: str, idx) -> dict:
+    """Review coverage for the panel header: how many fichas are still pending."""
+    progress = review_progress(mundo=mundo, mundos_dir=_mundos_dir(), index=idx)
+    return {
+        "total": progress.total,
+        "reviewed": progress.reviewed,
+        "pending": progress.pending,
+    }
+
+
 def _semantic_verifier(entities: list[dict]):
     """Re-check a semantic record against the current bodies (self-invalidating)."""
     by_key = {
@@ -7360,6 +7371,7 @@ def world_conflicts(mundo: str):
     world_dir = _resolve_mundo_dir(mundo)
     if idx is None or world_dir is None:
         payload, summary = apply_decisions([], {})
+        summary["review"] = {"total": 0, "reviewed": 0, "pending": 0}
         return {"indexed": False, "conflicts": payload, "summary": summary}
 
     with idx._lock:
@@ -7376,6 +7388,7 @@ def world_conflicts(mundo: str):
         + semantic_conflicts(records, verify=_semantic_verifier(live_entities)),
         load_decisions(world_dir),
     )
+    summary["review"] = _review_block(mundo, idx)
     return {"indexed": True, "conflicts": payload, "summary": summary}
 
 
@@ -7400,7 +7413,7 @@ def conflicts_sweep(mundo: str, body: dict | None = None):
         "status": result.status,
         "swept": result.swept,
         "created": result.created,
-        "pending": result.pending,
+        "proposals": result.proposals,
         "paths": result.paths,
         "message": result.message,
     }
@@ -7439,6 +7452,7 @@ def conflict_proposal_reject(mundo: str, body: dict):
         conflicts + semantic_conflicts(records, verify=_semantic_verifier(entities)),
         load_decisions(world_dir),
     )
+    summary["review"] = _review_block(mundo, idx)
     return {"indexed": idx is not None, "conflicts": payload, "summary": summary}
 
 
@@ -7502,6 +7516,7 @@ def set_conflict_decision(mundo: str, body: dict):
         ),
         load_decisions(world_dir),
     )
+    summary["review"] = _review_block(mundo, idx)
     return {"indexed": idx is not None, "conflicts": payload, "summary": summary}
 
 

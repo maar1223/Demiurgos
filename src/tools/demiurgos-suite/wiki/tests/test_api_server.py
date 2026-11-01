@@ -9869,6 +9869,7 @@ class TestWorldConflictsEndpoint:
                 "dangling-relation": 1,
                 "unresolved-reference": 1,
             },
+            "review": {"total": 3, "reviewed": 0, "pending": 3},
         }
 
     def test_clean_world_returns_no_conflicts(self, client: TestClient, monkeypatch):
@@ -9895,6 +9896,7 @@ class TestWorldConflictsEndpoint:
             "muted": 0,
             "proposed": 0,
             "by_code": {},
+            "review": {"total": 2, "reviewed": 0, "pending": 2},
         }
 
     def test_unknown_world_is_soft_empty(self, client: TestClient, monkeypatch):
@@ -9914,6 +9916,7 @@ class TestWorldConflictsEndpoint:
                 "muted": 0,
                 "proposed": 0,
                 "by_code": {},
+                "review": {"total": 0, "reviewed": 0, "pending": 0},
             },
         }
 
@@ -10137,6 +10140,7 @@ class TestConflictSweepEndpoint:
         assert swept.status_code == 200
         assert swept.json()["status"] == "swept"
         assert swept.json()["created"] == 1
+        assert swept.json()["proposals"] == 1
 
         listing = client.get("/api/test_mundo/conflicts").json()
         semantic = [c for c in listing["conflicts"] if c["code"] == "semantic-contradiction"]

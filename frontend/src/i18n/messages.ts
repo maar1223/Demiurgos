@@ -1065,7 +1065,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
     "relaciones.conflictos.summary":
-      "Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
+      "Por revisar: {pending} de {total} · Errores: {errors} · Advertencias: {warnings} · Propuestos: {proposed} · Conocidos: {known} · Silenciados: {muted}",
     "relaciones.conflictos.errors": "Errores",
     "relaciones.conflictos.warnings": "Advertencias",
     "relaciones.conflictos.loading": "Revisando el mundo…",
@@ -1101,7 +1101,8 @@ export const messages = {
     "relaciones.conflictos.decision.structuralBadge": "Ruptura estructural",
     "relaciones.conflictos.decision.clear": "Quitar decisión",
     "relaciones.conflictos.decision.reject": "Falso positivo",
-    "relaciones.conflictos.sweep": "Revisar {count} fichas",
+    "relaciones.conflictos.sweep": "Revisar {count} fichas · quedan {pending}",
+    "relaciones.conflictos.sweepAllDone": "Todo revisado",
     "relaciones.conflictos.sweeping": "Revisando…",
     "relaciones.conflictos.sweepDone":
       "Revisadas {swept} fichas · {created} propuestas nuevas",
@@ -3351,7 +3352,7 @@ export const messages = {
     "relaciones.reconcile.reason.rejected": "you rejected it before",
 
     "relaciones.conflictos.summary":
-      "Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
+      "To review: {pending} of {total} · Errors: {errors} · Warnings: {warnings} · Proposed: {proposed} · Known: {known} · Muted: {muted}",
     "relaciones.conflictos.errors": "Errors",
     "relaciones.conflictos.warnings": "Warnings",
     "relaciones.conflictos.loading": "Checking the world…",
@@ -3387,7 +3388,8 @@ export const messages = {
     "relaciones.conflictos.decision.structuralBadge": "Structural rupture",
     "relaciones.conflictos.decision.clear": "Clear decision",
     "relaciones.conflictos.decision.reject": "False positive",
-    "relaciones.conflictos.sweep": "Review {count} fichas",
+    "relaciones.conflictos.sweep": "Review {count} fichas · {pending} left",
+    "relaciones.conflictos.sweepAllDone": "All reviewed",
     "relaciones.conflictos.sweeping": "Reviewing…",
     "relaciones.conflictos.sweepDone":
       "Reviewed {swept} fichas · {created} new proposals",

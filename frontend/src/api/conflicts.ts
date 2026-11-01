@@ -45,6 +45,13 @@ export interface WorldConflict {
   source_b: string | null;
 }
 
+/** Coverage of the semantic review, by current body text. */
+export interface ReviewProgress {
+  total: number;
+  reviewed: number;
+  pending: number;
+}
+
 /** Counts the panel header shows. */
 export interface ConflictSummary {
   total: number;
@@ -54,6 +61,7 @@ export interface ConflictSummary {
   muted: number;
   proposed: number;
   by_code: Partial<Record<ConflictCode, number>>;
+  review: ReviewProgress;
 }
 
 /** GET /api/{mundo}/conflicts payload (S5). */
@@ -105,7 +113,8 @@ export interface ConflictSweepResponse {
   status: "swept" | "done" | "unavailable";
   swept: number;
   created: number;
-  pending: number;
+  /** Semantic proposals waiting for the Author (not fichas left to review). */
+  proposals: number;
   paths: string[];
   message: string;
 }
