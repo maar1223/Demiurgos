@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
@@ -16,6 +16,8 @@ interface ConfirmDialogProps {
   confirmVariant?: "primary" | "danger";
   isBusy?: boolean;
   error?: string | null;
+  /** Optional extra content rendered under the message (e.g. a change list). */
+  children?: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -36,6 +38,7 @@ export function ConfirmDialog({
   confirmVariant = "primary",
   isBusy = false,
   error = null,
+  children,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
@@ -84,6 +87,7 @@ export function ConfirmDialog({
         {/* Body */}
         <div className="px-6 py-4">
           <p className="text-body text-primary">{message}</p>
+          {children ? <div className="mt-3">{children}</div> : null}
           {error && (
             <div
               role="alert"
