@@ -6381,6 +6381,26 @@ def _relaciones_entry_key(raw: str) -> str:
     return relaciones_entry_key(raw)
 
 
+def _yaml_relation_scalar(value: str) -> str:
+    """Render a relation entry as a YAML scalar that always round-trips as a string.
+
+    Canonical ids can contain ``": "`` (``Eneatipo 8: El Desafiante``) or a
+    leading indicator character, so a bare scalar is parsed as a MAPPING or
+    truncated at a comment: ``  - Eneatipo 8: El Desafiante`` becomes
+    ``{"Eneatipo 8": "El Desafiante"}`` and every consumer that expects a string
+    silently drops it, which made the sync re-plan the same addition forever.
+    Double-quoted style with JSON escaping is valid YAML and unambiguous. A
+    value that already round-trips as the same string stays bare, so simple
+    canonical ids keep their existing bytes.
+    """
+    try:
+        if yaml.safe_load(value) == value:
+            return value
+    except yaml.YAMLError:
+        pass
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> str:
     """Add or remove a canonical-id entry from the frontmatter ``relaciones:`` list.
 
@@ -6399,7 +6419,7 @@ def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> st
     if m is None:
         if action == "break":
             raise RelationConflict("La relación no existe")
-        return f"---\nrelaciones:\n  - {target_id}\n---\n{content}"
+        return f"---\nrelaciones:\n  - {_yaml_relation_scalar(target_id)}\n---\n{content}"
 
     inner = m.group(1)
     eol = "\r\n" if "\r\n" in inner else "\n"
@@ -6413,7 +6433,7 @@ def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> st
     if rel_idx is None:
         if action == "break":
             raise RelationConflict("La relación no existe")
-        updated_inner = inner + f"relaciones:{eol}  - {target_id}{eol}"
+        updated_inner = inner + f"relaciones:{eol}  - {_yaml_relation_scalar(target_id)}{eol}"
         _validate_fm_yaml(updated_inner)
         return content[: m.start(1)] + updated_inner + content[m.end(1):]
 
@@ -6448,18 +6468,23 @@ def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> st
             # so the section stays homogeneous YAML.
             new_lines = (
                 [f"relaciones:{eol}"]
-                + [f"  - {k}{eol}" for k in keys]
-                + [f"  - {target_id}{eol}"]
+                + [f"  - {_yaml_relation_scalar(k)}{eol}" for k in keys]
+                + [f"  - {_yaml_relation_scalar(target_id)}{eol}"]
             )
         else:
-            new_lines = [header_line, *lines[rel_idx + 1:section_end], f"  - {target_id}{eol}"]
+            new_lines = [
+                header_line,
+                *lines[rel_idx + 1:section_end],
+                f"  - {_yaml_relation_scalar(target_id)}{eol}",
+            ]
     else:
         if target_id not in keys:
             raise RelationConflict("La relación no existe")
         if rest:
             remaining = [k for k in keys if k != target_id]
             new_lines = (
-                [f"relaciones:{eol}"] + [f"  - {k}{eol}" for k in remaining]
+                [f"relaciones:{eol}"]
+                + [f"  - {_yaml_relation_scalar(k)}{eol}" for k in remaining]
                 if remaining
                 else []
             )
