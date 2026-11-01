@@ -756,24 +756,50 @@ export default function GraphView({ mundo, bleed = false }: GraphViewProps) {
       const element = clusterRefs.current.get(cluster.id);
       if (!element) continue;
       let sumX = 0;
-      let sumY = 0;
+      let topY = Number.POSITIVE_INFINITY;
       let count = 0;
       for (const member of cluster.members) {
         const position = positions.get(member);
         if (!position) continue;
         sumX += position.x;
-        sumY += position.y;
+        const size = nodeSizesRef.current.get(member);
+        // Anchor above the GROUP, not on its centroid: the centroid is where
+        // the hub card sits, so the label used to land on top of it.
+        topY = Math.min(topY, position.y - (size?.height ?? NODE_MIN_HEIGHT) / 2);
         count += 1;
       }
       if (count === 0) continue;
+
       // Screen space, not flow space: the section label must stay legible from
-      // far away, where it is the only wayfinding cue. Projecting the cluster
-      // centre through the viewport keeps a constant pixel size at any zoom.
+      // far away, where it is the only wayfinding cue. Projecting through the
+      // viewport keeps a constant pixel size at any zoom.
       const viewport = rf.current?.getViewport() ?? { x: 0, y: 0, zoom: 1 };
       const screenX = (sumX / count) * viewport.zoom + viewport.x;
-      const screenY = (sumY / count) * viewport.zoom + viewport.y;
+      let screenY = topY * viewport.zoom + viewport.y - 10;
+
+      // A card from a neighbouring group can still sit where the header goes.
+      // Nudge it up instead of drawing the two on top of each other.
+      const cards = (rf.current?.getNodes() ?? []).map((node) => {
+        const size = nodeSizesRef.current.get(node.id);
+        const width = (size?.width ?? NODE_MIN_WIDTH) * viewport.zoom;
+        const height = (size?.height ?? NODE_MIN_HEIGHT) * viewport.zoom;
+        const left = node.position.x * viewport.zoom + viewport.x;
+        const top = node.position.y * viewport.zoom + viewport.y;
+        return { left, top, right: left + width, bottom: top + height };
+      });
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const hit = cards.some(
+          (card) =>
+            screenX >= card.left &&
+            screenX <= card.right &&
+            screenY >= card.top - 14 &&
+            screenY <= card.bottom,
+        );
+        if (!hit) break;
+        screenY -= 18;
+      }
       element.style.transform =
-        `translate(${screenX}px, ${screenY - 8}px) translate(-50%, -100%)`;
+        `translate(${screenX}px, ${screenY}px) translate(-50%, -100%)`;
     }
   }, []);
 
