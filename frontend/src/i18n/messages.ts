@@ -1007,7 +1007,7 @@ export const messages = {
     "relaciones.propuestas.sweep": "Barrer siguiente",
     "relaciones.propuestas.sweeping": "Barriendo…",
     "relaciones.propuestas.hint":
-      "Una ficha por vez. El modelo solo propone: nada se escribe hasta que aceptes.",
+      "Una ficha por vez. El modelo propone vínculos que el texto insinúa; nada se escribe hasta que aceptes. Para alinear el mundo con lo que el texto dice, usa Sincronizar (arriba).",
     "relaciones.propuestas.queue": "Propuestas pendientes",
     "relaciones.propuestas.empty": "No hay propuestas pendientes.",
     "relaciones.propuestas.candidates": "Fichas candidatas",
@@ -1047,6 +1047,8 @@ export const messages = {
     "relaciones.reconcile.button.one": "Sincronizar · 1 cambio",
     "relaciones.reconcile.button.many": "Sincronizar · {count} cambios",
     "relaciones.reconcile.checking": "Comprobando…",
+    "relaciones.reconcile.button.title":
+      "Alinea el frontmatter con lo que el texto dice. Sin IA: agrega lo que falta y quita lo que ningún texto respalda.",
     "relaciones.reconcile.listTitle": "Cambios por aplicar",
     "relaciones.reconcile.addList": "Se agregan",
     "relaciones.reconcile.removeList": "Se quitan",
@@ -3222,7 +3224,7 @@ export const messages = {
     "relaciones.propuestas.sweep": "Sweep next",
     "relaciones.propuestas.sweeping": "Sweeping…",
     "relaciones.propuestas.hint":
-      "One fiche at a time. The model only proposes: nothing is written until you accept.",
+      "One fiche at a time. The model proposes links the text implies; nothing is written until you accept. To align the world with what the text says, use Sync (above).",
     "relaciones.propuestas.queue": "Pending proposals",
     "relaciones.propuestas.empty": "No pending proposals.",
     "relaciones.propuestas.candidates": "Candidate fiches",
@@ -3261,6 +3263,8 @@ export const messages = {
     "relaciones.reconcile.button.one": "Sync · 1 change",
     "relaciones.reconcile.button.many": "Sync · {count} changes",
     "relaciones.reconcile.checking": "Checking…",
+    "relaciones.reconcile.button.title":
+      "Aligns the frontmatter with what the text says. No model: adds what is missing and removes what no text backs.",
     "relaciones.reconcile.listTitle": "Changes to apply",
     "relaciones.reconcile.addList": "Adds",
     "relaciones.reconcile.removeList": "Removes",

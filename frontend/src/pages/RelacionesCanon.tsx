@@ -117,6 +117,7 @@ export default function RelacionesCanon() {
         <button
           type="button"
           data-testid="sync-button"
+          title={t("relaciones.reconcile.button.title")}
           onClick={openSync}
           disabled={syncing || (preview !== null && preview.files === 0)}
           className="rounded-lg border border-edge px-4 py-2 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50"

@@ -29,6 +29,7 @@ from import_relations import (
     normalize_mention,
     relaciones_entry_key,
 )
+from relation_curation import load_curated
 from relation_rejections import load_rejected
 from relation_state import SweepState, load_state
 
@@ -86,12 +87,15 @@ def build_global_plan(
     mundos_dir: Path,
     index: Any,
     rejected: set[tuple[str, str]] | None = None,
+    curated: set[tuple[str, str]] | None = None,
     state: SweepState | None = None,
 ) -> GlobalPlan:
     """Compute the reconciliation plan for the whole world."""
     world_dir = Path(mundos_dir) / mundo
     if rejected is None:
         rejected = load_rejected(world_dir)
+    if curated is None:
+        curated = load_curated(world_dir)
     if state is None:
         state = load_state(world_dir)
 
@@ -137,12 +141,17 @@ def build_global_plan(
             if resolved is None:
                 removals.append(Removal(key=key, target_id="", reason="unresolved"))
             elif resolved not in grounded:
-                reason = (
-                    "rejected"
-                    if (source_key, resolved) in rejected
-                    else "ungrounded"
-                )
-                removals.append(Removal(key=key, target_id=resolved, reason=reason))
+                if (source_key, resolved) in rejected:
+                    removals.append(
+                        Removal(key=key, target_id=resolved, reason="rejected")
+                    )
+                elif (source_key, resolved) in curated:
+                    # The Author explicitly wanted this pair: curation wins.
+                    kept.add(resolved)
+                else:
+                    removals.append(
+                        Removal(key=key, target_id=resolved, reason="ungrounded")
+                    )
             else:
                 kept.add(resolved)
 

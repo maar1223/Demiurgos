@@ -137,6 +137,54 @@ def test_a_rejected_pair_is_removed_and_not_added(tmp_path: Path) -> None:
     assert removal.reason == "rejected"
 
 
+def test_a_curated_pair_is_kept_even_when_ungrounded(tmp_path: Path) -> None:
+    entities = [
+        _entity(
+            "lore/alpha.md",
+            "lore::alpha",
+            "Alpha",
+            "Alpha mentions nobody.",
+            relaciones=["lore::gamma"],
+        ),
+        _entity("lore/gamma.md", "lore::gamma", "Gamma", "Gamma."),
+    ]
+
+    plan = build_global_plan(
+        mundo="world",
+        mundos_dir=tmp_path / "mundos",
+        index=FakeIndex(entities),
+        state=SweepState(),
+        rejected=set(),
+        curated={("lore::alpha", "lore::gamma")},
+    )
+
+    assert plan.files == ()
+
+
+def test_rejection_wins_over_curation(tmp_path: Path) -> None:
+    entities = [
+        _entity(
+            "lore/alpha.md",
+            "lore::alpha",
+            "Alpha",
+            "Alpha mentions nobody.",
+            relaciones=["lore::gamma"],
+        ),
+        _entity("lore/gamma.md", "lore::gamma", "Gamma", "Gamma."),
+    ]
+
+    plan = build_global_plan(
+        mundo="world",
+        mundos_dir=tmp_path / "mundos",
+        index=FakeIndex(entities),
+        state=SweepState(),
+        rejected={("lore::alpha", "lore::gamma")},
+        curated={("lore::alpha", "lore::gamma")},
+    )
+
+    assert plan.files[0].remove[0].reason == "rejected"
+
+
 def test_a_muted_ficha_is_skipped_entirely(tmp_path: Path) -> None:
     entities = [
         _entity(
