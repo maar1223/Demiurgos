@@ -38,6 +38,20 @@ _WIKI = Path(__file__).resolve().parent.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
+# ``sync_lore`` (the canonical EntityType vocabulary and the media converters)
+# is a sibling tool under ``src/tools``. The importer reaches for it lazily, so
+# the suite needs that directory on the path explicitly: relying on whichever
+# test module happened to insert it first made results order-dependent.
+_TOOLS = _WIKI.parent.parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+# The suite root is a package parent (``wiki.world_authority`` is imported by
+# absolute name), so it must be importable without depending on the cwd.
+_SUITE = _WIKI.parent
+if str(_SUITE) not in sys.path:
+    sys.path.insert(0, str(_SUITE))
+
 # The shared live-probe helper lives in this tests/ dir (not a package, no
 # __init__.py). Insert the dir explicitly so ``import hermes_probe_support`` is
 # stable regardless of pytest rootdir/import-mode (WU-2, REQ-LPH-5).

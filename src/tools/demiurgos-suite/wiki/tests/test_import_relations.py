@@ -8,6 +8,26 @@ for batch mates and empty lists for single-ficha documents.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+_WIKI = _HERE.parent
+_SUITE = _WIKI.parent
+for _path in (str(_WIKI), str(_SUITE)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+import import_service
+from import_models import (
+    Candidate,
+    FrontmatterCandidate,
+    FrontmatterState,
+    ImportJob,
+    ImportJobState,
+    Provenance,
+    utcnow_iso,
+)
 from import_relations import (
     GroundedRelation,
     RelationTarget,
@@ -15,6 +35,11 @@ from import_relations import (
     grounded_relations,
     relation_quality,
 )
+from import_service import ImportService
+from import_store import ImportJobStore
+from relation_candidates import scan_candidates
+from relation_evidence import load_evidence
+from relation_state import load_state
 
 HUB_A = RelationTarget(
     canonical_id="Familia A",
@@ -300,3 +325,243 @@ def test_relation_quality_classifies_orphans():
     assert report["lore/bravo.md"] == ["standalone"]
     assert report["lore/charlie.md"] == ["false-orphan"]
     assert report["lore/meta.md"] == ["non-entity"]
+
+
+# ---------------------------------------------------------------------------
+# S6 — the importer feeds the shared evidence memory at materialization
+# ---------------------------------------------------------------------------
+
+
+def _evidence_job() -> ImportJob:
+    return ImportJob(
+        job_id="job1", world="world1", owner_principal="tester",
+        state=ImportJobState.REVIEW, source_kind="loose",
+        created_at=utcnow_iso(), updated_at=utcnow_iso(),
+    )
+
+
+def _evidence_candidate(
+    candidate_id: str,
+    identity: str,
+    canonical_id: str,
+    body: str,
+    enrichment_json: list[dict] | None = None,
+    status: str = "ok",
+) -> Candidate:
+    return Candidate(
+        candidate_id=candidate_id,
+        job_id="job1",
+        world="world1",
+        normalized_identity=identity,
+        canonical_id=canonical_id,
+        display_title=identity,
+        source_hash=f"sha256:{identity}",
+        provenance=Provenance(
+            source_path=f"lore/{identity}.md",
+            source_kind="loose",
+            source_hash=f"sha256:{identity}"),
+        content_preview=body,
+        frontmatter=FrontmatterCandidate(
+            title=identity, type="concepto", description="desc",
+            relaciones=[], state=FrontmatterState.GENERATED),
+        enrichment_json=enrichment_json,
+        enrichment_status=status,
+    )
+
+
+def _verified_relationship_entry(quote: str, verified: bool) -> dict:
+    return {
+        "__type__": "relationship",
+        "verified": verified,
+        "source_candidate_id": "cand-alpha",
+        "target_candidate_id": "cand-beta",
+        "relationship_type": "aliado-de",
+        "confidence": 0.9,
+        "evidence": quote,
+    }
+
+
+def _service_and_store(tmp_path):
+    store = ImportJobStore(":memory:")
+    (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+    service = ImportService(
+        store=store, mundos_dir=tmp_path, spool_dir=tmp_path / "spool")
+    return service, store
+
+
+def test_materialization_records_verified_evidence(tmp_path):
+    """A verified funnel relation lands in ``.relations/evidenced.json``."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha",
+        "Alpha reconoce a su aliada.",
+        [_verified_relationship_entry("reconoce a su aliada", verified=True)])
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta no nombra a nadie.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    outcome = service._execute_candidate(job, alpha)
+
+    assert outcome.written is True
+    stored = load_evidence(tmp_path / "world1")
+    evidence = stored[("G::Alpha", "G::Beta")]
+    assert evidence.side == "G::Alpha"
+    assert evidence.quote == "reconoce a su aliada"
+
+
+def test_materialization_ignores_unverified_relations(tmp_path):
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha",
+        "Alpha no menciona a nadie.",
+        [_verified_relationship_entry("reconoce a su aliada", verified=False)])
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta no nombra a nadie.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    outcome = service._execute_candidate(job, alpha)
+
+    assert outcome.written is True
+    assert load_evidence(tmp_path / "world1") == {}
+
+
+def test_evidence_store_oserror_does_not_fail_the_import(tmp_path, monkeypatch):
+    """Recording evidence is best-effort: an OSError never blocks the write."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha",
+        "Alpha reconoce a su aliada.",
+        [_verified_relationship_entry("reconoce a su aliada", verified=True)])
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta no nombra a nadie.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("store unavailable")
+
+    monkeypatch.setattr(import_service, "record_evidence", boom)
+
+    outcome = service._execute_candidate(job, alpha)
+
+    assert outcome.written is True
+    assert (tmp_path / "world1" / "lore" / "Alpha.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# S10 — importing reads the text, so the ficha is already reviewed
+# ---------------------------------------------------------------------------
+
+
+def test_materialization_marks_the_ficha_reviewed(tmp_path):
+    """A pass that answered marks the ficha swept: the sweep must not re-read it."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    outcome = service._execute_candidate(job, alpha)
+
+    assert outcome.written is True
+    assert "lore/Alpha.md" in load_state(tmp_path / "world1").swept
+
+
+def test_an_unanswered_pass_does_not_mark_the_ficha(tmp_path):
+    """A provider outage leaves the ficha for the sweep instead of hiding it."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.",
+        status="error")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+
+    service._execute_candidate(job, alpha)
+
+    assert "lore/Alpha.md" not in load_state(tmp_path / "world1").swept
+
+
+class _DiskIndex:
+    """Index built from the written files, split exactly like the indexer.
+
+    ``graph_indexer`` cannot be imported from this flat test harness (it uses
+    package-relative imports), so this reproduces its body split. The import
+    path uses the same expression, which is what makes the digests agree.
+    """
+
+    def __init__(self, entities: list[dict]) -> None:
+        self._entities = entities
+
+    def entities(self) -> list[dict]:
+        return self._entities
+
+
+def _sweep_paths(tmp_path) -> list[str]:
+    world = tmp_path / "world1"
+    entities = []
+    for md in sorted(world.rglob("*.md")):
+        body = import_service._body_after_frontmatter(md.read_text(encoding="utf-8"))
+        entities.append({
+            "path": md.relative_to(world).as_posix(),
+            "id": f"G::{md.stem}",
+            "name": md.stem,
+            "content": body,
+            "relaciones": [],
+        })
+    index = _DiskIndex(entities)
+    return [
+        candidate.path
+        for candidate in scan_candidates(
+            mundo="world1", mundos_dir=tmp_path, index=index)
+    ]
+
+
+def test_a_reviewed_ficha_is_not_a_sweep_candidate(tmp_path):
+    """End to end through the real indexer: no double work after an import."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+    service._execute_candidate(job, alpha)
+    service._execute_candidate(job, beta)
+
+    assert "lore/Alpha.md" not in _sweep_paths(tmp_path)
+
+
+def test_an_unreviewed_ficha_stays_a_sweep_candidate(tmp_path):
+    """The guard for the guard: an unanswered pass must remain reviewable."""
+    service, store = _service_and_store(tmp_path)
+    job = _evidence_job()
+    store.create_job(job)
+    alpha = _evidence_candidate(
+        "cand-alpha", "Alpha", "G::Alpha", "Alpha menciona a Beta.",
+        status="error")
+    beta = _evidence_candidate(
+        "cand-beta", "Beta", "G::Beta", "Beta es una ficha aparte.")
+    store.add_candidate(beta)
+    store.add_candidate(alpha)
+    service._execute_candidate(job, alpha)
+    service._execute_candidate(job, beta)
+
+    assert "lore/Alpha.md" in _sweep_paths(tmp_path)

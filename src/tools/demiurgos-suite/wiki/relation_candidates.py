@@ -113,5 +113,10 @@ def scan_candidates(
             )
         )
 
-    candidates.sort(key=lambda candidate: candidate.path)
+    # Value first: a ficha that mentions many entities carries more reviewable
+    # work than one that mentions a single neighbour. Path is the deterministic
+    # tie-breaker, so the order never depends on index traversal or dict order.
+    # Ordering by value also keeps one batch from being N near-identical
+    # siblings: the richest fichas are reviewed before path-adjacent ones.
+    candidates.sort(key=lambda candidate: (-len(candidate.mentions), candidate.path))
     return candidates

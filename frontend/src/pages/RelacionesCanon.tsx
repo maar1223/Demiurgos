@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 type TabKey = "grafo" | "conflictos" | "propuestas";
 
 const REASON_MESSAGES: Record<string, MessageKey> = {
+  "redundant-folder": "relaciones.reconcile.reason.redundant-folder",
   ungrounded: "relaciones.reconcile.reason.ungrounded",
   unresolved: "relaciones.reconcile.reason.unresolved",
   rejected: "relaciones.reconcile.reason.rejected",

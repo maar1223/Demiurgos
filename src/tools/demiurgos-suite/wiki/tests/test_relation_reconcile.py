@@ -69,7 +69,7 @@ def test_removes_a_declared_relation_the_text_does_not_back(tmp_path: Path) -> N
             "Alpha mentions nobody.",
             relaciones=["lore::gamma"],
         ),
-        _entity("lore/gamma.md", "lore::gamma", "Gamma", "Gamma."),
+        _entity("lore/otra/gamma.md", "lore::gamma", "Gamma", "Gamma."),
     ]
 
     plan = _plan(tmp_path, entities)

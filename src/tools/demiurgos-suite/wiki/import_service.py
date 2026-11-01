@@ -39,6 +39,12 @@ from import_intake import BoundedSpool
 from import_store import ImportJobStore
 from import_registry import _request_cancel
 from order_manifest import append_order, replace_prefix_order
+from relation_candidates import body_digest
+from relation_evidence import (
+    record as record_evidence,
+    record_many as record_evidence_many,
+)
+from relation_state import mark_swept
 
 if TYPE_CHECKING:
     # Only needed for the type annotation; graph_indexer uses package-relative
@@ -130,6 +136,26 @@ def _strip_frontmatter(content: str) -> str:
         if lines[i].rstrip() == "---":
             return "\n".join(lines[i + 1:]).lstrip("\n")
     return content  # no closing --- -> not a valid frontmatter block
+
+
+#: Enrichment outcomes that mean the text pass actually ran. ``disabled`` and
+#: ``error`` never mark a ficha reviewed, so the sweep still visits it.
+_REVIEWED_STATUSES = frozenset({"ok", "no_suggestions"})
+
+
+def _body_after_frontmatter(content: str) -> str:
+    """The body exactly as the graph indexer splits it.
+
+    Mirrors ``graph_indexer``'s split so the sweep digest taken at import time
+    matches the digest the index computes later; a mismatch would only cost a
+    redundant sweep pass, never a wrong mark.
+    """
+    start = content.find("---\n", 4)
+    if start == -1:
+        start = content.find("---\r\n", 4)
+    if start == -1:
+        return content
+    return content[start + 4:]
 
 
 def plan_merge(current_content: str, incoming_content: str) -> MergeDecision:
@@ -875,6 +901,60 @@ class ImportService:
                 f"graph_reconcile_partial:{len(result.failed)}",
             )
 
+    def _record_verified_relations(self, job: ImportJob,
+                                   candidate: Candidate) -> None:
+        """Persist quote-backed model relations in the world evidence store.
+
+        S6: the funnel marks only body-quoted model relations ``verified``. The
+        importer feeds those to the SAME evidence memory the sweep uses, so a
+        later sync can keep the declared relation while the quote survives.
+        Unverified entries never reach this point. Best-effort: an ``OSError``
+        (unwritable store) is logged and the import continues.
+        """
+        source_key = candidate.canonical_id or candidate.normalized_identity
+        if not source_key:
+            return
+        verified = [
+            entry for entry in (candidate.enrichment_json or [])
+            if isinstance(entry, dict)
+            and entry.get("__type__") == "relationship"
+            and entry.get("verified") is True
+        ]
+        if not verified:
+            return
+        # ``enrichment_json`` carries the target's candidate id; the evidence
+        # store keys canonical ids, so resolve them from this job's candidates.
+        try:
+            canonical_by_candidate = {
+                item.candidate_id: (item.canonical_id or item.normalized_identity)
+                for item in self.store.candidates_for(job.job_id)
+            }
+        except Exception:  # noqa: BLE001 — evidence recording is best-effort
+            canonical_by_candidate = {}
+        records: list[tuple[str, str, str, str]] = []
+        for entry in verified:
+            target_candidate_id = str(entry.get("target_candidate_id") or "")
+            right = (canonical_by_candidate.get(target_candidate_id)
+                     or str(entry.get("target_canonical_id") or ""))
+            quote = str(entry.get("evidence") or "").strip()
+            if not right or right == source_key or not quote:
+                continue
+            records.append((source_key, right, source_key, quote))
+        if not records:
+            return
+        world_dir = self._mundo_dir(job.world)
+        try:
+            if len(records) == 1:
+                left, right, side, quote = records[0]
+                record_evidence(
+                    world_dir, left=left, right=right, side=side, quote=quote)
+            else:
+                record_evidence_many(world_dir, records)
+        except OSError as exc:
+            logger.warning(
+                "relations: could not record verified evidence for %s: %s",
+                candidate.candidate_id, exc)
+
     def _execute_candidate(self, job: ImportJob, candidate: Candidate,
                            vision_by_path: dict[str, dict] | None = None,
                            approved_vision_ids: set[str] | None = None,
@@ -975,6 +1055,11 @@ class ImportService:
         else:
             document = preview
 
+        # S6 — verified model relations feed the shared evidence memory at
+        # materialization (same primitive the sweep uses). Unverified entries
+        # were annotated ``verified: false`` and are ignored here.
+        self._record_verified_relations(job, candidate)
+
         # Explicit replacement (candidate carries a replacement record): the
         # prior ficha is snapshotted to .papelera, then the new content is
         # written. This is the ONLY path that overwrites existing prose.
@@ -988,6 +1073,8 @@ class ImportService:
                 current, job.world)
             target.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(target, document)
+            self._mark_relations_reviewed(
+                job, target, document, candidate.enrichment_status)
             self._register_placements(job.world, job.job_id, placements)
             if self._graph_reconcile_many is None and self._graph_reconcile is not None:
                 rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -1011,6 +1098,8 @@ class ImportService:
                 job.world, candidate.source_hash, candidate.normalized_identity)
         if prior is not None:
             if _strip_frontmatter(current) == _strip_frontmatter(document):
+                self._mark_relations_reviewed(
+                    job, target, current, candidate.enrichment_status)
                 return ExecutionOutcome(
                     candidate_id=candidate.candidate_id, target=str(target),
                     action="keep", written=False, detail="ficha unchanged",
@@ -1018,6 +1107,7 @@ class ImportService:
             return self._write_ficha(
                 target, document, job, candidate.candidate_id,
                 placements, media_warnings, action="add",
+                candidate_status=candidate.enrichment_status,
             )
 
         # Layer C — standard merge: body-only comparison (REQ-A). Frontmatter
@@ -1025,6 +1115,8 @@ class ImportService:
         decision = plan_merge(
             _strip_frontmatter(current), _strip_frontmatter(document))
         if decision.action == "keep":
+            self._mark_relations_reviewed(
+                job, target, current, candidate.enrichment_status)
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="keep", written=False, detail="ficha unchanged",
@@ -1039,6 +1131,7 @@ class ImportService:
         return self._write_ficha(
             target, document, job, candidate.candidate_id,
             placements, media_warnings, action=decision.action,
+            candidate_status=candidate.enrichment_status,
         )
 
     def _register_placements(self, world: str, job_id: str,
@@ -1067,9 +1160,33 @@ class ImportService:
             if src.is_file():
                 self._register_gallery(world, src, clean)
 
+    def _mark_relations_reviewed(self, job: ImportJob, target: Path,
+                                 document: str, status: str) -> None:
+        """Record that the text pass already read this ficha (S10).
+
+        Importing now reads each ficha body with the same primitive the sweep
+        uses, so a later sweep would only re-read what was just read. Marking
+        the ficha reviewed is what stops the product from charging twice.
+        Best-effort: an unwritable store never fails an import.
+        """
+        if status not in _REVIEWED_STATUSES:
+            return
+        world_dir = self._mundo_dir(job.world)
+        try:
+            relative = str(target.relative_to(world_dir)).replace("\\", "/")
+        except ValueError:
+            return
+        try:
+            mark_swept(
+                world_dir, relative, body_digest(_body_after_frontmatter(document)))
+        except OSError as exc:
+            logger.warning(
+                "relations: could not mark %s reviewed: %s", relative, exc)
+
     def _write_ficha(self, target: Path, document: str, job: ImportJob,
                      candidate_id: str, placements: list[dict],
-                     media_warnings: list[str], action: str) -> ExecutionOutcome:
+                     media_warnings: list[str], action: str,
+                     candidate_status: str = "") -> ExecutionOutcome:
         """Write one ficha through the canonical write pipeline.
 
         Shared by the normal ``add`` path and the self-transformation
@@ -1082,6 +1199,7 @@ class ImportService:
         """
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(target, document)
+        self._mark_relations_reviewed(job, target, document, candidate_status)
         self._register_placements(job.world, job.job_id, placements)
         if self._graph_reconcile_many is None and self._graph_reconcile is not None:
             rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")

@@ -15,14 +15,19 @@ interface ProposalsPanelProps {
   mundo: string;
 }
 
+/** Bounded batch size: the number the button names as its cost (S8). */
+const BATCH_SIZE = 5;
+
 const buttonClass =
   "rounded-lg border border-edge px-3 py-1.5 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
  * P3 — on-demand semantic sweep.
  *
- * The panel is the only surface that triggers model work: one fiche per click.
- * It never writes by itself; accepting a proposal is the write.
+ * The panel is the only surface that triggers model work. It reviews a
+ * bounded batch of fichas per click and never writes by itself: accepting a
+ * proposal is the write. The button states its cost as a number, so the model
+ * spend is visible before the click.
  */
 export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
   const { t } = useAppLanguage();
@@ -72,16 +77,31 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
     }
   };
 
+  const batchSize =
+    candidates.length > 0 ? Math.min(BATCH_SIZE, candidates.length) : BATCH_SIZE;
+
   const handleSweep = () =>
     run(async () => {
       const result = await sweepRelations(mundo);
       if (result.status === "swept") {
-        setNotice(
-          t("relaciones.propuestas.swept", {
-            path: result.path,
-            count: result.created,
-          }),
-        );
+        if (typeof result.swept === "number") {
+          setNotice(
+            t(
+              result.swept === 1
+                ? "relaciones.propuestas.batchDoneOne"
+                : "relaciones.propuestas.batchDone",
+              { fichas: result.swept, count: result.created },
+            ),
+          );
+        } else {
+          // Pre-batch response: keep the old single-ficha message readable.
+          setNotice(
+            t("relaciones.propuestas.swept", {
+              path: result.path ?? "",
+              count: result.created,
+            }),
+          );
+        }
       } else if (result.status === "done") {
         setNotice(t("relaciones.propuestas.done"));
       } else {
@@ -89,10 +109,31 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
       }
     });
 
+  const sweepLabel = busy
+    ? t(
+        batchSize === 1
+          ? "relaciones.propuestas.sweepRunningOne"
+          : "relaciones.propuestas.sweepRunning",
+        { count: batchSize },
+      )
+    : t(
+        batchSize === 1
+          ? "relaciones.propuestas.sweepBatchOne"
+          : "relaciones.propuestas.sweepBatch",
+        { count: batchSize },
+      );
+
   const badge =
     candidates.length > 0
       ? t("relaciones.propuestas.badge", { count: candidates.length })
       : t("relaciones.propuestas.badgeNone");
+
+  const remaining =
+    candidates.length === 0
+      ? t("relaciones.propuestas.noneLeft")
+      : candidates.length === 1
+        ? t("relaciones.propuestas.remainingOne")
+        : t("relaciones.propuestas.remaining", { count: candidates.length });
 
   return (
     <section data-testid="proposals-panel" className="flex flex-col gap-4">
@@ -101,8 +142,8 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
           <p data-testid="candidate-count" className="text-body font-medium text-primary">
             {badge}
           </p>
-          <p className="mt-1 text-small text-muted">
-            {t("relaciones.propuestas.hint")}
+          <p data-testid="candidate-remaining" className="mt-1 text-small text-muted">
+            {remaining}
           </p>
         </div>
         <button
@@ -112,9 +153,7 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
           onClick={handleSweep}
           disabled={busy || loading || candidates.length === 0}
         >
-          {busy
-            ? t("relaciones.propuestas.sweeping")
-            : t("relaciones.propuestas.sweep")}
+          {sweepLabel}
         </button>
       </div>
 
@@ -156,11 +195,18 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
                       </span>
                     ) : null}
                   </p>
+                  {proposal.evidence ? (
+                    <blockquote
+                      data-testid="proposal-evidence"
+                      className="mt-1 border-l-2 border-edge pl-2 text-small italic text-muted"
+                    >
+                      {proposal.evidence}
+                    </blockquote>
+                  ) : null}
                   <p className="text-small text-muted">
                     {t("relaciones.propuestas.confidence", {
                       value: Math.round(proposal.confidence * 100),
                     })}
-                    {proposal.evidence ? ` · ${proposal.evidence}` : ""}
                   </p>
                 </div>
                 <div className="flex gap-2">

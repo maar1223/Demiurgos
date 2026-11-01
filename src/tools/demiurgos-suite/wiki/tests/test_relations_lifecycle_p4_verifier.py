@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import api_server
+from relation_evidence import record
 from relation_reconcile import create_preimage_backup
 from relation_rejections import record_rejection
 from test_api_server import client, _principal  # noqa: F401
@@ -196,6 +197,80 @@ def test_s4_s6_client_cannot_inject_and_preview_is_read_only(client, monkeypatch
     assert response.status_code == 200
     saved = (world / "lore" / "alpha.md").read_text(encoding="utf-8")
     assert "lore::beta" in saved and "lore::gamma" not in saved
+
+
+def test_s7_verified_evidence_keeps_a_declared_pair(client, monkeypatch) -> None:
+    _principal(monkeypatch)
+    world = _world()
+    _add(world, "lore/familia-a/beta.md",
+         "type: personaje\nid: lore::familia-a::beta\ntitle: Beta\n", "Beta.\n")
+    _add(world, "lore/familia-a/alpha.md",
+         "type: personaje\nid: lore::familia-a::alpha\ntitle: Alpha\n"
+         "relaciones:\n  - lore::familia-a::beta\n",
+         "Alpha sigue a su hermano mayor.\n")
+    assert record(
+        world,
+        left="lore::familia-a::alpha",
+        right="lore::familia-a::beta",
+        side="lore::familia-a::alpha",
+        quote="sigue a su hermano mayor",
+    )
+
+    assert client.get("/api/test_mundo/relations/reconcile/preview").json()["files"] == 0
+
+
+def test_s7_verified_evidence_adds_a_missing_pair(client, monkeypatch) -> None:
+    _principal(monkeypatch)
+    world = _world()
+    _add(world, "lore/familia-a/beta.md",
+         "type: personaje\nid: lore::familia-a::beta\ntitle: Beta\n", "Beta.\n")
+    _add(world, "lore/familia-a/alpha.md",
+         "type: personaje\nid: lore::familia-a::alpha\ntitle: Alpha\n",
+         "Alpha sigue a su hermano mayor.\n")
+    assert record(
+        world,
+        left="lore::familia-a::alpha",
+        right="lore::familia-a::beta",
+        side="lore::familia-a::alpha",
+        quote="sigue a su hermano mayor",
+    )
+
+    item = client.get("/api/test_mundo/relations/reconcile/preview").json()["items"][0]
+
+    assert item["path"] == "lore/familia-a/alpha.md"
+    assert item["add"] == ["lore::familia-a::beta"]
+    assert item["remove"] == []
+
+
+def test_s7_stale_evidence_is_removed_when_the_quote_disappears(client, monkeypatch) -> None:
+    _principal(monkeypatch)
+    world = _world()
+    _add(world, "lore/familia-b/beta.md",
+         "type: personaje\nid: lore::familia-b::beta\ntitle: Beta\n", "Beta.\n")
+    alpha = _add(world, "lore/familia-a/alpha.md",
+                 "type: personaje\nid: lore::familia-a::alpha\ntitle: Alpha\n"
+                 "relaciones:\n  - lore::familia-b::beta\n",
+                 "Alpha sigue a su hermano mayor.\n")
+    assert record(
+        world,
+        left="lore::familia-a::alpha",
+        right="lore::familia-b::beta",
+        side="lore::familia-a::alpha",
+        quote="sigue a su hermano mayor",
+    )
+    assert client.get("/api/test_mundo/relations/reconcile/preview").json()["files"] == 0
+
+    alpha.write_text(
+        "---\ntype: personaje\nid: lore::familia-a::alpha\ntitle: Alpha\n"
+        "relaciones:\n  - lore::familia-b::beta\n---\nAlpha ya no menciona a nadie.\n",
+        encoding="utf-8",
+    )
+    api_server._graph_indices.clear()
+
+    item = client.get("/api/test_mundo/relations/reconcile/preview").json()["items"][0]
+
+    assert item["remove"][0]["target_id"] == "lore::familia-b::beta"
+    assert item["remove"][0]["reason"] == "ungrounded"
 
 
 def test_s6_crlf_file_line_endings_are_preserved(client, monkeypatch) -> None:

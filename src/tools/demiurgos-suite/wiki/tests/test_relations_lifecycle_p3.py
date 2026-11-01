@@ -166,9 +166,88 @@ def test_a_silent_provider_leaves_the_ficha_reviewable(client, monkeypatch):
     assert swept.status_code == 200, swept.text
     assert swept.json()["status"] == "unavailable"
     assert swept.json()["created"] == 0
+    assert swept.json()["swept"] == 0
     assert client.get("/api/test_mundo/relations/proposals").json()["count"] == 0
     paths = [
         item["path"]
         for item in client.get("/api/test_mundo/relations/candidates").json()["items"]
     ]
     assert "lore/alpha.md" in paths
+
+
+def _seed_batch_world(world) -> None:
+    _add(
+        world,
+        "lore/beta.md",
+        "type: personaje\nid: lore::beta\ntitle: Beta\n",
+        "Beta.\n",
+    )
+    _add(
+        world,
+        "lore/alpha.md",
+        "type: personaje\nid: lore::alpha\ntitle: Alpha\n",
+        "Alpha served Beta.\n",
+    )
+    _add(
+        world,
+        "lore/gamma.md",
+        "type: personaje\nid: lore::gamma\ntitle: Gamma\n",
+        "Gamma met Alpha.\n",
+    )
+    api_server._graph_indices.clear()
+
+
+def _batch_theory():
+    import json
+
+    return json.dumps(
+        {
+            "relationships": [
+                {
+                    "source_canonical_id": "lore::alpha",
+                    "target_canonical_id": "lore::beta",
+                    "relationship_type": "aliado-de",
+                    "confidence": 0.9,
+                    "evidence": "Alpha served Beta.",
+                },
+                {
+                    "source_canonical_id": "lore::gamma",
+                    "target_canonical_id": "lore::alpha",
+                    "relationship_type": "aliado-de",
+                    "confidence": 0.9,
+                    "evidence": "Gamma met Alpha.",
+                },
+            ]
+        }
+    )
+
+
+def test_sweep_accepts_a_batch_size_and_reports_paths(client, monkeypatch):
+    _principal(monkeypatch)
+    world = _world()
+    _seed_batch_world(world)
+    monkeypatch.setattr(api_server, "_sync_hermes_enricher", lambda prompt, session: _batch_theory())
+
+    swept = client.post("/api/test_mundo/relations/sweep", json={"size": 2})
+
+    assert swept.status_code == 200, swept.text
+    body = swept.json()
+    assert body["status"] == "swept"
+    assert body["swept"] == 2
+    assert body["created"] == 2
+    assert body["paths"] == ["lore/alpha.md", "lore/gamma.md"]
+    assert body["pending"] == 2
+
+
+def test_sweep_clamps_a_zero_batch_size(client, monkeypatch):
+    _principal(monkeypatch)
+    world = _world()
+    _seed_batch_world(world)
+    monkeypatch.setattr(api_server, "_sync_hermes_enricher", lambda prompt, session: _batch_theory())
+
+    swept = client.post("/api/test_mundo/relations/sweep", json={"size": 0})
+
+    assert swept.status_code == 200, swept.text
+    body = swept.json()
+    assert body["swept"] == 1
+    assert body["paths"] == ["lore/alpha.md"]
