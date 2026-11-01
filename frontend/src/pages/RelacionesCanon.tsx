@@ -14,6 +14,12 @@ import { cn } from "@/lib/utils";
 
 type TabKey = "grafo" | "conflictos" | "propuestas";
 
+const REASON_MESSAGES: Record<string, MessageKey> = {
+  ungrounded: "relaciones.reconcile.reason.ungrounded",
+  unresolved: "relaciones.reconcile.reason.unresolved",
+  rejected: "relaciones.reconcile.reason.rejected",
+};
+
 const TABS: readonly { key: TabKey; label: MessageKey }[] = [
   { key: "grafo", label: "relaciones.tab.grafo" },
   { key: "conflictos", label: "relaciones.tab.conflictos" },
@@ -199,18 +205,56 @@ export default function RelacionesCanon() {
           <p className="text-small font-medium text-primary">
             {t("relaciones.reconcile.listTitle")}
           </p>
-          <ul className="mt-1 flex max-h-48 flex-col gap-1 overflow-auto text-small text-muted">
+          <ul className="mt-1 flex max-h-64 flex-col gap-1 overflow-auto text-small text-muted">
             {preview.items.map((item) => (
               <li key={item.path}>
-                {item.path}
-                {" · "}
-                {t("relaciones.reconcile.additions", {
-                  count: item.add.length,
-                })}
-                {" · "}
-                {t("relaciones.reconcile.removals", {
-                  count: item.remove.length,
-                })}
+                <details>
+                  <summary className="cursor-pointer select-none">
+                    <span className="text-primary">{item.path}</span>
+                    {" · "}
+                    {t("relaciones.reconcile.additions", {
+                      count: item.add.length,
+                    })}
+                    {" · "}
+                    {t("relaciones.reconcile.removals", {
+                      count: item.remove.length,
+                    })}
+                  </summary>
+                  {item.add.length > 0 ? (
+                    <div className="mt-1 pl-4">
+                      <p className="text-primary">
+                        {t("relaciones.reconcile.addList")}
+                      </p>
+                      <ul className="list-disc pl-4">
+                        {item.add.map((target) => (
+                          <li key={target}>{target}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {item.remove.length > 0 ? (
+                    <div className="mt-1 pl-4">
+                      <p className="text-primary">
+                        {t("relaciones.reconcile.removeList")}
+                      </p>
+                      <ul className="list-disc pl-4">
+                        {item.remove.map((removal) => (
+                          <li key={removal.key}>
+                            {removal.key}
+                            {removal.target_id &&
+                            removal.target_id !== removal.key
+                              ? ` → ${removal.target_id}`
+                              : ""}
+                            {" · "}
+                            {REASON_MESSAGES[removal.reason]
+                              ? t(REASON_MESSAGES[removal.reason])
+                              : removal.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </details>
               </li>
             ))}
           </ul>

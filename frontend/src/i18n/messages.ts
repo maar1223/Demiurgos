@@ -1048,6 +1048,11 @@ export const messages = {
     "relaciones.reconcile.button.many": "Sincronizar · {count} cambios",
     "relaciones.reconcile.checking": "Comprobando…",
     "relaciones.reconcile.listTitle": "Cambios por aplicar",
+    "relaciones.reconcile.addList": "Se agregan",
+    "relaciones.reconcile.removeList": "Se quitan",
+    "relaciones.reconcile.reason.ungrounded": "el texto no la respalda",
+    "relaciones.reconcile.reason.unresolved": "la ficha destino ya no existe",
+    "relaciones.reconcile.reason.rejected": "la rechazaste antes",
 
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
@@ -3257,6 +3262,11 @@ export const messages = {
     "relaciones.reconcile.button.many": "Sync · {count} changes",
     "relaciones.reconcile.checking": "Checking…",
     "relaciones.reconcile.listTitle": "Changes to apply",
+    "relaciones.reconcile.addList": "Adds",
+    "relaciones.reconcile.removeList": "Removes",
+    "relaciones.reconcile.reason.ungrounded": "no text backs it",
+    "relaciones.reconcile.reason.unresolved": "the target ficha no longer exists",
+    "relaciones.reconcile.reason.rejected": "you rejected it before",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
