@@ -199,9 +199,10 @@ def apply_decisions(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Project the computed conflicts through the recorded decisions.
 
-    ``muted`` conflicts disappear; ``intentional`` ones stay as known (never
-    counted as errors); ``structural`` ones stay as errors with the escalation
-    flagged. The summary counts what the panel header shows.
+    Every conflict stays in the payload with its ``decision``: ``muted`` ones are
+    grouped apart (so the Author can undo them), ``intentional`` ones are counted
+    as known instead of errors, and ``structural`` ones stay errors with the
+    escalation flagged.
     """
     payload: list[dict[str, Any]] = []
     by_code: dict[str, int] = {}
@@ -213,16 +214,16 @@ def apply_decisions(
     for conflict in conflicts:
         conflict_id = str(conflict.get("id") or "")
         decision = decisions.get(conflict_id)
-        code = str(conflict.get("code") or "")
-        if decision is not None and decision.decision == "muted":
-            muted += 1
-            continue
 
         item = dict(conflict)
         item["decision"] = decision.decision if decision is not None else None
         payload.append(item)
+        code = str(conflict.get("code") or "")
         by_code[code] = by_code.get(code, 0) + 1
 
+        if item["decision"] == "muted":
+            muted += 1
+            continue
         if item["decision"] == "intentional":
             known += 1
             continue

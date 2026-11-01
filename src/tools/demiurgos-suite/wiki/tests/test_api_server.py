@@ -9985,7 +9985,9 @@ class TestConflictDecisionsEndpoint:
         assert len(records) == 1
         assert "intentional" in records[0].read_text(encoding="utf-8")
 
-    def test_muted_decision_hides_the_conflict(self, client: TestClient, monkeypatch):
+    def test_muted_decision_keeps_the_conflict_recoverable(
+        self, client: TestClient, monkeypatch
+    ):
         self._world(monkeypatch, self._entities())
 
         resp = client.post(
@@ -9994,9 +9996,10 @@ class TestConflictDecisionsEndpoint:
         )
 
         body = resp.json()
-        assert body["conflicts"] == []
+        assert body["conflicts"][0]["decision"] == "muted"
         assert body["summary"]["muted"] == 1
-        assert body["summary"]["total"] == 0
+        assert body["summary"]["errors"] == 0
+        assert body["summary"]["total"] == 1
 
     def test_clear_decision_restores_the_conflict(self, client: TestClient, monkeypatch):
         self._world(monkeypatch, self._entities())

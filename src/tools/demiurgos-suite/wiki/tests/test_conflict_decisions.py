@@ -115,7 +115,7 @@ def test_decision_set_is_closed() -> None:
     assert DECISIONS == ("intentional", "muted", "structural")
 
 
-def test_apply_decisions_marks_known_and_hides_muted(tmp_path: Path) -> None:
+def test_apply_decisions_groups_known_and_muted(tmp_path: Path) -> None:
     world = _world(tmp_path)
     intentional = _conflict("unresolved-reference:lore/a.md:X")
     muted = _conflict("dangling-relation:lore/b.md:Y", code="dangling-relation", path="lore/b.md")
@@ -130,11 +130,17 @@ def test_apply_decisions_marks_known_and_hides_muted(tmp_path: Path) -> None:
     )
 
     by_id = {item["id"]: item for item in payload}
-    assert set(by_id) == {intentional["id"], structural["id"], undecided["id"]}
+    assert set(by_id) == {
+        intentional["id"],
+        muted["id"],
+        structural["id"],
+        undecided["id"],
+    }
     assert by_id[intentional["id"]]["decision"] == "intentional"
+    assert by_id[muted["id"]]["decision"] == "muted"
     assert by_id[structural["id"]]["decision"] == "structural"
     assert by_id[undecided["id"]]["decision"] is None
-    assert summary["total"] == 3
+    assert summary["total"] == 4
     assert summary["known"] == 1
     assert summary["muted"] == 1
     assert summary["errors"] == 2
