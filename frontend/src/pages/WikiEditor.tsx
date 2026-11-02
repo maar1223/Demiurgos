@@ -293,22 +293,32 @@ export default function WikiEditor() {
   // Baseline body — used for change detection and as the diff `original`
   const currentContent = body;
 
-  // S15 — a conflict deep link (`?highlight=<quote>`) opens the ficha with the
-  // fragment selected and scrolled into view. Applied once per file+quote so
-  // typing never re-selects it.
-  const [searchParams] = useSearchParams();
+  // S15 — a conflict deep link (`?highlight=<quote>`) lands in EDIT mode on the
+  // fragment: the Author clicks a conflict to fix it, not to read it. Applied
+  // once per file+quote, so typing never re-selects and cancelling edit mode
+  // stays cancelled.
+  const [searchParams, setSearchParams] = useSearchParams();
   const highlight = searchParams.get("highlight") ?? "";
   const [fragmentQuote, setFragmentQuote] = useState("");
   const appliedHighlightRef = useRef<string | null>(null);
+  const autoEditRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!highlight || editedContent === null) return;
+    if (!highlight) return;
     const key = `${filePath ?? ""}::${highlight}`;
+
+    if (!isEditing) {
+      if (autoEditRef.current === key) return;
+      autoEditRef.current = key;
+      if (editedContent === null && file) setEditedContent(currentContent);
+      setIsEditing(true);
+      return;
+    }
+
+    if (editedContent === null) return;
     if (appliedHighlightRef.current === key) return;
     const range = locateFragment(editedContent, highlight);
     if (!range) return;
-    appliedHighlightRef.current = key;
-    setFragmentQuote(highlight);
     const frame = window.requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
@@ -319,9 +329,29 @@ export default function WikiEditor() {
       const lineHeight =
         Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
       textarea.scrollTop = Math.max(0, (line - 3) * lineHeight);
+      appliedHighlightRef.current = key;
+      setFragmentQuote(highlight);
+      // The link did its job: drop the param so a reload or a cancel does not
+      // re-trigger it.
+      setSearchParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.delete("highlight");
+          return next;
+        },
+        { replace: true },
+      );
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [highlight, editedContent, filePath]);
+  }, [
+    highlight,
+    isEditing,
+    editedContent,
+    filePath,
+    file,
+    currentContent,
+    setSearchParams,
+  ]);
 
   const baseRevision = revision ?? file?.revision ?? null;
 
@@ -1287,7 +1317,7 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
-          {fragmentQuote ? (
+          {isEditing && fragmentQuote ? (
             <div
               data-testid="conflict-fragment"
               role="status"

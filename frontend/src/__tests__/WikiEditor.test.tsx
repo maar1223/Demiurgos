@@ -2147,7 +2147,7 @@ describe("WikiEditor", () => {
     expect(screen.queryByText(/auto-purged/i)).not.toBeInTheDocument();
   });
 
-  it("shows the conflict fragment from a deep link", async () => {
+  it("lands in edit mode with the conflict fragment selected", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: {
         ...mockFileContent,
@@ -2163,12 +2163,20 @@ describe("WikiEditor", () => {
       "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=invoco%20el%20poder%20de%20Stal",
     ]);
 
-    const pill = await screen.findByTestId("conflict-fragment");
-    expect(pill).toHaveTextContent("Fragmento del conflicto");
-    expect(pill).toHaveTextContent("invoco el poder de Stal");
+    const textarea = (await screen.findByLabelText(
+      "Editor de contenido",
+    )) as HTMLTextAreaElement;
+    await waitFor(() => {
+      expect(
+        textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
+      ).toBe("invoco el poder de Stal");
+    });
+    expect(screen.getByTestId("conflict-fragment")).toHaveTextContent(
+      "invoco el poder de Stal",
+    );
   });
 
-  it("does not show the fragment pill without a matching quote", async () => {
+  it("does not show the fragment pill when the quote is not in the ficha", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -2180,7 +2188,7 @@ describe("WikiEditor", () => {
       "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=no%20existe%20en%20la%20ficha",
     ]);
 
-    expect((await screen.findAllByText("cap1.md")).length).toBeGreaterThan(0);
+    await screen.findByLabelText("Editor de contenido");
     expect(screen.queryByTestId("conflict-fragment")).not.toBeInTheDocument();
   });
 });
