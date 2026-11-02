@@ -109,6 +109,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-01 — El manifiesto del payload está desactualizado
 
+- **Estado (2026-11-02)**: implementado en `097201c` — manifiesto regenerado
+  (187 archivos, con los cuatro `conflict_*.py`) y gate de frescura
+  `scripts/derive_payload_manifest.py --check` como job de CI. Verificado en
+  local: `test_payload_boot.py` 4 passed, derivador verde, installer contract
+  POSIX 119 passed / 5 skipped. Pendiente: celdas de CI verdes tras el push y
+  boot del paquete de release publicado (AUD-16).
 - **Impacto**: el paquete publicado no contiene cuatro módulos que `api_server`
   importa al arrancar; la app instalada no bootea. El smoke de release lo
   detectaría recién al publicar.
@@ -128,6 +134,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-02 — CI en rojo y el backend queda salteado
 
+- **Estado (2026-11-02)**: implementado en `097201c` — el aislamiento del test
+  de `ProposalsPanel` ya estaba verde en CI (run `41494138986`,
+  `Frontend (windows-latest)` success); `backend`, `launcher`,
+  `static-serving` y `ps51` ahora consumen un job `frontend-build` que solo
+  compila y publica el artefacto, nunca el resultado de los tests de frontend.
+  Pendiente: confirmar CI verde en `master` tras el push.
 - **Impacto**: `master` no está verde y el job de backend no corre, por lo que
   AUD-01 no se detecta en PRs. El riesgo llega al tag de release.
 - **Evidencia**:
@@ -145,6 +157,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-03 — El layout del launcher Windows no coincide con el paquete
 
+- **Estado (2026-11-02)**: implementado en `30ca73d` — las dos celdas de
+  empaquetado copian `start-demiurgos.ps1` a `<current>\scripts\`, el instalador
+  imprime esa ruta, el helper de accesos la prefiere y un test de deriva falla
+  si vuelve a aparecer una mención en la raíz fuera de una copia. Verificado en
+  local con el guard test y el installer contract POSIX. Pendiente: instalación
+  Windows real (no disponible en este entorno) y AUD-16.
 - **Impacto**: en una instalación Windows, reiniciar/apagar desde la UI falla
   cerrado, el rollback no encuentra versión previa y el comando de arranque que
   imprime el instalador apunta a un archivo inexistente.
@@ -348,3 +366,4 @@ gh run list --limit 5
 | Fecha | Cambio |
 |---|---|
 | 2026-11-02 | Creación del documento con la auditoría completa y el backlog AUD-01…AUD-17 |
+| 2026-11-02 | Ola 0: AUD-01 y AUD-02 implementados en `097201c`; AUD-03 implementado en `30ca73d`. Verificación local documentada en cada hallazgo; falta el verde de CI tras el push y la instalación Windows real |
