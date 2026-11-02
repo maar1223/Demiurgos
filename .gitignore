@@ -40,6 +40,10 @@ __pycache__/
 .tmp.driveupload/
 output/
 *.docx
+# Vitest writes its cache to ./node_modules when it runs from the repo root.
+# There is no root package.json, so this is never a real dependency tree; the
+# frontend's own tree stays covered by its section below.
+/node_modules/
 
 # ============================================================
 # SDD artifacts (persisten en Engram)
