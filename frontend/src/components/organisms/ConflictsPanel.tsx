@@ -291,6 +291,20 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
                     openPath(conflict.path_b!, conflict.evidence_b)
                   }
                 />
+              ) : conflict.source_b ? (
+                // Degraded: an older backend (or a ficha the graph no longer
+                // resolves) still names the other side, it just cannot link it.
+                <div
+                  data-testid="conflict-ficha-b"
+                  className="flex flex-col gap-1 rounded-lg border border-edge/60 p-3 opacity-70"
+                >
+                  <span className="block text-small font-medium text-primary">
+                    B · {conflict.source_b}
+                  </span>
+                  <span className="text-small text-muted">
+                    {t("relaciones.conflictos.unresolvedTarget")}
+                  </span>
+                </div>
               ) : null}
             </div>
           ) : (

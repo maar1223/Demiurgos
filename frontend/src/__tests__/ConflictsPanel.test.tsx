@@ -318,6 +318,26 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
     );
   });
 
+  it("still names the other ficha when its path cannot be resolved", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([
+        proposal({
+          path_b: null,
+          name_b: null,
+          source_b: "Política | Distribución Y Territorios::Atherr",
+        }),
+      ]),
+    );
+
+    renderPanel();
+
+    const half = await screen.findByTestId("conflict-ficha-b");
+    expect(half).toHaveTextContent(
+      "Política | Distribución Y Territorios::Atherr",
+    );
+    expect(half).toHaveTextContent("No se pudo resolver la ruta");
+  });
+
   it("shows both quotes of a proposal", async () => {
     fetchConflictsMock.mockResolvedValue(response([proposal()]));
 

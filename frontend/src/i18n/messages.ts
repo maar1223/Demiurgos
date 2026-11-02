@@ -1121,6 +1121,8 @@ export const messages = {
     "relaciones.conflictos.entityBanner":
       "Esta ficha tiene {count} conflictos abiertos.",
     "relaciones.conflictos.entityBannerLink": "Ver en Conflictos",
+    "relaciones.conflictos.unresolvedTarget":
+      "No se pudo resolver la ruta de esta ficha.",
 
     "backup.provider.unknown": "Sin proveedor detectado",
     "backup.provider.onedrive": "OneDrive",
@@ -3414,6 +3416,8 @@ export const messages = {
     "relaciones.conflictos.entityBanner":
       "This ficha has {count} open conflicts.",
     "relaciones.conflictos.entityBannerLink": "Open Conflicts",
+    "relaciones.conflictos.unresolvedTarget":
+      "This ficha's path could not be resolved.",
 
     "backup.provider.unknown": "No provider detected",
     "backup.provider.onedrive": "OneDrive",
