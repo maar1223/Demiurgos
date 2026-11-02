@@ -501,7 +501,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     mocked.discoverChatCandidates.mockResolvedValue({
       ok: true,
       candidates: [],
-      message: "Todavía no hay mensajes de este bot. Enviá /start.",
+      message: "Todavía no hay mensajes de este bot. Envía /start.",
     });
     const user = userEvent.setup();
     renderPanel(makeAuth());
@@ -569,7 +569,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     mocked.discoverChatCandidates.mockRejectedValue(
       new ApiError(
         400,
-        "El token guardado no es válido o fue revocado. Guardá un token nuevo desde este panel.",
+        "El token guardado no es válido o fue revocado. Guarda un token nuevo desde este panel.",
         undefined,
         "invalid_token",
       ),
@@ -592,7 +592,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     mocked.discoverChatCandidates.mockRejectedValue(
       new ApiError(
         502,
-        "No se pudo contactar la API de Telegram. Verificá la conexión e intentá de nuevo.",
+        "No se pudo contactar la API de Telegram. Verifica la conexión e intenta de nuevo.",
         undefined,
         "network",
       ),

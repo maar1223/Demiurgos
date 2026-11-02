@@ -54,7 +54,7 @@ Engram is a **hard requirement**. Demiurgos WILL NOT work without it.
 Verify Engram is connected by attempting `mem_search("narrative-init/{project}")`:
 
 - **Success**: Report "Engram activo — memoria persistente operativa."
-- **Failure**: STOP. Report "Engram no está disponible. Demiurgos no puede funcionar sin memoria persistente. Instalalo con: engram mcp --tools=agent y conectalo a Hermes." Do NOT proceed until Engram is available.
+- **Failure**: STOP. Report "Engram no está disponible. Demiurgos no puede funcionar sin memoria persistente. Instálalo con: engram mcp --tools=agent y conectalo a Hermes." Do NOT proceed until Engram is available.
 
 ### 5. Init Report
 

@@ -77,8 +77,8 @@ describe("StatusBadge", () => {
       .mockRejectedValue(
         new ApiError(
           500,
-          "Error interno del servidor. Revisá los logs del backend.",
-          "Error interno del servidor. Revisá los logs del backend.",
+          "Error interno del servidor. Revisa los logs del backend.",
+          "Error interno del servidor. Revisa los logs del backend.",
         ),
       );
     const user = userEvent.setup();

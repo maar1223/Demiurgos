@@ -50,7 +50,7 @@ interface MarkdownViewerProps {
  *
  * States:
  * - 🟡 Loading: Spinner centered in content area
- * - 🟢 No file selected: "Seleccioná un archivo" placeholder
+ * - 🟢 No file selected: "Selecciona un archivo" placeholder
  * - 🔴 Error: ErrorBanner with retry
  * - 🟢 Empty content: file selected but no content
  * - 🟢 Content: rendered markdown with wikilinks

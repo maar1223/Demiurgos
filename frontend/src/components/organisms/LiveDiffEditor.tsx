@@ -404,7 +404,7 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
             >
               <PencilIcon className="h-3.5 w-3.5 shrink-0 text-action" />
               <span className="min-w-0 overflow-hidden text-ellipsis">
-                Editado · hacé clic y escribí
+                Editado · haz clic y escribe
               </span>
             </div>
             <div aria-hidden="true" className="min-w-12 bg-surface-raised" />

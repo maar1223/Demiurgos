@@ -117,8 +117,8 @@ export function TallerExplorerSidebar({
             {!world && (
               <p className="text-small text-muted">
                 {worlds.length > 0
-                  ? "Elegí un mundo para poder activar versiones."
-                  : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
+                  ? "Elige un mundo para poder activar versiones."
+                  : "No hay mundos disponibles; puedes ver publicaciones pero no activar."}
               </p>
             )}
             <MethodologyLibrary

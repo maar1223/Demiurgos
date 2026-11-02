@@ -507,7 +507,7 @@ describe("ToolWorkshop", () => {
       ).toBeInTheDocument();
     });
     expect(
-      screen.getByText(/Elegí un mundo para poder activar versiones/),
+      screen.getByText(/Elige un mundo para poder activar versiones/),
     ).toBeInTheDocument();
 
     // Selection still works without a world...
@@ -521,7 +521,7 @@ describe("ToolWorkshop", () => {
 
     // ...and the no-world state does NOT clear or mutate the selection.
     expect(
-      screen.getByText(/Elegí un mundo para poder activar versiones/),
+      screen.getByText(/Elige un mundo para poder activar versiones/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {

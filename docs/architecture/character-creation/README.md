@@ -2,7 +2,7 @@
 
 > **Índice y mapa de decisiones.**
 > Documentación consultable para diseñar/mejorar la **Skill fundacional de creación de personajes**.
-> Todo el contenido de diseño vive ACÁ (en archivos re-leíbles) y NO solo en la memoria del contexto
+> Todo el contenido de diseño vive AQUÍ (en archivos re-leíbles) y NO solo en la memoria del contexto
 > o en Engram, para no perder decisiones entre sesiones.
 > Idioma: español (igual que el resto de `docs/architecture/`).
 

@@ -140,7 +140,7 @@ def sweep_batch(
         return SweepResult(
             status="unavailable",
             pending=len(load_proposals(world_dir)),
-            message="Las fichas ya no están en el índice; probá de nuevo.",
+            message="Las fichas ya no están en el índice; intenta de nuevo.",
         )
 
     catalog = _build_catalog(entities, catalog_limit)
@@ -157,7 +157,7 @@ def sweep_batch(
             status="unavailable",
             pending=len(load_proposals(world_dir)),
             paths=[source.path for source in sources],
-            message="El proveedor semántico no respondió; probá de nuevo.",
+            message="El proveedor semántico no respondió; intenta de nuevo.",
         )
 
     now = datetime.now(timezone.utc).isoformat()

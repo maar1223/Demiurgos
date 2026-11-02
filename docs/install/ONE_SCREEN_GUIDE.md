@@ -2,7 +2,7 @@
 
 ## Antes de empezar
 
-- Necesitás una terminal abierta. Un comando. Nada más.
+- Necesitas una terminal abierta. Un comando. Nada más.
 - **No** hace falta ser administrador, ni tener Python, ni Node, ni compilador.
 - Sistemas soportados: ver [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).
 
@@ -14,7 +14,7 @@ curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/downlo
 
 ## Windows
 
-Abrí **PowerShell** y pegá:
+Abre **PowerShell** y pega:
 
 ```powershell
 irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
@@ -29,9 +29,9 @@ Unblock-File .
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-Después **cerrá y volvé a abrir la terminal** y probá de nuevo.
+Después **cierra y vuelve a abrir la terminal** y prueba de nuevo.
 
-## Se instala acá
+## Se instala aquí
 
 | | Linux / macOS | Windows |
 |---|---|---|
@@ -39,7 +39,7 @@ Después **cerrá y volvé a abrir la terminal** y probá de nuevo.
 | Versión actual | `~/.demiurgos/current` | `%LOCALAPPDATA%\Demiurgos\current` |
 | Registros | `~/.demiurgos/logs/` | `%LOCALAPPDATA%\Demiurgos\logs\` |
 
-Podés cambiar la raíz con la variable `DEMIURGOS_HOME` **antes** de instalar.
+Puedes cambiar la raíz con la variable `DEMIURGOS_HOME` **antes** de instalar.
 
 ## Arrancarlo
 
@@ -58,14 +58,14 @@ está corriendo, no arranca una segunda instancia.
 
 ## Si algo falla
 
-1. Mirá los registros en `logs/` (arriba). Son permanentes: no se borran solos.
-2. Generá un paquete de diagnóstico para pedir ayuda:
+1. Mira los registros en `logs/` (arriba). Son permanentes: no se borran solos.
+2. Genera un paquete de diagnóstico para pedir ayuda:
 
    ```bash
    ~/.demiurgos/current/scripts/collect-diagnostics.sh
    ```
 
-   Deja un `.tar.gz` en la carpeta actual. **Revisalo antes de compartirlo**:
+   Deja un `.tar.gz` en la carpeta actual. **Revísalo antes de compartirlo**:
    puede contener rutas locales y el contenido de los registros.
 3. Volver a correr el mismo comando de instalación es seguro e idempotente.
 

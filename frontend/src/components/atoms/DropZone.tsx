@@ -10,7 +10,7 @@ interface DropZoneProps {
 /**
  * Visual drag-and-drop area for image files.
  *
- * Shows "Arrastrá una imagen o hacé clic para seleccionar" when empty.
+ * Shows "Arrastra una imagen o haz clic para seleccionar" when empty.
  * Accents border on drag-over. Accepts only image files (accept="image/*").
  * Shows file name preview after selection.
  *

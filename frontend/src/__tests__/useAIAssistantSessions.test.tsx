@@ -287,7 +287,7 @@ describe("useAIAssistantSessions guided consent wiring", () => {
   const suggestionEnvelope: SemanticDecisionEnvelope = {
     state: "require_confirmation",
     action: "request_confirmation",
-    response: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+    response: "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?",
     request_id: "r1",
     attempts: 1,
     guided: true,

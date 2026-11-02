@@ -297,7 +297,7 @@ def sweep_conflicts_batch(
                 discarded=discarded,
                 proposals=_pending(world_dir),
                 paths=[item[0] for item in batch],
-                message="El proveedor semántico no respondió; probá de nuevo.",
+                message="El proveedor semántico no respondió; intenta de nuevo.",
             )
 
         for claim in outcome.claims:

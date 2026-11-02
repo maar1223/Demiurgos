@@ -162,13 +162,13 @@ describe("semantic intent consent suggestion mapping", () => {
   it("maps a musing consent suggestion with no guided session", () => {
     const result = mapSemanticDecision(envelope("require_confirmation", {
       action: "request_confirmation",
-      response: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+      response: "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?",
       consent: "required",
       consent_token: "ct-1",
     }));
     expect(result).toEqual({
       kind: "suggestion",
-      text: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+      text: "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?",
       consentToken: "ct-1",
     });
   });

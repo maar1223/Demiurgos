@@ -224,7 +224,7 @@ describe("LiveDiffEditor", () => {
 
       expect(screen.getByText("Original · solo lectura")).toBeInTheDocument();
       expect(
-        screen.getByText("Editado · hacé clic y escribí"),
+        screen.getByText("Editado · haz clic y escribe"),
       ).toBeInTheDocument();
     });
 

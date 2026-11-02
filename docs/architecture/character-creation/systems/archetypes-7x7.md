@@ -63,7 +63,7 @@ debe hacer la pregunta de fricción.
 3. **Derivar el alineamiento** al cierre según el nivel (lista del nivel: Relleno=9 ·
    Principal-Secundario=25 · Inmortal=24); es una **trayectoria emergente `inicial → revelado`**, no un
    campo de la fase 1 (ver `alignment-system.md` § "Derivación emergente").
-4. **El 40/60 aplica acá de lleno:** los **arquetipos** son las **ANCLAS deterministas** (el 40% — no
+4. **El 40/60 aplica aquí de lleno:** los **arquetipos** son las **ANCLAS deterministas** (el 40% — no
    negociables); el alineamiento se **deriva** al cierre. El **60% flexible** es que el creador
    **rellené los huecos y haga que todo
    calce** (aspecto, carácter, conflicto, trasfondo, arco) — haciendo que los moldes convivan.

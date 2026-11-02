@@ -484,7 +484,7 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
     await userEvent.click(await screen.findByTestId("conflict-sweep"));
 
     expect(await screen.findByTestId("sweep-notice")).toHaveTextContent(
-      "El proveedor semántico no respondió; probá de nuevo.",
+      "El proveedor semántico no respondió; intenta de nuevo.",
     );
   });
 });
@@ -535,7 +535,7 @@ describe("ConflictsPanel — review progress", () => {
     await userEvent.click(await screen.findByTestId("conflict-sweep"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recargá en unos segundos.",
+      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recarga en unos segundos.",
     );
   });
 

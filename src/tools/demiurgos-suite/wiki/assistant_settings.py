@@ -192,7 +192,7 @@ def _resolve_profile_paths() -> HermesProfilePaths:
             active_name = active_file.read_text(encoding="utf-8").strip() or "default"
     except (OSError, UnicodeError) as exc:
         raise AssistantSettingsError(
-            "No se pudo leer el perfil activo de Hermes; verificá HERMES_HOME"
+            "No se pudo leer el perfil activo de Hermes; verifica HERMES_HOME"
         ) from exc
 
     if active_name == "default":
@@ -221,8 +221,8 @@ def _resolve_profile_paths() -> HermesProfilePaths:
 def _read_config(path: Path) -> tuple[str, dict[str, Any], str]:
     if not path.is_file():
         raise AssistantSettingsError(
-            "No se encontró config.yaml en el perfil activo de Hermes; iniciá Hermes "
-            "con ese perfil y volvé a intentar"
+            "No se encontró config.yaml en el perfil activo de Hermes; inicia Hermes "
+            "con ese perfil y vuelve a intentar"
         )
     try:
         content = path.read_text(encoding="utf-8")
@@ -328,7 +328,7 @@ def _set_normalized_content(content: str, status: AssistantSettingsStatus) -> st
 
 def _check_revision(expected: Any, actual: int) -> None:
     if expected is not None and (not isinstance(expected, int) or expected != actual):
-        raise StaleRevisionError("La configuración cambió; recargá antes de guardar")
+        raise StaleRevisionError("La configuración cambió; recarga antes de guardar")
 
 
 def _env_has_key(path: Path, provider: str = "opencode-go") -> bool:
@@ -390,7 +390,7 @@ def _candidate_from_payload_with_fallback(payload: Mapping[str, Any]) -> Provide
 
 def _validate_model(value: Any) -> str:
     if not isinstance(value, str) or value not in _ALLOWED_MODELS:
-        raise ValueError("modelo no permitido; elegí uno del catálogo del asistente")
+        raise ValueError("modelo no permitido; elige uno del catálogo del asistente")
     return value
 
 
@@ -399,7 +399,7 @@ def _validate_api_key(value: Any) -> str:
         raise ValueError("api_key debe ser texto")
     normalized = value.strip()
     if not normalized:
-        raise ValueError("api_key requerido; para quitarlo usá DELETE")
+        raise ValueError("api_key requerido; para quitarlo usa DELETE")
     if any(char.isspace() for char in normalized):
         raise ValueError("api_key no puede contener espacios")
     if len(normalized) > _API_KEY_MAX_LENGTH:
@@ -738,7 +738,7 @@ def create_assistant_settings_router(
         has_model = "model" in payload
         has_key = "api_key" in payload
         if not has_model and not has_key:
-            raise HTTPException(status_code=400, detail="Indicá model o api_key")
+            raise HTTPException(status_code=400, detail="Indica model o api_key")
 
         try:
             selected_model = _validate_model(payload.get("model")) if has_model else None

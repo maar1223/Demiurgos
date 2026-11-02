@@ -55,7 +55,7 @@ interface SectionCardsProps {
  * Visual grid of directory and file cards for a section (or a subdirectory).
  *
  * Embedded in the WikiEditor content area when no file is selected: the
- * cards replace the old "Seleccioná un archivo" placeholder so the section
+ * cards replace the old "Selecciona un archivo" placeholder so the section
  * contents are browsable without leaving the editor. Directories render
  * first (tree order), then files.
  *

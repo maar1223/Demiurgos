@@ -178,7 +178,7 @@ describe("LoginScreen (credentials vault mode)", () => {
     await user.click(await screen.findByRole("button", { name: "Entrar" }));
 
     expect(
-      await screen.findByText("Ingresá tu contraseña para continuar."),
+      await screen.findByText("Ingresa tu contraseña para continuar."),
     ).toBeInTheDocument();
   });
 

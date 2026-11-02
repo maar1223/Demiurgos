@@ -776,7 +776,7 @@ describe("WikiEditor", () => {
       error: null,
       mutate: vi.fn(),
     });
-    (saveFileConfirmed as Mock).mockRejectedValue({ status: 500, detail: "Error interno del servidor. Revisá los logs del backend." });
+    (saveFileConfirmed as Mock).mockRejectedValue({ status: 500, detail: "Error interno del servidor. Revisa los logs del backend." });
 
     const user = userEvent.setup();
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
@@ -1787,7 +1787,7 @@ describe("WikiEditor", () => {
   it("status chip: failed mutation shows the error and keeps the chip unchanged", async () => {
     (setStatus as Mock).mockRejectedValue({
       status: 500,
-      detail: "Error interno del servidor. Revisá los logs del backend.",
+      detail: "Error interno del servidor. Revisa los logs del backend.",
     });
     mockOpenFile();
     const mutate = vi.fn();
@@ -1872,7 +1872,7 @@ describe("WikiEditor", () => {
     });
     (saveFile as Mock).mockRejectedValue({
       status: 500,
-      detail: "Error interno del servidor. Revisá los logs del backend.",
+      detail: "Error interno del servidor. Revisa los logs del backend.",
     });
     mockGalleryWithImage();
     const mutate = vi.fn();

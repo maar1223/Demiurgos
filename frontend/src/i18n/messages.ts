@@ -1125,9 +1125,9 @@ export const messages = {
     "relaciones.conflictos.sweepDiscarded":
       "{count} descartada(s): la cita del modelo no aparece en la ficha.",
     "relaciones.conflictos.sweepUnavailable":
-      "El proveedor semántico no respondió; probá de nuevo.",
+      "El proveedor semántico no respondió; intenta de nuevo.",
     "relaciones.conflictos.sweepTimeout":
-      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recargá en unos segundos.",
+      "El proveedor sigue trabajando; las propuestas pueden aparecer en un momento. Recarga en unos segundos.",
     "relaciones.conflictos.code.semantic-contradiction":
       "Dos fichas afirman cosas que no pueden ser ciertas a la vez.",
     "relaciones.conflictos.entityBannerOne":

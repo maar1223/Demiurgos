@@ -76,7 +76,7 @@ def discover_world() -> str:
             validate_world_structure(world)
             return world
     # 3. No world found — fatal configuration error
-    print("ERROR: No se encontró ningún mundo en mundos/. Creá uno o definí DEMIURGOS_WORLD.", file=sys.stderr)
+    print("ERROR: No se encontró ningún mundo en mundos/. Crea uno o define DEMIURGOS_WORLD.", file=sys.stderr)
     sys.exit(1)
 
 
@@ -444,10 +444,10 @@ def call_qwen_vision(image_bytes: bytes, text: str) -> dict | None:
         user_content.append({"type": "text", "text": text})
 
     system_prompt = (
-        "Analizá esta imagen. Describí colores, composición, texturas, estilo, "
-        "y atmósfera. Luego, evaluá si esta imagen coincide con el texto adjunto: "
+        "Analiza esta imagen. Describe colores, composición, texturas, estilo, "
+        "y atmósfera. Luego, evalúa si esta imagen coincide con el texto adjunto: "
         f"[{text}]. "
-        "Respondé en español estrictamente en este formato JSON:\n\n"
+        "Responde en español estrictamente en este formato JSON:\n\n"
         '{\n'
         '  "descripcion": "...",\n'
         '  "veredicto": "confirma|contradice|no_aplica",\n'

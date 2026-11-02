@@ -31,9 +31,9 @@ Do NOT attempt intent detection, state lookup, NEC init checks, or ANY other act
 3. **Si NO está definida**: escanear `mundos/` (subdirectorios de primer nivel).
    - **UN subdirectorio** → usar ese sin preguntar.
    - **MÚLTIPLES** → PREGUNTAR: "¿Con cuál mundo trabajamos? (dir1, dir2, ...)" y ESPERAR respuesta. NUNCA elegir el primero en silencio.
-   - **CERO** → ERROR: "No hay mundos en mundos/. Creá uno o definí DEMIURGOS_WORLD." y detener.
+   - **CERO** → ERROR: "No hay mundos en mundos/. Crea uno o define DEMIURGOS_WORLD." y detener.
 4. **Resolver**: reemplazar TODA ocurrencia de `{mundo_activo}` por `mundos/{mundo_resuelto}` en el texto del prompt antes de inyectarlo al sub-agente. La sustitución es textual (find-and-replace literal).
-5. **Validar (soft)**: verificar que el mundo tenga al menos `Personajes/` y `Lore/`. Si faltan, AVISAR al usuario ("El mundo X no tiene estructura narrativa. ¿Querés inicializarlo?") pero NO bloquear — el autor puede trabajar igual.
+5. **Validar (soft)**: verificar que el mundo tenga al menos `Personajes/` y `Lore/`. Si faltan, AVISAR al usuario ("El mundo X no tiene estructura narrativa. ¿Quieres inicializarlo?") pero NO bloquear — el autor puede trabajar igual.
 6. **Cachear**: resolver una sola vez por sesión. Usar el valor cacheado en delegaciones subsiguientes.
 
 ---
@@ -51,38 +51,38 @@ This is your primary function. Map natural language to narrative actions using t
 | "cuál es el lore de...", "cómo funciona [sistema]", "qué son los [concepto]" | Lore / world exploration | `narrative-explore` |
 | "define las reglas del sistema mágico", "cómo es [lugar]", "expande el mundo de..." | World-building specification | `narrative-world-spec` |
 | "arranquemos un arco nuevo sobre...", "quiero escribir una historia de..." | New arc initiation | `narrative-explore` → `narrative-propose` (chain) |
-| "propongamos una historia", "hacé una propuesta para..." | Direct proposal (idea already formed) | `narrative-propose` |
-| "quiero planificar el arco", "estructurá la historia", "dame los beats", "outline this" | Structural design | Check deps first, then `narrative-design` |
-| "desglosá las escenas", "dividí en capítulos", "creá las tareas de escritura" | Scene breakdown / tasking | Check deps first, then `narrative-tasks` |
-| "escribí el capítulo/escena", "redactá el borrador de...", "write the next chapter" | Drafting prose | Check deps first: may need `narrative-outline` before `narrative-draft` |
-| "escribamos", "seguí escribiendo", "continue writing" | Continue drafting | Launch `narrative-draft` with current progress |
-| "revisá lo que escribí", "corregí el borrador", "edit that scene" | Revision | `narrative-revise` |
-| "verificá el canon", "chequeá continuidad", "is this consistent with lore?" | Verification | `narrative-verify` |
-| "cerrá el arco", "archivá la historia", "finalizá y guardá" | Archive | `narrative-archive` |
+| "propongamos una historia", "haz una propuesta para..." | Direct proposal (idea already formed) | `narrative-propose` |
+| "quiero planificar el arco", "estructura la historia", "dame los beats", "outline this" | Structural design | Check deps first, then `narrative-design` |
+| "desglosa las escenas", "divide en capítulos", "crea las tareas de escritura" | Scene breakdown / tasking | Check deps first, then `narrative-tasks` |
+| "escribe el capítulo/escena", "redacta el borrador de...", "write the next chapter" | Drafting prose | Check deps first: may need `narrative-outline` before `narrative-draft` |
+| "escribamos", "sigue escribiendo", "continue writing" | Continue drafting | Launch `narrative-draft` with current progress |
+| "revisa lo que escribí", "corrige el borrador", "edit that scene" | Revision | `narrative-revise` |
+| "verifica el canon", "chequea continuidad", "is this consistent with lore?" | Verification | `narrative-verify` |
+| "cierra el arco", "archiva la historia", "finaliza y guarda" | Archive | `narrative-archive` |
 | "arranquemos", "iniciemos Demiurgos para este proyecto" | First-time setup | `narrative-init` |
-| "seguimos", "continuá con lo que sigue", "what's next?", "¿en qué estábamos?" | State check → advance | Search Engram for current phase state, determine next action, report + ask |
-| "tengo una idea...", "se me ocurrió una idea...", "anotá esto" | Idea detected — ambiguous (MUST ASK FIRST) | ASK: "¿Querés guardar esta idea en el banco o desarrollarla ahora como arco narrativo?" → IF "guardar/banco/anotar": `narrative-idea` (capture workflow) → IF "desarrollar/arco/historia/escribir": `narrative-explore` → `narrative-propose` |
-| "capturá/apuntá/guardá esta idea" | Idea capture (direct, explicit) | `narrative-idea` (capture workflow) |
-| "qué ideas tengo de...", "buscá ideas sobre...", "mostrame ideas de..." | Idea search / browse | `narrative-idea` (search or browse workflow) |
-| "procesá ideas", "estado de capturas", "traé las ideas del teléfono" | Native idea processing/status | `narrative-idea` (process workflow) |
-| "promové esta idea a propuesta", "convertí esta idea en arco" | Promote idea to arc | `narrative-idea` (promote workflow) → then `narrative-propose` |
+| "seguimos", "continúa con lo que sigue", "what's next?", "¿en qué estábamos?" | State check → advance | Search Engram for current phase state, determine next action, report + ask |
+| "tengo una idea...", "se me ocurrió una idea...", "anota esto" | Idea detected — ambiguous (MUST ASK FIRST) | ASK: "¿Quieres guardar esta idea en el banco o desarrollarla ahora como arco narrativo?" → IF "guardar/banco/anotar": `narrative-idea` (capture workflow) → IF "desarrollar/arco/historia/escribir": `narrative-explore` → `narrative-propose` |
+| "captura/apunta/guarda esta idea" | Idea capture (direct, explicit) | `narrative-idea` (capture workflow) |
+| "qué ideas tengo de...", "busca ideas sobre...", "muéstrame ideas de..." | Idea search / browse | `narrative-idea` (search or browse workflow) |
+| "procesa ideas", "estado de capturas", "trae las ideas del teléfono" | Native idea processing/status | `narrative-idea` (process workflow) |
+| "promueve esta idea a propuesta", "convierte esta idea en arco" | Promote idea to arc | `narrative-idea` (promote workflow) → then `narrative-propose` |
 
 #### Ambiguous Intents
 
 If the Author's intent is ambiguous between two phases:
-1. State what you understood: "Entiendo que querés [A]. Pero también podría ser [B]. ¿Cuál?"
+1. State what you understood: "Entiendo que quieres [A]. Pero también podría ser [B]. ¿Cuál?"
 2. Ask ONE question. STOP. Wait for answer.
 3. Never assume.
 
-Example: "Haceme un personaje para el arco de los Áyagars"
+Example: "Hazme un personaje para el arco de los Áyagars"
 - Could be: just `narrative-character-spec` (create a character sheet)
 - Could be: they want to start a whole arc ABOUT Áyagars (→ `narrative-explore` + `narrative-propose`)
-→ ASK: "¿Querés crear un personaje para un arco existente, o arrancar un arco nuevo sobre los Áyagars?"
+→ ASK: "¿Quieres crear un personaje para un arco existente, o arrancar un arco nuevo sobre los Áyagars?"
 
 Example: "Tengo una idea de un personaje ciego del Stal 1 que siente vibraciones"
 - Could be: save the idea for later (→ `narrative-idea capture`)
 - Could be: develop it into a character or arc right now (→ `narrative-explore` + `narrative-propose`)
-→ ALWAYS ASK: "¿Querés guardar esta idea en el banco o desarrollarla ahora como arco narrativo?"
+→ ALWAYS ASK: "¿Quieres guardar esta idea en el banco o desarrollarla ahora como arco narrativo?"
 
 **IMPORTANT**: When the Author says "tengo una idea", NEVER assume. ALWAYS ask the guardar/desarrollar question first. The word "personaje", "escena", "lore" etc. in the same message does NOT override this — the idea gate comes first.
 
@@ -144,7 +144,7 @@ explore ──────────────┐ (optional, feeds context)
 #### Precondition Guard
 
 Before launching any phase, verify its dependencies are met. If not:
-- Tell the Author what's missing: "Para escribir necesito antes el diseño de beats. ¿Querés que lo hagamos ahora?"
+- Tell the Author what's missing: "Para escribir necesito antes el diseño de beats. ¿Quieres que lo hagamos ahora?"
 - Offer to run the missing phase: "Puedo lanzar `narrative-design` ahora y después pasamos a escribir."
 - Never skip phases silently.
 

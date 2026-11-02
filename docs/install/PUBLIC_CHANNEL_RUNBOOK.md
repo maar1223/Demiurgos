@@ -34,7 +34,7 @@ minisign -G -p minisign.pub -s minisign.key
 
 - `minisign.pub` se puede compartir (se embebe en los bootstraps).
 - `minisign.key` **nunca** se versiona ni se imprime.
-- Si protegés la clave con contraseña, guardala como secreto aparte.
+- Si proteges la clave con contraseña, guárdala como secreto aparte.
 
 ## 3. Cargar los secretos del repositorio
 
@@ -64,8 +64,8 @@ La clave va en **cuatro** archivos:
 - `scripts/lib/verify_checksum.ps1` (variable `$DefaultMinisignPubkey`)
 
 La clave pública embebida **debe** coincidir con la privada guardada en
-`secrets.MINISIGN_SECRET_KEY`. Si en algún momento rotás la clave de firma
-(`minisign -G`, paso 2), re-embebé la clave pública correspondiente en esos
+`secrets.MINISIGN_SECRET_KEY`. Si en algún momento rotas la clave de firma
+(`minisign -G`, paso 2), re-embebe la clave pública correspondiente en esos
 cuatro archivos.
 
 > `scripts/install-demiurgos.sh` **no** lleva la clave: usa `verify_minisig` de
@@ -99,7 +99,7 @@ sha256sum install.sh            # comparar con lo publicado
 Después: instalar de verdad, arrancar y comprobar `/health` y `/`. **Si esto no
 pasa, no se difunde nada.**
 
-## 7. Recién entonces: realinear la documentación
+## 7. Solo entonces: realinear la documentación
 
 La tarea 9.2 (secciones de instalación de `README.md`, `README.es.md`,
 `LEEME.md`, `COMANDOS.md`) **ya se ejecutó** tras verificar el paso 6. La regla

@@ -25,7 +25,7 @@ import { fetchConflicts } from "@/api/conflicts";
  * States:
  * - 🟡 Loading worlds: Spinner
  * - 🔴 Missing params / world not found: EmptyState or error
- * - 🟢 No entity path: EmptyState "Seleccioná una entidad"
+ * - 🟢 No entity path: EmptyState "Selecciona una entidad"
  * - 🟢 Ready: EntityDetail + sidebar connections
  */
 export default function EntityPage() {

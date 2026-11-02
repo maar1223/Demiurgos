@@ -626,7 +626,7 @@ def fetch_updates(token: str, api: str = _TELEGRAM_API) -> list[dict]:
     except requests.RequestException as exc:
         raise TelegramDiscoveryError(
             502,
-            "No se pudo contactar la API de Telegram. Verificá la conexión e intentá de nuevo.",
+            "No se pudo contactar la API de Telegram. Verifica la conexión e intenta de nuevo.",
             code="network") from exc
 
     # Defensive body parse: a non-JSON / non-dict body is a safe 502, never a 500.
@@ -640,7 +640,7 @@ def fetch_updates(token: str, api: str = _TELEGRAM_API) -> list[dict]:
     if resp.status_code == 401:
         raise TelegramDiscoveryError(
             400,
-            "El token guardado no es válido o fue revocado. Guardá un token nuevo desde este panel.",
+            "El token guardado no es válido o fue revocado. Guarda un token nuevo desde este panel.",
             code="invalid_token")
     if resp.status_code == 409:
         if "webhook" in description.lower():
@@ -648,20 +648,20 @@ def fetch_updates(token: str, api: str = _TELEGRAM_API) -> list[dict]:
                 409,
                 "El bot tiene un webhook activo: Telegram no permite usar getUpdates mientras "
                 "haya un webhook configurado (por eso «Detectar mi chat» no puede ver los "
-                "mensajes). Eliminá el webhook manualmente — con /deletewebhook en BotFather o "
-                "llamando al método deleteWebhook de la Bot API — y volvé a intentar. Este panel "
+                "mensajes). Elimina el webhook manualmente — con /deletewebhook en BotFather o "
+                "llamando al método deleteWebhook de la Bot API — y vuelve a intentar. Este panel "
                 "nunca borra el webhook automáticamente.",
                 code="webhook_conflict")
         raise TelegramDiscoveryError(
             409,
-            "Otro proceso ya está consumiendo getUpdates del mismo bot. Detené el serve y reintentá.",
+            "Otro proceso ya está consumiendo getUpdates del mismo bot. Detén el serve y reintenta.",
             code="conflicting_consumer")
     if resp.status_code >= 400:
         raise TelegramDiscoveryError(
             502, f"Telegram respondió con error HTTP {resp.status_code}.", code="telegram_http")
     if not isinstance(data, dict):
         raise TelegramDiscoveryError(
-            502, "Telegram respondió con una respuesta inválida. Reintentá en unos segundos.",
+            502, "Telegram respondió con una respuesta inválida. Reintenta en unos segundos.",
             code="invalid_response")
     if not data.get("ok"):
         raise TelegramDiscoveryError(
@@ -669,7 +669,7 @@ def fetch_updates(token: str, api: str = _TELEGRAM_API) -> list[dict]:
     result = data.get("result")
     if not isinstance(result, list):
         raise TelegramDiscoveryError(
-            502, "Telegram respondió con una respuesta inválida. Reintentá en unos segundos.",
+            502, "Telegram respondió con una respuesta inválida. Reintenta en unos segundos.",
             code="invalid_response")
     return result
 
@@ -707,7 +707,7 @@ def authorize_chat_into_config(config: dict, payload: dict) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 
 _LIMITATIONS = [
-    "La captura va siempre al Taller de Ideas global (ideas/): el mundo se elige recién al materializar una idea desde el taller.",
+    "La captura va siempre al Taller de Ideas global (ideas/): el mundo se elige solo al materializar una idea desde el taller.",
     "Publicador real de Engram no conectado: las ideas se persisten en el store local (outbox) pero aún no se publican a Engram.",
     "Los proveedores de enriquecimiento de voz e imágenes no están conectados: solo se captura texto plano.",
     "Para probar de verdad hace falta un bot y un chat de staging — nunca credenciales de producción.",
@@ -834,8 +834,8 @@ def _discover_candidates() -> dict:
         return JSONResponse(
             status_code=400,
             content={
-                "detail": "Todavía no hay token guardado. Guardá el token del bot, "
-                          "enviale un mensaje a tu bot en Telegram y reintentá.",
+                "detail": "Todavía no hay token guardado. Guarda el token del bot, "
+                          "envíale un mensaje a tu bot en Telegram y reintenta.",
                 "code": "no_token",
             })
     if owner_is_active():
@@ -843,7 +843,7 @@ def _discover_candidates() -> dict:
             status_code=409,
             content={
                 "detail": "El serve de captura ya está activo y es el único consumidor "
-                          "del bot. Detené el serve antes de usar «Detectar mi chat» "
+                          "del bot. Detén el serve antes de usar «Detectar mi chat» "
                           "para no crear un segundo consumidor.",
                 "code": "owner_active",
             })
@@ -853,8 +853,8 @@ def _discover_candidates() -> dict:
         return {
             "ok": True,
             "candidates": [],
-            "message": "Todavía no hay mensajes de este bot. Enviá /start (o "
-                       "cualquier mensaje) a tu bot en Telegram y volvé a "
+            "message": "Todavía no hay mensajes de este bot. Envía /start (o "
+                       "cualquier mensaje) a tu bot en Telegram y vuelve a "
                        "intentar.",
         }
     log.info("idea-capture: %d chat(s) candidato(s) detectados (contenido no expuesto)",
@@ -1002,7 +1002,7 @@ def create_idea_capture_router(
             return JSONResponse(
                 status_code=409,
                 content={
-                    "detail": "Todavía no hay token guardado. Guardá el token "
+                    "detail": "Todavía no hay token guardado. Guarda el token "
                               "del bot antes de probar la conexión.",
                     "code": "no_token",
                 })
@@ -1059,7 +1059,7 @@ def create_idea_capture_router(
                 status_code=500,
                 content={
                     "detail": "No se pudo detectar chats por un error inesperado. "
-                              "Reintentá; si el problema persiste, revisá los "
+                              "Reintenta; si el problema persiste, revisa los "
                               "registros del servidor.",
                     "code": "unexpected",
                 })

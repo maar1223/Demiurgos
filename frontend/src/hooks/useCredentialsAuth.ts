@@ -78,7 +78,7 @@ export function useCredentialsAuth(enabled: boolean): CredentialsAuthState {
         reloadPage();
       } catch (cause) {
         if (cause instanceof ApiError && cause.status === 422) {
-          setLoginError("Ingresá tu contraseña para continuar.");
+          setLoginError("Ingresa tu contraseña para continuar.");
         } else if (
           cause instanceof ApiError &&
           cause.status === 401 &&

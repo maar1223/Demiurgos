@@ -2,7 +2,7 @@
 
 > **Referencia de arquitectura.**
 > Define cómo se clasifican las skills de Demiurgos. Este vocabulario vive en el código, los prompts,
-> el UI del Taller de Herramientas y la documentación — por eso se fija acá para que no se reinterprete.
+> el UI del Taller de Herramientas y la documentación — por eso se fija aquí para que no se reinterprete.
 
 ## El árbol de skills
 

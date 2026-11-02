@@ -8831,7 +8831,7 @@ def _semantic_blocked_result(result: SemanticResult) -> dict:
 # ---------------------------------------------------------------------------
 
 GUIDED_CONSENT_SUGGESTION_TEXT = (
-    "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"
+    "Parece que quieres crear un personaje. ¿Abrimos el flujo guiado?"
 )
 """Approved in-chat suggestion copy (REQ-GFC-04)."""
 

@@ -88,21 +88,21 @@ def test_connection(token: str, api_base: str = _TELEGRAM_API) -> dict[str, Any]
             "state": "requires_connection",
             "error_code": "network",
             "message": "No se pudo contactar la API de Telegram. "
-                       "Verificá la conexión e intentá de nuevo.",
+                       "Verifica la conexión e intenta de nuevo.",
         }
     if resp.status_code == 401:
         return {
             "state": "error",
             "error_code": "invalid_token",
             "message": "El token guardado no es válido o fue revocado. "
-                       "Guardá un token nuevo.",
+                       "Guarda un token nuevo.",
         }
     if resp.status_code >= 400:
         return {
             "state": "error",
             "error_code": "telegram_http",
             "message": f"Telegram respondió con error HTTP {resp.status_code}. "
-                       "Reintentá en unos segundos.",
+                       "Reintenta en unos segundos.",
         }
     try:
         data = resp.json()
@@ -112,7 +112,7 @@ def test_connection(token: str, api_base: str = _TELEGRAM_API) -> dict[str, Any]
         return {
             "state": "error",
             "error_code": "telegram_api",
-            "message": "Telegram no validó el token. Revisalo e intentá de nuevo.",
+            "message": "Telegram no validó el token. Revísalo e intenta de nuevo.",
         }
     return {
         "state": "configured",

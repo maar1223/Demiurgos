@@ -485,7 +485,7 @@ describe("AIAssistantSidebar single conversation", () => {
         title: "Crear personaje",
         messages: [
           { role: "user", content: "Quiero crear la esposa de Rhyz" },
-          { role: "assistant", content: "¿Querés comenzar?" },
+          { role: "assistant", content: "¿Quieres comenzar?" },
         ],
         createdAt: 1,
         guided: {

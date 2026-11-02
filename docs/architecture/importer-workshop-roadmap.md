@@ -22,7 +22,7 @@ Regla: **un bloque se cierra en una sesión**; al terminar se actualiza el estad
 
 ---
 
-## 1. El descenso (por qué estamos acá)
+## 1. El descenso (por qué estamos aquí)
 
 ```
 Taller de Herramientas + Skill Madre
