@@ -627,7 +627,7 @@ try {
     Install-StartMenuShortcut
 
     Write-Host "install-demiurgos: done. Start Demiurgos with:"
-    Write-Host "  $installRoot\current\start-demiurgos.ps1 start"
+    Write-Host "  $installRoot\current\scripts\start-demiurgos.ps1 start"
 } catch {
     Remove-WorkDirs
     Write-Host $_.Exception.Message -ForegroundColor Red

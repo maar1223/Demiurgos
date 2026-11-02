@@ -120,7 +120,7 @@ jobs:
           done < <(jq -r '.payload[]' payload_manifest.json)
           # (2) explicit extras (S5-1 artifact list): bootstraps, cores,
           #     launchers, requirements, LICENSE (task 8.3: every artifact).
-          for f in install.sh install.ps1 start-demiurgos.ps1 start-api.ps1 \
+          for f in install.sh install.ps1 start-api.ps1 \
                    start-gateway.ps1 scripts/start-demiurgos.sh \
                    scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
                    scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
@@ -133,6 +133,11 @@ jobs:
             mkdir -p "$stage/$(dirname "$f")"
             cp "$f" "$stage/$f"
           done
+          # AUD-03: the Windows launcher ships at the frozen layout path
+          # (<current>/scripts/start-demiurgos.ps1, INSTALL_LAYOUT.md §1). The
+          # dev checkout keeps it at the repo root; the installed tree does not.
+          mkdir -p "$stage/scripts"
+          cp start-demiurgos.ps1 "$stage/scripts/start-demiurgos.ps1"
           [ -f LICENSE ] || { echo "FAIL: LICENSE is missing; every artifact must carry it (task 8.3)"; exit 1; }
           cp LICENSE "$stage/LICENSE"
           # (3) the shared dist -> <stage>/frontend/dist (explicit artifact)
@@ -146,9 +151,9 @@ jobs:
           cat > "$RUNNER_TEMP/payload-allow.txt" <<'ALLOW'
           install.sh
           install.ps1
-          start-demiurgos.ps1
           start-api.ps1
           start-gateway.ps1
+          scripts/start-demiurgos.ps1
           scripts/start-demiurgos.sh
           scripts/install-demiurgos.sh
           scripts/install-demiurgos.ps1
@@ -217,7 +222,7 @@ jobs:
           }
           # (2) explicit extras (S5-1 artifact list)
           $extras = @(
-            'install.sh', 'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
+            'install.sh', 'install.ps1', 'start-api.ps1',
             'start-gateway.ps1', 'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
@@ -233,6 +238,12 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
             Copy-Item -LiteralPath $f -Destination $dest
           }
+          # AUD-03: the Windows launcher ships at the frozen layout path
+          # (<current>\scripts\start-demiurgos.ps1, INSTALL_LAYOUT.md §1). The
+          # dev checkout keeps it at the repo root; the installed tree does not.
+          $launcherDest = Join-Path $stage 'scripts/start-demiurgos.ps1'
+          New-Item -ItemType Directory -Force -Path (Split-Path $launcherDest) | Out-Null
+          Copy-Item -LiteralPath 'start-demiurgos.ps1' -Destination $launcherDest
           if (-not (Test-Path LICENSE)) { throw 'FAIL: LICENSE is missing; every artifact must carry it (task 8.3)' }
           Copy-Item LICENSE (Join-Path $stage 'LICENSE')
           # (3) the shared dist -> <stage>/frontend/dist
@@ -245,8 +256,9 @@ jobs:
           #     packaging (Windows parity of payload_audit.sh, task 8.2).
           $allowFile = Join-Path $env:RUNNER_TEMP 'payload-allow.txt'
           @(
-            'install.sh', 'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
-            'start-gateway.ps1', 'scripts/start-demiurgos.sh',
+            'install.sh', 'install.ps1', 'start-api.ps1',
+            'start-gateway.ps1', 'scripts/start-demiurgos.ps1',
+            'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
             'scripts/lib/desktop-shortcut.ps1',

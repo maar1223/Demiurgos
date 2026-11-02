@@ -31,13 +31,13 @@ function Get-DemiurgosShellFolder {
 }
 
 function Get-DemiurgosLauncherPath {
-    # Installed layout: <current>\start-demiurgos.ps1 (the release extras copy
-    # it to the app root). The scripts\ form is accepted for a layout that
-    # keeps it there.
+    # Installed layout: <current>\scripts\start-demiurgos.ps1 (the frozen
+    # contract path every consumer uses, INSTALL_LAYOUT.md section 1). The repo
+    # root form is accepted for the dev checkout.
     param([Parameter(Mandatory = $true)][string]$AppRoot)
     $candidates = @(
-        (Join-Path $AppRoot "start-demiurgos.ps1"),
-        (Join-Path $AppRoot "scripts\start-demiurgos.ps1")
+        (Join-Path $AppRoot "scripts\start-demiurgos.ps1"),
+        (Join-Path $AppRoot "start-demiurgos.ps1")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
