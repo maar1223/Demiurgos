@@ -1279,8 +1279,10 @@ export default function WikiEditor() {
         ) : null}
 
         {/* Breadcrumb chips — flexible middle: takes the leftover width so its
-            internal collapse measurement gets a real constrained width */}
-        <div className="flex min-w-0 flex-1 items-center">
+            internal collapse measurement gets a real constrained width. The
+            min width keeps it readable: when the bar runs out of room it wraps
+            the actions to a new row instead of stacking the chips vertically. */}
+        <div className="flex min-w-[10rem] flex-1 items-center">
           <Breadcrumb
             segments={breadcrumbSegments}
             onSegmentClick={handleBreadcrumbClick}
@@ -1349,12 +1351,13 @@ export default function WikiEditor() {
             <button
               type="button"
               data-testid="select-conflict-fragment"
+              aria-label={t("wikiEditor.selectFragment")}
+              title={t("wikiEditor.selectFragmentHint")}
               disabled={fragmentRange === null}
               onClick={() => fragmentRange && applyRange(fragmentRange)}
-              title={t("wikiEditor.selectFragmentHint")}
-              className="rounded-md border border-action/40 bg-action/10 px-2 py-1 text-small font-medium text-action transition-colors hover:bg-action/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-action/40 bg-action/10 text-action transition-colors hover:bg-action/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {t("wikiEditor.selectFragment")}
+              <Icon name="search" size={14} />
             </button>
           ) : null}
           {/* File-bar options dropdown (⋯) — ficha-level actions. Sits right

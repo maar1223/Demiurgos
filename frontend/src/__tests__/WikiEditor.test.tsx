@@ -2201,7 +2201,9 @@ describe("WikiEditor", () => {
     // A stray click collapses the selection.
     textarea.setSelectionRange(0, 0);
 
-    await userEvent.click(screen.getByTestId("select-conflict-fragment"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Seleccionar fragmento del conflicto" }),
+    );
 
     expect(
       textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
@@ -2225,6 +2227,8 @@ describe("WikiEditor", () => {
     )) as HTMLTextAreaElement;
     expect(textarea.value).toContain("Este es el contenido");
     // The button is there but cannot restore a fragment that no longer exists.
-    expect(screen.getByTestId("select-conflict-fragment")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Seleccionar fragmento del conflicto" }),
+    ).toBeDisabled();
   });
 });
