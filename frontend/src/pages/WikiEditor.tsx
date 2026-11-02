@@ -299,13 +299,48 @@ export default function WikiEditor() {
   // stays cancelled.
   const [searchParams, setSearchParams] = useSearchParams();
   const highlight = searchParams.get("highlight") ?? "";
-  const [fragmentQuote, setFragmentQuote] = useState("");
   const appliedHighlightRef = useRef<string | null>(null);
   const autoEditRef = useRef<string | null>(null);
+  // The quote survives the URL (which is cleaned after applying) so the
+  // "select fragment" button can restore the selection after a stray click.
+  const [conflictFragment, setConflictFragment] = useState<{
+    path: string;
+    quote: string;
+  } | null>(null);
+  const activeFragment =
+    conflictFragment && conflictFragment.path === (filePath ?? "")
+      ? conflictFragment.quote
+      : "";
+  const fragmentRange = useMemo(
+    () =>
+      activeFragment ? locateFragment(editedContent ?? "", activeFragment) : null,
+    [activeFragment, editedContent],
+  );
+
+  /** Select a range in the textarea and scroll it near the top. */
+  const applyRange = useCallback(
+    (range: { start: number; end: number }) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(range.start, range.end);
+      const line =
+        (editedContent ?? "").slice(0, range.start).split("\n").length - 1;
+      const lineHeight =
+        Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+      textarea.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    },
+    [editedContent],
+  );
 
   useEffect(() => {
     if (!highlight) return;
     const key = `${filePath ?? ""}::${highlight}`;
+    setConflictFragment((current) =>
+      current && current.path === (filePath ?? "") && current.quote === highlight
+        ? current
+        : { path: filePath ?? "", quote: highlight },
+    );
 
     if (!isEditing) {
       if (autoEditRef.current === key) return;
@@ -320,17 +355,9 @@ export default function WikiEditor() {
     const range = locateFragment(editedContent, highlight);
     if (!range) return;
     const frame = window.requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(range.start, range.end);
-      const line =
-        editedContent.slice(0, range.start).split("\n").length - 1;
-      const lineHeight =
-        Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
-      textarea.scrollTop = Math.max(0, (line - 3) * lineHeight);
+      if (!textareaRef.current) return;
+      applyRange(range);
       appliedHighlightRef.current = key;
-      setFragmentQuote(highlight);
       // The link did its job: drop the param so a reload or a cancel does not
       // re-trigger it.
       setSearchParams(
@@ -351,6 +378,7 @@ export default function WikiEditor() {
     file,
     currentContent,
     setSearchParams,
+    applyRange,
   ]);
 
   const baseRevision = revision ?? file?.revision ?? null;
@@ -1317,17 +1345,17 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
-          {isEditing && fragmentQuote ? (
-            <div
-              data-testid="conflict-fragment"
-              role="status"
-              className="flex basis-full flex-wrap items-baseline gap-2 rounded border border-action/40 bg-action/10 px-2 py-1 text-small text-primary"
+          {isEditing && activeFragment ? (
+            <button
+              type="button"
+              data-testid="select-conflict-fragment"
+              disabled={fragmentRange === null}
+              onClick={() => fragmentRange && applyRange(fragmentRange)}
+              title={t("wikiEditor.selectFragmentHint")}
+              className="rounded-md border border-action/40 bg-action/10 px-2 py-1 text-small font-medium text-action transition-colors hover:bg-action/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <span className="font-medium">
-                {t("wikiEditor.conflictFragment")}
-              </span>
-              <span className="italic text-muted">“{fragmentQuote}”</span>
-            </div>
+              {t("wikiEditor.selectFragment")}
+            </button>
           ) : null}
           {/* File-bar options dropdown (⋯) — ficha-level actions. Sits right
               after the status chip and before the focus button so

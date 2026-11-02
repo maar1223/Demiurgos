@@ -2171,12 +2171,44 @@ describe("WikiEditor", () => {
         textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
       ).toBe("invoco el poder de Stal");
     });
-    expect(screen.getByTestId("conflict-fragment")).toHaveTextContent(
-      "invoco el poder de Stal",
-    );
   });
 
-  it("does not show the fragment pill when the quote is not in the ficha", async () => {
+  it("restores the fragment with the button after a stray click", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: {
+        ...mockFileContent,
+        content:
+          "Cuando el mundo no tenía nombre,\ninvoco el poder de Stal, su Áyagar Celestial.",
+      },
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor([
+      "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=invoco%20el%20poder%20de%20Stal",
+    ]);
+
+    const textarea = (await screen.findByLabelText(
+      "Editor de contenido",
+    )) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(
+        textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
+      ).toBe("invoco el poder de Stal"),
+    );
+
+    // A stray click collapses the selection.
+    textarea.setSelectionRange(0, 0);
+
+    await userEvent.click(screen.getByTestId("select-conflict-fragment"));
+
+    expect(
+      textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
+    ).toBe("invoco el poder de Stal");
+  });
+
+  it("still opens the editor when the quote is not in the ficha", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -2188,7 +2220,11 @@ describe("WikiEditor", () => {
       "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=no%20existe%20en%20la%20ficha",
     ]);
 
-    await screen.findByLabelText("Editor de contenido");
-    expect(screen.queryByTestId("conflict-fragment")).not.toBeInTheDocument();
+    const textarea = (await screen.findByLabelText(
+      "Editor de contenido",
+    )) as HTMLTextAreaElement;
+    expect(textarea.value).toContain("Este es el contenido");
+    // The button is there but cannot restore a fragment that no longer exists.
+    expect(screen.getByTestId("select-conflict-fragment")).toBeDisabled();
   });
 });

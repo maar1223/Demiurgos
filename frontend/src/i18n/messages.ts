@@ -2288,7 +2288,9 @@ export const messages = {
     "editorLayout.resizePanel": "Redimensionar panel",
     "editorLayout.closeRightPanel": "Cerrar panel derecho",
     "editorLayout.openRightPanel": "Abrir panel derecho",
-    "wikiEditor.conflictFragment": "Fragmento del conflicto",
+    "wikiEditor.selectFragment": "Seleccionar fragmento del conflicto",
+    "wikiEditor.selectFragmentHint":
+      "Vuelve a seleccionar el fragmento que originó el conflicto.",
     "wikiEditor.contentEditorAria": "Editor de contenido",
     "graph.loadError": "No se pudo cargar el grafo",
     "graph.searchError": "No se pudo buscar nodos",
@@ -4579,7 +4581,9 @@ export const messages = {
     "editorLayout.resizePanel": "Resize panel",
     "editorLayout.closeRightPanel": "Close right panel",
     "editorLayout.openRightPanel": "Open right panel",
-    "wikiEditor.conflictFragment": "Conflict fragment",
+    "wikiEditor.selectFragment": "Select conflict fragment",
+    "wikiEditor.selectFragmentHint":
+      "Select again the fragment that started the conflict.",
     "wikiEditor.contentEditorAria": "Content editor",
     "graph.loadError": "Could not load the graph",
     "graph.searchError": "Could not search nodes",
