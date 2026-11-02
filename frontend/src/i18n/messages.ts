@@ -2289,6 +2289,7 @@ export const messages = {
     "editorLayout.closeRightPanel": "Cerrar panel derecho",
     "editorLayout.openRightPanel": "Abrir panel derecho",
     "wikiEditor.selectFragment": "Seleccionar fragmento del conflicto",
+    "wikiEditor.selectFragmentShort": "Fragmento",
     "wikiEditor.selectFragmentHint":
       "Vuelve a seleccionar el fragmento que originó el conflicto.",
     "wikiEditor.contentEditorAria": "Editor de contenido",
@@ -4582,6 +4583,7 @@ export const messages = {
     "editorLayout.closeRightPanel": "Close right panel",
     "editorLayout.openRightPanel": "Open right panel",
     "wikiEditor.selectFragment": "Select conflict fragment",
+    "wikiEditor.selectFragmentShort": "Fragment",
     "wikiEditor.selectFragmentHint":
       "Select again the fragment that started the conflict.",
     "wikiEditor.contentEditorAria": "Content editor",

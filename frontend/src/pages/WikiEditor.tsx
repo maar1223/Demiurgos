@@ -1355,9 +1355,10 @@ export default function WikiEditor() {
               title={t("wikiEditor.selectFragmentHint")}
               disabled={fragmentRange === null}
               onClick={() => fragmentRange && applyRange(fragmentRange)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-action/40 bg-action/10 text-action transition-colors hover:bg-action/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-action/40 bg-action/10 px-2 text-small font-medium text-action transition-colors hover:bg-action/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="search" size={14} />
+              <span>{t("wikiEditor.selectFragmentShort")}</span>
             </button>
           ) : null}
           {/* File-bar options dropdown (⋯) — ficha-level actions. Sits right
