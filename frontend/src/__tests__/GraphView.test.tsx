@@ -1832,6 +1832,8 @@ describe("GraphView", () => {
           evidence_b: null,
           source_a: null,
           source_b: null,
+          path_b: null,
+          name_b: null,
         },
       ],
       summary: {

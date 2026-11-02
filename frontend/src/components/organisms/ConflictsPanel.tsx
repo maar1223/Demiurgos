@@ -46,10 +46,55 @@ const DECISION_ACTIONS: { kind: ConflictDecisionKind; label: MessageKey }[] = [
   { kind: "structural", label: "relaciones.conflictos.decision.structural" },
 ];
 
-const itemClass =
-  "w-full rounded-lg border border-edge bg-surface-raised p-3 text-left transition-colors hover:border-action";
+const itemClass = "w-full text-left";
 const actionClass =
   "rounded-lg border border-edge px-2 py-1 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50";
+
+interface FichaHalfProps {
+  label: string;
+  name: string;
+  path: string;
+  quote: string | null;
+  quoteTestId: string;
+  openLabel: string;
+  onOpen: () => void;
+}
+
+/** One half of a semantic contradiction: the ficha, its quote and its way in. */
+function FichaHalf({
+  label,
+  name,
+  path,
+  quote,
+  quoteTestId,
+  openLabel,
+  onOpen,
+}: FichaHalfProps) {
+  return (
+    <button
+      type="button"
+      data-testid={`conflict-ficha-${label.toLowerCase()}`}
+      onClick={onOpen}
+      className="flex h-full flex-col gap-1 rounded-lg border border-edge p-3 text-left transition-colors hover:border-action"
+    >
+      <span className="block text-small font-medium text-primary">
+        {label} · {name}
+      </span>
+      <span className="block truncate text-small text-muted">{path}</span>
+      {quote ? (
+        <span
+          data-testid={quoteTestId}
+          className="mt-1 block border-l-2 border-edge pl-2 text-small italic text-muted"
+        >
+          “{quote}”
+        </span>
+      ) : null}
+      <span className="mt-auto pt-1 text-small font-medium text-action">
+        {openLabel} →
+      </span>
+    </button>
+  );
+}
 
 /**
  * Conflictos — the deterministic conflict panel (S1), the semantic proposals
@@ -174,11 +219,13 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
   }, [mundo, t]);
 
   // Open the EDITABLE ficha in the Taller de Mundo: the Author clicks a
-  // conflict to fix it, not to read it.
-  const openFicha = useCallback(
-    (conflict: WorldConflict) => {
+  // conflict to fix it, not to read it. With a quote, the editor lands on the
+  // exact fragment the conflict talks about.
+  const openPath = useCallback(
+    (path: string, quote?: string | null) => {
+      const base = `/wiki/${encodeURIComponent(mundo)}/${encodePathSegment(path)}`;
       navigate(
-        `/wiki/${encodeURIComponent(mundo)}/${encodePathSegment(conflict.path)}`,
+        quote ? `${base}?highlight=${encodeURIComponent(quote)}` : base,
       );
     },
     [mundo, navigate],
@@ -199,12 +246,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     return (
       <li key={conflict.id} data-testid="conflict-item">
         <div className="rounded-lg border border-edge bg-surface-raised p-3">
-          <button
-            type="button"
-            className={itemClass}
-            onClick={() => openFicha(conflict)}
-            title={t("relaciones.conflictos.openFicha")}
-          >
+          <div className={itemClass}>
             <span className="block text-small font-medium text-primary">
               {conflict.name}
             </span>
@@ -222,29 +264,47 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
                 {t("relaciones.conflictos.decision.structuralBadge")}
               </span>
             ) : null}
-          </button>
+          </div>
           {proposal ? (
-            <div data-testid="conflict-evidence" className="mt-2 flex flex-col gap-1">
-              <p className="text-small font-medium text-muted">
-                {conflict.source_a}
-              </p>
-              <blockquote
-                data-testid="conflict-quote-a"
-                className="border-l-2 border-edge pl-2 text-small italic text-muted"
-              >
-                {conflict.evidence_a}
-              </blockquote>
-              <p className="text-small font-medium text-muted">
-                {conflict.source_b}
-              </p>
-              <blockquote
-                data-testid="conflict-quote-b"
-                className="border-l-2 border-edge pl-2 text-small italic text-muted"
-              >
-                {conflict.evidence_b}
-              </blockquote>
+            <div
+              data-testid="conflict-pair"
+              className="mt-2 grid gap-2 sm:grid-cols-2"
+            >
+              <FichaHalf
+                label="A"
+                name={conflict.name}
+                path={conflict.path}
+                quote={conflict.evidence_a}
+                quoteTestId="conflict-quote-a"
+                openLabel={t("relaciones.conflictos.openFicha")}
+                onOpen={() => openPath(conflict.path, conflict.evidence_a)}
+              />
+              {conflict.path_b ? (
+                <FichaHalf
+                  label="B"
+                  name={conflict.name_b ?? conflict.source_b ?? ""}
+                  path={conflict.path_b}
+                  quote={conflict.evidence_b}
+                  quoteTestId="conflict-quote-b"
+                  openLabel={t("relaciones.conflictos.openFicha")}
+                  onOpen={() =>
+                    openPath(conflict.path_b!, conflict.evidence_b)
+                  }
+                />
+              ) : null}
             </div>
-          ) : null}
+          ) : (
+            <div className="mt-2">
+              <button
+                type="button"
+                data-testid="open-ficha"
+                className={actionClass}
+                onClick={() => openPath(conflict.path)}
+              >
+                {t("relaciones.conflictos.openFicha")}
+              </button>
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap gap-2">
             {proposal ? (
               <>

@@ -258,3 +258,32 @@ def test_apply_decisions_counts_proposals_apart(tmp_path: Path) -> None:
     assert payload[0]["decision"] is None
     assert summary["proposed"] == 1
     assert summary["errors"] == 0
+
+
+def test_semantic_conflicts_resolves_the_other_ficha(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+
+    payload = semantic_conflicts(
+        load_records(world),
+        entities={
+            "A": {"path": "lore/alar.md", "name": "Alar"},
+            "B": {"path": "lore/vesta.md", "name": "Vesta"},
+        },
+    )
+
+    assert payload[0]["path"] == "lore/alar.md"
+    assert payload[0]["path_b"] == "lore/vesta.md"
+    assert payload[0]["name_b"] == "Vesta"
+
+
+def test_semantic_conflicts_without_the_other_ficha_still_lists_it(
+    tmp_path: Path,
+) -> None:
+    world = _world(tmp_path)
+    _proposal(world)
+
+    payload = semantic_conflicts(load_records(world))
+
+    assert payload[0]["path_b"] is None
+    assert payload[0]["name_b"] is None

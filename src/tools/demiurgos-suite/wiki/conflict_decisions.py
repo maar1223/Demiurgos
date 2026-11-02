@@ -347,6 +347,7 @@ def semantic_conflicts(
     records: Mapping[str, ConflictDecision],
     *,
     verify: Callable[[ConflictDecision], bool] | None = None,
+    entities: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Project proposed and decided semantic records into the panel payload.
 
@@ -362,6 +363,10 @@ def semantic_conflicts(
             continue
         if verify is not None and not verify(record):
             continue
+        # The target's path and name live in the graph, not in the record: a
+        # record only stores the two canonical ids, so a renamed or moved ficha
+        # still resolves and the record needs no migration.
+        target = (entities or {}).get(record.pair_right) or {}
         payload.append(
             {
                 "id": record.conflict_id,
@@ -379,6 +384,9 @@ def semantic_conflicts(
                 "evidence_b": record.quote_b or None,
                 "source_a": record.source_a or None,
                 "source_b": record.source_b or None,
+                "path_b": str(target.get("path") or "") or None,
+                "name_b": str(target.get("name") or target.get("title") or "")
+                or None,
             }
         )
     return sorted(payload, key=lambda item: (item["path"], item["id"]))

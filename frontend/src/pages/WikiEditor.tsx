@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { WorldNotFound } from "@/components/organisms/WorldNotFound";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useImageUpload } from "@/hooks/useImages";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { locateFragment } from "@/lib/fragment";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
@@ -291,6 +292,37 @@ export default function WikiEditor() {
 
   // Baseline body — used for change detection and as the diff `original`
   const currentContent = body;
+
+  // S15 — a conflict deep link (`?highlight=<quote>`) opens the ficha with the
+  // fragment selected and scrolled into view. Applied once per file+quote so
+  // typing never re-selects it.
+  const [searchParams] = useSearchParams();
+  const highlight = searchParams.get("highlight") ?? "";
+  const [fragmentQuote, setFragmentQuote] = useState("");
+  const appliedHighlightRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!highlight || editedContent === null) return;
+    const key = `${filePath ?? ""}::${highlight}`;
+    if (appliedHighlightRef.current === key) return;
+    const range = locateFragment(editedContent, highlight);
+    if (!range) return;
+    appliedHighlightRef.current = key;
+    setFragmentQuote(highlight);
+    const frame = window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(range.start, range.end);
+      const line =
+        editedContent.slice(0, range.start).split("\n").length - 1;
+      const lineHeight =
+        Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20;
+      textarea.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlight, editedContent, filePath]);
+
   const baseRevision = revision ?? file?.revision ?? null;
 
   // Initialise edited content when file path actually changes.
@@ -1255,6 +1287,18 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
+          {fragmentQuote ? (
+            <div
+              data-testid="conflict-fragment"
+              role="status"
+              className="flex basis-full flex-wrap items-baseline gap-2 rounded border border-action/40 bg-action/10 px-2 py-1 text-small text-primary"
+            >
+              <span className="font-medium">
+                {t("wikiEditor.conflictFragment")}
+              </span>
+              <span className="italic text-muted">“{fragmentQuote}”</span>
+            </div>
+          ) : null}
           {/* File-bar options dropdown (⋯) — ficha-level actions. Sits right
               after the status chip and before the focus button so
               Edit/Import actions stay at the far right of the bar (the

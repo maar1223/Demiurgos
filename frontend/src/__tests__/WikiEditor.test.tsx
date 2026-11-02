@@ -2146,4 +2146,41 @@ describe("WikiEditor", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/auto-purged/i)).not.toBeInTheDocument();
   });
+
+  it("shows the conflict fragment from a deep link", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: {
+        ...mockFileContent,
+        content:
+          "Cuando el mundo no tenía nombre,\ninvoco el poder de Stal, su Áyagar Celestial.",
+      },
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor([
+      "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=invoco%20el%20poder%20de%20Stal",
+    ]);
+
+    const pill = await screen.findByTestId("conflict-fragment");
+    expect(pill).toHaveTextContent("Fragmento del conflicto");
+    expect(pill).toHaveTextContent("invoco el poder de Stal");
+  });
+
+  it("does not show the fragment pill without a matching quote", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor([
+      "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=no%20existe%20en%20la%20ficha",
+    ]);
+
+    expect((await screen.findAllByText("cap1.md")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("conflict-fragment")).not.toBeInTheDocument();
+  });
 });

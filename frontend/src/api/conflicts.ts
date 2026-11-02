@@ -50,6 +50,9 @@ export interface WorldConflict {
   evidence_b: string | null;
   source_a: string | null;
   source_b: string | null;
+  /** The OTHER ficha of a semantic contradiction, resolved from the graph. */
+  path_b: string | null;
+  name_b: string | null;
 }
 
 /** Coverage of the semantic review, by current body text. */

@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import ConflictsPanel from "@/components/organisms/ConflictsPanel";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
@@ -57,6 +57,8 @@ function conflict(overrides: Partial<WorldConflict> = {}): WorldConflict {
     evidence_b: null,
     source_a: null,
     source_b: null,
+    path_b: null,
+    name_b: null,
     ...overrides,
   };
 }
@@ -88,6 +90,16 @@ function response(
   };
 }
 
+function FichaProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="ficha-page">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
+}
+
 function renderPanel() {
   return render(
     <MemoryRouter initialEntries={["/taller-mundo/vibrantes/relaciones-canon"]}>
@@ -96,10 +108,7 @@ function renderPanel() {
           path="/taller-mundo/:mundo/relaciones-canon"
           element={<ConflictsPanel mundo="vibrantes" />}
         />
-        <Route
-          path="/wiki/:mundo/:section/*"
-          element={<div data-testid="ficha-page">ficha</div>}
-        />
+        <Route path="/wiki/:mundo/:section/*" element={<FichaProbe />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -175,13 +184,13 @@ describe("ConflictsPanel", () => {
     expect(await screen.findByTestId("conflicts-empty")).toBeInTheDocument();
   });
 
-  it("opens the ficha when an item is clicked", async () => {
+  it("opens the single ficha of a deterministic conflict", async () => {
     fetchConflictsMock.mockResolvedValue(response([conflict()]));
 
     renderPanel();
 
-    const item = await screen.findByTestId("conflict-item");
-    await userEvent.click(item.querySelector("button")!);
+    await screen.findByTestId("conflict-item");
+    await userEvent.click(screen.getByTestId("open-ficha"));
 
     expect(await screen.findByTestId("ficha-page")).toBeInTheDocument();
   });
@@ -270,6 +279,8 @@ function proposal(overrides: Partial<WorldConflict> = {}): WorldConflict {
     evidence_b: "nació en el año 145",
     source_a: "A",
     source_b: "B",
+    path_b: "lore/vesta.md",
+    name_b: "Vesta",
     ...overrides,
   });
 }
@@ -278,6 +289,33 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("offers both fichas of a proposal, each with its quote", async () => {
+    fetchConflictsMock.mockResolvedValue(response([proposal()]));
+
+    renderPanel();
+
+    const pair = await screen.findByTestId("conflict-pair");
+    expect(pair).toHaveTextContent("A · Alar");
+    expect(pair).toHaveTextContent("lore/alar.md");
+    expect(pair).toHaveTextContent("B · Vesta");
+    expect(pair).toHaveTextContent("lore/vesta.md");
+  });
+
+  it("opens the chosen half with its quote as a highlight", async () => {
+    fetchConflictsMock.mockResolvedValue(response([proposal()]));
+
+    renderPanel();
+
+    await screen.findByTestId("conflict-pair");
+    await userEvent.click(screen.getByTestId("conflict-ficha-b"));
+
+    const page = await screen.findByTestId("ficha-page");
+    expect(page).toHaveTextContent("/wiki/vibrantes/lore/vesta.md");
+    expect(page).toHaveTextContent(
+      "?highlight=naci%C3%B3%20en%20el%20a%C3%B1o%20145",
+    );
   });
 
   it("shows both quotes of a proposal", async () => {

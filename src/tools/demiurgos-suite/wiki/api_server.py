@@ -7337,13 +7337,17 @@ def _review_block(mundo: str, idx) -> dict:
     }
 
 
-def _semantic_verifier(entities: list[dict]):
-    """Re-check a semantic record against the current bodies (self-invalidating)."""
-    by_key = {
+def _entity_map(entities: list[dict]) -> dict[str, dict]:
+    return {
         str(entity.get("id") or entity.get("path") or ""): entity
         for entity in entities
         if isinstance(entity, dict)
     }
+
+
+def _semantic_verifier(entities: list[dict]):
+    """Re-check a semantic record against the current bodies (self-invalidating)."""
+    by_key = _entity_map(entities)
 
     def verify(record) -> bool:
         source = by_key.get(record.pair_left)
@@ -7385,7 +7389,11 @@ def world_conflicts(mundo: str):
     records = load_records(world_dir)
     payload, summary = apply_decisions(
         [conflict.to_dict() for conflict in conflicts]
-        + semantic_conflicts(records, verify=_semantic_verifier(live_entities)),
+        + semantic_conflicts(
+            records,
+            verify=_semantic_verifier(live_entities),
+            entities=_entity_map(live_entities),
+        ),
         load_decisions(world_dir),
     )
     summary["review"] = _review_block(mundo, idx)
@@ -7449,7 +7457,12 @@ def conflict_proposal_reject(mundo: str, body: dict):
             ]
     records = load_records(world_dir)
     payload, summary = apply_decisions(
-        conflicts + semantic_conflicts(records, verify=_semantic_verifier(entities)),
+        conflicts
+        + semantic_conflicts(
+            records,
+            verify=_semantic_verifier(entities),
+            entities=_entity_map(entities),
+        ),
         load_decisions(world_dir),
     )
     summary["review"] = _review_block(mundo, idx)
@@ -7500,7 +7513,9 @@ def set_conflict_decision(mundo: str, body: dict):
             {
                 item["id"]: item
                 for item in semantic_conflicts(
-                    load_records(world_dir), verify=_semantic_verifier(entities)
+                    load_records(world_dir),
+                    verify=_semantic_verifier(entities),
+                    entities=_entity_map(entities),
                 )
             }
         )
@@ -7512,7 +7527,9 @@ def set_conflict_decision(mundo: str, body: dict):
     payload, summary = apply_decisions(
         list(deterministic.values())
         + semantic_conflicts(
-            load_records(world_dir), verify=_semantic_verifier(entities)
+            load_records(world_dir),
+            verify=_semantic_verifier(entities),
+            entities=_entity_map(entities),
         ),
         load_decisions(world_dir),
     )
