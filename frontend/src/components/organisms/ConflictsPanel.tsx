@@ -40,10 +40,26 @@ const CODE_MESSAGES: Record<ConflictCode, MessageKey> = {
     "relaciones.conflictos.code.semantic-contradiction",
 };
 
-const DECISION_ACTIONS: { kind: ConflictDecisionKind; label: MessageKey }[] = [
-  { kind: "intentional", label: "relaciones.conflictos.decision.intentional" },
-  { kind: "muted", label: "relaciones.conflictos.decision.muted" },
-  { kind: "structural", label: "relaciones.conflictos.decision.structural" },
+const DECISION_ACTIONS: {
+  kind: ConflictDecisionKind;
+  label: MessageKey;
+  hint: MessageKey;
+}[] = [
+  {
+    kind: "intentional",
+    label: "relaciones.conflictos.decision.intentional",
+    hint: "relaciones.conflictos.decision.intentionalHint",
+  },
+  {
+    kind: "muted",
+    label: "relaciones.conflictos.decision.muted",
+    hint: "relaciones.conflictos.decision.mutedHint",
+  },
+  {
+    kind: "structural",
+    label: "relaciones.conflictos.decision.structural",
+    hint: "relaciones.conflictos.decision.structuralHint",
+  },
 ];
 
 const itemClass = "w-full text-left";
@@ -335,6 +351,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
                   <button
                     key={action.kind}
                     type="button"
+                    title={t(action.hint)}
                     className={actionClass}
                     disabled={busy}
                     onClick={() => void decide(conflict, action.kind)}
@@ -345,6 +362,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
                 <button
                   type="button"
                   data-testid="reject-proposal"
+                  title={t("relaciones.conflictos.decision.rejectHint")}
                   className={actionClass}
                   disabled={busy}
                   onClick={() => void reject(conflict)}
@@ -355,6 +373,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
             ) : decided ? (
               <button
                 type="button"
+                title={t("relaciones.conflictos.decision.clearHint")}
                 className={actionClass}
                 disabled={busy}
                 onClick={() => void decide(conflict, "clear")}
@@ -366,6 +385,7 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
                 <button
                   key={action.kind}
                   type="button"
+                  title={t(action.hint)}
                   className={actionClass}
                   disabled={busy}
                   onClick={() => void decide(conflict, action.kind)}

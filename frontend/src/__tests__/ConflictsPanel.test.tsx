@@ -248,6 +248,52 @@ describe("ConflictsPanel", () => {
     expect(screen.getByTestId("conflicts-errors")).toBeInTheDocument();
   });
 
+  it("explains on hover what each decision action does", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([
+        conflict(),
+        conflict({
+          id: "semantic:A:B:date",
+          code: "semantic-contradiction",
+          state: "proposed",
+          origin: "semantic",
+          reference: "date",
+          evidence_a: "nació en el año 120",
+          evidence_b: "nació en el año 145",
+          source_a: "Alar",
+          source_b: "Vesta",
+          path_b: "lore/vesta.md",
+          name_b: "Vesta",
+        }),
+        conflict({ id: "known:lore/beta.md", path: "lore/beta.md", decision: "intentional" }),
+      ]),
+    );
+
+    renderPanel();
+    await screen.findAllByTestId("conflict-item");
+
+    // The labels alone never say what the author is committing to.
+    const hints: Record<string, string> = {
+      Intencional:
+        "Es así a propósito: pasa a Conocidos y deja de contar como error o advertencia.",
+      Silenciar:
+        "No es un problema: se aparta en Silenciados y deja de contar. Se puede deshacer con Quitar decisión.",
+      Ruptura:
+        "Ruptura deliberada de la estructura del mundo: queda marcada como ruptura y sigue contando como error.",
+      "Falso positivo":
+        "El modelo se equivocó: la pareja queda rechazada y no se vuelve a proponer.",
+      "Quitar decisión":
+        "Quita la decisión guardada y el conflicto vuelve a contar como pendiente.",
+    };
+    for (const [name, hint] of Object.entries(hints)) {
+      const buttons = screen.getAllByRole("button", { name });
+      expect(buttons.length).toBeGreaterThan(0);
+      expect(buttons.every((button) => button.getAttribute("title") === hint)).toBe(
+        true,
+      );
+    }
+  });
+
   it("keeps the panel and reports an action failure", async () => {
     fetchConflictsMock.mockResolvedValue(response([conflict()]));
     setConflictDecisionMock.mockRejectedValue(new Error("boom"));

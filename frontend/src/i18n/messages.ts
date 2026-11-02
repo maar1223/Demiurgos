@@ -1105,6 +1105,16 @@ export const messages = {
     "relaciones.conflictos.decision.structuralBadge": "Ruptura estructural",
     "relaciones.conflictos.decision.clear": "Quitar decisión",
     "relaciones.conflictos.decision.reject": "Falso positivo",
+    "relaciones.conflictos.decision.intentionalHint":
+      "Es así a propósito: pasa a Conocidos y deja de contar como error o advertencia.",
+    "relaciones.conflictos.decision.mutedHint":
+      "No es un problema: se aparta en Silenciados y deja de contar. Se puede deshacer con Quitar decisión.",
+    "relaciones.conflictos.decision.structuralHint":
+      "Ruptura deliberada de la estructura del mundo: queda marcada como ruptura y sigue contando como error.",
+    "relaciones.conflictos.decision.rejectHint":
+      "El modelo se equivocó: la pareja queda rechazada y no se vuelve a proponer.",
+    "relaciones.conflictos.decision.clearHint":
+      "Quita la decisión guardada y el conflicto vuelve a contar como pendiente.",
     "relaciones.conflictos.sweep": "Revisar {count} fichas · quedan {pending}",
     "relaciones.conflictos.sweepBase": "Revisar {count} fichas",
     "relaciones.conflictos.sweepAllDone": "Todo revisado",
@@ -3407,6 +3417,16 @@ export const messages = {
     "relaciones.conflictos.decision.structuralBadge": "Structural rupture",
     "relaciones.conflictos.decision.clear": "Clear decision",
     "relaciones.conflictos.decision.reject": "False positive",
+    "relaciones.conflictos.decision.intentionalHint":
+      "Deliberate: it moves to Known and stops counting as an error or warning.",
+    "relaciones.conflictos.decision.mutedHint":
+      "Not a problem: it moves to Muted and stops counting. You can undo it.",
+    "relaciones.conflictos.decision.structuralHint":
+      "A deliberate break in the world's structure: it is flagged as a rupture and keeps counting as an error.",
+    "relaciones.conflictos.decision.rejectHint":
+      "The model got it wrong: the pair stays rejected and is never proposed again.",
+    "relaciones.conflictos.decision.clearHint":
+      "Removes the saved decision and the conflict counts as pending again.",
     "relaciones.conflictos.sweep": "Review {count} fichas · {pending} left",
     "relaciones.conflictos.sweepBase": "Review {count} fichas",
     "relaciones.conflictos.sweepAllDone": "All reviewed",
