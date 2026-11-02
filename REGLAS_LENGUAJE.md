@@ -96,6 +96,9 @@ Cuando sea **español**, debe ser **español neutro íntegro** (sin voseo ni mod
   a mano (revisión humana).
 - La fuente única del blocklist es `frontend/src/i18n/forbidden.json` (compartida con el guard de backend).
   Si aparece un voseo/regionalismo nuevo que el guard no detecta, **ampliar ese archivo** y re-correr los tests.
+- **Excepción deliberada — locale `es-ar` del wizard de configuración** (`src/tools/web-config-ui/i18n.py`):
+  conserva voseo rioplatense porque es una opción de idioma explícita del producto. Su locale `es` y
+  todo el resto del proyecto siguen en español neutro; no "corregir" ese bloque.
 
 ### Recordatorio
 
