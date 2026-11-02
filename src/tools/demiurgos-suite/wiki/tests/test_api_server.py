@@ -10197,6 +10197,110 @@ class TestConflictSweepEndpoint:
         again = client.post("/api/test_mundo/conflicts/sweep", json={"size": 2})
         assert again.json()["status"] == "done"
 
+    def test_a_proposal_survives_when_the_source_sorts_after_the_target(
+        self, client: TestClient, monkeypatch
+    ):
+        """The pair is stored sorted, but the quotes follow source→target.
+
+        Regression: with source "Zeta" and target "Alar" the listing checked
+        quote_a against the target, silently dropped the proposal, and the
+        sweep reported "1 propuesta nueva" with an empty list.
+        """
+        source = {
+            "name": "Zeta",
+            "id": "Z",
+            "type": "ficha",
+            "path": "lore/zeta.md",
+            "title": "Zeta",
+            "description": "",
+            "tags": [],
+            "status": "stable",
+            "canon_state": "canon",
+            "forward_links": [],
+            "backlinks": [],
+            "content": "La reina Zeta nació en el año 120.",
+            "relaciones": ["A"],
+            "okf_issues": [],
+        }
+        target = {
+            "name": "Alar",
+            "id": "A",
+            "type": "ficha",
+            "path": "lore/alar.md",
+            "title": "Alar",
+            "description": "",
+            "tags": [],
+            "status": "stable",
+            "canon_state": "canon",
+            "forward_links": [],
+            "backlinks": [],
+            "content": "Alar nació en el año 145.",
+            "relaciones": [],
+            "okf_issues": [],
+        }
+        idx = self._index_with([source, target])
+
+        def runner(prompt: str, _session: str) -> str:
+            if '"Z"' not in prompt:
+                return json.dumps({"contradictions": []})
+            return json.dumps(
+                {
+                    "contradictions": [
+                        {
+                            "target_canonical_id": "A",
+                            "conflict_type": "date",
+                            "quote_source": "nació en el año 120",
+                            "quote_target": "nació en el año 145",
+                            "confidence": 0.9,
+                        }
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: idx)
+        monkeypatch.setattr(api_server, "_sync_hermes_enricher", runner)
+
+        swept = client.post("/api/test_mundo/conflicts/sweep", json={"size": 2})
+        assert swept.json()["created"] == 1
+
+        listing = client.get("/api/test_mundo/conflicts").json()
+        semantic = [
+            c for c in listing["conflicts"] if c["code"] == "semantic-contradiction"
+        ]
+        assert len(semantic) == 1
+        assert semantic[0]["state"] == "proposed"
+        assert semantic[0]["path"] == "lore/zeta.md"
+        assert semantic[0]["path_b"] == "lore/alar.md"
+        assert semantic[0]["name_b"] == "Alar"
+        assert listing["summary"]["proposed"] == 1
+
+    def test_sweep_reports_claims_dropped_for_a_quote_that_is_not_in_the_ficha(
+        self, client: TestClient, monkeypatch
+    ):
+        def runner(_prompt: str, _session: str) -> str:
+            return json.dumps(
+                {
+                    "contradictions": [
+                        {
+                            "target_canonical_id": "B",
+                            "conflict_type": "date",
+                            "quote_source": "nació en el año 120",
+                            "quote_target": "una frase que no está en la ficha",
+                            "confidence": 0.9,
+                        }
+                    ]
+                }
+            )
+
+        self._wire(monkeypatch, runner=runner)
+
+        swept = client.post("/api/test_mundo/conflicts/sweep", json={"size": 2})
+
+        assert swept.json()["created"] == 0
+        # Only Alar has a related ficha to compare, so one claim was rejected
+        # for a quote that is not verbatim in the target.
+        assert swept.json()["discarded"] == 1
+
     def test_provider_outage_returns_unavailable(
         self, client: TestClient, monkeypatch
     ):

@@ -64,6 +64,25 @@ class ConflictDecision:
     pair_left: str = ""
     pair_right: str = ""
 
+    @property
+    def source_key(self) -> str:
+        """The ficha the quotes and ``path`` belong to.
+
+        ``pair_left``/``pair_right`` are the SORTED identity of the pair (two
+        records for the same pair must collapse), while the quotes and ``path``
+        follow the order the sweep recorded. Resolution must use this order:
+        reading ``pair_left`` as the source checked quote_a against the wrong
+        ficha whenever the source sorted last, which silently hid the proposal.
+        Records written before ``source_a``/``source_b`` existed fall back to
+        the sorted pair, the only order they carry.
+        """
+        return self.source_a or self.pair_left
+
+    @property
+    def target_key(self) -> str:
+        """The ficha on the other side of the pair, in source→target order."""
+        return self.source_b or self.pair_right
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -365,8 +384,10 @@ def semantic_conflicts(
             continue
         # The target's path and name live in the graph, not in the record: a
         # record only stores the two canonical ids, so a renamed or moved ficha
-        # still resolves and the record needs no migration.
-        target = (entities or {}).get(record.pair_right) or {}
+        # still resolves and the record needs no migration. The lookup follows
+        # the recorded source→target order (see ``source_key``), never the
+        # sorted pair.
+        target = (entities or {}).get(record.target_key) or {}
         payload.append(
             {
                 "id": record.conflict_id,

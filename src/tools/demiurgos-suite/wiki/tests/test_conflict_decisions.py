@@ -277,6 +277,76 @@ def test_semantic_conflicts_resolves_the_other_ficha(tmp_path: Path) -> None:
     assert payload[0]["name_b"] == "Vesta"
 
 
+def test_semantic_conflicts_resolves_the_target_from_the_recorded_order(
+    tmp_path: Path,
+) -> None:
+    """``pair_left``/``pair_right`` are the SORTED identity, not source→target.
+
+    The quotes and the "other ficha" follow the order the sweep recorded, so
+    resolving the target from the sorted pair showed the source as the other
+    ficha whenever the source sorted last (regression: Teena → Nafaar).
+    """
+    world = _world(tmp_path)
+    record_proposal(
+        world,
+        conflict_id="semantic:Zeta:Alar:date",
+        source_a="Zeta",
+        source_b="Alar",
+        path="lore/zeta.md",
+        name="Zeta",
+        quote_a="nació en el año 120",
+        quote_b="nació en el año 145",
+        conflict_type="date",
+        confidence=0.8,
+        pair_left="Alar",
+        pair_right="Zeta",
+    )
+
+    payload = semantic_conflicts(
+        load_records(world),
+        entities={
+            "Alar": {"path": "lore/alar.md", "name": "Alar"},
+            "Zeta": {"path": "lore/zeta.md", "name": "Zeta"},
+        },
+    )
+
+    assert payload[0]["path"] == "lore/zeta.md"
+    assert payload[0]["path_b"] == "lore/alar.md"
+    assert payload[0]["name_b"] == "Alar"
+
+
+def test_semantic_conflicts_falls_back_to_the_pair_for_legacy_records(
+    tmp_path: Path,
+) -> None:
+    """Records written before ``source_a``/``source_b`` only carry the pair."""
+    world = _world(tmp_path)
+    record_proposal(
+        world,
+        conflict_id="semantic:A:B:date",
+        source_a="",
+        source_b="",
+        path="lore/alar.md",
+        name="Alar",
+        quote_a="nació en el año 120",
+        quote_b="nació en el año 145",
+        conflict_type="date",
+        confidence=0.8,
+        pair_left="A",
+        pair_right="B",
+    )
+
+    payload = semantic_conflicts(
+        load_records(world),
+        entities={
+            "A": {"path": "lore/alar.md", "name": "Alar"},
+            "B": {"path": "lore/vesta.md", "name": "Vesta"},
+        },
+    )
+
+    assert payload[0]["path_b"] == "lore/vesta.md"
+    assert payload[0]["name_b"] == "Vesta"
+
+
 def test_semantic_conflicts_without_the_other_ficha_still_lists_it(
     tmp_path: Path,
 ) -> None:

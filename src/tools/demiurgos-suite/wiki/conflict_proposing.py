@@ -71,6 +71,8 @@ class ConflictOutcome:
 
     claims: tuple[ConflictClaim, ...] = ()
     provider_ok: bool = False
+    #: Claims the model produced whose quote is not verbatim in the ficha.
+    discarded: int = 0
 
 
 def build_conflict_prompt(
@@ -126,8 +128,15 @@ def verify_conflict_claims(
     targets: Sequence[SourceFicha],
     *,
     known: Iterable[tuple[str, str, str]] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> list[ConflictClaim]:
-    """Keep only claims that quote BOTH bodies and were not already recorded."""
+    """Keep only claims that quote BOTH bodies and were not already recorded.
+
+    ``stats`` is an optional out-parameter: ``stats["discarded"]`` counts the
+    claims the model produced with a quote that is not verbatim in the ficha.
+    The sweep reports that number, so "1 propuesta nueva" is never shown alone
+    while the proposal is hidden for a quote the Author cannot see.
+    """
     by_key = {target.key: target for target in targets}
     already = set(known or ())
     kept: dict[tuple[str, str, str], ConflictClaim] = {}
@@ -155,9 +164,11 @@ def verify_conflict_claims(
             or entry.get("evidence_b")
             or ""
         ).strip()
-        if not quote_in_body(source.body, quote_a):
-            continue
-        if not quote_in_body(target.body, quote_b):
+        if not quote_in_body(source.body, quote_a) or not quote_in_body(
+            target.body, quote_b
+        ):
+            if stats is not None:
+                stats["discarded"] = stats.get("discarded", 0) + 1
             continue
 
         conflict_type = _normalize_conflict_type(entry.get("conflict_type"))
@@ -207,10 +218,15 @@ def propose_conflicts_outcome(
         return ConflictOutcome()
     if _parse_json_object(raw) is None:
         return ConflictOutcome()
+    stats: dict[str, int] = {}
     claims = verify_conflict_claims(
-        parse_conflict_response(raw), source, targets, known=known
+        parse_conflict_response(raw), source, targets, known=known, stats=stats
     )
-    return ConflictOutcome(claims=tuple(claims), provider_ok=True)
+    return ConflictOutcome(
+        claims=tuple(claims),
+        provider_ok=True,
+        discarded=stats.get("discarded", 0),
+    )
 
 
 def _normalize_conflict_type(raw: Any) -> str:

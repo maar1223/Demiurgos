@@ -61,6 +61,8 @@ class ConflictSweepResult:
     status: str  # swept | done | unavailable
     swept: int = 0
     created: int = 0
+    #: Claims the model produced with a quote that is not in the ficha.
+    discarded: int = 0
     #: Semantic proposals waiting for the Author (not fichas left to review).
     proposals: int = 0
     paths: list[str] = field(default_factory=list)
@@ -265,6 +267,7 @@ def sweep_conflicts_batch(
 
     reviewed = 0
     created = 0
+    discarded = 0
     for path, digest, target_paths in batch:
         source = _ficha(by_path[path], limit=SOURCE_BODY_LIMIT)
         targets = [
@@ -285,11 +288,13 @@ def sweep_conflicts_batch(
             known=known,
             session_id=f"conflicts-{mundo}-{uuid.uuid4().hex}",
         )
+        discarded += outcome.discarded
         if not outcome.provider_ok:
             return ConflictSweepResult(
                 status="unavailable",
                 swept=reviewed,
                 created=created,
+                discarded=discarded,
                 proposals=_pending(world_dir),
                 paths=[item[0] for item in batch],
                 message="El proveedor semántico no respondió; probá de nuevo.",
@@ -319,6 +324,7 @@ def sweep_conflicts_batch(
         status="swept",
         swept=reviewed,
         created=created,
+        discarded=discarded,
         proposals=_pending(world_dir),
         paths=[item[0] for item in batch],
     )

@@ -7392,8 +7392,10 @@ def _semantic_verifier(entities: list[dict]):
     by_key = _entity_map(entities)
 
     def verify(record) -> bool:
-        source = by_key.get(record.pair_left)
-        target = by_key.get(record.pair_right)
+        # source→target order, not the sorted pair: quote_a belongs to the ficha
+        # that was swept as the source (see ConflictDecision.source_key).
+        source = by_key.get(record.source_key)
+        target = by_key.get(record.target_key)
         if source is None or target is None:
             return False
         return quote_in_body(
@@ -7463,6 +7465,7 @@ def conflicts_sweep(mundo: str, body: dict | None = None):
         "status": result.status,
         "swept": result.swept,
         "created": result.created,
+        "discarded": result.discarded,
         "proposals": result.proposals,
         "paths": result.paths,
         "message": result.message,

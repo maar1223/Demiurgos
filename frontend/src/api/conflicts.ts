@@ -124,6 +124,8 @@ export interface ConflictSweepResponse {
   status: "swept" | "done" | "unavailable";
   swept: number;
   created: number;
+  /** Claims the model produced with a quote that is not in the ficha. */
+  discarded?: number;
   /** Semantic proposals waiting for the Author (not fichas left to review). */
   proposals: number;
   paths: string[];

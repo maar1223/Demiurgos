@@ -189,10 +189,17 @@ export default function ConflictsPanel({ mundo }: ConflictsPanelProps) {
     if (result.status === "done") {
       return t("relaciones.conflictos.sweepNone");
     }
-    return t("relaciones.conflictos.sweepDone", {
+    const done = t("relaciones.conflictos.sweepDone", {
       swept: result.swept,
       created: result.created,
     });
+    // A claim whose quote is not in the ficha never reaches the list: say so,
+    // or "1 propuesta nueva" looks like a lie next to an empty panel.
+    return result.discarded
+      ? `${done} ${t("relaciones.conflictos.sweepDiscarded", {
+          count: result.discarded,
+        })}`
+      : done;
   };
 
   const sweep = useCallback(async () => {

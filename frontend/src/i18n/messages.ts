@@ -1112,6 +1112,8 @@ export const messages = {
     "relaciones.conflictos.sweepDone":
       "Revisadas {swept} fichas · {created} propuestas nuevas",
     "relaciones.conflictos.sweepNone": "No hay fichas por revisar.",
+    "relaciones.conflictos.sweepDiscarded":
+      "{count} descartada(s): la cita del modelo no aparece en la ficha.",
     "relaciones.conflictos.sweepUnavailable":
       "El proveedor semántico no respondió; probá de nuevo.",
     "relaciones.conflictos.sweepTimeout":
@@ -3412,6 +3414,8 @@ export const messages = {
     "relaciones.conflictos.sweepDone":
       "Reviewed {swept} fichas · {created} new proposals",
     "relaciones.conflictos.sweepNone": "Nothing to review.",
+    "relaciones.conflictos.sweepDiscarded":
+      "{count} discarded: the model's quote is not in the fiche.",
     "relaciones.conflictos.sweepUnavailable":
       "The semantic provider did not answer; try again.",
     "relaciones.conflictos.sweepTimeout":

@@ -396,6 +396,30 @@ describe("ConflictsPanel — semantic proposals (S3)", () => {
     );
   });
 
+  it("says how many claims were discarded for a quote that is not in the ficha", async () => {
+    fetchConflictsMock.mockResolvedValue(
+      response([], { total: 5, reviewed: 2, pending: 3 }),
+    );
+    sweepConflictsMock.mockResolvedValue({
+      status: "swept",
+      swept: 3,
+      created: 1,
+      discarded: 1,
+      proposals: 0,
+      paths: [],
+      message: "",
+    });
+
+    renderPanel();
+
+    await userEvent.click(await screen.findByTestId("conflict-sweep"));
+
+    // Without this the notice promised a proposal the panel never showed.
+    expect(await screen.findByTestId("sweep-notice")).toHaveTextContent(
+      "1 descartada(s): la cita del modelo no aparece en la ficha.",
+    );
+  });
+
   it("says when the provider did not answer", async () => {
     fetchConflictsMock.mockResolvedValue(
       response([], { total: 5, reviewed: 2, pending: 3 }),
