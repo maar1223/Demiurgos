@@ -46,8 +46,19 @@ export default function RelacionesCanon() {
   const { mundo, tab } = useParams<{ mundo: string; tab?: string }>();
   // Each tab is a real route (`/relaciones-canon/conflictos`), so a section is
   // linkable and the editor's back button can return to the one it came from.
-  const activeTab: TabKey =
-    tab === "conflictos" || tab === "propuestas" ? tab : "grafo";
+  const validTab =
+    tab === "grafo" || tab === "conflictos" || tab === "propuestas";
+  const activeTab: TabKey = validTab ? (tab as TabKey) : "grafo";
+
+  // The bare path (the navbar entry) canonicalises to /grafo, so the URL always
+  // names the section instead of showing the section-less parent.
+  useEffect(() => {
+    if (!mundo || validTab) return;
+    navigate(
+      `/taller-mundo/${encodeURIComponent(mundo)}/relaciones-canon/grafo`,
+      { replace: true },
+    );
+  }, [mundo, validTab, navigate]);
   const [preview, setPreview] = useState<RelationReconcilePreview | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);

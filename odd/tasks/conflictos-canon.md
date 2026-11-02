@@ -94,3 +94,5 @@ Runner: `pytest src/tools/demiurgos-suite/wiki/tests/` · `cd frontend && npm te
 **L27 — Icon clarity (Owner report).** A lone magnifier did not say what it does. The button now reads icon + "Fragmento" (the full sentence stays in the accessible name and the tooltip), still compact enough that the breadcrumb keeps its minimum width.
 
 **L28 — Tabs became routes; back button (Owner request).** The three tabs were local state, so no section could be linked, reloaded or targeted. They are now real paths (`/taller-mundo/:mundo/relaciones-canon/:tab`, optional param; the bare path opens the graph). The editor's file bar replaces the "Editando" badge with a "← Conflictos" button when the ficha was opened from a conflict, and that button targets `/relaciones-canon/conflictos` directly. Normal editing keeps the badge.
+
+**L29 — Canonical tab URL (Owner report).** The bare path (the navbar entry) stayed section-less until the Author clicked another tab. It now redirects (replace) to `/relaciones-canon/grafo`, and an invalid tab does the same, so the URL always names the section.

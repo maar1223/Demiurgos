@@ -181,6 +181,16 @@ describe("RelacionesCanon", () => {
     expect(await screen.findByTestId("conflicts-empty")).toBeInTheDocument();
   });
 
+  it("canonicalises the bare path to the graph route", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/taller-mundo/vibrantes/relaciones-canon/grafo",
+      ),
+    );
+  });
+
   it("navigates to the tab's own route", async () => {
     fetchConflictsMock.mockResolvedValue({
       indexed: true,
