@@ -212,7 +212,7 @@ export function GraphControlsSidebar({
           />
         </div>
 
-        <div className="flex items-center justify-between gap-3 px-2 py-1">
+        <div className="mt-2 flex items-center justify-between gap-2">
           <span className="text-small text-muted">{t("graph.onlyConflicts")}</span>
           <Switch
             checked={onlyConflicts}
