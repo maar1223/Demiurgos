@@ -317,6 +317,17 @@ describe("Navbar", () => {
     expect(screen.getByTestId("path")).toHaveTextContent("/taller-mundo");
   });
 
+  it("keeps Taller de Mundo active on a world-scoped relations route", () => {
+    renderNavbar(
+      { worlds },
+      "/taller-mundo/Vibrantes/relaciones-canon/grafo",
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Taller de Mundo" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
   it("shows 'No hay mundos' when the world list is empty", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds: [] });

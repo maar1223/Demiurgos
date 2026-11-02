@@ -206,7 +206,14 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       (link) => !isTeaser(link) && link.to !== ROUTES.TALLER_MUNDO && pathname === link.to,
     );
     if (direct) return direct.to;
-    if (pathname.startsWith("/wiki/") || pathname === ROUTES.TALLER_MUNDO) {
+    // Taller de Mundo owns the wiki workspace AND its world-scoped sub-routes
+    // (`/taller-mundo/:mundo/relaciones-canon/:tab?`), so the highlight must
+    // survive leaving the workshop shell instead of going blank there.
+    if (
+      pathname.startsWith("/wiki/") ||
+      pathname === ROUTES.TALLER_MUNDO ||
+      pathname.startsWith(`${ROUTES.TALLER_MUNDO}/`)
+    ) {
       return ROUTES.TALLER_MUNDO;
     }
     if (pathname === ROUTES.TALLER_HERRAMIENTAS) return ROUTES.TALLER_HERRAMIENTAS;
