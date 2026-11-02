@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { forwardRef, useImperativeHandle } from "react";
 import WikiEditor from "@/pages/WikiEditor";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
@@ -185,11 +185,25 @@ const frontmatterFile = {
     "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n\nEste es el cuerpo.",
 };
 
+function ConflictsProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="conflicts-route">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
+}
+
 function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
       <Routes>
         <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+        <Route
+          path="/taller-mundo/:mundo/relaciones-canon/*"
+          element={<ConflictsProbe />}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -2208,6 +2222,29 @@ describe("WikiEditor", () => {
     expect(
       textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
     ).toBe("invoco el poder de Stal");
+  });
+
+  it("goes back to the conflicts section from the file bar", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: {
+        ...mockFileContent,
+        content:
+          "Cuando el mundo no tenía nombre,\ninvoco el poder de Stal, su Áyagar Celestial.",
+      },
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor([
+      "/wiki/Vibrantes/lore/capitulos/cap1.md?highlight=invoco%20el%20poder%20de%20Stal",
+    ]);
+
+    await userEvent.click(await screen.findByTestId("back-to-conflicts"));
+
+    expect(await screen.findByTestId("conflicts-route")).toHaveTextContent(
+      "/taller-mundo/Vibrantes/relaciones-canon/conflictos",
+    );
   });
 
   it("still opens the editor when the quote is not in the ficha", async () => {

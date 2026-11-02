@@ -1255,6 +1255,21 @@ export default function WikiEditor() {
       {/* Unified file bar — always visible so navigation never disappears:
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
       <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-edge bg-surface-raised px-4 py-2">
+        {activeFragment ? (
+          <button
+            type="button"
+            data-testid="back-to-conflicts"
+            onClick={() =>
+              navigate(
+                `/taller-mundo/${encodeURIComponent(mundo ?? "")}/relaciones-canon/conflictos`,
+              )
+            }
+            className="flex shrink-0 items-center gap-1 rounded-md border border-edge bg-surface px-3 py-1.5 text-small font-medium text-primary transition-colors hover:border-action hover:text-action"
+          >
+            <Icon name="chevron-left" size={16} />
+            {t("wikiEditor.backToConflicts")}
+          </button>
+        ) : null}
         {pendingNewFile ? (
           <span className="min-w-0 max-w-[16rem] shrink-0 truncate text-small text-muted">
             {pendingNewFile.path}
@@ -1265,7 +1280,7 @@ export default function WikiEditor() {
         ) : filePath && file ? (
           <span className="min-w-0 max-w-[16rem] shrink-0 truncate text-small text-muted">
             {file.name}
-            {isEditing && (
+            {isEditing && !activeFragment && (
               <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
                 Editando
               </span>
