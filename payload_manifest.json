@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "94abecd",
+  "source_commit": "4ace3ce",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -67,6 +67,10 @@
     "src/tools/demiurgos-suite/wiki/co_creation_materializer.py",
     "src/tools/demiurgos-suite/wiki/co_creation_protocol.py",
     "src/tools/demiurgos-suite/wiki/co_creation_session_store.py",
+    "src/tools/demiurgos-suite/wiki/conflict_decisions.py",
+    "src/tools/demiurgos-suite/wiki/conflict_detector.py",
+    "src/tools/demiurgos-suite/wiki/conflict_proposing.py",
+    "src/tools/demiurgos-suite/wiki/conflict_sweep.py",
     "src/tools/demiurgos-suite/wiki/content_move_service.py",
     "src/tools/demiurgos-suite/wiki/content_mover.py",
     "src/tools/demiurgos-suite/wiki/content_root_router.py",
@@ -307,7 +311,7 @@
     },
     {
       "file": "src/tools/demiurgos-suite/wiki/import_service.py",
-      "line": 48,
+      "line": 54,
       "module": "graph_indexer",
       "type_only": true
     },
@@ -328,7 +332,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1554
+        "line": 1569
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -386,7 +390,7 @@
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_enrichment.py",
-        "line": 113
+        "line": 122
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/import_vision.py",
