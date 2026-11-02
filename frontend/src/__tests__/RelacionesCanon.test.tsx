@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import RelacionesCanon from "@/pages/RelacionesCanon";
 import type { Mock } from "vitest";
 
@@ -43,12 +48,20 @@ import {
 
 const fetchConflictsMock = vi.mocked(fetchConflicts);
 
-function renderPage() {
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
+function renderPage(
+  entry = "/taller-mundo/vibrantes/relaciones-canon",
+) {
   return render(
-    <MemoryRouter initialEntries={["/taller-mundo/vibrantes/relaciones-canon"]}>
+    <MemoryRouter initialEntries={[entry]}>
+      <LocationProbe />
       <Routes>
         <Route
-          path="/taller-mundo/:mundo/relaciones-canon"
+          path="/taller-mundo/:mundo/relaciones-canon/:tab?"
           element={<RelacionesCanon />}
         />
       </Routes>
@@ -142,6 +155,55 @@ describe("RelacionesCanon", () => {
       screen.getByRole("tab", { name: "Propuestas" }),
     ).toHaveAttribute("aria-selected", "false");
     expect(screen.getByTestId("graph-view")).toBeInTheDocument();
+  });
+
+  it("opens the tab named in the URL", async () => {
+    fetchConflictsMock.mockResolvedValue({
+      indexed: true,
+      conflicts: [],
+      summary: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        known: 0,
+        muted: 0,
+        proposed: 0,
+        by_code: {},
+        review: { total: 0, reviewed: 0, pending: 0 },
+      },
+    });
+
+    renderPage("/taller-mundo/vibrantes/relaciones-canon/conflictos");
+
+    expect(
+      screen.getByRole("tab", { name: "Conflictos" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTestId("conflicts-empty")).toBeInTheDocument();
+  });
+
+  it("navigates to the tab's own route", async () => {
+    fetchConflictsMock.mockResolvedValue({
+      indexed: true,
+      conflicts: [],
+      summary: {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        known: 0,
+        muted: 0,
+        proposed: 0,
+        by_code: {},
+        review: { total: 0, reviewed: 0, pending: 0 },
+      },
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: "Conflictos" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/taller-mundo/vibrantes/relaciones-canon/conflictos",
+    );
   });
 
   it("orders Propuestas before Conflictos", () => {

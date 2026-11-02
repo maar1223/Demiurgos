@@ -167,7 +167,7 @@ export default function App() {
               <Route path="/wiki/:mundo" element={<WikiWorld />} />
               {/* Relaciones y Canon — semantic relations graph entry. */}
               <Route
-                path="/taller-mundo/:mundo/relaciones-canon"
+                path="/taller-mundo/:mundo/relaciones-canon/:tab?"
                 element={<RelacionesCanon />}
               />
               <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />

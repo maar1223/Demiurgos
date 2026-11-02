@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
 import ProposalsPanel from "@/components/organisms/ProposalsPanel";
@@ -42,14 +42,27 @@ const TABS: readonly { key: TabKey; label: MessageKey }[] = [
  */
 export default function RelacionesCanon() {
   const { t } = useAppLanguage();
-  const { mundo } = useParams<{ mundo: string }>();
-  const [activeTab, setActiveTab] = useState<TabKey>("grafo");
+  const navigate = useNavigate();
+  const { mundo, tab } = useParams<{ mundo: string; tab?: string }>();
+  // Each tab is a real route (`/relaciones-canon/conflictos`), so a section is
+  // linkable and the editor's back button can return to the one it came from.
+  const activeTab: TabKey =
+    tab === "conflictos" || tab === "propuestas" ? tab : "grafo";
   const [preview, setPreview] = useState<RelationReconcilePreview | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncNotice, setSyncNotice] = useState("");
   const [graphVersion, setGraphVersion] = useState(0);
+
+  const selectTab = useCallback(
+    (next: TabKey) => {
+      navigate(
+        `/taller-mundo/${encodeURIComponent(mundo ?? "")}/relaciones-canon/${next}`,
+      );
+    },
+    [mundo, navigate],
+  );
 
   const refreshPreview = useCallback(async () => {
     if (!mundo) return;
@@ -164,7 +177,7 @@ export default function RelacionesCanon() {
               type="button"
               role="tab"
               aria-selected={activeTab === tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => selectTab(tab.key)}
               className={cn(
                 "border-b-2 px-4 py-2 text-small font-medium transition-colors",
                 activeTab === tab.key
