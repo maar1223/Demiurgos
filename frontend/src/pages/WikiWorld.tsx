@@ -147,7 +147,7 @@ export default function WikiWorld() {
               "focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
             )}
           >
-            <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-raised">
+            <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-hover">
               <Icon name="world" size={48} />
             </div>
             <div className="flex items-center justify-between">

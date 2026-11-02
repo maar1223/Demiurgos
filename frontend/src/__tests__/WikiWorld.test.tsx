@@ -134,6 +134,21 @@ describe("WikiWorld", () => {
     ).toBeInTheDocument();
   });
 
+  it("gives the Relaciones y Canon card the same icon-area hover as the section cards", () => {
+    renderWikiWorld();
+
+    // The card is an inline duplicate of SectionCard's markup. When its icon
+    // area hovered to a different surface token the card showed a stray inner
+    // rectangle on hover while the three section cards stayed smooth.
+    const iconArea = (button: HTMLElement) => button.querySelector("div");
+    const relaciones = screen.getByRole("button", {
+      name: /Relaciones y Canon/,
+    });
+    const lore = screen.getByRole("button", { name: /Ambientación/ });
+
+    expect(iconArea(relaciones)?.className).toBe(iconArea(lore)?.className);
+  });
+
   it("navigates to Relaciones y Canon when the card is clicked", async () => {
     const user = userEvent.setup();
     renderWikiWorld();
