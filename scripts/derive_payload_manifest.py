@@ -29,10 +29,17 @@ Rules (design v2 S0-D + tasks-v2 errata D4, applied literally):
   exactly what the manifest names.
 
 Run: ``python scripts/derive_payload_manifest.py`` from the repo root.
+
+Pass ``--check`` to verify the committed manifest is fresh without writing:
+the derived document is compared field by field against the file, ignoring
+``source_commit`` (a commit cannot contain its own sha, so the provenance field
+can never match after the manifest is committed). Exit 0 means fresh, 1 means
+stale — this is the CI freshness gate.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import fnmatch
 import json
@@ -98,7 +105,7 @@ class _ImportSite:
 
     def as_dict(self) -> dict:
         return {
-            "file": str(self.file.relative_to(REPO_ROOT)),
+            "file": _rel_posix(self.file),
             "line": self.line,
             "module": self.module,
             "type_only": self.type_only,
@@ -126,6 +133,16 @@ def _resolve_candidates(top: str) -> list[Path]:
 
 def _is_repo_module(top: str) -> bool:
     return bool(_resolve_candidates(top)) or top == "wiki"
+
+
+def _rel_posix(path: Path) -> str:
+    """Repo-relative path with POSIX separators.
+
+    The manifest is a committed, platform-independent artifact: a Windows run
+    must emit exactly the same strings as a Linux one, so ``Path`` separators
+    never leak into it (``str(Path)`` yields backslashes on Windows).
+    """
+    return path.relative_to(REPO_ROOT).as_posix()
 
 
 def _matches(rel: Path, patterns: tuple[str, ...]) -> bool:
@@ -237,13 +254,51 @@ def _collect_code_root_resources(tree: ast.AST, source_path: Path) -> list[Path]
 def _expand_to_files(rel_dir: Path) -> set[str]:
     """Concrete repo-relative files under a directory, minus denied."""
     return {
-        str(p.relative_to(REPO_ROOT))
+        _rel_posix(p)
         for p in REPO_ROOT.joinpath(rel_dir).rglob("*")
         if p.is_file() and not _is_excluded(p.relative_to(REPO_ROOT))
     }
 
 
-def main() -> int:
+def _without_source_commit(manifest: dict) -> dict:
+    """The comparable view: provenance is not part of freshness."""
+    return {key: value for key, value in manifest.items() if key != "source_commit"}
+
+
+def _describe_staleness(current: dict, derived: dict) -> list[str]:
+    """Human-readable differences between the committed and derived manifests."""
+    details: list[str] = []
+    current_payload = set(current.get("payload", []))
+    derived_payload = set(derived.get("payload", []))
+    for path in sorted(derived_payload - current_payload):
+        details.append(f"missing from manifest: {path}")
+    for path in sorted(current_payload - derived_payload):
+        details.append(f"no longer derives: {path}")
+    for key in sorted(set(current) | set(derived)):
+        if key == "source_commit":
+            continue
+        if current.get(key) != derived.get(key):
+            details.append(f"field differs: {key}")
+    return details
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Derive (or check) the runtime payload manifest.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the manifest is fresh instead of writing it",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=REPO_ROOT / "payload_manifest.json",
+        help="manifest path to write or check (default: <repo>/payload_manifest.json)",
+    )
+    args = parser.parse_args(argv)
+
     runtime_sites: list[_ImportSite] = []
     type_only_sites: list[_ImportSite] = []
     external: set[str] = set()
@@ -293,12 +348,12 @@ def main() -> int:
             if candidate.is_dir():
                 payload |= _expand_to_files(rel)
             else:
-                payload.add(str(rel))
+                payload.add(rel.as_posix())
     for resource in resources:
         rel = resource
         target = REPO_ROOT / rel
         if target.is_file() and not _is_excluded(rel):
-            payload.add(str(rel))
+            payload.add(rel.as_posix())
         elif target.is_dir():
             payload |= _expand_to_files(rel)
     for mandated in MANDATED:
@@ -314,7 +369,7 @@ def main() -> int:
         if top not in resolved_tops:
             continue
         if not any(
-            str(c.relative_to(REPO_ROOT)).startswith("src/tools/demiurgos-suite/wiki")
+            _rel_posix(c).startswith("src/tools/demiurgos-suite/wiki")
             for c in _resolve_candidates(top)
         ):
             evidence.setdefault(top, []).append(
@@ -333,7 +388,7 @@ def main() -> int:
         "schema_version": 1,
         "generated_by": "scripts/derive_payload_manifest.py",
         "source_commit": head,
-        "entrypoints": [str(ep.relative_to(REPO_ROOT)) for ep in ENTRYPOINTS],
+        "entrypoints": [_rel_posix(ep) for ep in ENTRYPOINTS],
         "payload": sorted(payload),
         "mandated": list(MANDATED),
         "denied": list(_DENIED),
@@ -348,9 +403,30 @@ def main() -> int:
         },
     }
 
-    out = REPO_ROOT / "payload_manifest.json"
+    out = args.output
+    if args.check:
+        try:
+            current = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"FAIL: cannot read {out}: {exc}", file=sys.stderr)
+            return 1
+        if _without_source_commit(current) == _without_source_commit(manifest):
+            print(f"OK: {out} is fresh ({len(payload)} payload files)")
+            return 0
+        print(
+            f"FAIL: {out} is stale; run scripts/derive_payload_manifest.py",
+            file=sys.stderr,
+        )
+        for detail in _describe_staleness(current, manifest):
+            print(f"  {detail}", file=sys.stderr)
+        return 1
+
     out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"wrote {out.relative_to(REPO_ROOT)} ({len(payload)} payload files)")
+    try:
+        display: object = out.relative_to(REPO_ROOT)
+    except ValueError:
+        display = out
+    print(f"wrote {display} ({len(payload)} payload files)")
     return 0
 
 

@@ -12,6 +12,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  payload-manifest:
+    # AUD-01 guard: the packaging ships exactly the derived allow-list, so a
+    # runtime import the derivator misses produces an artifact that installs
+    # and cannot boot (four conflict_*.py modules were exactly that). This gate
+    # re-derives the manifest in memory and fails when the committed file is
+    # stale. source_commit is excluded: a commit cannot contain its own sha.
+    name: Payload manifest freshness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install uv (the derivator is stdlib-only; this keeps the job on uv)
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv
+        shell: bash
+        run: uv venv .venv --python 3.12
+
+      - name: Verify payload_manifest.json is fresh
+        shell: bash
+        run: .venv/bin/python scripts/derive_payload_manifest.py --check
+
   backend:
     # Task 7.4 — wheels-only uv matrix (no setup-python, no bare pip),
     # mirroring the narrowed support matrix (decision #3579):
@@ -20,7 +43,9 @@ jobs:
     # The suite includes the POSIX Hermes-absent boot cell, which serves the
     # built SPA at "/" (the launcher hardcodes <app-root>/frontend/dist), so the
     # built dist is downloaded into frontend/dist before the tests run.
-    needs: frontend
+    # AUD-02: the dependency is the artifact-only build, never the frontend
+    # TEST job — a failing frontend test must not skip the backend suite.
+    needs: frontend-build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -134,8 +159,33 @@ jobs:
         run: npm run build
         working-directory: frontend
 
-      - name: Upload the built dist (explicit artifact for the static-serving job)
-        if: matrix.os == 'ubuntu-latest'
+  frontend-build:
+    # AUD-02: artifact-only build. The backend, launcher, static-serving and
+    # PowerShell jobs need the built SPA, never the frontend TEST result: when
+    # they depended on the frontend matrix, a single frontend test failure
+    # skipped the whole backend suite and hid AUD-01 from every PR.
+    name: Frontend build (dist artifact)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
+      - name: Upload the built dist (explicit artifact for the consuming jobs)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: frontend-dist-ubuntu-latest
@@ -147,7 +197,7 @@ jobs:
     # built dist out of the general backend suite (S1-4); this job runs the
     # focused suite and the same-origin guard (S1-7) against the real build.
     name: Static serving (built dist artifact)
-    needs: frontend
+    needs: frontend-build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -191,8 +241,8 @@ jobs:
     name: Launcher (${{ matrix.os }})
     # The POSIX Hermes-absent boot cell serves the built SPA at "/": the launcher
     # hardcodes DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist", so the built
-    # dist (from the frontend job) is downloaded into frontend/dist first.
-    needs: frontend
+    # dist (from the frontend-build job) is downloaded into frontend/dist first.
+    needs: frontend-build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -322,7 +372,7 @@ jobs:
     # The Windows PS 5.1 boot-smoke cell serves the built SPA at "/" (the
     # launcher hardcodes <app-root>/frontend/dist), so the built dist is
     # downloaded here too.
-    needs: frontend
+    needs: frontend-build
     runs-on: windows-latest
     steps:
       - name: Checkout
