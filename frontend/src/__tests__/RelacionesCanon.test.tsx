@@ -294,23 +294,51 @@ describe("RelacionesCanon", () => {
     renderPage();
 
     const syncButton = await screen.findByTestId("sync-button");
-    await waitFor(() =>
-      expect(syncButton).toHaveTextContent("Sincronizar · 1 cambio"),
-    );
+    expect(syncButton).toHaveTextContent("Sincronizar");
 
     await user.click(screen.getByRole("tab", { name: "Propuestas" }));
     expect(screen.getByTestId("sync-button")).toBeInTheDocument();
+  });
+
+  it("does not compute the world plan until the sync dialog is opened", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // Regression: the plan is a whole-world server scan and the page only uses
+    // it to label the button. Paying it on every entry — for every tab — is
+    // what made the section take seconds to appear.
+    await screen.findByTestId("sync-button");
+    expect(fetchRelationReconcilePreview).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("sync-button"));
+
+    await screen.findByRole("dialog");
+    expect(fetchRelationReconcilePreview).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("sync-button")).toHaveTextContent(
+      "Sincronizar · 1 cambio",
+    );
+  });
+
+  it("reports a preview failure instead of opening an empty dialog", async () => {
+    vi.mocked(fetchRelationReconcilePreview).mockRejectedValue(
+      new Error("boom"),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("sync-button"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo comprobar el estado de sincronización.",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("applies the world sync after confirmation", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    const syncButton = await screen.findByTestId("sync-button");
-    await waitFor(() =>
-      expect(syncButton).toHaveTextContent("Sincronizar · 1 cambio"),
-    );
-    await user.click(syncButton);
+    await user.click(await screen.findByTestId("sync-button"));
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(/Se modificarán 1 fichas/);

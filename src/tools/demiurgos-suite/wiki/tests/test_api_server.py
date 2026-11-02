@@ -122,6 +122,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # exercise /ai/ask or /api/chat wire a fake provider explicitly.
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     api_server._graph_indices.clear()
+    api_server._relation_plans.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
     api_server._MATERIALIZE_PENDING_PROPOSALS.clear()
@@ -277,6 +278,7 @@ def client_sorted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
     api_server._graph_indices.clear()
+    api_server._relation_plans.clear()
     return TestClient(api_server.app)
 
 
@@ -6311,6 +6313,7 @@ def empty_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     api_server._graph_indices.clear()
+    api_server._relation_plans.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
     api_server._GUIDED_CONSENT_TOKENS.clear()

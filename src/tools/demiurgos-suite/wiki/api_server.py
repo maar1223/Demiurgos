@@ -6678,6 +6678,53 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
     return _graph_indices[mundo]
 
 
+# Cached whole-world reconciliation plans, keyed by the resolved world directory.
+# ``build_global_plan`` is pure Python CPU (about one second on a real world) and
+# the client only needs it to label one button, so a repeated preview must not
+# pay it again. The entry is validated by a cheap tree fingerprint: any ficha or
+# curation/state write under the world moves it, which keeps the cache exactly as
+# fresh as the graph index without every write path having to remember an
+# invalidation call.
+_relation_plans: dict[str, tuple[tuple[int, int, int], Any]] = {}
+
+
+def _world_fingerprint(root: Path) -> tuple[int, int, int]:
+    """(file count, newest mtime_ns, total bytes) for one world tree."""
+    count = 0
+    newest = 0
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            try:
+                stat = os.stat(os.path.join(dirpath, name))
+            except OSError:
+                continue
+            count += 1
+            total += stat.st_size
+            if stat.st_mtime_ns > newest:
+                newest = stat.st_mtime_ns
+    return (count, newest, total)
+
+
+def _get_global_plan(mundo: str, mundo_dir: Path):
+    """``build_global_plan`` for one world, recomputed only when its tree moved."""
+    # The index is ensured fresh first: a stale index would make the plan (and
+    # the fingerprint we cache it under) describe the previous bytes.
+    index = _get_graph(mundo)
+    fingerprint = _world_fingerprint(mundo_dir)
+    cache_key = str(mundo_dir)
+    cached = _relation_plans.get(cache_key)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    plan = build_global_plan(
+        mundo=mundo,
+        mundos_dir=_mundos_dir(),
+        index=index,
+    )
+    _relation_plans[cache_key] = (fingerprint, plan)
+    return plan
+
+
 def _read_ficha_frontmatter(full: Path) -> tuple[dict, str]:
     """Return the parsed frontmatter and body of one ficha (CRLF-safe)."""
     with open(full, "r", encoding="utf-8", newline="") as handle:
@@ -6892,14 +6939,10 @@ def relations_proposal_accept(mundo: str, proposal_id: str):
 @app.get("/api/{mundo}/relations/reconcile/preview")
 def relations_reconcile_preview(mundo: str):
     """Preview the world-wide deterministic reconciliation (P4). Read-only."""
-    if _resolve_mundo_dir(mundo) is None:
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         raise problem("world.not_found")
-    plan = build_global_plan(
-        mundo=mundo,
-        mundos_dir=_mundos_dir(),
-        index=_get_graph(mundo),
-    )
-    return _global_plan_dict(plan)
+    return _global_plan_dict(_get_global_plan(mundo, mundo_dir))
 
 
 def _global_plan_dict(plan) -> dict:
@@ -6935,11 +6978,7 @@ def relations_reconcile(mundo: str):
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
         raise problem("world.not_found")
-    plan = build_global_plan(
-        mundo=mundo,
-        mundos_dir=_mundos_dir(),
-        index=_get_graph(mundo),
-    )
+    plan = _get_global_plan(mundo, mundo_dir)
     if not plan:
         return {
             "applied": 0,
@@ -6995,6 +7034,9 @@ def relations_reconcile(mundo: str):
             logger.warning("relations: reconcile failed for %s: %s", file_plan.path, exc)
             failed.append(file_plan.path)
     _graph_indices.pop(mundo, None)
+    # The apply just rewrote fichas: drop the cached plan explicitly instead of
+    # relying on the next fingerprint read (same reason the index is dropped).
+    _relation_plans.pop(str(mundo_dir), None)
     return {
         "applied": applied,
         "failed": failed,

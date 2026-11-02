@@ -155,6 +155,62 @@ def test_a_cross_folder_ungrounded_link_stays_ungrounded(client, monkeypatch):
     assert item["remove"][0]["reason"] == "ungrounded"
 
 
+def test_preview_is_cached_until_the_world_changes(client, monkeypatch):
+    """The whole-world plan is CPU work; a repeated preview must not redo it."""
+    _principal(monkeypatch)
+    world = _world()
+    _seed(world)
+    calls: list[int] = []
+    real_build = api_server.build_global_plan
+
+    def counting_build(**kwargs):
+        calls.append(1)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(api_server, "build_global_plan", counting_build)
+
+    first = client.get("/api/test_mundo/relations/reconcile/preview").json()
+    second = client.get("/api/test_mundo/relations/reconcile/preview").json()
+
+    assert first == second
+    assert len(calls) == 1
+
+    # Any ficha write changes the tree fingerprint: the next preview is fresh.
+    # A direct write bypasses the endpoint that would drop the graph index, so
+    # the test drops it the same way `_seed` does.
+    _add(
+        world,
+        "lore/alpha.md",
+        "type: personaje\nid: lore::alpha\ntitle: Alpha\n"
+        "relaciones:\n  - lore::gamma\n  - lore::beta\n",
+        "Alpha served Beta.\n",
+    )
+    api_server._graph_indices.clear()
+    third = client.get("/api/test_mundo/relations/reconcile/preview").json()
+
+    assert len(calls) == 2
+    assert third["files"] == 1
+    assert third["additions"] == 0  # beta is declared now
+    assert third["removals"] == 1
+
+
+def test_a_curation_write_invalidates_the_cached_preview(client, monkeypatch):
+    _principal(monkeypatch)
+    _seed(_world())
+
+    assert client.get(
+        "/api/test_mundo/relations/reconcile/preview"
+    ).json()["files"] == 1
+
+    assert client.post(
+        "/api/test_mundo/relations/mute", json={"path": "lore/alpha.md"}
+    ).status_code == 200
+
+    assert client.get(
+        "/api/test_mundo/relations/reconcile/preview"
+    ).json()["files"] == 0
+
+
 def test_a_non_entity_ficha_is_not_touched(client, monkeypatch):
     _principal(monkeypatch)
     world = _world()

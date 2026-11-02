@@ -60,6 +60,7 @@ export default function RelacionesCanon() {
     );
   }, [mundo, validTab, navigate]);
   const [preview, setPreview] = useState<RelationReconcilePreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
@@ -75,25 +76,42 @@ export default function RelacionesCanon() {
     [mundo, navigate],
   );
 
-  const refreshPreview = useCallback(async () => {
-    if (!mundo) return;
+  /** Read the world-wide plan and return it, so a caller never reads a stale
+   *  `preview` from its own render closure. */
+  const loadPreview = useCallback(async (): Promise<RelationReconcilePreview | null> => {
+    if (!mundo) return null;
     try {
-      setPreview(await fetchRelationReconcilePreview(mundo));
+      const next = await fetchRelationReconcilePreview(mundo);
+      setPreview(next);
+      return next;
     } catch {
       setPreview(null);
+      return null;
     }
   }, [mundo]);
 
-  useEffect(() => {
-    void refreshPreview();
-  }, [refreshPreview]);
+  // Deliberately NO mount fetch. The plan is a whole-world scan (~1 s of server
+  // CPU on a real world) and this page only uses it to label the sync button,
+  // so paying it on every entry — for every tab — is what made the section feel
+  // slow. It is computed the first time the dialog is opened, and refreshed
+  // after a sync.
 
   const openSync = async () => {
     if (!mundo) return;
-    if (preview === null) {
-      await refreshPreview();
-    }
     setSyncNotice("");
+    setSyncError("");
+    let next = preview;
+    if (next === null) {
+      setPreviewing(true);
+      next = await loadPreview();
+      setPreviewing(false);
+    }
+    if (next === null) {
+      // Without a plan there is nothing to confirm: say so instead of opening
+      // an empty dialog.
+      setSyncError(t("relaciones.reconcile.previewError"));
+      return;
+    }
     setSyncOpen(true);
   };
 
@@ -105,7 +123,7 @@ export default function RelacionesCanon() {
       const result = await applyRelationReconcile(mundo);
       setSyncOpen(false);
       setGraphVersion((version) => version + 1);
-      await refreshPreview();
+      await loadPreview();
       setSyncNotice(
         t("relaciones.reconcile.applied", {
           files: result.applied,
@@ -124,13 +142,15 @@ export default function RelacionesCanon() {
     }
   };
 
-  const syncLabel = preview === null
-    ? t("relaciones.reconcile.button.base")
-    : preview.files === 0
-      ? t("relaciones.reconcile.button.zero")
-      : preview.files === 1
-        ? t("relaciones.reconcile.button.one")
-        : t("relaciones.reconcile.button.many", { count: preview.files });
+  const syncLabel = previewing
+    ? t("relaciones.reconcile.checking")
+    : preview === null
+      ? t("relaciones.reconcile.button.base")
+      : preview.files === 0
+        ? t("relaciones.reconcile.button.zero")
+        : preview.files === 1
+          ? t("relaciones.reconcile.button.one")
+          : t("relaciones.reconcile.button.many", { count: preview.files });
 
   // The graph gets the whole viewport under the app header (3.5rem + 1px):
   // a fixed 1280px container and 18rem of reserved height wasted both axes.
@@ -157,7 +177,9 @@ export default function RelacionesCanon() {
           data-testid="sync-button"
           title={t("relaciones.reconcile.button.title")}
           onClick={openSync}
-          disabled={syncing || (preview !== null && preview.files === 0)}
+          disabled={
+            syncing || previewing || (preview !== null && preview.files === 0)
+          }
           className="rounded-lg border border-edge px-4 py-2 text-small font-medium text-primary transition-colors hover:border-action hover:text-action disabled:cursor-not-allowed disabled:opacity-50"
         >
           {syncing ? t("relaciones.reconcile.checking") : syncLabel}

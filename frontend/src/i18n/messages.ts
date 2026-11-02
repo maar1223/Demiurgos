@@ -1054,6 +1054,8 @@ export const messages = {
     "relaciones.reconcile.button.one": "Sincronizar · 1 cambio",
     "relaciones.reconcile.button.many": "Sincronizar · {count} cambios",
     "relaciones.reconcile.checking": "Comprobando…",
+    "relaciones.reconcile.previewError":
+      "No se pudo comprobar el estado de sincronización.",
     "relaciones.reconcile.button.title":
       "Alinea el frontmatter con lo que el texto dice. Sin IA: agrega lo que falta y quita lo que ningún texto respalda.",
     "relaciones.reconcile.listTitle": "Cambios por aplicar",
@@ -3353,6 +3355,7 @@ export const messages = {
     "relaciones.reconcile.button.one": "Sync · 1 change",
     "relaciones.reconcile.button.many": "Sync · {count} changes",
     "relaciones.reconcile.checking": "Checking…",
+    "relaciones.reconcile.previewError": "Could not check the sync state.",
     "relaciones.reconcile.button.title":
       "Aligns the frontmatter with what the text says. No model: adds what is missing and removes what no text backs.",
     "relaciones.reconcile.listTitle": "Changes to apply",
