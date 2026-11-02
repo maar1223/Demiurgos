@@ -66,7 +66,7 @@ Cuando sea **español**, debe ser **español neutro íntegro** (sin voseo ni mod
 | finalizá | finaliza |
 | arrancá | empieza |
 | construí / mantenelo | construye / mantenlo |
-| usá / probá | usa / prueba |
+| usá / probá / recargá | usa / prueba / recarga |
 | agregá / quitá | agrega / quita |
 | mové / buscá | mueve / busca |
 
