@@ -105,7 +105,7 @@ class _ImportSite:
 
     def as_dict(self) -> dict:
         return {
-            "file": str(self.file.relative_to(REPO_ROOT)),
+            "file": _rel_posix(self.file),
             "line": self.line,
             "module": self.module,
             "type_only": self.type_only,
@@ -133,6 +133,16 @@ def _resolve_candidates(top: str) -> list[Path]:
 
 def _is_repo_module(top: str) -> bool:
     return bool(_resolve_candidates(top)) or top == "wiki"
+
+
+def _rel_posix(path: Path) -> str:
+    """Repo-relative path with POSIX separators.
+
+    The manifest is a committed, platform-independent artifact: a Windows run
+    must emit exactly the same strings as a Linux one, so ``Path`` separators
+    never leak into it (``str(Path)`` yields backslashes on Windows).
+    """
+    return path.relative_to(REPO_ROOT).as_posix()
 
 
 def _matches(rel: Path, patterns: tuple[str, ...]) -> bool:
@@ -244,7 +254,7 @@ def _collect_code_root_resources(tree: ast.AST, source_path: Path) -> list[Path]
 def _expand_to_files(rel_dir: Path) -> set[str]:
     """Concrete repo-relative files under a directory, minus denied."""
     return {
-        str(p.relative_to(REPO_ROOT))
+        _rel_posix(p)
         for p in REPO_ROOT.joinpath(rel_dir).rglob("*")
         if p.is_file() and not _is_excluded(p.relative_to(REPO_ROOT))
     }
@@ -338,12 +348,12 @@ def main(argv: list[str] | None = None) -> int:
             if candidate.is_dir():
                 payload |= _expand_to_files(rel)
             else:
-                payload.add(str(rel))
+                payload.add(rel.as_posix())
     for resource in resources:
         rel = resource
         target = REPO_ROOT / rel
         if target.is_file() and not _is_excluded(rel):
-            payload.add(str(rel))
+            payload.add(rel.as_posix())
         elif target.is_dir():
             payload |= _expand_to_files(rel)
     for mandated in MANDATED:
@@ -359,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         if top not in resolved_tops:
             continue
         if not any(
-            str(c.relative_to(REPO_ROOT)).startswith("src/tools/demiurgos-suite/wiki")
+            _rel_posix(c).startswith("src/tools/demiurgos-suite/wiki")
             for c in _resolve_candidates(top)
         ):
             evidence.setdefault(top, []).append(
@@ -378,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": 1,
         "generated_by": "scripts/derive_payload_manifest.py",
         "source_commit": head,
-        "entrypoints": [str(ep.relative_to(REPO_ROOT)) for ep in ENTRYPOINTS],
+        "entrypoints": [_rel_posix(ep) for ep in ENTRYPOINTS],
         "payload": sorted(payload),
         "mandated": list(MANDATED),
         "denied": list(_DENIED),
