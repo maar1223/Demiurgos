@@ -355,6 +355,122 @@ class TestPowerShell51Contract:
             assert "DEMIURGOS_DATA_ROOT" in text
 
 
+class TestProductRuntimeContract:
+    """S5/S7 (hermes-core-runtime T6): the launchers run the product-owned
+    runtime by absolute path, isolate its home/checkout, and pass the upstream
+    API-server port variables while keeping the legacy names for older builds."""
+
+    def test_posix_gateway_exports_upstream_api_server_port(self):
+        text = _text(PORTABLE_LAUNCHER)
+        # The new runtime reads API_SERVER_*; older builds still read the legacy
+        # HERMES_GATEWAY_* names, so both must be exported for the same port.
+        assert 'API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$GATEWAY_PORT"' in text
+        assert 'HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT"' in text
+
+    def test_posix_prefers_product_owned_binary_over_path(self):
+        text = _text(PORTABLE_LAUNCHER)
+        assert (
+            'PRODUCT_HERMES_AGENT_ROOT="${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes-agent"'
+            in text
+        )
+        # The checkout's exact-install launcher and the installer's home bin are
+        # both product-owned candidates...
+        assert '"$PRODUCT_HERMES_AGENT_ROOT/.hermes/bin/hermes"' in text
+        assert '"$PRODUCT_HERMES_HOME/bin/hermes"' in text
+        # ...and resolve before `command -v hermes`, which stays a dev fallback
+        # so a user-installed Hermes can never shadow the product runtime.
+        assert text.index(
+            '"$PRODUCT_HERMES_AGENT_ROOT/.hermes/bin/hermes"'
+        ) < text.index('candidate="$(command -v hermes')
+
+    def test_posix_exports_product_agent_root_for_the_project_plugin(self):
+        text = _text(PORTABLE_LAUNCHER)
+        assert 'export HERMES_AGENT_ROOT="$PRODUCT_HERMES_AGENT_ROOT"' in text
+        # Exported before either child starts, so the gateway/API inherit it.
+        assert text.index("export HERMES_AGENT_ROOT") < text.index("start_component gateway")
+
+    def test_ps_gateway_exports_upstream_api_server_port(self):
+        text = _text(PS_GATEWAY)
+        assert '$env:API_SERVER_HOST = "127.0.0.1"' in text
+        assert '$env:API_SERVER_PORT = "$gatewayPort"' in text
+        # Legacy names kept for older builds.
+        assert '$env:HERMES_GATEWAY_HOST = "127.0.0.1"' in text
+        assert '$env:HERMES_GATEWAY_PORT = "$gatewayPort"' in text
+
+    def test_ps_gateway_prefers_product_owned_binary_over_path(self):
+        text = _text(PS_GATEWAY)
+        assert "$productAgentRoot" in text
+        assert ".hermes\\bin\\hermes.exe" in text
+        assert 'Join-Path $productHermesHome "bin\\hermes.exe"' in text
+        # Get-Command remains the dev fallback only.
+        assert text.index(".hermes\\bin\\hermes.exe") < text.index("Get-Command hermes")
+
+    def test_ps_gateway_exports_product_home_and_agent_root(self):
+        text = _text(PS_GATEWAY)
+        assert "$env:HERMES_HOME = $productHermesHome" in text
+        assert "$env:HERMES_AGENT_ROOT = $productAgentRoot" in text
+        # A provisioned checkout is enough, even before config.yaml exists.
+        assert '(Join-Path $productAgentRoot ".git")' in text
+
+    def test_posix_verifies_the_product_pin_before_starting_gateway(self):
+        """S7: a product-owned binary is only started after the checkout pin
+        check; the app still boots when the check rejects the runtime."""
+        text = _text(PORTABLE_LAUNCHER)
+        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        assert "verify_product_runtime" in start_block
+        assert start_block.index("verify_product_runtime") < start_block.index(
+            'if [ -z "$HERMES_BIN" ]'
+        )
+        assert '--check --install-root "$PRODUCT_ROOT"' in text
+
+    def test_ps_gateway_verifies_the_product_pin_before_starting(self):
+        text = _text(PS_GATEWAY)
+        assert "provision-hermes.ps1" in text
+        assert "-Check -InstallRoot $productRoot" in text
+        assert text.index("-Check -InstallRoot $productRoot") < text.index(
+            "& $hermesBin gateway run"
+        )
+
+    @pytest.mark.skipif(
+        os.name == "nt" or shutil.which("bash") is None,
+        reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
+    )
+    def test_posix_resolution_prefers_product_binary_behaviourally(self, tmp_path: Path):
+        """Behavioural, hermetic: with a provisioned checkout launcher AND a
+        different `hermes` on PATH, the product-owned binary wins."""
+        product = tmp_path / "demiurgos"
+        agent_bin = product / "hermes-agent" / ".hermes" / "bin"
+        agent_bin.mkdir(parents=True)
+        product_bin = agent_bin / "hermes"
+        product_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        product_bin.chmod(0o755)
+
+        user_bin = tmp_path / "user-bin"
+        user_bin.mkdir()
+        path_hermes = user_bin / "hermes"
+        path_hermes.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path_hermes.chmod(0o755)
+
+        probe = (
+            'source "$1" __probe__ >/dev/null 2>&1 || true; '
+            'printf "%s" "${HERMES_BIN:-}"'
+        )
+        result = subprocess.run(
+            ["bash", "-c", probe, "bash", str(PORTABLE_LAUNCHER)],
+            env={
+                "HOME": str(tmp_path / "home"),
+                "TMPDIR": str(tmp_path / "tmp"),
+                "DEMIURGOS_HOME": str(product),
+                "PATH": f"{user_bin}:/usr/bin:/bin",
+            },
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == str(product_bin)
+
+
 class TestSystemControlDispatch:
     def test_dispatch_resolves_per_os_launcher(self):
         text = _text(API_SERVER)

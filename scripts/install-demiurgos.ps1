@@ -49,6 +49,10 @@
 #                        path is normalized. The installer never prompts.
 #   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
 #                        pipeline bakes the real value at publish time)
+#   DEMIURGOS_HERMES_SKIP  "1" -> skip the assistant runtime provisioning
+#                        (hermetic installer harnesses; never a normal install).
+#                        scripts/provision-hermes.ps1 is downloaded and
+#                        verified against the signed SHA256SUMS before it runs.
 #   UV_VERSION           pinned uv version
 #   DEMIURGOS_LANGUAGE   seeded data-root locale (default es)
 #   DEMIURGOS_WORLD      optional seeded world
@@ -119,6 +123,9 @@ $script:payloadFile = $null
 $script:uvBin = $null
 $script:dataRoot = $null
 $script:envFile = $null
+# Verified channel manifest (SHA256SUMS); reused by the runtime provisioner so
+# the Hermes script is verified against the SAME signed manifest as the core.
+$script:sumsFile = $null
 
 # Dot-source the shared checksum verifier (design S3-2).
 . (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "lib\verify_checksum.ps1")
@@ -268,6 +275,7 @@ function Invoke-FetchAndVerifyPayload {
     if (-not (Test-Minisig -SumsFile (Join-Path $workdir "SHA256SUMS") -SignatureFile (Join-Path $workdir "SHA256SUMS.minisig"))) {
         Fail "signed-manifest verification failed; the channel manifest is tampered or unsigned - fix the channel and re-run"
     }
+    $script:sumsFile = Join-Path $workdir "SHA256SUMS"
 
     $payloadName = Get-PayloadName (Join-Path $workdir "version.json") $version
     $script:payloadFile = Join-Path $workdir $payloadName
@@ -279,6 +287,51 @@ function Invoke-FetchAndVerifyPayload {
     }
     if (-not (Verify-Sha256 -FilePath $payloadFile -Expected $expected)) {
         Fail "checksum mismatch for $payloadName; the download is corrupt or tampered - fix the channel and re-run"
+    }
+}
+
+# --- product-owned Hermes runtime (S5/S7, hermes-core-runtime T4) ----------
+# Mirrors the POSIX core: download scripts/provision-hermes.ps1 from the SAME
+# signed channel manifest, verify it, then execute it. A missing script or
+# checksum entry is a channel defect, so the install fails closed.
+
+function Get-ChannelManifest {
+    if ($script:sumsFile -and (Test-Path -LiteralPath $script:sumsFile)) { return }
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    $workdir = Join-Path $stagingRoot ".work-manifest-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $workDirs.Add($workdir)
+    New-Item -ItemType Directory -Force -Path $workdir | Out-Null
+    $sums = Join-Path $workdir "SHA256SUMS"
+    Invoke-Download "$urlBase/SHA256SUMS" $sums
+    try { Invoke-Download "$urlBase/SHA256SUMS.minisig" (Join-Path $workdir "SHA256SUMS.minisig") } catch { }
+    if (-not (Test-Minisig -SumsFile $sums -SignatureFile (Join-Path $workdir "SHA256SUMS.minisig"))) {
+        Fail "signed-manifest verification failed; the channel manifest is tampered or unsigned - fix the channel and re-run"
+    }
+    $script:sumsFile = $sums
+}
+
+function Invoke-HermesProvision {
+    if ($env:DEMIURGOS_HERMES_SKIP -eq "1") {
+        Write-Host "install-demiurgos: Hermes runtime provisioning skipped (DEMIURGOS_HERMES_SKIP=1)"
+        return
+    }
+    Get-ChannelManifest
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    $workdir = Join-Path $stagingRoot ".work-provision-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $workDirs.Add($workdir)
+    New-Item -ItemType Directory -Force -Path $workdir | Out-Null
+    $script = Join-Path $workdir "provision-hermes.ps1"
+    Invoke-Download "$urlBase/scripts/provision-hermes.ps1" $script
+    $expected = Get-ShaFor $script:sumsFile "scripts/provision-hermes.ps1"
+    if (-not $expected) {
+        Fail "SHA256SUMS has no entry for scripts/provision-hermes.ps1; fix the channel and re-run"
+    }
+    if (-not (Verify-Sha256 -FilePath $script -Expected $expected)) {
+        Fail "checksum mismatch for scripts/provision-hermes.ps1; the download is corrupt or tampered - fix the channel and re-run"
+    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -InstallRoot $installRoot
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Hermes runtime provisioning failed; the assistant is required by default - see the error above and re-run"
     }
 }
 
@@ -611,9 +664,12 @@ try {
     }
     if ($alreadyCurrent) {
         Write-Host "install-demiurgos: $version is already installed and current; nothing to do"
-        # ...except the Start Menu entry, which is the installer's own to own:
-        # a user who deleted it gets it back by re-running the installer.
+        # ...except the Start Menu entry and the assistant runtime, which are
+        # the installer's own to own: a user who deleted the entry, or an
+        # earlier install that predates the runtime, is repaired by re-running
+        # the installer without reinstalling the app.
         Install-StartMenuShortcut
+        Invoke-HermesProvision
         exit 0
     }
 
@@ -623,6 +679,7 @@ try {
     Invoke-StageAndInstall
     Invoke-CommitStaging
     Write-ChannelConfig
+    Invoke-HermesProvision
     Invoke-DataRootBootstrap
     Install-StartMenuShortcut
 

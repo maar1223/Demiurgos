@@ -123,8 +123,10 @@ jobs:
           for f in install.sh install.ps1 start-api.ps1 \
                    start-gateway.ps1 scripts/start-demiurgos.sh \
                    scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
+                   scripts/provision-hermes.sh scripts/provision-hermes.ps1 \
                    scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
                    scripts/lib/desktop-shortcut.ps1 \
+                   third-party/hermes/LICENSE \
                    desktop/Demiurgos.desktop \
                    "docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg" \
                    docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico \
@@ -157,9 +159,12 @@ jobs:
           scripts/start-demiurgos.sh
           scripts/install-demiurgos.sh
           scripts/install-demiurgos.ps1
+          scripts/provision-hermes.sh
+          scripts/provision-hermes.ps1
           scripts/lib/verify_checksum.sh
           scripts/lib/verify_checksum.ps1
           scripts/lib/desktop-shortcut.ps1
+          third-party/hermes/LICENSE
           desktop/Demiurgos.desktop
           docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg
           docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico
@@ -225,8 +230,10 @@ jobs:
             'install.sh', 'install.ps1', 'start-api.ps1',
             'start-gateway.ps1', 'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
+            'scripts/provision-hermes.sh', 'scripts/provision-hermes.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
             'scripts/lib/desktop-shortcut.ps1',
+            'third-party/hermes/LICENSE',
             'desktop/Demiurgos.desktop',
             'docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg',
             'docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico',
@@ -260,8 +267,10 @@ jobs:
             'start-gateway.ps1', 'scripts/start-demiurgos.ps1',
             'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
+            'scripts/provision-hermes.sh', 'scripts/provision-hermes.ps1',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
             'scripts/lib/desktop-shortcut.ps1',
+            'third-party/hermes/LICENSE',
             'desktop/Demiurgos.desktop',
             'docs/Logos-Demiurgos/dorado/01_svg_dorado/letra-D-6tonos.svg',
             'docs/Logos-Demiurgos/dorado/03_ico_dorado/demiurgos.ico',
@@ -323,6 +332,7 @@ jobs:
           cat SHA256SUMS.* > SHA256SUMS
           for f in scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh \
                    scripts/install-demiurgos.ps1 scripts/lib/verify_checksum.ps1 \
+                   scripts/provision-hermes.sh scripts/provision-hermes.ps1 \
                    install.sh install.ps1; do
             [ -f "$f" ] || continue
             sha256sum "$f" >> SHA256SUMS

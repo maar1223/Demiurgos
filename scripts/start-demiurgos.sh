@@ -54,15 +54,38 @@ fi
 # The launcher exports it to the children ONLY when provisioned (see
 # export_product_hermes_home); unprovisioned machines keep today's resolution.
 PRODUCT_HERMES_HOME="${DEMIURGOS_HERMES_HOME:-${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes}"
+# Product-owned runtime checkout (S5): the pinned fork provisioned next to the
+# profile root. The project plugin resolves it through HERMES_AGENT_ROOT.
+PRODUCT_HERMES_AGENT_ROOT="${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes-agent"
+PRODUCT_ROOT="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
 
 # Interpreter from the frozen layout (S2-4): the layout venv, never a
 # system Python and never a hardcoded path.
 PYTHON_BIN="$APP_ROOT/.venv/bin/python"
 API_DIR="$APP_ROOT/src/tools/demiurgos-suite/wiki"
-HERMES_BIN="$(command -v hermes 2>/dev/null || true)"
-if [ -z "$HERMES_BIN" ] && [ -x "$HOME/.local/bin/hermes" ]; then
-    HERMES_BIN="$HOME/.local/bin/hermes"
-fi
+
+# Product-owned runtime first (S5/S7): the checkout's exact-install launcher
+# and the installer-published <hermes home>/bin. `command -v hermes` is a dev
+# fallback only, so a user-installed Hermes on PATH never shadows the product
+# runtime. Candidates are absolute; nothing is resolved from the user's PATH
+# until both product locations are absent.
+resolve_hermes_bin() {
+    local candidate
+    for candidate in \
+        "$PRODUCT_HERMES_AGENT_ROOT/.hermes/bin/hermes" \
+        "$PRODUCT_HERMES_HOME/bin/hermes"; do
+        if [ -x "$candidate" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    candidate="$(command -v hermes 2>/dev/null || true)"
+    if [ -z "$candidate" ] && [ -x "$HOME/.local/bin/hermes" ]; then
+        candidate="$HOME/.local/bin/hermes"
+    fi
+    printf '%s' "$candidate"
+}
+HERMES_BIN="$(resolve_hermes_bin)"
 
 # Persistent logs under the install root (S2-6); runtime state (pid files) in
 # the per-user runtime dir from the layout contract — never hardcoded temp
@@ -523,10 +546,13 @@ start_component() {
         gateway)
             # CWD = app root so Path.cwd()/.hermes/plugins resolves to the
             # project plugins; HERMES_ENABLE_PROJECT_PLUGINS=1 opts them in
-            # (plugins.enabled in ~/.hermes/config.yaml gates which load).
+            # (plugins.enabled in the Hermes profile gates which load).
+            # The current runtime reads API_SERVER_HOST/PORT; the legacy
+            # HERMES_GATEWAY_* names stay for older builds on the same port.
             (cd "$APP_ROOT" && exec nohup env \
                 DEMIURGOS_ROOT="$APP_ROOT" \
                 HERMES_ENABLE_PROJECT_PLUGINS=1 \
+                API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$GATEWAY_PORT" \
                 HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT" \
                 "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
         *) return 1 ;;
@@ -542,11 +568,35 @@ start_component() {
 # the product falls back to today's personal-profile resolution — absence of
 # the dedicated profile is NOT an error condition.
 export_product_hermes_home() {
-    if [ -f "$PRODUCT_HERMES_HOME/config.yaml" ]; then
+    # The dedicated root is provisioned when the product runtime checkout
+    # exists, even before Assistant Settings writes config.yaml: using the
+    # personal profile as a fallback would silently break S5 isolation.
+    if [ -f "$PRODUCT_HERMES_HOME/config.yaml" ] || [ -d "$PRODUCT_HERMES_AGENT_ROOT/.git" ]; then
         export HERMES_HOME="$PRODUCT_HERMES_HOME"
     else
         printf 'Hermes dedicated profile not provisioned: %s/config.yaml missing.\n' "$PRODUCT_HERMES_HOME" >&2
         printf 'Falling back to the personal Hermes profile (the assistant may need configuration).\n' >&2
+    fi
+    # Product-owned checkout (S5): only when its plugins package is present, so
+    # the plugin fallback imports the bundled adapter from the pinned runtime
+    # instead of guessing HERMES_HOME + "hermes-agent".
+    if [ -d "$PRODUCT_HERMES_AGENT_ROOT/plugins" ]; then
+        export HERMES_AGENT_ROOT="$PRODUCT_HERMES_AGENT_ROOT"
+    fi
+}
+
+# Boot verification (S7): a product-owned binary must belong to a checkout at
+# the pinned commit. A user-installed dev fallback has no product pin to check.
+verify_product_runtime() {
+    case "$HERMES_BIN" in
+        "$PRODUCT_HERMES_AGENT_ROOT"/*|"$PRODUCT_HERMES_HOME"/*) ;;
+        *) return 0 ;;
+    esac
+    local checker="$SCRIPT_DIR/provision-hermes.sh"
+    [ -f "$checker" ] || return 0
+    if ! bash "$checker" --check --install-root "$PRODUCT_ROOT"; then
+        printf 'Hermes runtime rejected: the product checkout is not at the expected pin (S7).\n' >&2
+        HERMES_BIN=""
     fi
 }
 
@@ -616,6 +666,8 @@ start_all() {
     # Hermes dedicated profile (additive isolation): export HERMES_HOME to both
     # children before they start, only when the profile is provisioned.
     export_product_hermes_home
+    # Fail closed on a product runtime that is not at the pinned commit (S7).
+    verify_product_runtime
 
     # Hermes is OPTIONAL (S2-2): the app boots without the provider and the
     # assistant degrades. The gateway is started only when the CLI is found;
