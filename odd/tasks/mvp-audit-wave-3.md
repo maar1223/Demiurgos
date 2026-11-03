@@ -5,7 +5,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 ## Specs
 
 - **S1 (AUD-11) — relay CI job.** `.github/workflows/ci.yml` runs the separately-deployed Cloudflare Worker's tests and typecheck on Node 22 (the relay's `--experimental-strip-types` test runner needs it). Acceptance: the `relay` job exists and its commands pass locally.
-- **S2 (AUD-12) — `engram_sync` promise.** PENDING Owner decision: wire the documented worker into a launcher, or retire the README promise. Acceptance from the audit: the promise matches what actually runs.
+- **S2 (AUD-12) — `engram_sync` promise.** Owner decision (2026-11-03): keep the tool, document it as a manual CLI and drop the "worker" claim. No launcher wiring, no deletion. Acceptance: the README promise matches what actually runs.
 - **S3 (AUD-13) — dev-tool dependencies.** PENDING Owner decision: declare `googleapiclient` / `faster_whisper` in a dev requirements file, or retire the scripts. Acceptance: no undeclared import in shipped tooling.
 - **S4 (AUD-14) — macOS desktop integration.** PENDING Owner decision: add a `.app`/alias or declare it out of MVP scope. Acceptance: the desktop story matches the shipped artifacts.
 - **S5 (AUD-15) — fixed ports.** PENDING Owner decision: document the overrides, or choose a free port when 8000/8642 are taken. Acceptance: a foreign process on a default port does not leave the app unusable without guidance.
@@ -15,7 +15,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 ## Tasks
 
 - T1 — AUD-11 relay CI — inline — done; local `npm test` 143 passed, `npm run typecheck` clean.
-- T2 — AUD-12 — blocked on S2 decision.
+- T2 — AUD-12 — inline — done; both READMEs describe `engram_sync` as a manual CLI.
 - T3 — AUD-13 — blocked on S3 decision.
 - T4 — AUD-14 — blocked on S4 decision.
 - T5 — AUD-15 — blocked on S5 decision.
@@ -28,3 +28,5 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - **L2** Wave 3 backlog from `docs/MVP_READINESS_AUDIT.md`: AUD-11 relay CI, AUD-12 `engram_sync`, AUD-13 dev deps, AUD-14 macOS desktop, AUD-15 ports, AUD-16 Windows payload, AUD-17 `web-config-ui`.
 - **L3** AUD-11 implemented: new `relay` job (Node 22, `npm install` because no lockfile is committed, `npm test`, `npm run typecheck`). Local evidence: 143 tests pass, typecheck clean.
 - **L4** Next: Owner decisions for S2..S5 and S7; S6 needs a Windows CI boot harness.
+- **L5** (Owner decision, 2026-11-03) `engram_sync`: "Documentarlo como CLI manual". Both READMEs now say `engram_sync` CLI (run manually); the tool and its tests stay.
+- **L6** Next: AUD-13 (dev-tool dependencies).

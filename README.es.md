@@ -138,7 +138,7 @@ Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: c
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (probado en 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Almacenamiento | Archivos OKF en `mundos/{mundo}/`; SQLite en `data/` (sesiones guiadas, memoria de conversación, ideas, trabajos de importación); papelera `.papelera` (TTL 30 días) |
-| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; worker `engram_sync` |
+| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; CLI `engram_sync` (ejecución manual) |
 | Proveedor de IA | Hermes (gateway en el puerto 8642) vía runs adapter + gate semántico; agnóstico de proveedor (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---

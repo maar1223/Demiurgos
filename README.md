@@ -139,7 +139,7 @@ Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: H
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (tested on 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Storage | OKF files in `mundos/{mundo}/`; SQLite in `data/` (guided sessions, conversation memory, ideas, import jobs); `.papelera` trash (30-day TTL) |
-| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` worker |
+| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` CLI (run manually) |
 | AI provider | Hermes (gateway port 8642) via runs adapter + semantic gate; provider-agnostic (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---
