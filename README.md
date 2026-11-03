@@ -150,12 +150,13 @@ Configuration is optional and environment-based — **no `.env` is required for 
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DEMIURGOS_AUTH_MODE` | *(disabled)* | `local-dev` (one-click session) or `credentials` (account vault) |
+| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (one-click loopback session) or `credentials` (account vault); `disabled` is an explicit opt-out |
 | `DEMIURGOS_REAUTH_INTERVAL_D` | `14` | Soft re-auth reminder interval (days) |
 | `DEMIURGOS_SESSION_TTL_H` / `DEMIURGOS_REMEMBER_ME_TTL_D` | `8` / `30` | Session TTL and "remember me" duration |
 | `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | Text LLM (assistant, import enrichment) |
 | `DEMIURGOS_VISION_PROVIDER/ENDPOINT/MODEL` | opencode-go | Vision LLM (image analysis) |
 | `DEMIURGOS_LANGUAGE` | `es` | UI language |
+| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | API/SPA and Hermes gateway ports; override when a port is already taken (the launcher never kills a foreign process) |
 | `TELEGRAM_BOT_TOKEN` / `GOOGLE_SHEETS_ID` | — | Optional Telegram idea capture / sync |
 | `GOOGLE_API_KEY` | — | Optional image generation |
 

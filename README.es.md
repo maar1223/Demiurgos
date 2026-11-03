@@ -149,12 +149,13 @@ La configuración es opcional y por variables de entorno — **la bóveda no req
 
 | Variable | Por defecto | Propósito |
 |----------|---------|-----------|
-| `DEMIURGOS_AUTH_MODE` | *(desactivado)* | `local-dev` (sesión de un clic) o `credentials` (bóveda de cuenta) |
+| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (sesión de un clic en loopback) o `credentials` (bóveda de cuenta); `disabled` es un opt-out explícito |
 | `DEMIURGOS_REAUTH_INTERVAL_D` | `14` | Intervalo del recordatorio de re-autenticación (días) |
 | `DEMIURGOS_SESSION_TTL_H` / `DEMIURGOS_REMEMBER_ME_TTL_D` | `8` / `30` | TTL de sesión y duración de "recordarme" |
 | `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | LLM de texto (asistente, enriquecimiento de importación) |
 | `DEMIURGOS_VISION_PROVIDER/ENDPOINT/MODEL` | opencode-go | LLM de visión (análisis de imágenes) |
 | `DEMIURGOS_LANGUAGE` | `es` | Idioma de la UI |
+| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | Puertos de la API/SPA y del gateway de Hermes; se sobreescriben si un puerto ya está tomado (el launcher nunca mata un proceso ajeno) |
 | `TELEGRAM_BOT_TOKEN` / `GOOGLE_SHEETS_ID` | — | Captura de ideas por Telegram / sync opcionales |
 | `GOOGLE_API_KEY` | — | Generación de imágenes opcional |
 
