@@ -35,7 +35,7 @@ EXPECTED_GATES = {"legacy_wiring_removed", "legacy_preserved_historical",
                   "online_offline_restart", "canonical_tree",
                   "migration_rollback_evidence", "three_proof_runtime",
                   "readiness_truthfulness", "deferred_handoff",
-                  "zero_legacy_mutation"}
+                  "zero_legacy_mutation", "legacy_tree_frozen"}
 
 
 def test_report_shape_and_gate_names():
@@ -222,3 +222,27 @@ def test_zero_legacy_mutation_passes_on_case_insensitive_fs():
 
 def test_cli_reports_all_passed_with_exit_zero():
     assert gate.main(["--check", str(PROJECT_ROOT)]) == 0
+
+
+def test_legacy_tree_frozen_passes_on_real_root():
+    """AUD-17: the retired tree matches the frozen fingerprint."""
+    assert gate.check_legacy_tree_frozen(PROJECT_ROOT).passed
+
+
+def test_legacy_tree_frozen_detects_an_edit(tmp_path):
+    """AUD-17: any byte changed under the retired tree fails the gate."""
+    import shutil
+
+    legacy = tmp_path / gate.LEGACY_DIR
+    shutil.copytree(
+        PROJECT_ROOT / gate.LEGACY_DIR,
+        legacy,
+        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"),
+    )
+    assert gate.check_legacy_tree_frozen(tmp_path).passed
+
+    target = legacy / "i18n.py"
+    target.write_bytes(target.read_bytes() + b"\n# drift\n")
+    check = gate.check_legacy_tree_frozen(tmp_path)
+    assert not check.passed
+    assert "changed" in check.detail

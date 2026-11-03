@@ -10,7 +10,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - **S4 (AUD-14) — macOS desktop integration.** Owner decision (2026-11-03): out of MVP scope. The READMEs state macOS launches from Terminal; no `.app`/Applications entry. `install_desktop_entry` was already Linux-only (`[ "$OS" = "Linux" ] || return 0`), so no code change was needed. Acceptance: the desktop story matches the shipped artifacts.
 - **S5 (AUD-15) — fixed ports.** The overrides already existed (`DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`); the gap was documentation. Documented in both READMEs and `.env.example`; the launcher still refuses to reuse a foreign process's port (never kills it) by design. No behavior change.
 - **S6 (AUD-16) — Windows payload boot test.** The packaged Windows payload has no real boot test; the fixture fabricates the layout. Acceptance: the packaged Windows bundle boots in CI or a documented harness.
-- **S7 (AUD-17) — retired `web-config-ui` tree.** PENDING Owner decision: freeze the tree or retire it entirely. Acceptance: the historical tree cannot drift again.
+- **S7 (AUD-17) — retired `web-config-ui` tree.** Owner decision (2026-11-03): freeze it. `retirement_gate.py` gains `legacy_tree_frozen`, a SHA-256 fingerprint over every non-generated file under the tree (line endings normalized so CRLF/LF checkouts agree); any edit, addition or deletion fails the gate. Acceptance: the historical tree cannot drift silently.
 
 ## Tasks
 
@@ -20,7 +20,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - T4 — AUD-14 — inline — done; macOS desktop integration declared out, READMEs updated.
 - T5 — AUD-15 — inline — done; port overrides documented (READMEs + `.env.example`).
 - T6 — AUD-16 — not started (needs a Windows runner).
-- T7 — AUD-17 — blocked on S7 decision.
+- T7 — AUD-17 — inline — done; `legacy_tree_frozen` gate + mutation test (26 retirement-gate tests pass).
 
 ## Log
 
@@ -36,3 +36,5 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - **L10** Next: AUD-15 (fixed ports).
 - **L11** AUD-15: no product fork — the env overrides already existed, so this was a documentation gap. Documented `DEMIURGOS_API_PORT`/`DEMIURGOS_GATEWAY_PORT`; also corrected the stale auth default row in both READMEs to `local-dev`.
 - **L12** Next: AUD-16 (Windows payload boot test) and AUD-17 (`web-config-ui` tree).
+- **L13** (Owner decision, 2026-11-03) `web-config-ui`: "Congelar el árbol". New gate `legacy_tree_frozen` with SHA-256 `ffdb9925…e362f7` over 33 files (line endings normalized). Mutation test added. `EXPECTED_GATES` updated.
+- **L14** Next: AUD-16 only. It needs a real Windows payload boot harness; cannot be verified from this Linux host.

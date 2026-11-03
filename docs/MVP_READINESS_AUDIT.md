@@ -320,7 +320,7 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 | AUD-14 | Sin integración de escritorio en macOS | solo Linux `.desktop` y Windows shortcuts | **resuelto (2026-11-03)**: la integración de escritorio de macOS queda fuera del MVP; ambos README lo dicen y aclaran que se lanza desde Terminal. `install_desktop_entry` ya era Linux-only |
 | AUD-15 | Puertos fijos sin fallback | 8000/8642; el launcher rechaza si los ocupa un proceso ajeno | **resuelto (2026-11-03)**: los overrides ya existían (`DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`); documentados en ambos README y `.env.example`. El launcher sigue rechazando puertos ajenos sin matarlos, por diseño |
 | AUD-16 | Sin test de payload Windows real | el fixture fabrica `scripts\start-demiurgos.ps1` | bootear el paquete Windows empaquetado |
-| AUD-17 | `web-config-ui` retirado pero aún editable | se editó su i18n en `ef2171e` | congelar o retirar el árbol |
+| AUD-17 | `web-config-ui` retirado pero aún editable | se editó su i18n en `ef2171e` | **resuelto (2026-11-03)**: árbol congelado — el gate `legacy_tree_frozen` compara un SHA-256 del árbol (líneas normalizadas) y falla ante cualquier edición, alta o borrado |
 
 ---
 
@@ -421,3 +421,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 3: AUD-13 resuelto — `requirements-dev.txt` declara las deps de los dev tools; el docstring de `sync-ideas.py` deja de listar `gspread` (no se importa). |
 | 2026-11-03 | Ola 3: AUD-14 resuelto — integración de escritorio de macOS fuera del MVP; README aclara que se lanza desde Terminal. |
 | 2026-11-03 | Ola 3: AUD-15 resuelto — puertos documentados vía `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`; README y `.env.example` actualizados (también el default de auth a `local-dev`). |
+| 2026-11-03 | Ola 3: AUD-17 resuelto — `web-config-ui` congelado con el gate `legacy_tree_frozen` (SHA-256 del árbol). |

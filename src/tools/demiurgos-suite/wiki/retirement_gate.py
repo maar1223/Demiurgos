@@ -9,10 +9,11 @@ and wiki module contracts; running the gate never mutates anything. Gates:
 legacy_wiring_removed (ONB-5.1 RED barrier, inverted), legacy_preserved_historical,
 new_runtime_present, online_offline_restart, canonical_tree,
 migration_rollback_evidence, three_proof_runtime, readiness_truthfulness,
-deferred_handoff, auth_fail_closed, zero_legacy_mutation."""
+deferred_handoff, auth_fail_closed, zero_legacy_mutation, legacy_tree_frozen."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -46,6 +47,11 @@ NEW_MODULES = ("onboarding.py", "world_authority.py", "local_state.py", "migrati
 LEGACY_WIRING_MARKERS = ("web-config-ui", "port 8000")
 LEGACY_DIR = Path("src") / "tools" / "web-config-ui"
 LEGACY_KEEPERS = ("backup.py", "tests/test_restore.py")
+# AUD-17: the retired tree is a historical artifact, not editable code. The
+# fingerprint covers every non-generated file under LEGACY_DIR (line endings
+# normalized so a CRLF/LF checkout does not change it). Any edit, addition or
+# deletion fails the gate and forces a deliberate audit decision.
+LEGACY_TREE_SHA256 = "ffdb9925a50f743c995a3b9fa99d38619ca28c5a5c51d498626f6f2741e362f7"
 PROOF_KEYS = ("text", "vision", "runtime")
 PROOF_VALUES = {"text": "passed", "vision": "passed", "runtime": "accepted"}
 HERMES_STATES = ("accepted", "pending-reload", "saved-not-active")
@@ -131,6 +137,41 @@ def check_legacy_preserved_historical(project_root: Path) -> GateCheck:
                         "legacy reference not preserved: " + ", ".join(missing))
     return _verdict("legacy_preserved_historical", True,
                     "web-config-ui/ preserved; backup.py + test_restore.py intact")
+
+
+def _legacy_tree_fingerprint(project_root: Path) -> str:
+    """SHA-256 over the retired tree: relative path + normalized bytes."""
+    legacy = Path(project_root) / LEGACY_DIR
+    if not legacy.is_dir():
+        return ""
+    digest = hashlib.sha256()
+    for path in sorted(legacy.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(legacy)
+        if "__pycache__" in rel.parts or ".pytest_cache" in rel.parts:
+            continue
+        if path.suffix == ".pyc":
+            continue
+        digest.update(rel.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def check_legacy_tree_frozen(project_root: Path) -> GateCheck:
+    """AUD-17: the historical web-config-ui tree must not drift."""
+    actual = _legacy_tree_fingerprint(project_root)
+    if not actual:
+        return _verdict("legacy_tree_frozen", False,
+                        "src/tools/web-config-ui/ is missing")
+    if actual != LEGACY_TREE_SHA256:
+        return _verdict("legacy_tree_frozen", False,
+                        "the historical web-config-ui tree changed; freeze it "
+                        "or record the change in the audit")
+    return _verdict("legacy_tree_frozen", True,
+                    "historical web-config-ui tree matches the frozen fingerprint")
 
 
 def check_new_runtime_present(project_root: Path) -> GateCheck:
@@ -315,7 +356,7 @@ CHECKS = (
     check_online_offline_restart, check_canonical_tree,
     check_migration_rollback_evidence, check_three_proof_runtime,
     check_readiness_truthfulness, check_deferred_handoff,
-    check_zero_legacy_mutation,
+    check_zero_legacy_mutation, check_legacy_tree_frozen,
 )
 
 
