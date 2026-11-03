@@ -1,6 +1,6 @@
 # Hermes as the MVP runtime (AUD-04, hardened)
 
-Branch: `feat/hermes-core-runtime` · Base: `master` (`7bd8f26`) · Tests: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q`, fork: `pytest tests/gateway/test_api_server.py` · Delivery: work-unit commits on the feature branch; push/PR are the Owner's decision. Forecast: L (multi-session).
+Branch: `feat/hermes-core-runtime` · Base: `master` (`7bd8f26`) · Runtime pin: `d046ff9905b8470c4a0cfd5e9da566986056b438` · Tests: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q`, fork: `pytest tests/gateway/test_api_server.py` · Delivery: work-unit commits on the feature branch; push/PR are the Owner's decision. Forecast: L (multi-session).
 
 ## Specs
 
@@ -31,7 +31,7 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 | T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | pending | |
 | T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | pending | |
 | T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | pending | |
-| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` | S5, S7 | inline | pending | |
+| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | in progress — port env finding (L13) | |
 | T7 | Docs/readiness/license notices | S8, S9 | inline | pending | |
 | T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | pending | |
 
@@ -60,3 +60,17 @@ L10 (compatibility risk, open) — the app depends on Hermes internals. In the n
 L11 (e2e, closed) — an isolated gateway was started from the merged tree on `127.0.0.1:8643` with a temporary `HERMES_HOME` (copy of the real `config.yaml`/`.env`, Telegram disabled, `API_SERVER_PORT=8643`), leaving the live home and the 8642 gateway untouched. The real config is exactly the risky shape: `model.provider: custom`, `model.base_url: https://api.deepseek.com`. Results: `/health` 200, `/v1/capabilities` 200, `POST /v1/runs` 202 → `queued` → `running` → `completed` with `message.delta` events spelling "mercurio", and `POST /v1/chat/completions` with `tool_choice: "none"` 200 with `content: "mercurio"`. The new bare-custom trust check accepts an explicit `provider: custom`, so the mapping Demiurgos writes is safe. The test gateway was stopped and the temporary home deleted; `~/.hermes/config.yaml` and `.env` were never modified.
 
 L12 (compatibility finding for T6) — the new upstream reads the API-server port from `API_SERVER_PORT` / `API_SERVER_HOST` (`gateway/config_env.py`), while `scripts/start-demiurgos.sh` exports `HERMES_GATEWAY_PORT` / `HERMES_GATEWAY_HOST`. With the new runtime the launcher's port selection is ignored and the gateway silently binds the default 8642. T6 must switch the launcher (and `start-demiurgos.ps1`) to the new env names and keep the default safe.
+
+L13 (T6 exact work, verified) — `scripts/start-demiurgos.sh:530` currently exports only `HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT"`; `start-gateway.ps1:94-95` does the same. Fix both to export `API_SERVER_HOST`/`API_SERVER_PORT` (keep the legacy names too, so older builds still work). `start-demiurgos.ps1` starts only the API, not the gateway; `start-gateway.ps1` is the Windows gateway entry. `hermes_probe_support.py` already uses `API_SERVER_PORT`; `test_semantic_e2e.py:571-572` still sets the legacy names (excluded from CI — update for consistency). Also switch the launcher's binary resolution: prefer the product-owned `$DEMIURGOS_HOME/hermes/bin/hermes`, use `command -v hermes` only as a dev fallback, and export `HERMES_HOME=$DEMIURGOS_HOME/hermes` + `HERMES_AGENT_ROOT=$DEMIURGOS_HOME/hermes-agent` so the project plugin resolves the checkout.
+
+L14 (T3/T4 design, next session) — one provisioning owner, invoked by both platform installers and the CLI stack:
+- `scripts/provision-hermes.sh` (POSIX) and `scripts/provision-hermes.ps1` (Windows), called from `scripts/install-demiurgos.sh` / `.ps1` (the default install) and from `install.sh --with-cli-stack` (replacing `install_hermes`).
+- Constants: `HERMES_FORK_URL=https://github.com/maar1223/hermes-agent-demiurgos.git`, `HERMES_PIN=d046ff9905b8470c4a0cfd5e9da566986056b438`.
+- Fetch the pinned commit without a full clone: `git init` + `git remote add` + `git fetch --depth 1 origin "$HERMES_PIN"` + `git checkout FETCH_HEAD`, then assert `git rev-parse HEAD == $HERMES_PIN`.
+- Install with the product root: run `setup-hermes.sh` / `setup-hermes.ps1` from the checkout with `HERMES_HOME=$DEMIURGOS_HOME/hermes`, `HERMES_RUNTIME_DIR=$DEMIURGOS_HOME/hermes/tools`, `HERMES_AGENT_ROOT=$DEMIURGOS_HOME/hermes-agent`. The setup scripts stage their own pinned uv and hash-verify deps via `pm/lock.json`/`uv.lock`.
+- Prior install: detect `command -v hermes` and `~/.hermes`, report what was found, and modify nothing there (no `config.yaml`, no `profiles/`, no `.env`). The product runtime is used regardless.
+- Boot verification: the launcher checks the product binary exists and its checkout is at the pin; failure is closed with expected-vs-found and the remedy.
+- License: ship the MIT `LICENSE` text as a third-party notice in the artifact, and add it to the release extras + allow-list.
+- Tests: `test_installer_hermes_isolation.py` extended (no `$HOME/.hermes` write, pin constant, product paths), `test_installer_contract.py` still green, launcher suites green, and a focused unit test for the pin/fetch/verify helpers.
+
+L15 (next-session start) — read this document and the `nec/checkpoint` observation first. Then, in order: (1) T6 launcher env/binary fix from L13, with the launcher suites; (2) T3/T4 `provision-hermes.{sh,ps1}` from L14, with the installer contract tests; (3) T5 isolation (`HERMES_HOME` export, `configure_mcp_profile` out of `~/.hermes/profiles`, prior-install report); (4) T7 docs/readiness/license; (5) T8 full verification. Do not modify `~/.hermes`, do not restart the live gateway, and do not push the Demiurgos branch without the Owner's decision. The fork is public and pinned; future runtime updates are `git merge upstream/main`, never a rebuild.
