@@ -310,6 +310,86 @@ jobs:
             SHA256SUMS.${{ matrix.cell }}
             version-${{ matrix.cell }}.json
 
+  windows-payload-boot:
+    # AUD-16: boot the REAL packaged Windows payload (the shipped zip), not a
+    # fabricated layout. Runs on every push to master (dry run) and on tags;
+    # it never publishes. The launcher needs <appRoot>\.venv, so provision the
+    # hash-locked requirements first, exactly like the installer does.
+    name: Windows payload boot
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Download the packaged Windows artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: package-windows-amd64
+          path: package
+
+      - name: Extract the packaged payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Get-ChildItem package -Filter 'demiurgos-app-*-windows-amd64.zip' |
+            Select-Object -First 1
+          if (-not $zip) { throw 'no Windows payload archive found' }
+          New-Item -ItemType Directory -Force -Path payload | Out-Null
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath payload
+
+      - name: Provision the payload venv (wheels-only, hash-locked)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'payload\requirements.lock')) {
+            throw 'packaged payload is missing requirements.lock'
+          }
+          uv venv payload\.venv --python 3.12
+          uv pip install --python payload\.venv\Scripts\python.exe `
+            --only-binary=:all: -r payload\requirements.lock
+
+      - name: Boot the packaged payload and check /health
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $port = 18000
+          $env:DEMIURGOS_HOME = Join-Path $env:RUNNER_TEMP 'boot-install'
+          $env:DEMIURGOS_DATA_ROOT = Join-Path $env:RUNNER_TEMP 'boot-data'
+          $env:DEMIURGOS_API_PORT = "$port"
+          $env:DEMIURGOS_NO_BROWSER = '1'
+          $launcher = Join-Path (Resolve-Path payload) 'scripts\start-demiurgos.ps1'
+          if (-not (Test-Path $launcher)) { throw "packaged launcher missing: $launcher" }
+
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher start
+          if ($LASTEXITCODE -ne 0) { throw "launcher start failed (exit $LASTEXITCODE)" }
+
+          $ready = $false
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 `
+                  "http://127.0.0.1:$port/health"
+                if ($r.StatusCode -eq 200) { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) {
+              Write-Host '--- payload logs (boot failure) ---'
+              $logRoot = Join-Path $env:DEMIURGOS_HOME 'logs'
+              Get-ChildItem -Recurse -File $logRoot -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "### $($_.FullName)"; Get-Content $_.FullName }
+              throw 'packaged payload never served /health'
+            }
+            $root = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 `
+              "http://127.0.0.1:$port/"
+            if ($root.StatusCode -ne 200) {
+              throw "packaged payload / returned $($root.StatusCode)"
+            }
+            Write-Host "OK: packaged Windows payload booted and served /health + / on $port"
+          } finally {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher stop
+          }
+
   publish:
     name: Publish to the public channel
     needs: package
