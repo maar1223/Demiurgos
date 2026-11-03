@@ -14,6 +14,7 @@ is a copy *source*, and both cells copy it to the contract path.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -69,7 +70,10 @@ class TestDiagnosticsInPayload:
 
     def test_the_diagnostics_script_exists_and_is_executable(self) -> None:
         assert _DIAGNOSTICS.is_file()
-        assert _DIAGNOSTICS.stat().st_mode & 0o111
+        # The POSIX executable bit is the contract; Windows checkouts (and
+        # anyone running the guide from Git Bash there) do not preserve it.
+        if os.name != "nt":
+            assert _DIAGNOSTICS.stat().st_mode & 0o111
 
     def test_both_packaging_cells_ship_it_and_allow_it(self) -> None:
         text = _RELEASE.read_text(encoding="utf-8")
