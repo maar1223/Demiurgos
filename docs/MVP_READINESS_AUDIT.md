@@ -292,6 +292,13 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-10 — Drift entre docs y código
 
+- **Estado (2026-11-03)**: resuelto en `54949e7` + el commit de cierre. Se
+  reconciliaron las cuatro afirmaciones: README.es ya no incluye Hermes en el
+  stack opcional; Engram queda como obligatorio del flujo del agente/ODD y el
+  runtime web en SQLite; la constitución marca el puente compilado como
+  `[ACTUAL]` (ya cableado); y `requirements.txt` deja de declarar macOS x86_64
+  como target, con la celda de closure Intel marcada como informativa. Decisión
+  del Owner: Intel queda fuera de la matriz de soporte.
 - **Evidencia**:
   - La constitución marca como `[OBJETIVO]` el bridge metodología→runtime, pero
     `guided_character_provider.py` ya recibe el snapshot pinneado.
@@ -408,3 +415,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 2: AUD-09 resuelto en `5badeaf` — se retira el locale `es-ar`; español neutro (`es`) es el único español del producto. |
 | 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
 | 2026-11-03 | Ola 2: AUD-08 resuelto en `ff50320` — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |
+| 2026-11-03 | Ola 2: AUD-10 resuelto en `54949e7` — Hermes/Engram/puente compilado reconciliados; macOS Intel queda fuera de la matriz y de los targets declarados. |
