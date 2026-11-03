@@ -9,7 +9,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - **S3 (AUD-13) — dev-tool dependencies.** Owner decision (2026-11-03): declare them in `requirements-dev.txt` (dev-only, never in the payload): `google-auth`, `google-api-python-client`, `faster-whisper`, `requests`. The scripts stay; `sync-ideas.py`'s docstring drops the unused `gspread`. Acceptance: no undeclared import in the dev tools.
 - **S4 (AUD-14) — macOS desktop integration.** Owner decision (2026-11-03): out of MVP scope. The READMEs state macOS launches from Terminal; no `.app`/Applications entry. `install_desktop_entry` was already Linux-only (`[ "$OS" = "Linux" ] || return 0`), so no code change was needed. Acceptance: the desktop story matches the shipped artifacts.
 - **S5 (AUD-15) — fixed ports.** The overrides already existed (`DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`); the gap was documentation. Documented in both READMEs and `.env.example`; the launcher still refuses to reuse a foreign process's port (never kills it) by design. No behavior change.
-- **S6 (AUD-16) — Windows payload boot test.** Owner decision (2026-11-03): a `windows-payload-boot` job in `release.yml` downloads the real `package-windows-amd64` zip, provisions the hash-locked venv with `uv`, boots `scripts/start-demiurgos.ps1` with a temp data root and port 18000, asserts `/health` + `/`, and dumps logs on failure. Runs on every master push (dry run) and tags. Not verifiable locally; the first master run validates it. Acceptance: the packaged Windows bundle boots in CI.
+- **S6 (AUD-16) — Windows payload boot test.** Owner decision (2026-11-03): a `windows-payload-boot` job in `release.yml` downloads the real `package-windows-amd64` zip, provisions the hash-locked venv with `uv`, boots `scripts/start-demiurgos.ps1` with a temp data root and port 18000, asserts `/health` + `/`, and dumps logs on failure. Runs on every master push (dry run) and tags. Validated on run `41637335818` (Release dry-run): the `Windows payload boot` job passed on a real Windows runner. Acceptance: the packaged Windows bundle boots in CI.
 - **S7 (AUD-17) — retired `web-config-ui` tree.** Owner decision (2026-11-03): freeze it. `retirement_gate.py` gains `legacy_tree_frozen`, a SHA-256 fingerprint over every non-generated file under the tree (line endings normalized so CRLF/LF checkouts agree); any edit, addition or deletion fails the gate. Acceptance: the historical tree cannot drift silently.
 
 ## Tasks
@@ -19,7 +19,7 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - T3 — AUD-13 — inline — done; `requirements-dev.txt` created; payload manifest still fresh.
 - T4 — AUD-14 — inline — done; macOS desktop integration declared out, READMEs updated.
 - T5 — AUD-15 — inline — done; port overrides documented (READMEs + `.env.example`).
-- T6 — AUD-16 — inline — job added to `release.yml`; not verified locally (needs a Windows runner).
+- T6 — AUD-16 — inline — job added to `release.yml`; validated on run `41637335818` (`Windows payload boot`: success).
 - T7 — AUD-17 — inline — done; `legacy_tree_frozen` gate + mutation test (26 retirement-gate tests pass).
 
 ## Log
@@ -38,4 +38,4 @@ Branch: `fix/mvp-audit-wave-3` · Base: `master` (`1165120`) · Delivery: work-u
 - **L12** Next: AUD-16 (Windows payload boot test) and AUD-17 (`web-config-ui` tree).
 - **L13** (Owner decision, 2026-11-03) `web-config-ui`: "Congelar el árbol". New gate `legacy_tree_frozen` with SHA-256 `ffdb9925…e362f7` over 33 files (line endings normalized). Mutation test added. `EXPECTED_GATES` updated.
 - **L14** Next: AUD-16 only. It needs a real Windows payload boot harness; cannot be verified from this Linux host.
-- **L15** (Owner decision, 2026-11-03) Windows payload boot: "Job de boot en release.yml". Added `windows-payload-boot` (setup-uv, download `package-windows-amd64`, extract, `uv venv` + hash-locked install, boot, `/health` + `/`, stop, dump logs on failure). YAML validated with PyYAML (5 jobs). Wave 3 code is complete 7/7; AUD-16 awaits its first master-run validation.
+- **L15** (Owner decision, 2026-11-03) Windows payload boot: "Job de boot en release.yml". Added `windows-payload-boot` (setup-uv, download `package-windows-amd64`, extract, `uv venv` + hash-locked install, boot, `/health` + `/`, stop, dump logs on failure). YAML validated with PyYAML (5 jobs). Wave 3 code is complete 7/7. AUD-16 validated on run `41637335818` (`Windows payload boot`: success; publish/smoke skipped by the tag guard).
