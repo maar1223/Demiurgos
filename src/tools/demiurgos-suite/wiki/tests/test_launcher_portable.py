@@ -410,6 +410,25 @@ class TestProductRuntimeContract:
         assert "$env:HERMES_HOME = $productHermesHome" in text
         assert "$env:HERMES_AGENT_ROOT = $productAgentRoot" in text
 
+    def test_posix_verifies_the_product_pin_before_starting_gateway(self):
+        """S7: a product-owned binary is only started after the checkout pin
+        check; the app still boots when the check rejects the runtime."""
+        text = _text(PORTABLE_LAUNCHER)
+        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        assert "verify_product_runtime" in start_block
+        assert start_block.index("verify_product_runtime") < start_block.index(
+            'if [ -z "$HERMES_BIN" ]'
+        )
+        assert '--check --install-root "$PRODUCT_ROOT"' in text
+
+    def test_ps_gateway_verifies_the_product_pin_before_starting(self):
+        text = _text(PS_GATEWAY)
+        assert "provision-hermes.ps1" in text
+        assert "-Check -InstallRoot $productRoot" in text
+        assert text.index("-Check -InstallRoot $productRoot") < text.index(
+            "& $hermesBin gateway run"
+        )
+
     @pytest.mark.skipif(
         os.name == "nt" or shutil.which("bash") is None,
         reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",

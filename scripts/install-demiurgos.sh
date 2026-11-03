@@ -50,6 +50,10 @@
 #                        prompts; an unknown argument fails with usage.
 #   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
 #                        pipeline bakes the real value at publish time)
+#   DEMIURGOS_HERMES_SKIP  "1" -> skip the assistant runtime provisioning
+#                        (hermetic installer harnesses; never a normal install).
+#                        The script is downloaded and verified against the
+#                        signed SHA256SUMS before it runs.
 #   UV_VERSION           pinned uv version
 #   DEMIURGOS_LANGUAGE   seeded data-root locale (default es)
 #   DEMIURGOS_WORLD      optional seeded world
@@ -87,6 +91,9 @@ source "$SCRIPT_DIR/lib/verify_checksum.sh"
 # on another FS). Cleaned on exit so a failed install leaves no debris and no
 # runnable state; the committed app/<version> is never touched.
 WORK_DIRS=""
+# Verified channel manifest (SHA256SUMS); reused by the runtime provisioner so
+# the Hermes script is verified against the SAME signed manifest as the core.
+SUMS_FILE=""
 
 cleanup() {
     local d
@@ -324,6 +331,7 @@ fetch_and_verify_payload() {
     download "$URL_BASE/SHA256SUMS.minisig" "$workdir/SHA256SUMS.minisig" 2>/dev/null || true
     verify_minisig "$workdir/SHA256SUMS" "$workdir/SHA256SUMS.minisig" \
         || fail "the channel manifest signature is INVALID or missing; refusing to trust the channel — fix the channel and re-run"
+    SUMS_FILE="$workdir/SHA256SUMS"
 
     payload_name="$(json_str "$workdir/version.json" posix)"
     [ -n "$payload_name" ] || payload_name="demiurgos-app-$VERSION.tar.gz"
@@ -335,6 +343,50 @@ fetch_and_verify_payload() {
     [ -n "$expected" ] || fail "no checksum entry for $payload_name in SHA256SUMS; fix the channel and re-run"
     verify_sha256 "$PAYLOAD_FILE" "$expected" \
         || fail "checksum mismatch for $payload_name; the download is corrupt or tampered — fix the channel and re-run"
+}
+
+# --- product-owned Hermes runtime (S5/S7, hermes-core-runtime T3) ----------
+# The runtime is provisioned by scripts/provision-hermes.sh, downloaded from
+# the SAME signed channel manifest as this core and verified BEFORE execution
+# (download-then-verify-then-execute). A missing script or checksum entry is a
+# channel defect: fail closed instead of shipping an assistant-less install.
+
+fetch_channel_manifest() {
+    local workdir
+    if [ -n "${SUMS_FILE:-}" ] && [ -f "$SUMS_FILE" ]; then
+        return 0
+    fi
+    workdir="$STAGING_ROOT/.work-manifest-$$"
+    WORK_DIRS="$WORK_DIRS $workdir"
+    mkdir -p "$workdir"
+    download "$URL_BASE/SHA256SUMS" "$workdir/SHA256SUMS" \
+        || fail "cannot download SHA256SUMS from $URL_BASE; check the channel and re-run"
+    download "$URL_BASE/SHA256SUMS.minisig" "$workdir/SHA256SUMS.minisig" 2>/dev/null || true
+    verify_minisig "$workdir/SHA256SUMS" "$workdir/SHA256SUMS.minisig" \
+        || fail "the channel manifest signature is INVALID or missing; refusing to trust the channel — fix the channel and re-run"
+    SUMS_FILE="$workdir/SHA256SUMS"
+}
+
+provision_hermes_runtime() {
+    local workdir script expected
+    if [ "${DEMIURGOS_HERMES_SKIP:-0}" = "1" ]; then
+        printf 'install-demiurgos: Hermes runtime provisioning skipped (DEMIURGOS_HERMES_SKIP=1)\n' >&2
+        return 0
+    fi
+    fetch_channel_manifest
+    workdir="$STAGING_ROOT/.work-provision-$$"
+    WORK_DIRS="$WORK_DIRS $workdir"
+    mkdir -p "$workdir"
+    script="$workdir/provision-hermes.sh"
+    download "$URL_BASE/scripts/provision-hermes.sh" "$script" \
+        || fail "cannot download scripts/provision-hermes.sh from $URL_BASE; the assistant runtime cannot be provisioned — fix the channel and re-run"
+    expected="$(sha_for "$SUMS_FILE" "scripts/provision-hermes.sh")"
+    [ -n "$expected" ] \
+        || fail "SHA256SUMS has no entry for scripts/provision-hermes.sh; fix the channel and re-run"
+    verify_sha256 "$script" "$expected" \
+        || fail "checksum mismatch for scripts/provision-hermes.sh; the download is corrupt or tampered — fix the channel and re-run"
+    bash "$script" --install-root "$INSTALL_ROOT" \
+        || fail "Hermes runtime provisioning failed; the assistant is required by default — see the error above and re-run"
 }
 
 # --- uv provisioning (4.5/4.6, M2) ------------------------------------------
@@ -629,10 +681,13 @@ resolve_version
 # Idempotent re-run: same version already current -> exit 0, nothing to do.
 if [ -L "$INSTALL_ROOT/current" ] && [ "$(readlink "$INSTALL_ROOT/current")" = "app/$VERSION" ] && [ -d "$INSTALL_ROOT/app/$VERSION" ]; then
     printf 'install-demiurgos: %s is already installed and current; nothing to do\n' "$VERSION" >&2
-    # ...except the applications-menu entry, which is the installer's own to
-    # own: a user who deleted it (or who installed before it existed) gets it
-    # back by re-running the installer, without a reinstall.
+    # ...except the applications-menu entry and the assistant runtime, which
+    # are the installer's own to own: a user who deleted the entry, or an
+    # earlier install that predates the runtime, is repaired by re-running the
+    # installer without reinstalling the app. Provisioning is idempotent.
     install_desktop_entry
+    mkdir -p "$STAGING_ROOT"
+    provision_hermes_runtime
     exit 0
 fi
 
@@ -642,6 +697,7 @@ provision_uv
 stage_and_install
 commit_staging
 write_channel_config
+provision_hermes_runtime
 bootstrap_data_root
 install_desktop_entry
 

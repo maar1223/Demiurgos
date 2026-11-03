@@ -28,8 +28,8 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 |---|---|---|---|---|---|
 | T1 | Make the fork public and record the license obligation | S2, S8 | inline | done (public confirmed) | — |
 | T2 | Port the `tool_choice: none` patch onto current upstream `main`; run the fork tests; pin the new commit | S3, S4 | inline | done — merge `d046ff99` on upstream `6112c2ad`; 367 api_server tests pass | — |
-| T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | pending | |
-| T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | pending | |
+| T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | done — see L17 | |
+| T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | done — see L17 | |
 | T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | pending | |
 | T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | `d2af5d4` |
 | T7 | Docs/readiness/license notices | S8, S9 | inline | pending | |
@@ -81,3 +81,15 @@ L16 (execution, T6) — implemented in `scripts/start-demiurgos.sh` and `start-g
 - `HERMES_AGENT_ROOT` is exported (when the checkout's `plugins/` package exists) before either child starts; `HERMES_HOME` keeps the ratified conditional export (only when `<dedicated root>/config.yaml` is provisioned).
 - Evidence correction to L13: on POSIX `setup-hermes.sh` publishes conveniences to `~/.local/bin` and the exact install launcher to `<checkout>/.hermes/bin/hermes`; it never writes `<hermes home>/bin`. The launcher therefore checks the checkout launcher first and keeps `<hermes home>/bin` as the Windows installer convention, instead of pinning only `$DEMIURGOS_HOME/hermes/bin/hermes`.
 - Verification: `test_launcher_portable.py` (7 new contract tests, including a behavioural sourcing probe proving the product binary beats a different `hermes` on `PATH`) plus the launcher/installer/system-control/probe suites: 297 passed, 11 skipped. Tests were observed RED before the implementation.
+
+L17 (execution, T3/T4) — one provisioning owner, shipped and hash-verified:
+- `scripts/provision-hermes.sh` and `scripts/provision-hermes.ps1` install the pinned fork (`d046ff99…`, `HERMES_FORK_URL`/`HERMES_PIN` constants) under `<install root>/hermes-agent`, with `HERMES_HOME=<root>/hermes`, `HERMES_RUNTIME_DIR=<root>/hermes/tools` and `HERMES_AGENT_ROOT=<root>/hermes-agent`.
+- Fetch is a shallow commit fetch (`git init` + `remote add` + `fetch --depth 1 <pin>` + `checkout FETCH_HEAD`), then HEAD and the `no_tools` patch marker are asserted. A stale checkout is moved to `hermes-agent.previous-<ts>` only after the pinned tree fetched successfully.
+- Setup runs with a scratch `HOME`/uv cache so the upstream script's `~/.local/bin` and shell-rc writes land in the scratch dir and are deleted; the product entry point is the checkout's exact launcher (`<checkout>/.hermes/bin/hermes[.exe]`). Prior `hermes`/`~/.hermes` are reported and never modified.
+- Both cores download `scripts/provision-hermes.{sh,ps1}` from the channel, verify it against the SAME signed SHA256SUMS as the core, then execute it (also on the "already current" repair path). Missing script/checksum fails closed. `DEMIURGOS_HERMES_SKIP=1` is the hermetic-installer seam used by the contract tests.
+- `install.sh --with-cli-stack` now calls the product provisioner instead of the upstream installer URL (the constant was removed).
+- Boot verification (S7): `start-demiurgos.sh` and `start-gateway.ps1` run `provision-hermes --check`; a product-owned binary whose checkout is not at the pin is rejected with expected-vs-found and the remedy. A dev `command -v hermes` fallback has no product pin to check.
+- MIT: `third-party/hermes/LICENSE` (upstream `Copyright (c) 2025 Nous Research`) is copied into both payloads and allow-listed; both provisioners and the notice are also added to the publish SHA256SUMS loop.
+- Verification: `test_provision_hermes.py` (11 tests; local-git behavioural probes for fetch/pin/patch/provisioned, contract text for both platforms, release shipping), launcher suites (pin check), installer contract/isolation/payload/seed suites: 198 passed, 11 skipped.
+
+L18 (full suite, T3/T4 closure) — `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q` -> 4856 passed, 26 skipped, 1 pre-existing pydantic-settings warning. `bash -n` clean on the touched POSIX scripts; `provision-hermes.sh --check` on an absent root fails closed with expected-vs-found (pin `d046ff99…`) as designed.

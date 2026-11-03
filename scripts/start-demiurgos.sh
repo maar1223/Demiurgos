@@ -57,6 +57,7 @@ PRODUCT_HERMES_HOME="${DEMIURGOS_HERMES_HOME:-${DEMIURGOS_HOME:-$HOME/.demiurgos
 # Product-owned runtime checkout (S5): the pinned fork provisioned next to the
 # profile root. The project plugin resolves it through HERMES_AGENT_ROOT.
 PRODUCT_HERMES_AGENT_ROOT="${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes-agent"
+PRODUCT_ROOT="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
 
 # Interpreter from the frozen layout (S2-4): the layout venv, never a
 # system Python and never a hardcoded path.
@@ -581,6 +582,21 @@ export_product_hermes_home() {
     fi
 }
 
+# Boot verification (S7): a product-owned binary must belong to a checkout at
+# the pinned commit. A user-installed dev fallback has no product pin to check.
+verify_product_runtime() {
+    case "$HERMES_BIN" in
+        "$PRODUCT_HERMES_AGENT_ROOT"/*|"$PRODUCT_HERMES_HOME"/*) ;;
+        *) return 0 ;;
+    esac
+    local checker="$SCRIPT_DIR/provision-hermes.sh"
+    [ -f "$checker" ] || return 0
+    if ! bash "$checker" --check --install-root "$PRODUCT_ROOT"; then
+        printf 'Hermes runtime rejected: the product checkout is not at the expected pin (S7).\n' >&2
+        HERMES_BIN=""
+    fi
+}
+
 # --- Stale frontend bundle guard (plan B) ----------------------------------
 # The API serves the prebuilt `frontend/dist`, which is gitignored: `vitest`
 # and `tsc` can be green while the served bundle lags behind `frontend/src`,
@@ -647,6 +663,8 @@ start_all() {
     # Hermes dedicated profile (additive isolation): export HERMES_HOME to both
     # children before they start, only when the profile is provisioned.
     export_product_hermes_home
+    # Fail closed on a product runtime that is not at the pinned commit (S7).
+    verify_product_runtime
 
     # Hermes is OPTIONAL (S2-2): the app boots without the provider and the
     # assistant degrades. The gateway is started only when the CLI is found;

@@ -837,6 +837,10 @@ def _installer_env(
         "XDG_RUNTIME_DIR": str(tmp_path / "runtime"),
         "DEMIURGOS_NO_BROWSER": "1",
         "DEMIURGOS_LANGUAGE": "en",
+        # Hermetic harnesses never provision the real assistant runtime (the
+        # fixture channel carries no Hermes script); the runtime contract is
+        # covered by test_provision_hermes.py.
+        "DEMIURGOS_HERMES_SKIP": "1",
         "PATH": f"{NOOP_BROWSER_BIN}:{os.environ.get('PATH', '/usr/bin:/bin')}",
     }
     if fail_pip:
@@ -1937,6 +1941,9 @@ def _ps_installer_env(
         "USERPROFILE": str(tmp_path / "userprofile"),
         "DEMIURGOS_NO_BROWSER": "1",
         "DEMIURGOS_LANGUAGE": "en",
+        # Hermetic harnesses never provision the real assistant runtime; the
+        # runtime contract is covered by test_provision_hermes.py.
+        "DEMIURGOS_HERMES_SKIP": "1",
         "PATH": os.environ.get("PATH", ""),
     }
     if fail_pip:

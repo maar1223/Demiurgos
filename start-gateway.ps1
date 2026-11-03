@@ -34,9 +34,16 @@ if ($env:DEMIURGOS_HOME) {
 }
 
 # --- Product-owned runtime roots (S5) ---------------------------------------
-# Same chain as the POSIX launcher: an explicit DEMIURGOS_HOME (install root),
-# else the per-user product root. HERMES_HOME stays overridable on its own.
-$productRoot = if ($env:DEMIURGOS_HOME) { $env:DEMIURGOS_HOME } else { Join-Path $env:USERPROFILE ".demiurgos" }
+# Same chain as the Windows installer core: an explicit DEMIURGOS_HOME (install
+# root), else the parent of the installed `current` junction, else the Windows
+# default install root. HERMES_HOME stays overridable on its own.
+if ($env:DEMIURGOS_HOME) {
+    $productRoot = $env:DEMIURGOS_HOME
+} elseif ((Split-Path -Leaf $appRoot) -eq "current") {
+    $productRoot = Split-Path -Parent $appRoot
+} else {
+    $productRoot = Join-Path $env:LOCALAPPDATA "Demiurgos"
+}
 $productHermesHome = if ($env:DEMIURGOS_HERMES_HOME) { $env:DEMIURGOS_HERMES_HOME } else { Join-Path $productRoot "hermes" }
 $productAgentRoot = Join-Path $productRoot "hermes-agent"
 
@@ -68,6 +75,20 @@ if (-not $hermesBin) {
 if (-not $hermesBin) {
     Write-Error "Hermes CLI not found. Install Hermes or add it to PATH, then retry."
     exit 1
+}
+
+# Boot verification (S7): a product-owned binary must belong to a checkout at
+# the pinned commit. A user-installed dev fallback has no product pin to check.
+$ownsRuntime = $hermesBin.StartsWith($productAgentRoot) -or $hermesBin.StartsWith($productHermesHome)
+if ($ownsRuntime) {
+    $provisionScript = Join-Path $PSScriptRoot "scripts\provision-hermes.ps1"
+    if (Test-Path -LiteralPath $provisionScript -PathType Leaf) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $provisionScript -Check -InstallRoot $productRoot
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Hermes runtime rejected: the product checkout is not at the expected pin (S7)."
+            exit 1
+        }
+    }
 }
 
 $gatewayPort = if ($env:DEMIURGOS_GATEWAY_PORT) { [int]$env:DEMIURGOS_GATEWAY_PORT } else { 8642 }

@@ -55,7 +55,6 @@ DEMIURGOS_REPO_NAME="Dem""iurgos"
 DEMIURGOS_REPO="https://github.com/${DEMIURGOS_REPO_OWNER}/${DEMIURGOS_REPO_NAME}.git"
 ENGRAM_VERSION="1.17.0"
 ENGRAM_REPO="Gentleman-Programming/engram"
-HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
 HERMES_CONFIG="$DEMIURGOS_HERMES_HOME/config.yaml"
 
 # Rutas relativas al checkout que usan las etapas de entorno Python y data-root.
@@ -114,26 +113,24 @@ check_prerequisites() {
     ok "Herramientas base: curl, git disponibles"
 }
 
-# ── Etapa 2: Instalar Hermes Agent ────────────────────────
+# ── Etapa 2: Instalar el runtime de Hermes de Demiurgos ───
+# One provisioning owner (S5/S7): scripts/provision-hermes.sh installs the
+# pinned product fork under DEMIURGOS_HOME, reports (never modifies) a
+# pre-existing Hermes, and keeps the personal ~/.hermes untouched. This
+# replaces the historical upstream installer script.
 install_hermes() {
-    step "Instalando Hermes Agent..."
-    
-    if command -v hermes &>/dev/null; then
-        ok "Hermes Agent ya instalado ($(hermes --version 2>/dev/null || echo 'versión desconocida'))"
-        return 0
+    step "Instalando el runtime de Hermes de Demiurgos..."
+
+    local here provision
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    provision="$here/scripts/provision-hermes.sh"
+    if [ ! -f "$provision" ]; then
+        fail "No se encontró scripts/provision-hermes.sh en este checkout. Ejecuta el instalador desde el checkout de Demiurgos."
     fi
-    
-    curl -fsSL "$HERMES_INSTALL_URL" | bash || fail "No se pudo instalar Hermes Agent."
-    
-    # Asegurar que hermes esté en el PATH
-    if ! command -v hermes &>/dev/null; then
-        export PATH="$HOME/.hermes/bin:$PATH"
-        if ! command -v hermes &>/dev/null; then
-            fail "Hermes Agent se instaló pero no está en el PATH. Reinicia la terminal o ejecuta: export PATH=\$HOME/.hermes/bin:\$PATH"
-        fi
-    fi
-    
-    ok "Hermes Agent instalado"
+
+    bash "$provision" --install-root "$DEMIURGOS_HOME" || fail "No se pudo provisionar el runtime de Hermes."
+
+    ok "Runtime de Hermes instalado en $DEMIURGOS_HOME/hermes-agent"
 }
 
 # ── Etapa 3: Instalar Engram ──────────────────────────────
