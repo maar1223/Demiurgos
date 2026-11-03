@@ -258,9 +258,10 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-08 — Auth `disabled` por defecto al correr desde fuente
 
-- **Estado (2026-11-03)**: resuelto por decisión del Owner — el default pasa a
-  `local-dev` (la misma sesión loopback que siembra el instalador); `disabled`
-  queda solo como override explícito. Tests: `test_unset_env_defaults_to_local_dev`
+- **Estado (2026-11-03)**: resuelto en `ff50320` por decisión del Owner — el
+  default pasa a `local-dev` (la misma sesión loopback que siembra el
+  instalador); `disabled` queda solo como override explícito. Tests:
+  `test_unset_env_defaults_to_local_dev`
   (RED→GREEN), el caso de `disabled` pasa a fijar el modo explícitamente, y la
   suite completa queda en 4868 passed / 26 skipped.
 - **Evidencia**: `_auth_mode()` cae a `"disabled"` sin `DEMIURGOS_AUTH_MODE`; el
@@ -406,4 +407,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 1: AUD-05 (`collect-diagnostics.sh` en el payload) y AUD-06 (PyMuPDF obligatorio y lockeado) implementados en `fix/mvp-audit-wave-1`. |
 | 2026-11-03 | Ola 2: AUD-09 resuelto en `5badeaf` — se retira el locale `es-ar`; español neutro (`es`) es el único español del producto. |
 | 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
-| 2026-11-03 | Ola 2: AUD-08 resuelto — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |
+| 2026-11-03 | Ola 2: AUD-08 resuelto en `ff50320` — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |

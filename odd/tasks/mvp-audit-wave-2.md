@@ -13,7 +13,7 @@ Branch: `fix/mvp-audit-wave-2` · Base: `master` (`801f7aa`) · Delivery: work-u
 
 - T1 — AUD-09 retire `es-ar` — inline — done (`5badeaf`); focused tests `test_retirement_gate.py` + `test_demiurgos_language.py` + `web-config-ui/tests` = 78 passed.
 - T2 — AUD-07 VPS out of the MVP — inline — done (README.md + README.es.md claims removed).
-- T3 — AUD-08 auth default — inline — done (RED→GREEN; `test_api_server_auth_default.py` + full suite 4868 passed).
+- T3 — AUD-08 auth default — inline — done (`ff50320`; RED→GREEN; `test_api_server_auth_default.py` + full suite 4868 passed).
 - T4 — AUD-10 docs drift — blocked on the two embedded S4 decisions.
 
 ## Log
