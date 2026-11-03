@@ -17,7 +17,7 @@
 | CLI de [Hermes Agent](https://hermes-agent.nousresearch.com) | Proveedor conversacional (asistente y gateway en el puerto 8642) |
 | `git` | Clonar el repositorio |
 
-> `install.sh` es el **bootstrap de la app web** en un solo comando: sin flags instala la aplicación web de Demiurgos (delegando en `scripts/install-demiurgos.sh`, descargado del canal de releases). El stack **CLI de desarrollo** opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas) es opt-in: `bash install.sh --with-cli-stack` (o `DEMIURGOS_WITH_CLI_STACK=1`). No es necesario para usar la app web.
+> `install.sh` es el **bootstrap de la app web** en un solo comando: sin flags instala la aplicación web de Demiurgos (delegando en `scripts/install-demiurgos.sh`, descargado del canal de releases). El stack **CLI de desarrollo** opcional ([Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas) es opt-in: `bash install.sh --with-cli-stack` (o `DEMIURGOS_WITH_CLI_STACK=1`). No es necesario para usar la app web.
 
 ### 2. Instalación
 
@@ -96,7 +96,7 @@ La primera ejecución muestra el flujo de **onboarding**: elige el idioma de la 
 - **Los mundos son datos, no código.** Cada mundo vive bajo `mundos/{mundo}/` en OKF (`lore/`, `personajes/`, `sagas/`, …). Ningún código de la plataforma se acopla a un universo concreto.
 - **El grafo es la fuente de verdad para leer** entidades; el filesystem solo se escribe a través de rutas de API con compuertas.
 - **Nada persiste sin tu aprobación.** Las propuestas de IA son diskless hasta que confirmas un diff (digest SHA-256 + token de un solo uso) — canon-safety por construcción.
-- **Engram** es la capa de memoria persistente obligatoria; **Hermes** es un proveedor conversacional intercambiable, no la plataforma.
+- **Engram** es la capa de memoria persistente obligatoria para el flujo del agente/ODD; la app web distribuida persiste su propio estado en SQLite. **Hermes** es un proveedor conversacional intercambiable, no la plataforma.
 
 ---
 
@@ -138,7 +138,7 @@ Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: c
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (probado en 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Almacenamiento | Archivos OKF en `mundos/{mundo}/`; SQLite en `data/` (sesiones guiadas, memoria de conversación, ideas, trabajos de importación); papelera `.papelera` (TTL 30 días) |
-| Memoria | Engram (MCP) — obligatoria para la co-creación; worker `engram_sync` |
+| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; worker `engram_sync` |
 | Proveedor de IA | Hermes (gateway en el puerto 8642) vía runs adapter + gate semántico; agnóstico de proveedor (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---

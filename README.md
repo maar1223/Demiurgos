@@ -97,7 +97,7 @@ The first launch shows the **onboarding** flow: pick your UI language, configure
 - **Worlds are data, not code.** Every world lives under `mundos/{mundo}/` in OKF (`lore/`, `personajes/`, `sagas/`, …). No platform code is coupled to a specific universe.
 - **The graph is the read source of truth** for entities; the filesystem is only written through gated API routes.
 - **Nothing persists without your approval.** AI proposals are diskless until you confirm a diff (SHA-256 digest + one-time token) — canon-safety by construction.
-- **Engram** is the mandatory persistent memory layer; **Hermes** is one interchangeable conversational provider, not the platform.
+- **Engram** is the mandatory persistent memory layer for the agent/ODD workflow; the shipped web app persists its own state to SQLite. **Hermes** is one interchangeable conversational provider, not the platform.
 
 ---
 
@@ -139,7 +139,7 @@ Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: H
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (tested on 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Storage | OKF files in `mundos/{mundo}/`; SQLite in `data/` (guided sessions, conversation memory, ideas, import jobs); `.papelera` trash (30-day TTL) |
-| Memory | Engram (MCP) — mandatory for co-creation; `engram_sync` worker |
+| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` worker |
 | AI provider | Hermes (gateway port 8642) via runs adapter + semantic gate; provider-agnostic (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---

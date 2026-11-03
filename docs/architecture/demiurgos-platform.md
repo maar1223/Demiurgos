@@ -73,7 +73,7 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 | **Agnosticismo de proveedor** | Configuración unificada de proveedores (texto/visión); Hermes es el proveedor conversacional actual y tratado como componente reemplazable | `[DECISIÓN CERRADA]` |
 | **Fronteras seguras de propuesta/escritura** | Las propuestas no alteran Canon ni runtime; los borradores de trabajo pueden autoguardarse, pero toda promoción a Canon, publicación o activación ocurre solo tras aprobación con digest + token de un solo uso | `[DECISIÓN CERRADA]` |
 | **Divulgación progresiva** | Primero lo esencial, después lo profundo; una pregunta a la vez; opciones solo cuando ayudan (máx. 5) | `[DECISIÓN CERRADA]` |
-| **Memoria persistente** | Engram es memoria obligatoria; sin ella el flujo de co-creación se detiene y reporta el error | `[DECISIÓN CERRADA]` |
+| **Memoria persistente** | Engram es la memoria obligatoria del flujo del agente/ODD; el runtime web distribuido no la requiere y persiste su estado durable en SQLite | `[DECISIÓN CERRADA]` |
 | **Metodología como contenido** | Las metodologías creativas (qué preguntar, cómo explorar) son contenido editable del Autor (skills), no lógica incrustada en el servidor | `[DECISIÓN CERRADA]` |
 | **Co-creación asistida** | En la creación de skills, Hermes conversa y **redacta la propuesta**; el backend valida/compila y protege el kernel; el Autor aprueba la publicación. Hermes no escribe ni decide canon | `[DECISIÓN CERRADA]` |
 | **Co-creación adaptativa** | El sistema **aprende el vocabulario y la estructura del mundo** y **pregunta ante la ambigüedad** en lugar de asumir; el LLM propone y el backend conserva **contexto, procedencia y seguridad**; el Autor confirma | `[DECISIÓN CERRADA]` |
@@ -216,7 +216,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 | Plantillas/catálogos | `[ACTUAL]` | Catálogos narrativos en `plantillas/` con `_catalog.json` |
 | Búsqueda/índice | `[ACTUAL]` | Search del grafo + `lore_search`; indexado vía sync_lore y `ReindexCoordinator` |
 | Persistencia y revisión | `[ACTUAL]` | Pipeline de escritura gated (confirmación digest+token), papelera, historial |
-| Memoria persistente | `[ACTUAL]` | Engram (MCP): `mem_save/search/context`; obligatoria para co-creación |
+| Memoria persistente | `[ACTUAL]` | Engram (MCP): `mem_save/search/context`; obligatoria para el flujo del agente/ODD. El runtime web usa SQLite y trata Engram como auxiliar (`api_server.py:662,9539`) |
 | Imágenes | `[ACTUAL]` subida de media + `image_indexer` + proveedor de visión + `nanobanana` · `[PROPUESTO]` flujos de imagen de personaje profundos | No es objetivo de la iniciativa de skills; profundidad es decisión abierta (sección 10) |
 | Configuración/instalación | `[ACTUAL]` | onboarding + Centro de Configuración (en el Perfil de la wiki, `/perfil`; sin página/ruta independiente); wizard legacy `web-config-ui` retirado (histórico, solo referencia) |
 | Workflows narrativos | `[ACTUAL]` | Orquestador AGENTS.md + máquina de fases + `.demiurgos-estado.json` |
@@ -314,7 +314,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 
 | Brecha | Detalle | Estado |
 |---|---|---|
-| Runtime guiado con prompts hardcodeados | `guided_character_provider.py` y `semantic_intent.py` mantienen el contrato builtin como driver actual; el compilador/biblioteca/cuarentena existen, pero el cableado de la metodología compilada al provider/gate queda para Phase 3 | `[ACTUAL]` — contrato builtin activo; puente compilado→runtime `[OBJETIVO]` (ver iniciativa) |
+| Runtime guiado con contrato compilado | La metodología compilada llega al provider: `_compiled_contract_markdown` resuelve el pin de la sesión y `continue_session` pasa `compiled_contract_markdown`/`convergence_specimen_markdown` server-pinned a `guided_character_provider.py` (`api_server.py:3086,3461-3486`); `semantic_intent.py` conserva el contrato builtin como fallback | `[ACTUAL]` — puente compilado→runtime cableado |
 | Biblioteca de metodologías | Versionado inmutable, activación por mundo, rollback y borrado recuperable (`methodology_library.py`); import/export `.zip` con checksum, cuarentena y firma oficial aditiva (`methodology_trust.py`) | `[ACTUAL]` (ver iniciativa) |
 | Persistencia de sesiones durable | `GuidedSessionStore` es durable (SQLite); TTL 30 días, snapshot de metodología pinneado, tokens/autorizaciones efímeros y no heredables; propuestas pendientes se re-piden | `[ACTUAL]` — modelo híbrido G2 implementado |
 | Contrato OKF mínimo v1 | Identidad, wikilinks/relaciones, estado y mínimos por tipo (personaje primero) validados por `okf_contract.py`; sin acoplamiento a mundo | `[ACTUAL]` (ver iniciativa) |
