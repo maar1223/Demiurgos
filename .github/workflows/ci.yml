@@ -159,6 +159,33 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+  relay:
+    # AUD-11: the separately-deployed Cloudflare Worker had no CI job.
+    name: Relay (Cloudflare Worker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          # node --experimental-strip-types (the relay test runner) needs Node 22+.
+          node-version: "22"
+
+      - name: Install relay dependencies
+        # No lockfile is committed for the relay; npm install is intentional.
+        run: npm install --no-audit --no-fund
+        working-directory: relay
+
+      - name: Test
+        run: npm test
+        working-directory: relay
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: relay
+
   frontend-build:
     # AUD-02: artifact-only build. The backend, launcher, static-serving and
     # PowerShell jobs need the built SPA, never the frontend TEST result: when

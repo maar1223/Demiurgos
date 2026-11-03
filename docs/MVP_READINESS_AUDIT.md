@@ -314,7 +314,7 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 | ID | Hallazgo | Evidencia | Fix mínimo |
 |---|---|---|---|
-| AUD-11 | `relay/` sin job de CI | `.github/workflows/ci.yml` no lo ejecuta | agregar job `relay` (test + typecheck) |
+| AUD-11 | `relay/` sin job de CI | `.github/workflows/ci.yml` no lo ejecuta | **resuelto (2026-11-03)**: job `relay` en Node 22 con `npm install` + `npm test` + `npm run typecheck`; local 143 tests pasan |
 | AUD-12 | `engram_sync` documentado pero no arrancado | README lo cita; ningún launcher lo inicia; el importer ya retiró su adaptador | retirar la promesa o cablearlo |
 | AUD-13 | Dev tools con deps no declaradas | `sync-ideas.py`/`dev_diary.py` → `googleapiclient`; `opencode-bridge.py` → `faster_whisper` | declararlas en un requirements de dev o retirar los scripts |
 | AUD-14 | Sin integración de escritorio en macOS | solo Linux `.desktop` y Windows shortcuts | decidir si se agrega `.app`/alias |
@@ -416,3 +416,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
 | 2026-11-03 | Ola 2: AUD-08 resuelto en `ff50320` — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |
 | 2026-11-03 | Ola 2: AUD-10 resuelto en `54949e7` — Hermes/Engram/puente compilado reconciliados; macOS Intel queda fuera de la matriz y de los targets declarados. |
+| 2026-11-03 | Ola 3: AUD-11 resuelto — job `relay` agregado a CI (Node 22, tests + typecheck; local 143 passed). |
