@@ -28,12 +28,12 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 |---|---|---|---|---|---|
 | T1 | Make the fork public and record the license obligation | S2, S8 | inline | done (public confirmed) | — |
 | T2 | Port the `tool_choice: none` patch onto current upstream `main`; run the fork tests; pin the new commit | S3, S4 | inline | done — merge `d046ff99` on upstream `6112c2ad`; 367 api_server tests pass | — |
-| T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | done — see L17 | |
-| T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | done — see L17 | |
-| T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | done — see L19 | |
+| T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | done — see L17 | `68296ab`, `a86af93` |
+| T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | done — see L17 | `68296ab`, `a86af93` |
+| T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | done — see L19 | `c10c069` |
 | T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | `d2af5d4` |
-| T7 | Docs/readiness/license notices | S8, S9 | inline | done — see L19 | |
-| T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | pending | |
+| T7 | Docs/readiness/license notices | S8, S9 | inline | done — see L19 | `c10c069` |
+| T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | done — see L20 | |
 
 ## Log
 
@@ -99,3 +99,10 @@ L19 (execution, T5/T7) — isolation and docs:
 - `configure_mcp_profile` reads/writes `$DEMIURGOS_HERMES_HOME/profiles/demiurgos-mcp/config.yaml`; the personal `~/.hermes/profiles` tree is never touched. Prior-install detection/reporting lives in the provisioner (T3/T4).
 - README: Hermes is no longer a manual prerequisite; the default install provisions the pinned, isolated runtime, leaves the personal `~/.hermes` untouched, and readiness stays honest (the app boots; `runtime=accepted` needs a real turn). `docs/RELEASING.md` documents the shipped MIT third-party notice (`third-party/hermes/LICENSE`).
 - Verification: `test_installer_hermes_isolation.py` extended (4 new assertions: export, product binary, no PATH selection, dedicated profile path) -> 16 passed.
+
+L20 (T8 verification) — real install + boot, plus the two defects the run exposed:
+1. `setup-hermes.sh` is bash-only; invoking it with `sh` (dash) failed on its substitutions. `run_setup` now executes `bash "$setup"` (pinned by a test).
+2. After provisioning, `HERMES_HOME` was still exported only when `config.yaml` existed, so a fresh product install silently fell back to the personal `~/.hermes`. Both launchers now also treat an existing product checkout (`hermes-agent/.git`) as provisioned; the app still starts without credentials (accepted consequence), but never with the personal profile.
+- Real provisioning on this host: `scripts/provision-hermes.sh --install-root ~/.demiurgos` fetched pin `d046ff99…`, installed uv 0.13.5 + Python 3.14.9 + the hash-locked deps, and reported the existing personal Hermes/profile as untouched. `--check` exits 0; the exact launcher reports `Install directory: ~/.demiurgos/hermes-agent`; `~/.local/bin/hermes` kept its original mtime; `~/.hermes` was not modified.
+- Real gateway boot from the product runtime with `HERMES_HOME=~/.demiurgos/hermes`, `API_SERVER_KEY`, `API_SERVER_PORT=8644`, `HERMES_ENABLE_PROJECT_PLUGINS=1`: `GET /health` -> 200 `{"status": "ok", ...}`. Temporary config/log removed; the live 8642 gateway was not touched.
+- Full suite: 4860 passed, 26 skipped, 1 pre-existing warning. Launcher/provisioner/installer suites are green; `bash -n` clean. Fork tests were already green on the same pin (L9).

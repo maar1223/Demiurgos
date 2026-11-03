@@ -568,7 +568,10 @@ start_component() {
 # the product falls back to today's personal-profile resolution — absence of
 # the dedicated profile is NOT an error condition.
 export_product_hermes_home() {
-    if [ -f "$PRODUCT_HERMES_HOME/config.yaml" ]; then
+    # The dedicated root is provisioned when the product runtime checkout
+    # exists, even before Assistant Settings writes config.yaml: using the
+    # personal profile as a fallback would silently break S5 isolation.
+    if [ -f "$PRODUCT_HERMES_HOME/config.yaml" ] || [ -d "$PRODUCT_HERMES_AGENT_ROOT/.git" ]; then
         export HERMES_HOME="$PRODUCT_HERMES_HOME"
     else
         printf 'Hermes dedicated profile not provisioned: %s/config.yaml missing.\n' "$PRODUCT_HERMES_HOME" >&2

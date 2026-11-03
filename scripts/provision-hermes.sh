@@ -188,7 +188,7 @@ run_setup() {
         HERMES_HOME="$HERMES_HOME" \
         HERMES_RUNTIME_DIR="$RUNTIME_DIR" \
         HERMES_AGENT_ROOT="$AGENT_ROOT" \
-        sh "$setup"
+        bash "$setup"
     ); then
         rm -rf "$scratch"
         fail "setup-hermes.sh failed; expected pin $HERMES_PIN at $AGENT_ROOT — fix the error above and re-run"

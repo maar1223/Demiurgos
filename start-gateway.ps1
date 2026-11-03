@@ -141,7 +141,8 @@ $env:HERMES_ENABLE_PROJECT_PLUGINS = "1"
 # Dedicated product profile/checkout (S5), mirroring the POSIX launcher: export
 # HERMES_HOME only when provisioned, and the checkout root only when present so
 # the project plugin imports the bundled adapter from the pinned runtime.
-if (Test-Path -LiteralPath (Join-Path $productHermesHome "config.yaml") -PathType Leaf) {
+if ((Test-Path -LiteralPath (Join-Path $productHermesHome "config.yaml") -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $productAgentRoot ".git") -PathType Container)) {
     $env:HERMES_HOME = $productHermesHome
 } else {
     Write-Host "Hermes dedicated profile not provisioned: $(Join-Path $productHermesHome 'config.yaml') missing." -ForegroundColor Yellow

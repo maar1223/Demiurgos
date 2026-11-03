@@ -173,6 +173,39 @@ def test_launcher_sourcing_hermes_home_unset_when_unprovisioned(tmp_path: Path):
     os.name == "nt" or shutil.which("bash") is None,
     reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
 )
+def test_launcher_exports_hermes_home_when_only_the_runtime_is_provisioned(tmp_path: Path):
+    """S5 isolation: a provisioned product checkout is enough to export the
+    dedicated HERMES_HOME, even before Assistant Settings writes config.yaml.
+    Falling back to the personal ~/.hermes here would break isolation."""
+    home = tmp_path / "home"
+    install = home / ".demiurgos"
+    agent = install / "hermes-agent"
+    (agent / ".git").mkdir(parents=True)
+
+    probe = (
+        'source "$1" __probe__ || true; '
+        'export_product_hermes_home; '
+        'printf "HH=%s" "${HERMES_HOME:-UNSET}"'
+    )
+    result = subprocess.run(
+        ["bash", "-c", probe, "bash", str(PORTABLE_LAUNCHER)],
+        env={
+            "HOME": str(home),
+            "TMPDIR": str(tmp_path / "tmp"),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"HH={install}/hermes"
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="POSIX-bash sourcing probe (on Windows `bash` is the WSL stub)",
+)
 def test_launcher_sourcing_default_chain_without_overrides(tmp_path: Path):
     """Behavioural, hermetic (spec 'Default path with no DEMIURGOS_HOME'): with
     neither override set, PRODUCT_HERMES_HOME resolves to $HOME/.demiurgos/hermes

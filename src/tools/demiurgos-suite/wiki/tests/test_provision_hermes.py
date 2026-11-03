@@ -90,6 +90,8 @@ def test_provisioner_runs_setup_with_product_env_and_scratch_home():
     assert 'HERMES_HOME="$HERMES_HOME"' in text
     assert 'HERMES_RUNTIME_DIR="$RUNTIME_DIR"' in text
     assert 'HERMES_AGENT_ROOT="$AGENT_ROOT"' in text
+    # The setup script is bash-only (dash fails on its substitutions).
+    assert 'bash "$setup"' in text
     # Scratch HOME keeps setup's ~/.local/bin + shell rc writes off the user.
     assert 'HOME="$scratch"' in text
     assert 'UV_CACHE_DIR="$scratch/uv-cache"' in text

@@ -409,6 +409,8 @@ class TestProductRuntimeContract:
         text = _text(PS_GATEWAY)
         assert "$env:HERMES_HOME = $productHermesHome" in text
         assert "$env:HERMES_AGENT_ROOT = $productAgentRoot" in text
+        # A provisioned checkout is enough, even before config.yaml exists.
+        assert '(Join-Path $productAgentRoot ".git")' in text
 
     def test_posix_verifies_the_product_pin_before_starting_gateway(self):
         """S7: a product-owned binary is only started after the checkout pin
