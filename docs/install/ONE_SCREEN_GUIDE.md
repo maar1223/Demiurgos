@@ -2,8 +2,10 @@
 
 ## Antes de empezar
 
-- Necesitas una terminal abierta. Un comando. Nada más.
+- Necesitas una terminal abierta.
 - **No** hace falta ser administrador, ni tener Python, ni Node, ni compilador.
+- En Linux/macOS es un solo comando. En Windows son dos: primero Scoop +
+  `minisign`, después Demiurgos.
 - Sistemas soportados: ver [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).
 
 ## Linux y macOS
@@ -14,11 +16,25 @@ curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/downlo
 
 ## Windows
 
-Abre **PowerShell** y pega:
+Abre **PowerShell** (sin administrador) y ejecuta dos pasos.
+
+### 1. Instala Scoop y `minisign` (solo la primera vez)
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; irm get.scoop.sh | iex; scoop install minisign
+```
+
+`minisign` es lo que verifica la firma del instalador. Si ya tienes Scoop, la
+línea lo detecta y sigue con `minisign`; si ya tienes ambos, no rompe nada. Deja
+Scoop instalado, que además sirve para otras herramientas.
+
+### 2. Instala Demiurgos
 
 ```powershell
 irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
 ```
+
+Las dos líneas van en la **misma ventana** de PowerShell.
 
 ### Si Windows bloquea el archivo
 
@@ -53,13 +69,21 @@ En Windows:
 & "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" start
 ```
 
-Se abre en el navegador. Volver a ejecutar el comando **no** duplica nada: si ya
-está corriendo, no arranca una segunda instancia.
+La app queda disponible en `http://127.0.0.1:8000`. En Windows, ábrela en el
+navegador si no se abre sola. Si el asistente aparece pendiente, arranca su
+gateway en otra ventana:
+
+```powershell
+& "$env:LOCALAPPDATA\Demiurgos\current\start-gateway.ps1"
+```
+
+Volver a ejecutar el comando de arranque **no** duplica nada: si ya está
+corriendo, no arranca una segunda instancia.
 
 ## Si algo falla
 
 1. Mira los registros en `logs/` (arriba). Son permanentes: no se borran solos.
-2. Genera un paquete de diagnóstico para pedir ayuda:
+2. En Linux/macOS, genera un paquete de diagnóstico para pedir ayuda:
 
    ```bash
    ~/.demiurgos/current/scripts/collect-diagnostics.sh
@@ -67,6 +91,10 @@ está corriendo, no arranca una segunda instancia.
 
    Deja un `.tar.gz` en la carpeta actual. **Revísalo antes de compartirlo**:
    puede contener rutas locales y el contenido de los registros.
+
+   En Windows, adjunta los archivos de `%LOCALAPPDATA%\Demiurgos\logs\` y usa
+   **Perfil → Reporte de errores** dentro de la app (muestra la versión y el
+   build).
 3. Volver a correr el mismo comando de instalación es seguro e idempotente.
 
 ## Lo que esta guía NO promete
