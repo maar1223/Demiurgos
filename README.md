@@ -57,7 +57,7 @@ cd frontend && npm install && cd ..
 | **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Hermes Gateway (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | Same stack + graph warm-up |
 
-The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API.
+The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API. macOS has no desktop entry in the MVP: launch it from Terminal with the command above.
 
 Remote/VPS deployment is **out of the MVP scope**: Demiurgos runs as a local desktop-class app bound to loopback. The session cookie stays scheme-aware, but no server/proxy guide is provided yet.
 
@@ -139,7 +139,7 @@ Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: H
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (tested on 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Storage | OKF files in `mundos/{mundo}/`; SQLite in `data/` (guided sessions, conversation memory, ideas, import jobs); `.papelera` trash (30-day TTL) |
-| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` worker |
+| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` CLI (run manually) |
 | AI provider | Hermes (gateway port 8642) via runs adapter + semantic gate; provider-agnostic (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---
@@ -150,12 +150,13 @@ Configuration is optional and environment-based — **no `.env` is required for 
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DEMIURGOS_AUTH_MODE` | *(disabled)* | `local-dev` (one-click session) or `credentials` (account vault) |
+| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (one-click loopback session) or `credentials` (account vault); `disabled` is an explicit opt-out |
 | `DEMIURGOS_REAUTH_INTERVAL_D` | `14` | Soft re-auth reminder interval (days) |
 | `DEMIURGOS_SESSION_TTL_H` / `DEMIURGOS_REMEMBER_ME_TTL_D` | `8` / `30` | Session TTL and "remember me" duration |
 | `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | Text LLM (assistant, import enrichment) |
 | `DEMIURGOS_VISION_PROVIDER/ENDPOINT/MODEL` | opencode-go | Vision LLM (image analysis) |
 | `DEMIURGOS_LANGUAGE` | `es` | UI language |
+| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | API/SPA and Hermes gateway ports; override when a port is already taken (the launcher never kills a foreign process) |
 | `TELEGRAM_BOT_TOKEN` / `GOOGLE_SHEETS_ID` | — | Optional Telegram idea capture / sync |
 | `GOOGLE_API_KEY` | — | Optional image generation |
 

@@ -314,13 +314,13 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 | ID | Hallazgo | Evidencia | Fix mínimo |
 |---|---|---|---|
-| AUD-11 | `relay/` sin job de CI | `.github/workflows/ci.yml` no lo ejecuta | agregar job `relay` (test + typecheck) |
-| AUD-12 | `engram_sync` documentado pero no arrancado | README lo cita; ningún launcher lo inicia; el importer ya retiró su adaptador | retirar la promesa o cablearlo |
-| AUD-13 | Dev tools con deps no declaradas | `sync-ideas.py`/`dev_diary.py` → `googleapiclient`; `opencode-bridge.py` → `faster_whisper` | declararlas en un requirements de dev o retirar los scripts |
-| AUD-14 | Sin integración de escritorio en macOS | solo Linux `.desktop` y Windows shortcuts | decidir si se agrega `.app`/alias |
-| AUD-15 | Puertos fijos sin fallback | 8000/8642; el launcher rechaza si los ocupa un proceso ajeno | documentar overrides o elegir puerto libre |
-| AUD-16 | Sin test de payload Windows real | el fixture fabrica `scripts\start-demiurgos.ps1` | bootear el paquete Windows empaquetado |
-| AUD-17 | `web-config-ui` retirado pero aún editable | se editó su i18n en `ef2171e` | congelar o retirar el árbol |
+| AUD-11 | `relay/` sin job de CI | `.github/workflows/ci.yml` no lo ejecuta | **resuelto (2026-11-03)**: job `relay` en Node 22 con `npm install` + `npm test` + `npm run typecheck`; local 143 tests pasan |
+| AUD-12 | `engram_sync` documentado pero no arrancado | README lo cita; ningún launcher lo inicia; el importer ya retiró su adaptador | **resuelto (2026-11-03)**: se retira la promesa de "worker"; ambos README lo presentan como CLI de ejecución manual |
+| AUD-13 | Dev tools con deps no declaradas | `sync-ideas.py`/`dev_diary.py` → `googleapiclient`; `opencode-bridge.py` → `faster_whisper` | **resuelto (2026-11-03)**: `requirements-dev.txt` declara `google-auth`, `google-api-python-client`, `faster-whisper` y `requests` como solo-desarrollo (fuera del payload) |
+| AUD-14 | Sin integración de escritorio en macOS | solo Linux `.desktop` y Windows shortcuts | **resuelto (2026-11-03)**: la integración de escritorio de macOS queda fuera del MVP; ambos README lo dicen y aclaran que se lanza desde Terminal. `install_desktop_entry` ya era Linux-only |
+| AUD-15 | Puertos fijos sin fallback | 8000/8642; el launcher rechaza si los ocupa un proceso ajeno | **resuelto (2026-11-03)**: los overrides ya existían (`DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`); documentados en ambos README y `.env.example`. El launcher sigue rechazando puertos ajenos sin matarlos, por diseño |
+| AUD-16 | Sin test de payload Windows real | el fixture fabrica `scripts\start-demiurgos.ps1` | **resuelto (2026-11-03)**: job `windows-payload-boot` en `release.yml` descarga el zip real, provisiona el venv hash-locked con `uv`, lo bootea y verifica `/health` y `/`; vuelca logs si falla. Corre en cada push a `master` (dry-run) y en tags. No verificable desde Linux: lo valida el primer run de `master` |
+| AUD-17 | `web-config-ui` retirado pero aún editable | se editó su i18n en `ef2171e` | **resuelto (2026-11-03)**: árbol congelado — el gate `legacy_tree_frozen` compara un SHA-256 del árbol (líneas normalizadas) y falla ante cualquier edición, alta o borrado |
 
 ---
 
@@ -416,3 +416,10 @@ gh run list --limit 5
 | 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
 | 2026-11-03 | Ola 2: AUD-08 resuelto en `ff50320` — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |
 | 2026-11-03 | Ola 2: AUD-10 resuelto en `54949e7` — Hermes/Engram/puente compilado reconciliados; macOS Intel queda fuera de la matriz y de los targets declarados. |
+| 2026-11-03 | Ola 3: AUD-11 resuelto — job `relay` agregado a CI (Node 22, tests + typecheck; local 143 passed). |
+| 2026-11-03 | Ola 3: AUD-12 resuelto — `engram_sync` deja de anunciarse como worker; queda como CLI manual. |
+| 2026-11-03 | Ola 3: AUD-13 resuelto — `requirements-dev.txt` declara las deps de los dev tools; el docstring de `sync-ideas.py` deja de listar `gspread` (no se importa). |
+| 2026-11-03 | Ola 3: AUD-14 resuelto — integración de escritorio de macOS fuera del MVP; README aclara que se lanza desde Terminal. |
+| 2026-11-03 | Ola 3: AUD-15 resuelto — puertos documentados vía `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`; README y `.env.example` actualizados (también el default de auth a `local-dev`). |
+| 2026-11-03 | Ola 3: AUD-17 resuelto — `web-config-ui` congelado con el gate `legacy_tree_frozen` (SHA-256 del árbol). |
+| 2026-11-03 | Ola 3: AUD-16 resuelto — job `windows-payload-boot` bootea el zip Windows real en `release.yml`; pendiente de validación en el primer run de `master`. |

@@ -56,7 +56,7 @@ cd frontend && npm install && cd ..
 | **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Gateway de Hermes (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | El mismo stack + warm-up del grafo |
 
-El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows el instalador añade un acceso al menú Inicio y `start-demiurgos.ps1 install -Desktop` añade el icono del escritorio; `start-api.ps1` arranca solo la API.
+El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows el instalador añade un acceso al menú Inicio y `start-demiurgos.ps1 install -Desktop` añade el icono del escritorio; `start-api.ps1` arranca solo la API. macOS no tiene entrada de escritorio en el MVP: se lanza desde Terminal con el comando de arriba.
 
 El despliegue remoto/VPS está **fuera del alcance del MVP**: Demiurgos corre como app local de escritorio, atada a loopback. La cookie de sesión sigue siendo scheme-aware, pero todavía no hay guía de servidor ni de proxy.
 
@@ -138,7 +138,7 @@ Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: c
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (probado en 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Almacenamiento | Archivos OKF en `mundos/{mundo}/`; SQLite en `data/` (sesiones guiadas, memoria de conversación, ideas, trabajos de importación); papelera `.papelera` (TTL 30 días) |
-| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; worker `engram_sync` |
+| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; CLI `engram_sync` (ejecución manual) |
 | Proveedor de IA | Hermes (gateway en el puerto 8642) vía runs adapter + gate semántico; agnóstico de proveedor (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---
@@ -149,12 +149,13 @@ La configuración es opcional y por variables de entorno — **la bóveda no req
 
 | Variable | Por defecto | Propósito |
 |----------|---------|-----------|
-| `DEMIURGOS_AUTH_MODE` | *(desactivado)* | `local-dev` (sesión de un clic) o `credentials` (bóveda de cuenta) |
+| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (sesión de un clic en loopback) o `credentials` (bóveda de cuenta); `disabled` es un opt-out explícito |
 | `DEMIURGOS_REAUTH_INTERVAL_D` | `14` | Intervalo del recordatorio de re-autenticación (días) |
 | `DEMIURGOS_SESSION_TTL_H` / `DEMIURGOS_REMEMBER_ME_TTL_D` | `8` / `30` | TTL de sesión y duración de "recordarme" |
 | `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | LLM de texto (asistente, enriquecimiento de importación) |
 | `DEMIURGOS_VISION_PROVIDER/ENDPOINT/MODEL` | opencode-go | LLM de visión (análisis de imágenes) |
 | `DEMIURGOS_LANGUAGE` | `es` | Idioma de la UI |
+| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | Puertos de la API/SPA y del gateway de Hermes; se sobreescriben si un puerto ya está tomado (el launcher nunca mata un proceso ajeno) |
 | `TELEGRAM_BOT_TOKEN` / `GOOGLE_SHEETS_ID` | — | Captura de ideas por Telegram / sync opcionales |
 | `GOOGLE_API_KEY` | — | Generación de imágenes opcional |
 
