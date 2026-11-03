@@ -58,7 +58,7 @@ cd frontend && npm install && cd ..
 
 El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows el instalador añade un acceso al menú Inicio y `start-demiurgos.ps1 install -Desktop` añade el icono del escritorio; `start-api.ps1` arranca solo la API.
 
-**VPS:** el mismo stack funciona en un servidor. La cookie de sesión es **scheme-aware**: las peticiones HTTPS reciben una cookie `Secure`; HTTP plano (un VPS sin TLS) no — el inicio de sesión funciona en cualquier plataforma sin configuración.
+El despliegue remoto/VPS está **fuera del alcance del MVP**: Demiurgos corre como app local de escritorio, atada a loopback. La cookie de sesión sigue siendo scheme-aware, pero todavía no hay guía de servidor ni de proxy.
 
 ### 4. Primer arranque
 
@@ -181,7 +181,7 @@ Módulos de backend útiles (bajo `src/tools/demiurgos-suite/wiki/`): `api_serve
 
 ## Modelo de producto
 
-- **Freeware propietario** — el Core es gratuito; los talleres opcionales son de **compra única** (activación por plataforma: 1 Windows + 1 macOS + 1 Linux + 1 servidor/VPS, con transferencia).
+- **Freeware propietario** — el Core es gratuito; los talleres opcionales son de **compra única**.
 - **La versión instalada nunca se bloquea** — la caducidad de la ventana de actualizaciones nunca desactiva ni degrada lo que ya tienes.
 - **Los mundos son privados** — el contenido bajo `mundos/` está en `.gitignore` y nunca se distribuye con el repositorio.
 - Creado por [@maar1223](https://github.com/maar1223).

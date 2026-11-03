@@ -59,7 +59,7 @@ cd frontend && npm install && cd ..
 
 The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API.
 
-**VPS:** the same stack runs on a server. The session cookie is **scheme-aware**: HTTPS requests get a `Secure` cookie, plain HTTP (a VPS without TLS) does not — login works on any platform with zero configuration.
+Remote/VPS deployment is **out of the MVP scope**: Demiurgos runs as a local desktop-class app bound to loopback. The session cookie stays scheme-aware, but no server/proxy guide is provided yet.
 
 ### 4. First run
 
@@ -182,7 +182,7 @@ Useful backend modules (under `src/tools/demiurgos-suite/wiki/`): `api_server.py
 
 ## Product model
 
-- **Proprietary freeware** — the Core is free; optional workshops are a **one-time purchase** (per-platform activation: 1 Windows + 1 macOS + 1 Linux + 1 server/VPS, transferable).
+- **Proprietary freeware** — the Core is free; optional workshops are a **one-time purchase**.
 - **The installed version never gets blocked** — an expired update window never disables or degrades what you already have.
 - **Worlds are private** — world content under `mundos/` is gitignored and never shipped with the repo.
 - Built by [@maar1223](https://github.com/maar1223).

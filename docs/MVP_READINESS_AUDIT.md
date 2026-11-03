@@ -242,6 +242,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-07 — VPS: bind local y auth loopback
 
+- **Estado (2026-11-03)**: resuelto por decisión del Owner — el despliegue
+  remoto/VPS queda **fuera del alcance del MVP**. Se retiró la promesa de VPS de
+  `README.md` y `README.es.md`, y la línea de activación por plataforma que
+  listaba un asiento de servidor/VPS (ya obsoleta tras la decisión #3840 de no
+  venta). No se agrega bind configurable ni guía de proxy; el servidor sigue
+  atado a loopback por diseño.
 - **Evidencia**: `README.md:61` afirma soporte VPS; `api_server.py:12298` y el
   launcher bindean `127.0.0.1`; `local-dev` exige loopback
   (`api_server.py:1945`). No hay guía de reverse proxy ni variable de bind.
@@ -394,3 +400,4 @@ gh run list --limit 5
 | 2026-11-03 | AUD-04 implementado en `feat/hermes-core-runtime` (PR #75): runtime de Hermes provisionado, aislado y verificado. |
 | 2026-11-03 | Ola 1: AUD-05 (`collect-diagnostics.sh` en el payload) y AUD-06 (PyMuPDF obligatorio y lockeado) implementados en `fix/mvp-audit-wave-1`. |
 | 2026-11-03 | Ola 2: AUD-09 resuelto en `5badeaf` — se retira el locale `es-ar`; español neutro (`es`) es el único español del producto. |
+| 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
