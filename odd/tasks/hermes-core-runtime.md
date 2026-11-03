@@ -31,7 +31,7 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 | T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | pending | |
 | T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | pending | |
 | T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | pending | |
-| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | in progress — port env finding (L13) | |
+| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | |
 | T7 | Docs/readiness/license notices | S8, S9 | inline | pending | |
 | T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | pending | |
 
@@ -74,3 +74,10 @@ L14 (T3/T4 design, next session) — one provisioning owner, invoked by both pla
 - Tests: `test_installer_hermes_isolation.py` extended (no `$HOME/.hermes` write, pin constant, product paths), `test_installer_contract.py` still green, launcher suites green, and a focused unit test for the pin/fetch/verify helpers.
 
 L15 (next-session start) — read this document and the `nec/checkpoint` observation first. Then, in order: (1) T6 launcher env/binary fix from L13, with the launcher suites; (2) T3/T4 `provision-hermes.{sh,ps1}` from L14, with the installer contract tests; (3) T5 isolation (`HERMES_HOME` export, `configure_mcp_profile` out of `~/.hermes/profiles`, prior-install report); (4) T7 docs/readiness/license; (5) T8 full verification. Do not modify `~/.hermes`, do not restart the live gateway, and do not push the Demiurgos branch without the Owner's decision. The fork is public and pinned; future runtime updates are `git merge upstream/main`, never a rebuild.
+
+L16 (execution, T6) — implemented in `scripts/start-demiurgos.sh` and `start-gateway.ps1`:
+- Both gateway entry points now export `API_SERVER_HOST`/`API_SERVER_PORT` alongside the legacy `HERMES_GATEWAY_HOST`/`HERMES_GATEWAY_PORT`, so the pinned upstream binds the launcher's port and older builds still work. `test_semantic_e2e._start_gateway` was updated for consistency.
+- Binary resolution prefers product-owned absolute paths: the checkout's exact-install launcher (`<agent root>/.hermes/bin/hermes[.exe|.cmd]`, created by `ensure_install_launchers` on both platforms) and the installer-published `<hermes home>/bin/hermes[.exe|.cmd]` (Windows convention). `command -v hermes` / `~/.local/bin/hermes` are dev fallbacks only.
+- `HERMES_AGENT_ROOT` is exported (when the checkout's `plugins/` package exists) before either child starts; `HERMES_HOME` keeps the ratified conditional export (only when `<dedicated root>/config.yaml` is provisioned).
+- Evidence correction to L13: on POSIX `setup-hermes.sh` publishes conveniences to `~/.local/bin` and the exact install launcher to `<checkout>/.hermes/bin/hermes`; it never writes `<hermes home>/bin`. The launcher therefore checks the checkout launcher first and keeps `<hermes home>/bin` as the Windows installer convention, instead of pinning only `$DEMIURGOS_HOME/hermes/bin/hermes`.
+- Verification: `test_launcher_portable.py` (7 new contract tests, including a behavioural sourcing probe proving the product binary beats a different `hermes` on `PATH`) plus the launcher/installer/system-control/probe suites: 297 passed, 11 skipped. Tests were observed RED before the implementation.

@@ -570,6 +570,10 @@ def _start_gateway() -> bool:
         **os.environ,
         "HERMES_GATEWAY_HOST": "127.0.0.1",
         "HERMES_GATEWAY_PORT": "8642",
+        # The current runtime reads the API-server names; both are exported so
+        # older builds keep working (hermes-core-runtime T6).
+        "API_SERVER_HOST": "127.0.0.1",
+        "API_SERVER_PORT": "8642",
     }
     # The gateway subprocess must NOT look like a pytest child: Hermes' live
     # system guard refuses to open the production state.db when
