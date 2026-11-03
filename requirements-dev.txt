@@ -1,0 +1,17 @@
+# Development-only dependencies for the standalone tools under src/tools/.
+# These are NOT part of the shipped runtime closure and never enter the payload
+# (payload_audit.sh / payload_audit.ps1 exclude those scripts explicitly).
+#
+# Install into the project venv with:
+#   .venv/bin/python -m pip install -r requirements-dev.txt
+
+# src/tools/dev_diary.py + src/tools/sync-ideas.py (Google Sheets / Drive)
+google-auth>=2.0
+google-api-python-client>=2.0
+
+# src/tools/opencode-bridge.py + src/tools/sync-ideas.py (local transcription)
+faster-whisper>=1.0
+
+# src/tools/opencode-bridge.py + src/tools/sync-ideas.py
+# (also present in the runtime closure; listed for a standalone dev install)
+requests>=2.31

@@ -316,7 +316,7 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 |---|---|---|---|
 | AUD-11 | `relay/` sin job de CI | `.github/workflows/ci.yml` no lo ejecuta | **resuelto (2026-11-03)**: job `relay` en Node 22 con `npm install` + `npm test` + `npm run typecheck`; local 143 tests pasan |
 | AUD-12 | `engram_sync` documentado pero no arrancado | README lo cita; ningún launcher lo inicia; el importer ya retiró su adaptador | **resuelto (2026-11-03)**: se retira la promesa de "worker"; ambos README lo presentan como CLI de ejecución manual |
-| AUD-13 | Dev tools con deps no declaradas | `sync-ideas.py`/`dev_diary.py` → `googleapiclient`; `opencode-bridge.py` → `faster_whisper` | declararlas en un requirements de dev o retirar los scripts |
+| AUD-13 | Dev tools con deps no declaradas | `sync-ideas.py`/`dev_diary.py` → `googleapiclient`; `opencode-bridge.py` → `faster_whisper` | **resuelto (2026-11-03)**: `requirements-dev.txt` declara `google-auth`, `google-api-python-client`, `faster-whisper` y `requests` como solo-desarrollo (fuera del payload) |
 | AUD-14 | Sin integración de escritorio en macOS | solo Linux `.desktop` y Windows shortcuts | decidir si se agrega `.app`/alias |
 | AUD-15 | Puertos fijos sin fallback | 8000/8642; el launcher rechaza si los ocupa un proceso ajeno | documentar overrides o elegir puerto libre |
 | AUD-16 | Sin test de payload Windows real | el fixture fabrica `scripts\start-demiurgos.ps1` | bootear el paquete Windows empaquetado |
@@ -418,3 +418,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 2: AUD-10 resuelto en `54949e7` — Hermes/Engram/puente compilado reconciliados; macOS Intel queda fuera de la matriz y de los targets declarados. |
 | 2026-11-03 | Ola 3: AUD-11 resuelto — job `relay` agregado a CI (Node 22, tests + typecheck; local 143 passed). |
 | 2026-11-03 | Ola 3: AUD-12 resuelto — `engram_sync` deja de anunciarse como worker; queda como CLI manual. |
+| 2026-11-03 | Ola 3: AUD-13 resuelto — `requirements-dev.txt` declara las deps de los dev tools; el docstring de `sync-ideas.py` deja de listar `gspread` (no se importa). |

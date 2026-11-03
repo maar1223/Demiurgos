@@ -32,7 +32,8 @@ Engram persistence:
     Falls back to JSON report on stdout for the calling agent to handle.
 
 Dependencies (pip install):
-    gspread google-auth google-api-python-client faster-whisper requests
+    google-auth google-api-python-client faster-whisper requests
+    (declared in requirements-dev.txt)
 """
 
 import os
