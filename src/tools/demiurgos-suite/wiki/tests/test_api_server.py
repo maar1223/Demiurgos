@@ -5388,7 +5388,11 @@ class TestEditPrincipalSeam:
 class TestLocalDevelopmentAuth:
     """Explicit loopback-only session provider for local editing tests."""
 
-    def test_disabled_mode_is_visible_and_remains_fail_closed(self, client: TestClient):
+    def test_disabled_mode_is_visible_and_remains_fail_closed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        # AUD-08: `disabled` is no longer the default; it must be explicit.
+        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "disabled")
         status = client.get("/api/auth/local-dev/session")
         assert status.status_code == 200
         assert status.json() == {

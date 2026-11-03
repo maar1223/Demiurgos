@@ -242,6 +242,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-07 — VPS: bind local y auth loopback
 
+- **Estado (2026-11-03)**: resuelto por decisión del Owner — el despliegue
+  remoto/VPS queda **fuera del alcance del MVP**. Se retiró la promesa de VPS de
+  `README.md` y `README.es.md`, y la línea de activación por plataforma que
+  listaba un asiento de servidor/VPS (ya obsoleta tras la decisión #3840 de no
+  venta). No se agrega bind configurable ni guía de proxy; el servidor sigue
+  atado a loopback por diseño.
 - **Evidencia**: `README.md:61` afirma soporte VPS; `api_server.py:12298` y el
   launcher bindean `127.0.0.1`; `local-dev` exige loopback
   (`api_server.py:1945`). No hay guía de reverse proxy ni variable de bind.
@@ -252,6 +258,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-08 — Auth `disabled` por defecto al correr desde fuente
 
+- **Estado (2026-11-03)**: resuelto en `ff50320` por decisión del Owner — el
+  default pasa a `local-dev` (la misma sesión loopback que siembra el
+  instalador); `disabled` queda solo como override explícito. Tests:
+  `test_unset_env_defaults_to_local_dev`
+  (RED→GREEN), el caso de `disabled` pasa a fijar el modo explícitamente, y la
+  suite completa queda en 4868 passed / 26 skipped.
 - **Evidencia**: `_auth_mode()` cae a `"disabled"` sin `DEMIURGOS_AUTH_MODE`; el
   instalador siembra `local-dev`, pero la vía manual no.
 - **Fix**: fallar cerrado o sembrar `local-dev` también en la vía manual;
@@ -261,6 +273,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-09 — `es-ar` vive solo en el wizard retirado; la UI soporta `es`/`en`
 
+- **Estado (2026-11-03)**: resuelto en `5badeaf` por decisión del Owner — se
+  retira `es-ar` por completo; el producto solo expone español neutro (`es`). Se
+  eliminó el locale legacy de `src/tools/web-config-ui/i18n.py`, el botón del
+  selector en `templates/screen_lang.html` y la excepción documentada en
+  `REGLAS_LENGUAJE.md`. La normalización `es-*` → `es` de `demiurgos_language.py`
+  se conserva como migración de códigos regionales entrantes.
 - **Evidencia**: `SUPPORTED_UI_LANGUAGES = frozenset({"es", "en"})`
   (`demiurgos_language.py:35`); el locale `es-ar` existe en
   `src/tools/web-config-ui/i18n.py`, retirado según
@@ -274,6 +292,13 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-10 — Drift entre docs y código
 
+- **Estado (2026-11-03)**: resuelto en `54949e7` + el commit de cierre. Se
+  reconciliaron las cuatro afirmaciones: README.es ya no incluye Hermes en el
+  stack opcional; Engram queda como obligatorio del flujo del agente/ODD y el
+  runtime web en SQLite; la constitución marca el puente compilado como
+  `[ACTUAL]` (ya cableado); y `requirements.txt` deja de declarar macOS x86_64
+  como target, con la celda de closure Intel marcada como informativa. Decisión
+  del Owner: Intel queda fuera de la matriz de soporte.
 - **Evidencia**:
   - La constitución marca como `[OBJETIVO]` el bridge metodología→runtime, pero
     `guided_character_provider.py` ya recibe el snapshot pinneado.
@@ -387,3 +412,7 @@ gh run list --limit 5
 | 2026-11-02 | Ola 0: AUD-01 y AUD-02 implementados en `097201c`; AUD-03 implementado en `30ca73d`; gate de frescura cross-platform en `77d6a89`. CI verde en PR #74 (run `41536146433`, 18/18 checks). Falta el verde en `master` y la instalación Windows real |
 | 2026-11-03 | AUD-04 implementado en `feat/hermes-core-runtime` (PR #75): runtime de Hermes provisionado, aislado y verificado. |
 | 2026-11-03 | Ola 1: AUD-05 (`collect-diagnostics.sh` en el payload) y AUD-06 (PyMuPDF obligatorio y lockeado) implementados en `fix/mvp-audit-wave-1`. |
+| 2026-11-03 | Ola 2: AUD-09 resuelto en `5badeaf` — se retira el locale `es-ar`; español neutro (`es`) es el único español del producto. |
+| 2026-11-03 | Ola 2: AUD-07 resuelto — VPS fuera del alcance del MVP; se retira la promesa de ambos README y la activación por plataforma con asiento de servidor. |
+| 2026-11-03 | Ola 2: AUD-08 resuelto en `ff50320` — `_auth_mode()` default `local-dev`; `disabled` solo explícito; README documenta el default. |
+| 2026-11-03 | Ola 2: AUD-10 resuelto en `54949e7` — Hermes/Engram/puente compilado reconciliados; macOS Intel queda fuera de la matriz y de los targets declarados. |

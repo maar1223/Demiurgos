@@ -59,7 +59,7 @@ cd frontend && npm install && cd ..
 
 The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API.
 
-**VPS:** the same stack runs on a server. The session cookie is **scheme-aware**: HTTPS requests get a `Secure` cookie, plain HTTP (a VPS without TLS) does not — login works on any platform with zero configuration.
+Remote/VPS deployment is **out of the MVP scope**: Demiurgos runs as a local desktop-class app bound to loopback. The session cookie stays scheme-aware, but no server/proxy guide is provided yet.
 
 ### 4. First run
 
@@ -97,7 +97,7 @@ The first launch shows the **onboarding** flow: pick your UI language, configure
 - **Worlds are data, not code.** Every world lives under `mundos/{mundo}/` in OKF (`lore/`, `personajes/`, `sagas/`, …). No platform code is coupled to a specific universe.
 - **The graph is the read source of truth** for entities; the filesystem is only written through gated API routes.
 - **Nothing persists without your approval.** AI proposals are diskless until you confirm a diff (SHA-256 digest + one-time token) — canon-safety by construction.
-- **Engram** is the mandatory persistent memory layer; **Hermes** is one interchangeable conversational provider, not the platform.
+- **Engram** is the mandatory persistent memory layer for the agent/ODD workflow; the shipped web app persists its own state to SQLite. **Hermes** is one interchangeable conversational provider, not the platform.
 
 ---
 
@@ -128,7 +128,7 @@ Demiurgos no longer depends on Google OAuth. The vault is a **single local accou
 - Verification is **100% offline** (zero HTTP imports), with in-memory rate limiting and exponential backoff; the word list is rotated atomically.
 - The account lives in a local state registry, **not** in `.env` — no secrets file required for the vault.
 
-Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: HttpOnly cookie, same-origin, scheme-aware `Secure` flag, **soft re-auth reminder after 14 days** (default), session TTL 8 h, optional "remember me" for 30 days. Without a vault, the lighter `local-dev` mode provides a one-click session cookie for loopback development.
+Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: HttpOnly cookie, same-origin, scheme-aware `Secure` flag, **soft re-auth reminder after 14 days** (default), session TTL 8 h, optional "remember me" for 30 days. Without a vault, the default mode is the lighter `local-dev`: a one-click loopback session. `DEMIURGOS_AUTH_MODE=disabled` remains available only as an explicit opt-out.
 
 ---
 
@@ -139,7 +139,7 @@ Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: H
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (tested on 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Storage | OKF files in `mundos/{mundo}/`; SQLite in `data/` (guided sessions, conversation memory, ideas, import jobs); `.papelera` trash (30-day TTL) |
-| Memory | Engram (MCP) — mandatory for co-creation; `engram_sync` worker |
+| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` worker |
 | AI provider | Hermes (gateway port 8642) via runs adapter + semantic gate; provider-agnostic (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---
@@ -182,7 +182,7 @@ Useful backend modules (under `src/tools/demiurgos-suite/wiki/`): `api_server.py
 
 ## Product model
 
-- **Proprietary freeware** — the Core is free; optional workshops are a **one-time purchase** (per-platform activation: 1 Windows + 1 macOS + 1 Linux + 1 server/VPS, transferable).
+- **Proprietary freeware** — the Core is free; optional workshops are a **one-time purchase**.
 - **The installed version never gets blocked** — an expired update window never disables or degrades what you already have.
 - **Worlds are private** — world content under `mundos/` is gitignored and never shipped with the repo.
 - Built by [@maar1223](https://github.com/maar1223).

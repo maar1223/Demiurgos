@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Pin the install-time auth default (design S0-A / tasks 0.5).
+"""Pin the install-time auth default (design S0-A / tasks 0.5, AUD-08).
 
-The pre-mortem (PM-1) proved that ``_auth_mode()`` defaults to ``disabled``
-(api_server.py:1280-1282) and that every gated write 401s on a fresh install
-unless an auth mode reaches the process environment. The existing suite hides
-this path (``test_api_server.py:119`` delenvs the variable and ``:203-204``
-monkeypatches ``_resolve_principal``). These tests un-hide it and pin the S0-A
-contract:
+AUD-08 removed the unsafe fallback: ``_auth_mode()`` no longer returns
+``disabled`` when ``DEMIURGOS_AUTH_MODE`` is unset. The process default is now
+``local-dev``, the same loopback-bound session the installer seeds, so running
+from source never leaves the app without an auth provider. These tests pin the
+current contract:
 
-- the app is ENV-ONLY for auth: a data-root ``.env`` sitting on disk changes
-  nothing until the launcher parses and exports it (the launcher is the
-  bridge between the installer's seed and ``_auth_mode()``);
-- with the seed exported, a loopback local-dev session makes gated writes
-  succeed (2xx) — the fresh-install posture (single-user, loopback-bound).
+- with the env unset the mode is ``local-dev``;
+- the app remains ENV-ONLY for the override: a data-root ``.env`` sitting on
+  disk changes nothing until the launcher parses and exports it;
+- without a session, gated writes still 401 (fail closed), and with a loopback
+  local-dev session they succeed (2xx) — the fresh-install posture
+  (single-user, loopback-bound).
 
 ``_seed_data_root_env`` and ``_launcher_export`` model the S3a installer seed
 and the S2a launcher export so the contract is pinned BEFORE those slices
@@ -86,8 +86,19 @@ def _delete_json(client: TestClient, url: str, payload: dict):
 
 
 class TestAuthDefaultBaseline:
+    def test_unset_env_defaults_to_local_dev(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """AUD-08: no env override -> the default is local-dev, never disabled."""
+        monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+        assert api_server._auth_mode() == "local-dev"
+        status = client.get("/api/auth/local-dev/session")
+        assert status.status_code == 200, status.text
+        assert status.json()["mode"] == "local-dev"
+        assert status.json()["enabled"] is True
+
     def test_unseeded_env_returns_401(self, client: TestClient):
-        """No data-root .env, process env unset -> gated write fails closed."""
+        """No session under the default mode -> gated write still fails closed."""
         assert "DEMIURGOS_AUTH_MODE" not in os.environ
         response = _delete_json(client, "/api/worlds/Avalor", {"confirm_name": "Avalor"})
         assert response.status_code == 401, response.text

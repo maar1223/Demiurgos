@@ -24,7 +24,7 @@ sistema.
 
 | Plataforma | Motivo | Qué hace el instalador |
 |---|---|---|
-| macOS **Intel** (x86_64) | no hay ruedas binarias de una dependencia del importador para esa arquitectura | frena al inicio con un mensaje claro y ofrece la vía manual |
+| macOS **Intel** (x86_64) | fuera de la matriz decidida: el closure de wheels resuelve hoy, pero no hay prueba de instalación real en Intel ni se promete soporte | frena al inicio con un mensaje claro y ofrece la vía manual |
 | macOS **anterior a la versión mínima** | dependencias del sistema demasiado viejas | frena nombrando la versión requerida |
 | Linux **musl / Alpine** | el conjunto de dependencias obligatorias no resuelve sin compilador | frena con el mensaje explícito de no soportado |
 | Linux con **glibc < 2.28** | ídem | frena nombrando el piso de glibc |

@@ -31,9 +31,9 @@ from typing import Callable, Iterable, Sequence
 
 from backup.inventory import build_inventory
 
-#: Carried with the content on purpose: without it the new root boots without
-#: ``DEMIURGOS_AUTH_MODE`` and the app fails closed. The backup excludes it as
-#: secret material; a move is not a backup.
+#: Carried with the content on purpose: without it the new root boots with the
+#: ``local-dev`` default instead of the source root's configured auth mode. The
+#: backup excludes it as secret material; a move is not a backup.
 CONTENT_ENV_FILE = ".env"
 
 #: How much a copy reads at a time while hashing.

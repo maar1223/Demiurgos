@@ -17,7 +17,7 @@
 | CLI de [Hermes Agent](https://hermes-agent.nousresearch.com) | Proveedor conversacional (asistente y gateway en el puerto 8642) |
 | `git` | Clonar el repositorio |
 
-> `install.sh` es el **bootstrap de la app web** en un solo comando: sin flags instala la aplicación web de Demiurgos (delegando en `scripts/install-demiurgos.sh`, descargado del canal de releases). El stack **CLI de desarrollo** opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas) es opt-in: `bash install.sh --with-cli-stack` (o `DEMIURGOS_WITH_CLI_STACK=1`). No es necesario para usar la app web.
+> `install.sh` es el **bootstrap de la app web** en un solo comando: sin flags instala la aplicación web de Demiurgos (delegando en `scripts/install-demiurgos.sh`, descargado del canal de releases). El stack **CLI de desarrollo** opcional ([Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas) es opt-in: `bash install.sh --with-cli-stack` (o `DEMIURGOS_WITH_CLI_STACK=1`). No es necesario para usar la app web.
 
 ### 2. Instalación
 
@@ -58,7 +58,7 @@ cd frontend && npm install && cd ..
 
 El launcher abre la app en **http://127.0.0.1:8000** (health de la API: `http://127.0.0.1:8000/health`). Es idempotente: ejecutarlo dos veces nunca duplica procesos. Otras acciones: `restart`, `stop` e `install`. En Linux el instalador ya añade Demiurgos al menú de aplicaciones e `install` reescribe esa entrada; `install --desktop` añade además el icono en la carpeta del escritorio. En Windows el instalador añade un acceso al menú Inicio y `start-demiurgos.ps1 install -Desktop` añade el icono del escritorio; `start-api.ps1` arranca solo la API.
 
-**VPS:** el mismo stack funciona en un servidor. La cookie de sesión es **scheme-aware**: las peticiones HTTPS reciben una cookie `Secure`; HTTP plano (un VPS sin TLS) no — el inicio de sesión funciona en cualquier plataforma sin configuración.
+El despliegue remoto/VPS está **fuera del alcance del MVP**: Demiurgos corre como app local de escritorio, atada a loopback. La cookie de sesión sigue siendo scheme-aware, pero todavía no hay guía de servidor ni de proxy.
 
 ### 4. Primer arranque
 
@@ -96,7 +96,7 @@ La primera ejecución muestra el flujo de **onboarding**: elige el idioma de la 
 - **Los mundos son datos, no código.** Cada mundo vive bajo `mundos/{mundo}/` en OKF (`lore/`, `personajes/`, `sagas/`, …). Ningún código de la plataforma se acopla a un universo concreto.
 - **El grafo es la fuente de verdad para leer** entidades; el filesystem solo se escribe a través de rutas de API con compuertas.
 - **Nada persiste sin tu aprobación.** Las propuestas de IA son diskless hasta que confirmas un diff (digest SHA-256 + token de un solo uso) — canon-safety por construcción.
-- **Engram** es la capa de memoria persistente obligatoria; **Hermes** es un proveedor conversacional intercambiable, no la plataforma.
+- **Engram** es la capa de memoria persistente obligatoria para el flujo del agente/ODD; la app web distribuida persiste su propio estado en SQLite. **Hermes** es un proveedor conversacional intercambiable, no la plataforma.
 
 ---
 
@@ -127,7 +127,7 @@ Demiurgos ya no depende de Google OAuth. La bóveda es una **cuenta local única
 - La verificación es **100 % offline** (cero imports HTTP), con rate limiting en memoria y backoff exponencial; la wordlist se rota de forma atómica.
 - La cuenta vive en un registro de estado local, **no** en `.env` — no se necesita un archivo de secretos para la bóveda.
 
-Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: cookie HttpOnly, mismo origen, flag `Secure` scheme-aware, **recordatorio suave de re-autenticación a los 14 días** (por defecto), TTL de sesión de 8 h y "recordarme" opcional por 30 días. Sin bóveda, el modo ligero `local-dev` ofrece una sesión de un clic para desarrollo en loopback.
+Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: cookie HttpOnly, mismo origen, flag `Secure` scheme-aware, **recordatorio suave de re-autenticación a los 14 días** (por defecto), TTL de sesión de 8 h y "recordarme" opcional por 30 días. Sin bóveda, el modo por defecto es el ligero `local-dev`: una sesión de un clic en loopback. `DEMIURGOS_AUTH_MODE=disabled` queda solo como opt-out explícito.
 
 ---
 
@@ -138,7 +138,7 @@ Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: c
 | Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
 | Backend | Python 3.11+ (probado en 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
 | Almacenamiento | Archivos OKF en `mundos/{mundo}/`; SQLite en `data/` (sesiones guiadas, memoria de conversación, ideas, trabajos de importación); papelera `.papelera` (TTL 30 días) |
-| Memoria | Engram (MCP) — obligatoria para la co-creación; worker `engram_sync` |
+| Memoria | Engram (MCP) — obligatoria para el flujo del agente; la app web guarda su estado durable en SQLite; worker `engram_sync` |
 | Proveedor de IA | Hermes (gateway en el puerto 8642) vía runs adapter + gate semántico; agnóstico de proveedor (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
 
 ---
@@ -181,7 +181,7 @@ Módulos de backend útiles (bajo `src/tools/demiurgos-suite/wiki/`): `api_serve
 
 ## Modelo de producto
 
-- **Freeware propietario** — el Core es gratuito; los talleres opcionales son de **compra única** (activación por plataforma: 1 Windows + 1 macOS + 1 Linux + 1 servidor/VPS, con transferencia).
+- **Freeware propietario** — el Core es gratuito; los talleres opcionales son de **compra única**.
 - **La versión instalada nunca se bloquea** — la caducidad de la ventana de actualizaciones nunca desactiva ni degrada lo que ya tienes.
 - **Los mundos son privados** — el contenido bajo `mundos/` está en `.gitignore` y nunca se distribuye con el repositorio.
 - Creado por [@maar1223](https://github.com/maar1223).

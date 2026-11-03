@@ -34,6 +34,8 @@ PYTHON_VERSION="3.12"
 MATRIX_SPEC=(
   "windows-amd64:x86_64-pc-windows-msvc:0"
   "macos-arm64:aarch64-apple-darwin:0"
+  # Tracked for information only: SUPPORT_MATRIX.md does not support Intel
+  # Macs, so a PASS here does not create a support promise.
   "macos-x86_64-intel:x86_64-apple-darwin:0"
   "linux-x86_64-glibc:x86_64-unknown-linux-gnu:0"
   "linux-aarch64-glibc:aarch64-unknown-linux-gnu:0"
@@ -163,7 +165,7 @@ if [ -n "$JSON_OUT" ]; then
   echo "proof: {"
   echo "  \"command\": \"uv pip install --only-binary=:all: --dry-run --python-version $PYTHON_VERSION -r requirements.txt\","
   echo "  \"floors\": {\"kernel\": \"$kernel\", \"arch\": \"$arch\", \"libc\": \"${libc:-unknown}\", \"glibc\": \"${glibc:-unknown}\"},"
-  echo "  \"declared_floors\": {\"windows\": \"10+ x86_64\", \"macos\": \">=13 arm64 (Intel: optional extras degraded)\", \"linux\": \"x86_64/aarch64 glibc >= 2.28\", \"musl\": \"x86_64/aarch64 musl (mandatory closure resolves post-split; optional extras degraded; real confirmation pending)\"},"
+  echo "  \"declared_floors\": {\"windows\": \"10+ x86_64\", \"macos\": \">=13 arm64 (Intel x86_64 tracked, not supported)\", \"linux\": \"x86_64/aarch64 glibc >= 2.28\", \"musl\": \"x86_64/aarch64 musl (mandatory closure resolves post-split; optional extras degraded; real confirmation pending)\"},"
   echo "  \"matrix\": ["
   first=1
   for spec in "${MATRIX_SPEC[@]}"; do
