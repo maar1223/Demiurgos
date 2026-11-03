@@ -31,7 +31,7 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 | T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | pending | |
 | T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | pending | |
 | T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | pending | |
-| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | |
+| T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | `d2af5d4` |
 | T7 | Docs/readiness/license notices | S8, S9 | inline | pending | |
 | T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | pending | |
 
