@@ -56,6 +56,12 @@ DEMIURGOS_REPO="https://github.com/${DEMIURGOS_REPO_OWNER}/${DEMIURGOS_REPO_NAME
 ENGRAM_VERSION="1.17.0"
 ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_CONFIG="$DEMIURGOS_HERMES_HOME/config.yaml"
+# Product runtime isolation (S5/S6): every Hermes CLI call below resolves the
+# dedicated profile, and the binary is the pinned checkout's exact launcher —
+# never the user's personal ~/.hermes and never `command -v hermes`. install_hermes
+# provisions it before these steps run.
+export HERMES_HOME="$DEMIURGOS_HERMES_HOME"
+HERMES_BIN="$DEMIURGOS_HOME/hermes-agent/.hermes/bin/hermes"
 
 # Rutas relativas al checkout que usan las etapas de entorno Python y data-root.
 REQUIREMENTS_REL="src/tools/demiurgos-suite/requirements.txt"
@@ -169,7 +175,7 @@ install_engram() {
 configure_engram() {
     step "Conectando Engram a Hermes..."
     
-    local engram_path="${1:-$DEMIURGOS_HOME/bin/engram}"
+    local engram_path="${1:-$DEMIURGOS_HOME/bin/engram}" hermes_bin="${HERMES_BIN:-}"
     
     # Verificar si ya está configurado
     if [ -f "$HERMES_CONFIG" ] && grep -q "engram" "$HERMES_CONFIG" 2>/dev/null; then
@@ -177,9 +183,10 @@ configure_engram() {
         return 0
     fi
     
-    # Intentar primero con la CLI de hermes
-    if command -v hermes &>/dev/null; then
-        hermes mcp add engram --command "$engram_path" --args mcp --args --tools=agent 2>/dev/null && {
+    # Intentar primero con la CLI del runtime de producto (Demiurgos la
+    # provisiona en install_hermes; HERMES_HOME ya apunta al perfil dedicado).
+    if [ -x "$hermes_bin" ]; then
+        "$hermes_bin" mcp add engram --command "$engram_path" --args mcp --args --tools=agent 2>/dev/null && {
             ok "Engram conectado a Hermes (vía CLI)"
             return 0
         }
@@ -287,29 +294,36 @@ PY
 # ── Etapa 5.5: Configurar el perfil demiurgos-mcp ─────────
 configure_mcp_profile() {
     step "Configurando perfil demiurgos-mcp (MCP serve)..."
-    
-    if hermes profile list 2>/dev/null | grep -q "demiurgos-mcp"; then
+
+    local hermes_bin="${HERMES_BIN:-}"
+    if [ ! -x "$hermes_bin" ]; then
+        warn "El runtime de Hermes no está disponible en $HERMES_BIN. Se omite el perfil demiurgos-mcp."
+        return 1
+    fi
+
+    if "$hermes_bin" profile list 2>/dev/null | grep -q "demiurgos-mcp"; then
         ok "Perfil demiurgos-mcp ya existe"
         return 0
     fi
     
     # Crear el perfil clonando los valores por defecto (o desde demiurgos-core si está disponible)
     local clone_source=""
-    if hermes profile list 2>/dev/null | grep -q "demiurgos-core"; then
+    if "$hermes_bin" profile list 2>/dev/null | grep -q "demiurgos-core"; then
         clone_source="--clone-from demiurgos-core"
     fi
     
-    hermes profile create demiurgos-mcp $clone_source \
+    "$hermes_bin" profile create demiurgos-mcp $clone_source \
         --description "Demiurgos MCP serve — narrative agent with file, terminal, clarify, skills, mcp toolsets" \
         --no-alias 2>/dev/null || {
-            warn "No se pudo crear el perfil demiurgos-mcp. Créalo manualmente con: hermes profile create demiurgos-mcp"
+            warn "No se pudo crear el perfil demiurgos-mcp. Créalo manualmente con: $hermes_bin profile create demiurgos-mcp"
             return 1
         }
     
     ok "Perfil demiurgos-mcp creado"
     
-    # Asegurar que los toolsets sean correctos para MCP serve
-    local profile_config="$HOME/.hermes/profiles/demiurgos-mcp/config.yaml"
+    # Asegurar que los toolsets sean correctos para MCP serve. The profile lives
+    # under the dedicated product home (HERMES_HOME), never the personal tree.
+    local profile_config="$DEMIURGOS_HERMES_HOME/profiles/demiurgos-mcp/config.yaml"
     if [ -f "$profile_config" ]; then
         # Agregar terminal, skills y mcp a los toolsets si faltan
         for toolset in terminal skills mcp; do

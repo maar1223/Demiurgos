@@ -51,6 +51,14 @@ Al empujar el tag, el robot arma, firma y sube la versión, y acomoda el canal.
 Si el chequeo automático falla, **no se publica** (y una beta nunca pisa el canal
 **Recomendado**). El comportamiento vive en `.github/workflows/release.yml`.
 
+## Avisos de terceros
+
+Cada artefacto incluye `third-party/hermes/LICENSE` con el aviso MIT de Hermes
+(`Copyright (c) 2025 Nous Research`), además del `LICENSE` propio de Demiurgos.
+El runtime de Hermes se instala en la máquina del usuario desde el fork público
+fijado (`scripts/provision-hermes.sh` / `.ps1`); el artefacto no redistribuye
+su árbol de dependencias, pero el aviso viaja igual en el payload.
+
 ## Reglas de oro
 
 - **No se edita ningún archivo para "subir la versión"**: el tag **ES** la versión.

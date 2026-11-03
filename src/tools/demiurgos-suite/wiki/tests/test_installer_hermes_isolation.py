@@ -168,6 +168,35 @@ def test_installer_registers_the_owned_skills_folder():
     assert "data/methodology/skills" in _text(HERMES_PROFILE_CONFIG)
 
 
+def test_installer_exports_the_dedicated_hermes_home():
+    """T5: every Hermes CLI call made by the CLI-stack installer resolves the
+    dedicated product home, never the user's personal ~/.hermes."""
+    text = _text(INSTALL_SH)
+    assert 'export HERMES_HOME="$DEMIURGOS_HERMES_HOME"' in text
+
+
+def test_installer_uses_the_product_runtime_binary():
+    """S5: the installer calls the provisioned runtime by absolute path, never
+    whatever `hermes` happens to be on the user's PATH."""
+    text = _text(INSTALL_SH)
+    assert 'HERMES_BIN="$DEMIURGOS_HOME/hermes-agent/.hermes/bin/hermes"' in text
+    assert '"$hermes_bin" mcp add engram' in text
+    assert '"$hermes_bin" profile create demiurgos-mcp' in text
+    # No bare PATH-based selection remains in the CLI-stack path.
+    assert "if command -v hermes" not in text
+    assert "$(command -v hermes)" not in text
+    assert "hermes mcp add engram" not in text
+    assert "hermes profile list" not in text
+
+
+def test_installer_mcp_profile_lives_under_the_dedicated_root():
+    """S5/S6: the demiurgos-mcp profile config is read from the dedicated root,
+    never from the personal ~/.hermes/profiles tree."""
+    text = _text(INSTALL_SH)
+    assert '"$DEMIURGOS_HERMES_HOME/profiles/demiurgos-mcp/config.yaml"' in text
+    assert "$HOME/.hermes/profiles" not in text
+
+
 def test_installer_merge_targets_dedicated_product_profile():
     """Spec 'Folder path is registered in the product profile' + 'Installer
     never writes the personal profile': the merge writes $HERMES_CONFIG — the

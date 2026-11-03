@@ -14,10 +14,11 @@
 |-----------|---------|
 | Python 3.11+ | Backend API (`uvicorn api_server:app`) |
 | Node.js 18+ & npm | Frontend (Vite) |
-| [Hermes Agent](https://hermes-agent.nousresearch.com) CLI | Conversational provider (assistant + gateway on port 8642) |
 | `git` | Cloning the repository |
 
-> `install.sh` is the one-command **web-app bootstrap**: with no flags it installs the Demiurgos web app (delegating to `scripts/install-demiurgos.sh`, fetched from the release channel). The optional **dev-CLI stack** (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) persistent memory, and the narrative skills) is opt-in: `bash install.sh --with-cli-stack` (or `DEMIURGOS_WITH_CLI_STACK=1`). It is not required to run the web app.
+The **Hermes runtime is part of the product**, not a manual prerequisite: the installer provisions the pinned Demiurgos fork under `~/.demiurgos/hermes-agent` (`%LOCALAPPDATA%\Demiurgos\hermes-agent` on Windows) with its own `HERMES_HOME`. It never uses a `hermes` from your `PATH` and never modifies your personal `~/.hermes` (config, profiles or `.env`). A pre-existing Hermes is reported and left untouched.
+
+> `install.sh` is the one-command **web-app bootstrap**: with no flags it installs the Demiurgos web app and its assistant runtime (delegating to `scripts/install-demiurgos.sh`, fetched from the release channel). The optional **dev-CLI stack** ([Engram](https://github.com/Gentleman-Programming/engram) persistent memory and the narrative skills) is opt-in: `bash install.sh --with-cli-stack` (or `DEMIURGOS_WITH_CLI_STACK=1`). It is not required to run the web app.
 
 ### 2. Install
 
@@ -33,7 +34,7 @@ Windows (PowerShell):
 irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
 ```
 
-This installs the web app under `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` on Windows); launch it with `~/.demiurgos/current/scripts/start-demiurgos.sh start` (see [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). The installer verifies a minisign signature and SHA256 checksums; there is no auto-update and no paid code signing, so a first-run security warning is expected.
+This installs the web app under `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` on Windows) plus the pinned assistant runtime under `hermes-agent/`; launch it with `~/.demiurgos/current/scripts/start-demiurgos.sh start` (see [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). The installer verifies a minisign signature and SHA256 checksums before executing anything, and ships the third-party notices in `third-party/hermes/LICENSE`; there is no auto-update and no paid code signing, so a first-run security warning is expected.
 
 **From source (contributors):** clone, `venv`, `npm install`, and launch with the launchers below.
 
@@ -56,7 +57,7 @@ cd frontend && npm install && cd ..
 | **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Hermes Gateway (8642), API + SPA (8000) |
 | **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | Same stack + graph warm-up |
 
-The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API.
+The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API.
 
 **VPS:** the same stack runs on a server. The session cookie is **scheme-aware**: HTTPS requests get a `Secure` cookie, plain HTTP (a VPS without TLS) does not — login works on any platform with zero configuration.
 

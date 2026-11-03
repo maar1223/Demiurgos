@@ -30,9 +30,9 @@ S9 — Existing behaviour that shares the changed code must not regress: the ins
 | T2 | Port the `tool_choice: none` patch onto current upstream `main`; run the fork tests; pin the new commit | S3, S4 | inline | done — merge `d046ff99` on upstream `6112c2ad`; 367 api_server tests pass | — |
 | T3 | POSIX installer: product-owned pinned runtime + verification | S5, S7 | inline | done — see L17 | |
 | T4 | Windows installer parity (`setup-hermes.ps1`, product env) | S4, S5 | inline | done — see L17 | |
-| T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | pending | |
+| T5 | Isolation: export `HERMES_HOME`, move `demiurgos-mcp` out of `~/.hermes/profiles`, prior-install report | S5, S6 | inline | done — see L19 | |
 | T6 | Launcher: product binary + `HERMES_AGENT_ROOT` (+ `API_SERVER_PORT`) | S5, S7 | inline | done — see L16 | `d2af5d4` |
-| T7 | Docs/readiness/license notices | S8, S9 | inline | pending | |
+| T7 | Docs/readiness/license notices | S8, S9 | inline | done — see L19 | |
 | T8 | Verification: installer contract, launcher suites, readiness, fork tests | S9 | inline | pending | |
 
 ## Log
@@ -93,3 +93,9 @@ L17 (execution, T3/T4) — one provisioning owner, shipped and hash-verified:
 - Verification: `test_provision_hermes.py` (11 tests; local-git behavioural probes for fetch/pin/patch/provisioned, contract text for both platforms, release shipping), launcher suites (pin check), installer contract/isolation/payload/seed suites: 198 passed, 11 skipped.
 
 L18 (full suite, T3/T4 closure) — `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q` -> 4856 passed, 26 skipped, 1 pre-existing pydantic-settings warning. `bash -n` clean on the touched POSIX scripts; `provision-hermes.sh --check` on an absent root fails closed with expected-vs-found (pin `d046ff99…`) as designed.
+
+L19 (execution, T5/T7) — isolation and docs:
+- `install.sh` now exports `HERMES_HOME="$DEMIURGOS_HERMES_HOME"` and calls the provisioned binary by absolute path (`$DEMIURGOS_HOME/hermes-agent/.hermes/bin/hermes`). `configure_engram` and `configure_mcp_profile` use it; no `command -v hermes` selection remains.
+- `configure_mcp_profile` reads/writes `$DEMIURGOS_HERMES_HOME/profiles/demiurgos-mcp/config.yaml`; the personal `~/.hermes/profiles` tree is never touched. Prior-install detection/reporting lives in the provisioner (T3/T4).
+- README: Hermes is no longer a manual prerequisite; the default install provisions the pinned, isolated runtime, leaves the personal `~/.hermes` untouched, and readiness stays honest (the app boots; `runtime=accepted` needs a real turn). `docs/RELEASING.md` documents the shipped MIT third-party notice (`third-party/hermes/LICENSE`).
+- Verification: `test_installer_hermes_isolation.py` extended (4 new assertions: export, product binary, no PATH selection, dedicated profile path) -> 16 passed.
