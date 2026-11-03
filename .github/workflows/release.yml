@@ -124,6 +124,7 @@ jobs:
                    start-gateway.ps1 scripts/start-demiurgos.sh \
                    scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
                    scripts/provision-hermes.sh scripts/provision-hermes.ps1 \
+                   scripts/collect-diagnostics.sh \
                    scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
                    scripts/lib/desktop-shortcut.ps1 \
                    third-party/hermes/LICENSE \
@@ -161,6 +162,7 @@ jobs:
           scripts/install-demiurgos.ps1
           scripts/provision-hermes.sh
           scripts/provision-hermes.ps1
+          scripts/collect-diagnostics.sh
           scripts/lib/verify_checksum.sh
           scripts/lib/verify_checksum.ps1
           scripts/lib/desktop-shortcut.ps1
@@ -231,6 +233,7 @@ jobs:
             'start-gateway.ps1', 'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/provision-hermes.sh', 'scripts/provision-hermes.ps1',
+            'scripts/collect-diagnostics.sh',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
             'scripts/lib/desktop-shortcut.ps1',
             'third-party/hermes/LICENSE',
@@ -268,6 +271,7 @@ jobs:
             'scripts/start-demiurgos.sh',
             'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
             'scripts/provision-hermes.sh', 'scripts/provision-hermes.ps1',
+            'scripts/collect-diagnostics.sh',
             'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
             'scripts/lib/desktop-shortcut.ps1',
             'third-party/hermes/LICENSE',
