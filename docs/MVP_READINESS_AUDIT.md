@@ -261,6 +261,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-09 — `es-ar` vive solo en el wizard retirado; la UI soporta `es`/`en`
 
+- **Estado (2026-11-03)**: resuelto en `5badeaf` por decisión del Owner — se
+  retira `es-ar` por completo; el producto solo expone español neutro (`es`). Se
+  eliminó el locale legacy de `src/tools/web-config-ui/i18n.py`, el botón del
+  selector en `templates/screen_lang.html` y la excepción documentada en
+  `REGLAS_LENGUAJE.md`. La normalización `es-*` → `es` de `demiurgos_language.py`
+  se conserva como migración de códigos regionales entrantes.
 - **Evidencia**: `SUPPORTED_UI_LANGUAGES = frozenset({"es", "en"})`
   (`demiurgos_language.py:35`); el locale `es-ar` existe en
   `src/tools/web-config-ui/i18n.py`, retirado según
@@ -387,3 +393,4 @@ gh run list --limit 5
 | 2026-11-02 | Ola 0: AUD-01 y AUD-02 implementados en `097201c`; AUD-03 implementado en `30ca73d`; gate de frescura cross-platform en `77d6a89`. CI verde en PR #74 (run `41536146433`, 18/18 checks). Falta el verde en `master` y la instalación Windows real |
 | 2026-11-03 | AUD-04 implementado en `feat/hermes-core-runtime` (PR #75): runtime de Hermes provisionado, aislado y verificado. |
 | 2026-11-03 | Ola 1: AUD-05 (`collect-diagnostics.sh` en el payload) y AUD-06 (PyMuPDF obligatorio y lockeado) implementados en `fix/mvp-audit-wave-1`. |
+| 2026-11-03 | Ola 2: AUD-09 resuelto en `5badeaf` — se retira el locale `es-ar`; español neutro (`es`) es el único español del producto. |
