@@ -127,7 +127,7 @@ Demiurgos ya no depende de Google OAuth. La bóveda es una **cuenta local única
 - La verificación es **100 % offline** (cero imports HTTP), con rate limiting en memoria y backoff exponencial; la wordlist se rota de forma atómica.
 - La cuenta vive en un registro de estado local, **no** en `.env` — no se necesita un archivo de secretos para la bóveda.
 
-Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: cookie HttpOnly, mismo origen, flag `Secure` scheme-aware, **recordatorio suave de re-autenticación a los 14 días** (por defecto), TTL de sesión de 8 h y "recordarme" opcional por 30 días. Sin bóveda, el modo ligero `local-dev` ofrece una sesión de un clic para desarrollo en loopback.
+Actívala con `DEMIURGOS_AUTH_MODE=credentials` (ver Configuración). Sesión: cookie HttpOnly, mismo origen, flag `Secure` scheme-aware, **recordatorio suave de re-autenticación a los 14 días** (por defecto), TTL de sesión de 8 h y "recordarme" opcional por 30 días. Sin bóveda, el modo por defecto es el ligero `local-dev`: una sesión de un clic en loopback. `DEMIURGOS_AUTH_MODE=disabled` queda solo como opt-out explícito.
 
 ---
 

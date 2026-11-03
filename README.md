@@ -128,7 +128,7 @@ Demiurgos no longer depends on Google OAuth. The vault is a **single local accou
 - Verification is **100% offline** (zero HTTP imports), with in-memory rate limiting and exponential backoff; the word list is rotated atomically.
 - The account lives in a local state registry, **not** in `.env` — no secrets file required for the vault.
 
-Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: HttpOnly cookie, same-origin, scheme-aware `Secure` flag, **soft re-auth reminder after 14 days** (default), session TTL 8 h, optional "remember me" for 30 days. Without a vault, the lighter `local-dev` mode provides a one-click session cookie for loopback development.
+Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: HttpOnly cookie, same-origin, scheme-aware `Secure` flag, **soft re-auth reminder after 14 days** (default), session TTL 8 h, optional "remember me" for 30 days. Without a vault, the default mode is the lighter `local-dev`: a one-click loopback session. `DEMIURGOS_AUTH_MODE=disabled` remains available only as an explicit opt-out.
 
 ---
 

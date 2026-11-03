@@ -1929,8 +1929,15 @@ _recovery_tokens: dict[str, dict] = {}
 
 
 def _auth_mode() -> str:
-    """Read auth mode at request time so local tests can isolate configuration."""
-    return os.environ.get("DEMIURGOS_AUTH_MODE", "disabled").strip().lower()
+    """Read auth mode at request time so local tests can isolate configuration.
+
+    The default is ``local-dev``: running from source without configuration
+    must never leave the app without an auth provider (AUD-08). ``disabled``
+    stays available only as an explicit, deliberate override.
+    """
+    return os.environ.get(
+        "DEMIURGOS_AUTH_MODE", _LOCAL_AUTH_MODE
+    ).strip().lower()
 
 
 def _is_loopback_request(request: Request | None) -> bool:
