@@ -38,3 +38,9 @@ argon2-cffi>=21.0.0
 # /usr/share/zoneinfo; Windows needs the tzdata package or IANA timezone
 # validation fails). Required for onboarding step0/locale handling.
 tzdata>=2024.1
+
+# PDF image extraction for the importer (PyMuPDF, imported as `fitz`).
+# Mandatory: SUPPORT_MATRIX promises complete .docx/.pdf import on every
+# supported target, and the PDF image path must not depend on an optional extra.
+# Upper bound avoids the 2.x LLM plugin subtree (pymupdf4llm/onnxruntime).
+pymupdf>=1.24,<1.27

@@ -11,8 +11,10 @@
 #     Assistant's chat attachments): when markitdown/magika is importable the
 #     importer uses it; otherwise it reports "document conversion unavailable
 #     on this platform" — feature degraded, never a crash. The PDF extra
-#     (pdfminer-six, pdfplumber) is what makes `.pdf` conversion work at all;
+#     (pdfminer-six, pdfplumber) is what makes `.pdf` TEXT conversion work;
 #     without it the upload endpoint answers `attachment.conversion_unavailable`.
+#     PDF IMAGE extraction is PyMuPDF (`fitz`), declared in the MANDATORY
+#     requirements.txt so the .pdf import promise holds on every target.
 #   - watchdog (live index watching): when watchdog is importable the observer
 #     is used; otherwise the index falls back to poll-based refresh / explicit
 #     reindex.

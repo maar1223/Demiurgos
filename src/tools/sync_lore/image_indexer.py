@@ -145,7 +145,7 @@ def extract_images_from_docx(
 
 
 # ---------------------------------------------------------------------------
-# PDF image extraction (PyMuPDF — optional)
+# PDF image extraction (PyMuPDF — a mandatory runtime dependency)
 # ---------------------------------------------------------------------------
 
 def extract_images_from_pdf(

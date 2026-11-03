@@ -185,6 +185,12 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-04 — El install de un comando no provisiona el runtime del asistente
 
+- **Estado (2026-11-03)**: implementado en `feat/hermes-core-runtime` (PR #75) —
+  opción (A) aprobada por el Owner: el install default provisiona el fork
+  pinneado (`d046ff99…`) bajo el root de producto, con `HERMES_HOME`/
+  `HERMES_RUNTIME_DIR`/`HERMES_AGENT_ROOT` dedicados, sin tocar `~/.hermes`.
+  Launcher, instaladores, CLI stack y el aviso MIT quedan alineados; verificado
+  con suite completa, instalación real y boot aislado (`/health` 200).
 - **Impacto**: el asistente, la creación guiada, la co-creación y los barridos
   semánticos quedan inoperables en una instalación limpia. Onboarding los reporta
   `pending` (honesto), pero el MVP promete el asistente.
@@ -207,6 +213,10 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-05 — `collect-diagnostics.sh` no está en el payload
 
+- **Estado (2026-11-03)**: implementado en `fix/mvp-audit-wave-1` — el script se
+  copia como extra explícito en las dos celdas de empaquetado y se declara en
+  ambas allow-lists del audit; un guard test verifica que el comando de
+  `ONE_SCREEN_GUIDE.md` exista y sea ejecutable en el árbol empaquetado.
 - **Evidencia**: `ONE_SCREEN_GUIDE.md:65` manda ejecutar
   `<current>/scripts/collect-diagnostics.sh`; el archivo no está en
   `payload_manifest.json` ni en los extras de `release.yml`.
@@ -216,6 +226,11 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-06 — PDF incompleto: PyMuPDF no está declarado
 
+- **Estado (2026-11-03)**: implementado en `fix/mvp-audit-wave-1` — PyMuPDF es
+  ahora una dependencia **obligatoria** (`pymupdf>=1.24,<1.27`, lock
+  `1.26.7` con hashes), así que la extracción de imágenes de `.pdf` no depende
+  de un extra opcional. El closure proof LOCAL y el dry-run wheels-only de las
+  celdas soportadas pasan; `SUPPORT_MATRIX.md` queda veraz.
 - **Evidencia**: `sync_lore/image_indexer.py:169` importa `fitz` (PyMuPDF) con
   degradación silenciosa; no figura en `requirements.lock` ni en
   `requirements-optional.txt`. El texto PDF depende de `markitdown[pdf]`
@@ -370,3 +385,5 @@ gh run list --limit 5
 |---|---|
 | 2026-11-02 | Creación del documento con la auditoría completa y el backlog AUD-01…AUD-17 |
 | 2026-11-02 | Ola 0: AUD-01 y AUD-02 implementados en `097201c`; AUD-03 implementado en `30ca73d`; gate de frescura cross-platform en `77d6a89`. CI verde en PR #74 (run `41536146433`, 18/18 checks). Falta el verde en `master` y la instalación Windows real |
+| 2026-11-03 | AUD-04 implementado en `feat/hermes-core-runtime` (PR #75): runtime de Hermes provisionado, aislado y verificado. |
+| 2026-11-03 | Ola 1: AUD-05 (`collect-diagnostics.sh` en el payload) y AUD-06 (PyMuPDF obligatorio y lockeado) implementados en `fix/mvp-audit-wave-1`. |

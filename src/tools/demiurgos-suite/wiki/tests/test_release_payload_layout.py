@@ -14,6 +14,7 @@ is a copy *source*, and both cells copy it to the contract path.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -22,6 +23,8 @@ _REPO_ROOT = _HERE.parents[4]
 _RELEASE = _REPO_ROOT / ".github" / "workflows" / "release.yml"
 _LAYOUT = _REPO_ROOT / "docs" / "architecture" / "INSTALL_LAYOUT.md"
 _LAUNCHER = _REPO_ROOT / "start-demiurgos.ps1"
+_DIAGNOSTICS = _REPO_ROOT / "scripts" / "collect-diagnostics.sh"
+_GUIDE = _REPO_ROOT / "docs" / "install" / "ONE_SCREEN_GUIDE.md"
 
 # A root-form mention: not preceded by a path separator (POSIX or Windows) or a
 # dotted prefix, so `scripts/start-demiurgos.ps1` and
@@ -58,6 +61,29 @@ class TestReleasePayloadLayout:
                 "root-form start-demiurgos.ps1 outside a copy source "
                 f"(it would ship at <current>/, not <current>/scripts/): {prefix!r}"
             )
+
+
+class TestDiagnosticsInPayload:
+    """AUD-05: the one-screen guide's "if something fails" command must exist in
+    a clean install. The script is shipped as an explicit extra and declared in
+    both payload audit allow-lists (POSIX + Windows packaging cells)."""
+
+    def test_the_diagnostics_script_exists_and_is_executable(self) -> None:
+        assert _DIAGNOSTICS.is_file()
+        # The POSIX executable bit is the contract; Windows checkouts (and
+        # anyone running the guide from Git Bash there) do not preserve it.
+        if os.name != "nt":
+            assert _DIAGNOSTICS.stat().st_mode & 0o111
+
+    def test_both_packaging_cells_ship_it_and_allow_it(self) -> None:
+        text = _RELEASE.read_text(encoding="utf-8")
+        # One copy in each explicit-extras list and one entry in each
+        # audit allow-list: four mentions total.
+        assert text.count("scripts/collect-diagnostics.sh") >= 4
+
+    def test_the_guide_command_matches_the_shipped_path(self) -> None:
+        guide = _GUIDE.read_text(encoding="utf-8")
+        assert "current/scripts/collect-diagnostics.sh" in guide
 
     def test_the_frozen_layout_document_agrees(self) -> None:
         layout = _LAYOUT.read_text(encoding="utf-8")
