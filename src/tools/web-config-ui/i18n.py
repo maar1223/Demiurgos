@@ -1,13 +1,12 @@
 """
 i18n module for web-config-ui onboarding wizard.
 
-Provides translations for all 11 Demiurgos-supported languages, plus
+Provides translations for all 10 Demiurgos-supported languages, plus
 Jinja2 template integration helpers.  Used by wizard routes and screen
 templates to render UI in the user's selected language.
 
 Tone constraints:
   - es (neutro): formal usted, verbos sin voseo ("Seleccione", "Configure")
-  - es-ar (rioplatense): voseo natural ("Seleccioná", "Configurá")
   - All languages: warm but professional, never generic/cheerful
   - Never expose internal jargon to the user
 """
@@ -25,7 +24,6 @@ _LANGUAGE_NAMES: dict[str, str] = {
     "zh": "中文",
     "hi": "हिन्दी",
     "es": "Español (neutro)",
-    "es-ar": "Español (Argentina)",
     "fr": "Français",
     "ar": "العربية",
     "bn": "বাংলা",
@@ -38,7 +36,7 @@ _LANGUAGE_NAMES: dict[str, str] = {
 _FALLBACK_LANG = "en"
 
 # ---------------------------------------------------------------------------
-# Translation tables — 11 languages × ~49 keys
+# Translation tables — 10 languages × ~49 keys
 # ---------------------------------------------------------------------------
 
 _LANGUAGES: dict[str, dict[str, str]] = {
@@ -707,170 +705,6 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "reconfigure": "Reconfigurar",
         "config_dashboard_title": "Configuración",
         "config_dashboard_subtitle": "Gestione su configuración de Demiurgos",
-        "not_configured": "No configurado",
-        "config_skipped": "Omitido",
-        "config_coming_soon": "Panel de configuración completo próximamente",
-        "config_language": "Idioma",
-        "config_world": "Mundo",
-        "config_ai": "IA Texto y Visión",
-        "config_images": "Imágenes",
-        "config_chats": "Chats",
-        "config_backup": "Respaldo",
-        "restart_wizard": "Reiniciar Asistente",
-    },
-
-    # ==================================================================
-    # Spanish (Rioplatense — voseo natural)
-    # ==================================================================
-    "es-ar": {
-        "welcome_title": "Bienvenido a Demiurgos",
-        "welcome_subtitle": "Tu motor narrativo para Hermes. Configuremos todo.",
-        "select_language": "Elegí tu idioma",
-        "continue_button": "Continuar",
-        "other": "Otro",
-
-        "world_title": "Tu Mundo",
-        "world_subtitle": "Toda saga necesita un hogar. Creá un nuevo mundo o cargá uno existente.",
-        "create_new_world": "Crear Nuevo Mundo",
-        "load_existing_world": "Cargar Mundo Existente",
-        "world_name_label": "Nombre del mundo",
-        "world_name_placeholder": "ej., Thalassia, Las Profundidades Olvidadas…",
-        "select_folder": "Seleccionar carpeta",
-        "supported_formats": "Formatos soportados",
-        "format_docx": ".docx (Word) — totalmente soportado",
-        "format_md": ".md (Obsidian) — próximamente",
-        "format_notion": "Exportación de Notion — próximamente",
-        "format_pdf": "PDF — próximamente",
-
-        "ai_title": "Configurar IA",
-        "ai_subtitle": "Conectá Demiurgos a tus proveedores LLM. El modelo de texto es obligatorio; visión es opcional.",
-        "provider_label": "Proveedor",
-        "endpoint_label": "URL del endpoint",
-        "api_key_label": "API Key",
-        "model_text_label": "Modelo de texto",
-        "model_vision_label": "Modelo de visión",
-        "test_connection": "Probar Conexión",
-        "testing": "Probando conexión…",
-        "connection_success": "Conexión exitosa — {count} modelos encontrados",
-        "connection_error": "Error de conexión",
-        "same_as_text": "Mismo que modelo de texto",
-        "vision_warning": "{model} no soporta visión. Elegí un modelo marcado con 👁️ para tareas de visión.",
-        "save_config": "Guardar Configuración",
-        "select_model": "Seleccioná un modelo…",
-        "select_provider": "Seleccioná un proveedor…",
-        "discover_models": "Descubrir modelos",
-
-        "images_title": "Generación de Imágenes",
-        "images_subtitle": "Opcional — configurá un proveedor de imágenes para narración visual.",
-        "skip_for_now": "Saltar por ahora",
-        "configure_later": "Configurar después",
-
-        "chats_title": "Plataformas de Chat",
-        "chats_subtitle": "Opcional — conectá Demiurgos a Telegram o Discord para acceso móvil.",
-
-        "backup_title": "Respaldo y Sincronización",
-        "backup_subtitle": "Opcional — configurá respaldos automáticos de tus mundos y lore.",
-
-        "summary_title": "Listo para Arrancar",
-        "summary_subtitle": "Acá tenés un resumen de tu configuración. Podés cambiar todo después.",
-        "start_using": "Comenzar a Usar Demiurgos",
-        "go_back": "Volver",
-        "world_created": "Mundo creado",
-        "ai_configured": "IA configurada",
-        "configured": "Configurado",
-        "skipped": "Omitido",
-        "edit": "Editar",
-
-        "next": "Siguiente",
-        "back": "Atrás",
-        "step_x_of_y": "Paso {current} de {total}",
-
-        "error_generic": "Algo salió mal. Intentá de nuevo.",
-        "error_required_field": "Este campo es obligatorio.",
-        "error_connection": "No se pudo conectar al servidor. Verificá tu red e intentá de nuevo.",
-        "error_timeout": "Timeout después de {seconds}s",
-        "error_connect": "Endpoint inalcanzable — revisá la URL",
-        "error_network": "Error de red",
-        "error_auth_401": "API key inválida — revisá tus credenciales",
-        "error_auth_403": "Acceso denegado — revisá los permisos",
-        "error_endpoint_404": "Endpoint /models no encontrado — ¿la URL es correcta?",
-        "error_server": "Error del servidor (HTTP {code})",
-        "error_json_parse": "No se pudo leer la respuesta del servidor",
-        "error_unexpected_format": "Formato de respuesta inesperado",
-        "error_no_models": "No se encontraron modelos compatibles",
-
-        "vision_tag_confirmed": "👁️ visión",
-        "vision_tag_text_only": "✍️ texto",
-        "vision_tag_unknown": "❓ desconocido",
-
-        "world_name_hint": "Usá minúsculas, números y guiones. Ej.: mi-mundo",
-        "browse_button": "Explorar...",
-        "test_vision_connection": "Probá Conexión de Visión",
-        "images_explanation": "Demiurgos puede crear ilustraciones de tus personajes y escenas para darle vida a tu mundo.",
-        "save_and_continue": "Guardar y Continuar",
-        "chats_explanation": "Conectá Demiurgos a tus apps de mensajería para escribir y gestionar tu mundo desde el celu.",
-        "telegram": "Telegram",
-        "discord": "Discord",
-        "coming_soon": "Próximamente",
-        "backup_explanation": "Guardá tu mundo y lore automáticamente en Google Drive para no perder nunca tu trabajo.",
-        "enable_backup": "Activar respaldo automático",
-        "rclone_warning": "rclone es necesario para el respaldo en Google Drive. Instalalo y ejecutá 'rclone config' primero.",
-        "language_label": "Idioma",
-        "world_label": "Mundo",
-        "ai_text_label": "IA de Texto",
-        "ai_vision_label": "IA de Visión",
-        "images_label": "Generación de Imágenes",
-        "chats_label": "Chats",
-        "backup_label": "Respaldo",
-
-        # -- Fragmentos de conexión/error --------------------------------
-        "connection_success_title": "Conexión exitosa",
-        "connection_success_detail": "Se descubrieron {count} modelos compatibles.",
-        "vision_connection_success_detail": "Se descubrieron {count} modelos de visión.",
-        "model_select_placeholder": "— Seleccioná un modelo —",
-        "model_custom_option": "Otro (escribir manualmente)",
-        "vision_supported_notice": "El proveedor soporta visión. {count} modelos cargados.",
-        "vision_not_supported_notice": "Este proveedor no soporta visión. Sección de visión deshabilitada.",
-        "error_title": "Error",
-        "error_dismiss_label": "Cerrar",
-        "error_connection_hint": "Verificá el endpoint, la API key y tu conexión a internet.",
-        "error_test_first": "— Probá la conexión primero —",
-
-        # -- Pantalla de respaldo ----------------------------------------
-        "backup_interval_label": "Intervalo",
-        "backup_interval_hourly": "Cada hora",
-        "backup_interval_daily": "Cada día",
-        "backup_interval_weekly": "Cada semana",
-        "backup_pending_note": "Pendiente — rclone/Google no disponible. Core sigue utilizable.",
-        "backup_ready": "Respaldo listo — rclone detectado.",
-        "backup_remote_label": "Base remota",
-        "backup_remote_hint": "Base remote:path de rclone para todos los espejos (p. ej. gdrive:demiurgos).",
-        "backup_mirror_title": "Espejo por taller",
-        "backup_mirror_hint": "Elegí qué talleres se reflejan por separado en Google Drive.",
-        "backup_workshop_herramientas": "Taller de Herramientas",
-        "backup_workshop_mundo": "Taller de Mundo",
-        "backup_sync_label": "Sync tras edición (segundos)",
-        "backup_sync_hint": "El espejo se ejecuta 30 segundos después de la última edición por defecto.",
-        "backup_restore_title": "Restaurar Google → Demiurgos",
-        "backup_restore_hint": "Restaura un espejo de taller en Demiurgos de forma atómica.",
-        "backup_restore_button": "Restaurar",
-        "backup_restore_unavailable": "Restauración no disponible — rclone no detectado.",
-        "backup_restore_success": "Restauración completada",
-        "backup_restore_conflict": "Conflicto de restauración — los cambios locales difieren. No se sobrescribió.",
-        "backup_restore_timeout": "Restauración agotada por tiempo",
-        "backup_restore_error": "Error en la restauración",
-
-        # -- Pantalla de chats -------------------------------------------
-        "bot_token_label": "Bot Token",
-        "enable_chat_platform": "Activar",
-
-        # -- Dashboard / already-configured ------------------------------
-        "already_configured_title": "Demiurgos ya está configurado",
-        "already_configured_subtitle": "Tu proveedor LLM está listo. Continuá a tu mundo o reconfigurá.",
-        "continue_to_demiurgos": "Continuar a Demiurgos",
-        "reconfigure": "Reconfigurar",
-        "config_dashboard_title": "Configuración",
-        "config_dashboard_subtitle": "Gestioná tu configuración de Demiurgos",
         "not_configured": "No configurado",
         "config_skipped": "Omitido",
         "config_coming_soon": "Panel de configuración completo próximamente",
@@ -1883,9 +1717,6 @@ def t(lang: str, key: str) -> str:
 
     Examples::
 
-        >>> t("es-ar", "welcome_title")
-        'Bienvenido a Demiurgos'
-
         >>> t("es", "welcome_title")
         'Bienvenido a Demiurgos'
 
@@ -1928,8 +1759,8 @@ def get_language_name(lang_code: str) -> str:
 
     Examples::
 
-        >>> get_language_name("es-ar")
-        'Español (Argentina)'
+        >>> get_language_name("es")
+        'Español (neutro)'
 
         >>> get_language_name("en")
         'English'
