@@ -218,8 +218,18 @@ def _resolve_profile_paths() -> HermesProfilePaths:
     )
 
 
-def _read_config(path: Path) -> tuple[str, dict[str, Any], str]:
+def _read_config(
+    path: Path, *, allow_missing: bool = False
+) -> tuple[str, dict[str, Any], str]:
+    """Read the active profile's config (content, ``model`` block, whole doc).
+
+    ``allow_missing`` turns an absent ``config.yaml`` into the empty state the
+    fresh-install UI configures (the save paths create it); every other caller
+    keeps the historical fail-closed error.
+    """
     if not path.is_file():
+        if allow_missing:
+            return "", {}, {}
         raise AssistantSettingsError(
             "No se encontró config.yaml en el perfil activo de Hermes; inicia Hermes "
             "con ese perfil y vuelve a intentar"
@@ -519,8 +529,12 @@ def _set_model_config_content(
 
 
 def _atomic_write(path: Path, content: str, mode: int | None = None) -> None:
-    if not path.parent.is_dir():
-        raise AssistantSettingsError("El directorio del perfil activo de Hermes no existe")
+    try:
+        # The save paths create a missing dedicated profile (fresh install);
+        # a genuinely unwritable location still fails closed below.
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise AssistantSettingsError("El directorio del perfil activo de Hermes no existe") from exc
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
@@ -582,7 +596,7 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
     if candidate is None:
         raise ValueError("Provider, endpoint, and API key are required")
     paths = _resolve_profile_paths()
-    config_content, _, config_data = _read_config(paths.config)
+    config_content, _, config_data = _read_config(paths.config, allow_missing=True)
     current_status = _status_from_config(paths, config_data)
     _check_revision(payload.get("revision"), current_status.revision)
     env_content = paths.env.read_text(encoding="utf-8") if paths.env.is_file() else ""
@@ -719,7 +733,7 @@ def create_assistant_settings_router(
         guard(request)
         try:
             paths = _resolve_profile_paths()
-            _, model, data = _read_config(paths.config)
+            _, model, data = _read_config(paths.config, allow_missing=True)
             public = _status(paths, model, data, seam, runtime_state_resolver)
             # S2b (degradable-ai-provider): an explicit presence boolean so
             # the UI can distinguish "gateway up" from "configured state".
@@ -744,7 +758,7 @@ def create_assistant_settings_router(
             selected_model = _validate_model(payload.get("model")) if has_model else None
             api_key = _validate_api_key(payload.get("api_key")) if has_key else None
             paths = _resolve_profile_paths()
-            config_content, _, config_data = _read_config(paths.config)
+            config_content, _, config_data = _read_config(paths.config, allow_missing=True)
             current_status = _status_from_config(paths, config_data)
             _check_revision(payload.get("revision"), current_status.revision)
             env_content = paths.env.read_text(encoding="utf-8") if paths.env.is_file() else ""
@@ -911,7 +925,11 @@ def create_assistant_settings_router(
         guard(request)
         try:
             paths = _resolve_profile_paths()
-            config_content, _, config_data = _read_config(paths.config)
+            if not paths.config.is_file():
+                # Nothing is configured: deleting a key must not create a
+                # metadata-only config on a fresh profile.
+                return _status(paths, {}, {}, seam, runtime_state_resolver)
+            config_content, _, config_data = _read_config(paths.config, allow_missing=True)
             current_status = _status_from_config(paths, config_data)
             _check_revision((body or {}).get("revision"), current_status.revision)
             env_content = paths.env.read_text(encoding="utf-8") if paths.env.is_file() else ""

@@ -389,18 +389,145 @@ class TestAssistantSettings:
         assert "default: qwen3.6-plus" in (profile / "config.yaml").read_text(encoding="utf-8")
 
     def test_unresolvable_profile_fails_closed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "does-not-exist"))
-        monkeypatch.setattr(
-            api_server,
-            "_resolve_principal",
-            lambda request: api_server.EditPrincipal("assistant-tester"),
+        # A *missing config* is a valid empty state (created on save), but an
+        # unresolvable root is not: never invent a profile without a home.
+        for name in ("HERMES_HOME", "HOME", "LOCALAPPDATA"):
+            monkeypatch.delenv(name, raising=False)
+        registry = ProviderRegistry()
+        registry.transport = lambda method, url, headers: (200, {"data": []})
+        local_app = FastAPI()
+        local_app.include_router(
+            assistant_settings.create_assistant_settings_router(
+                require_principal=lambda request: object(),
+                provider_registry=registry,
+            )
         )
-        client = TestClient(api_server.app, client=("127.0.0.1", 50000))
+        client = TestClient(local_app, client=("127.0.0.1", 50000))
 
         response = client.put("/api/profile/assistant", json={"model": "gpt-5.6-luna"})
 
         assert response.status_code == 503
-        assert "config.yaml" in response.json()["detail"]
+        assert "perfil de Hermes" in response.json()["detail"]
+
+
+class TestConfiglessProfile:
+    """Fresh install: the dedicated profile exists but has no config.yaml yet.
+
+    A missing config is an empty state the UI can configure — never a 503 —
+    while an unresolvable root (TestAssistantSettings above) still fails closed.
+    """
+
+    def _client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        hermes = tmp_path / "hermes-empty"
+        hermes.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(hermes))
+        _install_fake_probes(monkeypatch)
+        registry = ProviderRegistry()
+        registry.transport = lambda method, url, headers: (
+            200,
+            {"data": [{"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna"}]},
+        )
+        seam = HermesRuntimeSeam(
+            lambda revision: HermesRuntimeResult("saved-not-active", accepted=False)
+        )
+        local_app = FastAPI()
+        local_app.include_router(
+            assistant_settings.create_assistant_settings_router(
+                require_principal=lambda request: object(),
+                provider_registry=registry,
+                runtime_seam=seam,
+            )
+        )
+        return TestClient(local_app, client=("127.0.0.1", 50000))
+
+    def test_get_without_config_returns_the_needs_configuration_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        client = self._client(tmp_path, monkeypatch)
+
+        response = client.get("/api/profile/assistant")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["provider"] == ""
+        assert body["base_url"] == ""
+        assert body["model"] == ""
+        assert body["model_metadata"]["id"] == ""
+        assert body["key_configured"] is False
+        assert body["revision"] == 0
+        assert body["active_profile"] == "default"
+        assert body["runtime_state"] == "saved-not-active"
+        assert {item["id"] for item in body["models"]} >= {"gpt-5.6-luna", "qwen3.6-plus"}
+        assert "api_key" not in body
+
+    def test_put_model_creates_the_missing_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        client = self._client(tmp_path, monkeypatch)
+
+        response = client.put("/api/profile/assistant", json={"model": "qwen3.6-plus"})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["model"] == "qwen3.6-plus"
+        config = assistant_settings._resolve_profile_paths().config
+        assert config.is_file()
+        text = config.read_text(encoding="utf-8")
+        assert "default: qwen3.6-plus" in text
+        assert "provider: opencode-go" in text
+
+    def test_save_configuration_creates_the_missing_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        client = self._client(tmp_path, monkeypatch)
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fresh-install-fixture-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["provider"] == "openai"
+        assert response.json()["key_configured"] is True
+        paths = assistant_settings._resolve_profile_paths()
+        assert paths.config.is_file()
+        assert "default: manual-model" in paths.config.read_text(encoding="utf-8")
+        assert "OPENAI_API_KEY=fresh-install-fixture-key" in paths.env.read_text(encoding="utf-8")
+
+    def test_put_creates_a_resolved_but_missing_profile_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "created-on-save"))
+        registry = ProviderRegistry()
+        registry.transport = lambda method, url, headers: (200, {"data": []})
+        local_app = FastAPI()
+        local_app.include_router(
+            assistant_settings.create_assistant_settings_router(
+                require_principal=lambda request: object(),
+                provider_registry=registry,
+            )
+        )
+        client = TestClient(local_app, client=("127.0.0.1", 50000))
+
+        response = client.put("/api/profile/assistant", json={"model": "gpt-5.6-luna"})
+
+        assert response.status_code == 200, response.text
+        assert (
+            tmp_path / "created-on-save" / "config.yaml"
+        ).is_file()
+
+    def test_delete_key_tolerates_a_missing_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        client = self._client(tmp_path, monkeypatch)
+
+        response = client.delete("/api/profile/assistant/key")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["key_configured"] is False
 
 
 class TestProviderAdapters:
