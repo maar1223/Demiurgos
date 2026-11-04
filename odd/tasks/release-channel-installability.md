@@ -1,6 +1,6 @@
 # Release channel installability — make the public channel serve a complete, verifiable installer tree
 
-Branch: `fix/release-channel-installability` (from `master` @ `abc7abf`). Delivery: `ask-on-risk`.
+Branch: `fix/release-channel-installability` (from `master` @ `abc7abf`). PR: #77. Delivery: `ask-on-risk` (`size:exception` requested: 1113 changed lines, no cohesive split under 400).
 Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for CI/release.
 
 ## Specs
