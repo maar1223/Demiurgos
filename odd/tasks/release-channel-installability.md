@@ -82,3 +82,7 @@ Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for 
   because the repository lives on a FUSE/ntfs-3g mount with a fixed owner projection, so native
   review cannot be resolved. Treated as unknown; no review authority exists and none is
   fabricated. Independent verification still runs (Risk: high-risk items 3 and 5).
+- **E3** Test-first disclosure: the new uv-shas and payload-cell tests were written alongside the
+  implementation, so no RED was captured for them. A real RED was observed for the stale
+  `test_payload_audit.py` expectation after the behavior changed, and it was corrected against
+  the new contract.
