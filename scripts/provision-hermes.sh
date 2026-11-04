@@ -196,10 +196,35 @@ run_setup() {
     rm -rf "$scratch"
 }
 
+# Seed the dedicated profile files a fresh install needs to configure the
+# assistant: Hermes loads <root>/config.yaml on boot, and Assistant Settings
+# reads/writes the same root. Only missing files/lines are written; an
+# existing profile is never overwritten. Runs even when the checkout is
+# already provisioned (is_provisioned skips run_setup, not this seed).
+seed_profile() {
+    local config="$HERMES_HOME/config.yaml" env_file="$HERMES_HOME/.env"
+    mkdir -p "$HERMES_HOME" \
+        || fail "cannot create the dedicated Hermes profile at $HERMES_HOME"
+    if [ ! -f "$config" ]; then
+        printf 'model: {}\n' > "$config" \
+            || fail "cannot seed the dedicated profile config at $config"
+        log "seeded the dedicated profile config at $config"
+    fi
+    if [ ! -f "$env_file" ]; then
+        : > "$env_file" || fail "cannot create the dedicated profile env at $env_file"
+    fi
+    if ! grep -q '^API_SERVER_ENABLED=' "$env_file" 2>/dev/null; then
+        printf 'API_SERVER_ENABLED=true\n' >> "$env_file" \
+            || fail "cannot seed API_SERVER_ENABLED in $env_file"
+    fi
+    chmod 600 "$env_file" 2>/dev/null || true
+}
+
 provision() {
     report_prior_install
     if is_provisioned; then
         log "runtime already provisioned at $AGENT_ROOT (pin $HERMES_PIN)"
+        seed_profile
         return 0
     fi
     is_valid_pin "$HERMES_PIN" \
@@ -208,6 +233,7 @@ provision() {
     run_setup
     check_runtime \
         || fail "post-install verification failed; the assistant runtime is not usable"
+    seed_profile
     log "runtime ready at $AGENT_ROOT (pin $HERMES_PIN)"
 }
 

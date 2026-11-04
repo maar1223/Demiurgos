@@ -262,3 +262,80 @@ def test_is_provisioned_requires_pin_and_launcher(tmp_path: Path):
     result = _run_probe(probe, env)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "YES"
+
+
+# ---------------------------------------------------------------------------
+# Dedicated-profile seed (fresh-install assistant setup)
+# ---------------------------------------------------------------------------
+
+
+def test_provisioners_seed_the_dedicated_profile():
+    sh_text = _text(PROVISION_SH)
+    assert "seed_profile" in sh_text
+    assert "model: {}" in sh_text
+    assert "API_SERVER_ENABLED=true" in sh_text
+    ps_text = _text(PROVISION_PS1)
+    assert "Invoke-SeedProfile" in ps_text
+    assert "model: {}" in ps_text
+    assert "API_SERVER_ENABLED=true" in ps_text
+    PROVISION_PS1.read_bytes().decode("ascii")
+
+
+@_BASH
+def test_seed_profile_creates_minimal_config_and_env(tmp_path: Path):
+    install = tmp_path / "install"
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "DEMIURGOS_HOME": str(install),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    result = _run_probe(
+        'source "$1"; resolve_paths ""; seed_profile; printf "%s" "$HERMES_HOME"',
+        env,
+    )
+    assert result.returncode == 0, result.stderr
+    hermes = install / "hermes"
+    assert result.stdout == str(hermes)
+    assert (hermes / "config.yaml").read_text(encoding="utf-8") == "model: {}\n"
+    assert "API_SERVER_ENABLED=true" in (hermes / ".env").read_text(encoding="utf-8")
+
+
+@_BASH
+def test_seed_profile_never_overwrites_existing_files(tmp_path: Path):
+    install = tmp_path / "install"
+    hermes = install / "hermes"
+    hermes.mkdir(parents=True)
+    (hermes / "config.yaml").write_text("model:\n  default: keep-me\n", encoding="utf-8")
+    (hermes / ".env").write_text("KEEP=1\nAPI_SERVER_ENABLED=false\n", encoding="utf-8")
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "DEMIURGOS_HOME": str(install),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    result = _run_probe(
+        'source "$1"; resolve_paths ""; seed_profile; seed_profile; '
+        'printf "%s|%s" "$(cksum "$HERMES_HOME/config.yaml")" "$(cksum "$HERMES_HOME/.env")"',
+        env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (hermes / "config.yaml").read_text(encoding="utf-8") == "model:\n  default: keep-me\n"
+    assert (hermes / ".env").read_text(encoding="utf-8") == "KEEP=1\nAPI_SERVER_ENABLED=false\n"
+
+
+@_BASH
+def test_provision_seeds_the_profile_on_the_already_provisioned_fast_path(tmp_path: Path):
+    install = tmp_path / "install"
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "DEMIURGOS_HOME": str(install),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    result = _run_probe(
+        'source "$1"; resolve_paths ""; is_provisioned() { return 0; }; '
+        'provision >/dev/null 2>&1; printf "OK"',
+        env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK"
+    assert (install / "hermes" / "config.yaml").is_file()
+    assert "API_SERVER_ENABLED=true" in (install / "hermes" / ".env").read_text(encoding="utf-8")

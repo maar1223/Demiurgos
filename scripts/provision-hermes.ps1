@@ -184,10 +184,33 @@ function Invoke-HermesSetup {
     }
 }
 
+function Invoke-SeedProfile {
+    if (-not (Test-Path -LiteralPath $hermesHome -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $hermesHome | Out-Null
+    }
+    $config = Join-Path $hermesHome "config.yaml"
+    if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+        Set-Content -LiteralPath $config -Value "model: {}" -Encoding ASCII
+        Write-Log "seeded the dedicated profile config at $config"
+    }
+    $envFile = Join-Path $hermesHome ".env"
+    $lines = @()
+    if (Test-Path -LiteralPath $envFile -PathType Leaf) { $lines = @(Get-Content -LiteralPath $envFile) }
+    $has = $false
+    foreach ($line in $lines) {
+        if ($line -match '^API_SERVER_ENABLED=') { $has = $true; break }
+    }
+    if (-not $has) {
+        $lines += "API_SERVER_ENABLED=true"
+        Set-Content -LiteralPath $envFile -Value $lines -Encoding ASCII
+    }
+}
+
 function Invoke-Provision {
     Report-PriorInstall
     if (Test-Provisioned) {
         Write-Log "runtime already provisioned at $agentRoot (pin $pin)"
+        Invoke-SeedProfile
         return
     }
     if (-not (Test-ValidPin $pin)) {
@@ -198,6 +221,7 @@ function Invoke-Provision {
     if (-not (Test-Runtime)) {
         Fail "post-install verification failed; the assistant runtime is not usable"
     }
+    Invoke-SeedProfile
     Write-Log "runtime ready at $agentRoot (pin $pin)"
 }
 
