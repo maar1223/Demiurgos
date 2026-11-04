@@ -37,8 +37,29 @@ persiste ni viaja por la API.
 
 ## Betas
 
-Primero `0.3.0-beta.1`, después `0.3.0-beta.2`, y así. Cuando la beta está bien,
-publicas `0.3.0` (el mismo número, sin `beta`) y va al canal **Recomendado**.
+Primero `0.3.0-beta.1`, después `0.3.0-beta.2`, y así. Cuando la beta cumple los
+criterios de promoción (abajo), publicas `0.3.0` (el mismo número, sin `beta`) y
+va al canal **Recomendado**.
+
+## Cuándo una beta pasa a Recomendado
+
+La promoción es una decisión del Owner, no automática. Se promueve cuando se
+cumplen **todos** estos criterios:
+
+1. **Máquinas reales.** La beta se instaló y se usó en al menos una máquina real
+   por cada sistema operativo que se va a prometer (hoy: Windows 10/11 x64;
+   macOS arm64 y Linux cuando correspondan).
+2. **Sin bloqueantes.** No quedan regresiones P0/P1 abiertas contra la beta; los
+   P2 conocidos están triados o aceptados explícitamente.
+3. **Gates verdes.** CI del commit y el smoke anónimo post-publicación (firma
+   minisign + checksums + instalación de prueba) pasan.
+4. **Instalación limpia.** Una instalación desde el canal publicado, en una
+   máquina limpia o recién formateada, arranca y sirve `/health` y `/`.
+5. **Soak.** Pasaron al menos 3 días desde la beta con uso real y sin nuevos
+   bloqueantes.
+
+Si falta cualquiera, se publica otra `-beta.N` en el canal Anticipado. Nunca se
+mueve `latest` con una beta: la promoción es el tag sin `beta`.
 
 ## Cómo se publica
 
