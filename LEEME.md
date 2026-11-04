@@ -2,7 +2,7 @@
 
 Bienvenido a Demiurgos, la plataforma web de worldbuilding y gestión de lore: frontend React, backend FastAPI, grafo de entidades, memoria persistente (Engram) y asistente conversacional (Hermes). Gestiona cualquier mundo ficticio en **formato OKF** (Markdown + frontmatter YAML) sin acoplarse a un universo concreto.
 
-Si eres un usuario nuevo, este documento es tu **Punto de Partida**.
+Si eres un usuario nuevo, empieza por **[README.md](README.md)**: tiene la instalación en 3 pasos. Este documento queda como mapa del proyecto para el asistente.
 
 ---
 

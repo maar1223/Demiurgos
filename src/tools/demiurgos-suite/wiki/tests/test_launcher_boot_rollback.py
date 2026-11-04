@@ -126,11 +126,30 @@ class TestPosixRollbackContract:
         health_block = text[text.index("wait_for_health()"):text.index("find_previous_version()")]
         assert '"$HEALTH_POLLS"' in health_block
         assert '"$HEALTH_POLL_INTERVAL"' in health_block
-        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        services_block = text[text.index("start_services()"):text.index("open_browser()")]
         # The API REQUIRED readiness is the health signal (S6-2/D6)...
-        assert 'if wait_for_health "$API_PORT"' in start_block
-        # ...while the gateway keeps the plain port wait (best-effort, S2-2).
-        assert 'wait_for_port "$GATEWAY_PORT"' in start_block
+        assert 'if wait_for_health "$API_PORT"' in services_block
+        # ...and the optional gateway never gates the boot: no blocking TCP
+        # wait anywhere (a 20 s stall on a socket-served runtime).
+        assert 'wait_for_port "$GATEWAY_PORT"' not in text
+        assert "wait_for_gateway" not in text
+
+    def test_browser_opens_right_after_the_api_is_healthy(self):
+        """The tab opens as soon as /health answers; the gateway warms behind."""
+        text = _text(PORTABLE_LAUNCHER)
+        start_line = next(
+            line for line in text.splitlines()
+            if line.strip().startswith("start) start_services;")
+        )
+        assert "open_browser" in start_line
+        assert "wait_for_gateway" not in start_line
+        assert "show_status" in start_line
+        # Restart must NOT open a tab: the open tab reloads itself.
+        restart_line = next(
+            line for line in text.splitlines()
+            if line.strip().startswith("restart)")
+        )
+        assert "open_browser" not in restart_line
 
     def test_rollback_scans_local_app_dirs_only(self):
         text = _text(PORTABLE_LAUNCHER)

@@ -167,10 +167,15 @@ Verify-Sha256Hex $coreScript $coreSha
 Verify-Sha256Hex $coreLib $libSha
 
 Write-Host "Core verified (version: $version); delegating to the versioned installer"
-# Env passthrough: DEMIURGOS_VERSION, DEMIURGOS_HOME, DEMIURGOS_URL_BASE,
-# DEMIURGOS_DATA_ROOT, DEMIURGOS_UV_SHA256, UV_VERSION, ... are inherited by
-# the child process. The core is a real file, so -File execution under Bypass
-# is safe here even though THIS bootstrap ran under iex (no script file).
+# The core is a CHILD process: publish the resolved values as environment
+# variables. Without this, a user running the documented one-liner (no env
+# overrides) hits "DEMIURGOS_URL_BASE is not set". Values the user already set
+# keep their values; these lines only publish the resolved ones.
+$env:DEMIURGOS_URL_BASE = $urlBase
+$env:DEMIURGOS_VERSION = $version
+$env:DEMIURGOS_HOME = $installRoot
+# DEMIURGOS_DATA_ROOT, DEMIURGOS_UV_SHA256, UV_VERSION, ... arrive already in
+# the environment and are inherited by the child process.
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $coreScript
 $coreExit = $LASTEXITCODE
 Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue

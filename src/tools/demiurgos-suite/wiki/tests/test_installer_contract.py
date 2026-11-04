@@ -1796,6 +1796,29 @@ class TestPublicBootstrapsS4:
         assert "DEMIURGOS_HOME" in text
         assert "DEMIURGOS_URL_BASE" in text
 
+    def test_posix_bootstrap_exports_the_resolved_channel_to_the_core(self):
+        """Assigning the resolved defaults is not enough: the core is a CHILD
+        process and only inherits EXPORTED variables. Without the export, the
+        documented one-liner (no env overrides) failed with
+        "DEMIURGOS_URL_BASE is not set"."""
+        text = _text(INSTALL_SH)
+        delegation = text.split('bash "$core_dir/install-demiurgos.sh"', 1)[0]
+        export = "export DEMIURGOS_URL_BASE DEMIURGOS_VERSION DEMIURGOS_HOME"
+        assert export in delegation
+        assert delegation.index("DEMIURGOS_URL_BASE=") < delegation.index(export)
+
+    def test_windows_bootstrap_publishes_the_resolved_channel_to_the_core(self):
+        """Windows parity: the resolved powershell values become env vars before
+        the child core runs."""
+        text = _text(INSTALL_PS1)
+        delegation = text.split(
+            "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $coreScript",
+            1,
+        )[0]
+        assert "$env:DEMIURGOS_URL_BASE = $urlBase" in delegation
+        assert "$env:DEMIURGOS_VERSION = $version" in delegation
+        assert "$env:DEMIURGOS_HOME = $installRoot" in delegation
+
     def test_posix_bootstrap_has_no_private_repo_url(self):
         """D1/S4-4: the private address never appears verbatim — the owner and
         repo names are built from parts at runtime."""

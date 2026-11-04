@@ -4,9 +4,30 @@
 
 - Necesitas una terminal abierta.
 - **No** hace falta ser administrador, ni tener Python, ni Node, ni compilador.
+- Sí necesitas **`git`** y **`minisign`** una sola vez (abajo).
 - En Linux/macOS es un solo comando. En Windows son dos: primero Scoop +
   `minisign`, después Demiurgos.
 - Sistemas soportados: ver [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).
+
+## Prepara `git` y `minisign` (solo la primera vez)
+
+**Linux:**
+
+```bash
+sudo apt install git minisign      # Debian / Ubuntu
+# Fedora: sudo dnf install git minisign
+# Arch:   sudo pacman -S git minisign
+```
+
+**macOS:**
+
+```bash
+# Si no tienes Homebrew:
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install git minisign
+```
+
+**Windows:** se instalan junto con Scoop en el paso 1 de la sección de Windows.
 
 ## Linux y macOS
 
@@ -18,15 +39,16 @@ curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/in
 
 Abre **PowerShell** (sin administrador) y ejecuta dos pasos.
 
-### 1. Instala Scoop y `minisign` (solo la primera vez)
+### 1. Instala Scoop, `git` y `minisign` (solo la primera vez)
 
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; irm get.scoop.sh | iex; scoop install minisign
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; irm get.scoop.sh | iex; scoop install git minisign
 ```
 
-`minisign` es lo que verifica la firma del instalador. Si ya tienes Scoop, la
-línea lo detecta y sigue con `minisign`; si ya tienes ambos, no rompe nada. Deja
-Scoop instalado, que además sirve para otras herramientas.
+`minisign` verifica la firma del instalador y `git` descarga el asistente. Si ya
+tienes Scoop, la línea lo detecta y sigue con las herramientas; si ya tienes
+ambas, no rompe nada. Deja Scoop instalado, que además sirve para otras
+herramientas.
 
 ### 2. Instala Demiurgos
 
@@ -59,6 +81,11 @@ Puedes cambiar la raíz con la variable `DEMIURGOS_HOME` **antes** de instalar.
 
 ## Arrancarlo
 
+En **Linux**, abre **Demiurgos** desde el menú de aplicaciones. En **Windows**,
+desde el menú Inicio. El lanzador abre la app en el navegador predeterminado.
+
+También puedes arrancarlo desde una terminal:
+
 ```bash
 ~/.demiurgos/current/scripts/start-demiurgos.sh start
 ```
@@ -67,6 +94,17 @@ En Windows:
 
 ```powershell
 & "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" start
+```
+
+El icono **en el escritorio** es opcional (el instalador solo agrega la entrada
+del menú):
+
+```bash
+~/.demiurgos/current/scripts/start-demiurgos.sh install --desktop
+```
+
+```powershell
+& "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" install -Desktop
 ```
 
 La app queda disponible en `http://127.0.0.1:8000`. En Windows, el launcher abre
