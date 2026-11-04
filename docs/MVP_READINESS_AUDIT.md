@@ -312,11 +312,15 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 
 #### AUD-18 — Launcher de Windows sin gateway ni navegador
 
-- **Estado (2026-11-03)**: resuelto — `start-demiurgos.ps1` ahora arranca el
-  gateway de Hermes en background (pid trackeado, `taskkill /T` en `stop`/`restart`,
-  log propio) y abre el navegador (respetando `DEMIURGOS_NO_BROWSER`), con paridad
-  respecto del launcher POSIX. La API sigue siendo el único gate de boot y, sin
-  Hermes, el asistente queda pendiente sin romper el arranque.
+- **Estado (2026-11-03)**: resuelto en `5faecfe` (merge `3c6a00e`) —
+  `start-demiurgos.ps1` ahora arranca el gateway de Hermes en background (pid
+  trackeado, `taskkill /T` en `stop`/`restart`, log propio) y abre el navegador
+  (respetando `DEMIURGOS_NO_BROWSER`), con paridad respecto del launcher POSIX.
+  La API sigue siendo el único gate de boot y, sin Hermes, el asistente queda
+  pendiente sin romper el arranque. Validado en CI run `41743598267`
+  (`Launcher (windows-latest)`: success) y en el boot del payload Windows del
+  Release run `41743598201`; el camino con Hermes real queda para la primera
+  máquina Windows.
 - **Evidencia**: `start-demiurgos.ps1` solo llamaba a `Start-Api`; el header decía
   que el gateway "nunca se arranca aquí", y no había apertura de navegador. El
   launcher POSIX sí arranca ambos y abre el navegador. `api_server.py:1071`
@@ -439,4 +443,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 3: AUD-15 resuelto — puertos documentados vía `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`; README y `.env.example` actualizados (también el default de auth a `local-dev`). |
 | 2026-11-03 | Ola 3: AUD-17 resuelto — `web-config-ui` congelado con el gate `legacy_tree_frozen` (SHA-256 del árbol). |
 | 2026-11-03 | Ola 3: AUD-16 resuelto — job `windows-payload-boot` bootea el zip Windows real en `release.yml`. Validado en el run `41637335818` (`Windows payload boot`: success). |
-| 2026-11-03 | Preparación alpha: AUD-18 resuelto — el launcher de Windows arranca el gateway de Hermes en background y abre el navegador; el boot sin Hermes sigue intacto. |
+| 2026-11-03 | Preparación alpha: AUD-18 resuelto en `5faecfe` (merge `3c6a00e`) — el launcher de Windows arranca el gateway de Hermes en background y abre el navegador; el boot sin Hermes sigue intacto. CI `41743598267` y Release `41743598201` verdes. |
