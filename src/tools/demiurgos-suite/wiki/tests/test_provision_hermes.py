@@ -339,3 +339,24 @@ def test_provision_seeds_the_profile_on_the_already_provisioned_fast_path(tmp_pa
     assert result.stdout == "OK"
     assert (install / "hermes" / "config.yaml").is_file()
     assert "API_SERVER_ENABLED=true" in (install / "hermes" / ".env").read_text(encoding="utf-8")
+
+
+@_BASH
+def test_seed_profile_preserves_an_env_file_without_a_trailing_newline(tmp_path: Path):
+    """An editor may save the last line without a newline; appending must not
+    concatenate the new key onto it (S6: existing lines are preserved)."""
+    install = tmp_path / "install"
+    hermes = install / "hermes"
+    hermes.mkdir(parents=True)
+    (hermes / ".env").write_bytes(b"X=1")
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "DEMIURGOS_HOME": str(install),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    result = _run_probe('source "$1"; resolve_paths ""; seed_profile', env)
+
+    assert result.returncode == 0, result.stderr
+    lines = (hermes / ".env").read_text(encoding="utf-8").splitlines()
+    assert "X=1" in lines
+    assert "API_SERVER_ENABLED=true" in lines

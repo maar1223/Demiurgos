@@ -195,13 +195,13 @@ load_data_root_env() {
         case "$key" in
             ''|'#'*) continue ;;
             DEMIURGOS_*|HERMES_GATEWAY_KEY)
-                # Strip one layer of surrounding quotes and a trailing CR
-                # (CRLF .env files) so the value reaches the app cleanly.
+                # Strip the CR first (CRLF .env files), then one layer of
+                # surrounding quotes, so the value reaches the app cleanly.
+                value="${value%$'\r'}"
                 value="${value%\"}"
                 value="${value#\"}"
                 value="${value%\'}"
                 value="${value#\'}"
-                value="${value%$'\r'}"
                 export "$key=$value"
                 ;;
         esac
@@ -265,12 +265,17 @@ set_env_value() {
 
 # A fresh install seeds the data-root .env without HERMES_GATEWAY_KEY. Create
 # it once and persist it, so the API client and the gateway share one secret
-# across restarts. An existing key (env or .env) is never replaced.
+# across restarts. An existing usable key (>= 16 chars) is never replaced; a
+# present-but-unusable key is regenerated because the runtime refuses it.
 ensure_gateway_key() {
     local env_file="$DATA_ROOT/.env"
     if [ -n "${HERMES_GATEWAY_KEY:-}" ]; then
-        export HERMES_GATEWAY_KEY
-        return 0
+        if [ "${#HERMES_GATEWAY_KEY}" -ge 16 ]; then
+            export HERMES_GATEWAY_KEY
+            return 0
+        fi
+        printf 'The existing HERMES_GATEWAY_KEY is shorter than 16 characters; regenerating it.\n' >&2
+        unset HERMES_GATEWAY_KEY
     fi
     HERMES_GATEWAY_KEY="$(generate_gateway_key)"
     [ -n "$HERMES_GATEWAY_KEY" ] || {
@@ -295,8 +300,10 @@ bridge_gateway_key() {
     export API_SERVER_ENABLED=true
     export API_SERVER_KEY="$HERMES_GATEWAY_KEY"
     if [ -n "${HERMES_HOME:-}" ]; then
-        set_env_value "$HERMES_HOME/.env" API_SERVER_ENABLED true || true
-        set_env_value "$HERMES_HOME/.env" API_SERVER_KEY "$HERMES_GATEWAY_KEY" || true
+        set_env_value "$HERMES_HOME/.env" API_SERVER_ENABLED true \
+            || printf 'No se pudo reconciliar API_SERVER_ENABLED en %s/.env\n' "$HERMES_HOME" >&2
+        set_env_value "$HERMES_HOME/.env" API_SERVER_KEY "$HERMES_GATEWAY_KEY" \
+            || printf 'No se pudo reconciliar API_SERVER_KEY en %s/.env\n' "$HERMES_HOME" >&2
     fi
 }
 

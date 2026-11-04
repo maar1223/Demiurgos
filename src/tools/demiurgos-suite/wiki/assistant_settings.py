@@ -559,6 +559,17 @@ def _atomic_write(path: Path, content: str, mode: int | None = None) -> None:
 _ENV_FILE_MODE = 0o600
 
 
+def _restore_config(path: Path, content: str, existed: bool) -> None:
+    """Restore the pre-save config; a save that created it leaves no empty file."""
+    if existed:
+        _atomic_write(path, content)
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def current_config_revision() -> int | None:
     """Current normalized config revision for the active Hermes profile.
 
@@ -596,6 +607,7 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
     if candidate is None:
         raise ValueError("Provider, endpoint, and API key are required")
     paths = _resolve_profile_paths()
+    config_existed = paths.config.is_file()
     config_content, _, config_data = _read_config(paths.config, allow_missing=True)
     current_status = _status_from_config(paths, config_data)
     _check_revision(payload.get("revision"), current_status.revision)
@@ -633,7 +645,7 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
             _atomic_write(paths.env, next_env, mode=_ENV_FILE_MODE)
     except AssistantSettingsError:
         if config_changed:
-            _atomic_write(paths.config, config_content)
+            _restore_config(paths.config, config_content, config_existed)
         if env_changed:
             _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
         raise
@@ -758,6 +770,7 @@ def create_assistant_settings_router(
             selected_model = _validate_model(payload.get("model")) if has_model else None
             api_key = _validate_api_key(payload.get("api_key")) if has_key else None
             paths = _resolve_profile_paths()
+            config_existed = paths.config.is_file()
             config_content, _, config_data = _read_config(paths.config, allow_missing=True)
             current_status = _status_from_config(paths, config_data)
             _check_revision(payload.get("revision"), current_status.revision)
@@ -805,9 +818,10 @@ def create_assistant_settings_router(
                     _atomic_write(paths.env, next_env, mode=_ENV_FILE_MODE)
             except AssistantSettingsError:
                 # Restore every file touched by this transaction, including a
-                # metadata migration that preceded a failed secret write.
+                # metadata migration that preceded a failed secret write. A
+                # fresh profile has no prior config: remove the one we created.
                 if config_changed:
-                    _atomic_write(paths.config, config_content)
+                    _restore_config(paths.config, config_content, config_existed)
                 if env_changed:
                     _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
                 raise

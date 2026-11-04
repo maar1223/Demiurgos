@@ -158,6 +158,41 @@ def test_ensure_gateway_key_keeps_an_existing_key(tmp_path: Path):
 
 
 @_BASH
+def test_ensure_gateway_key_reads_a_quoted_crlf_key_without_a_stray_quote(tmp_path: Path):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    (data_root / ".env").write_bytes(b'HERMES_GATEWAY_KEY="crlf-key-0123456789"\r\n')
+    probe = (
+        'source "$1" __probe__ || true; '
+        'DATA_ROOT="$2"; '
+        'load_data_root_env; ensure_gateway_key; '
+        'printf "%s" "$HERMES_GATEWAY_KEY"'
+    )
+    result = _run_probe(tmp_path, probe, str(data_root))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "crlf-key-0123456789"
+
+
+@_BASH
+def test_ensure_gateway_key_regenerates_a_too_short_key(tmp_path: Path):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    (data_root / ".env").write_text("HERMES_GATEWAY_KEY=short\n", encoding="utf-8")
+    probe = (
+        'source "$1" __probe__ || true; '
+        'DATA_ROOT="$2"; '
+        'load_data_root_env; ensure_gateway_key; '
+        'printf "%s|%s" "$HERMES_GATEWAY_KEY" '
+        '"$(grep "^HERMES_GATEWAY_KEY=" "$DATA_ROOT/.env" | cut -d= -f2-)"'
+    )
+    result = _run_probe(tmp_path, probe, str(data_root))
+    assert result.returncode == 0, result.stderr
+    exported, persisted = result.stdout.split("|", 1)
+    assert len(exported) >= 16
+    assert exported == persisted
+
+
+@_BASH
 def test_bridge_gateway_key_reconciles_the_profile_env(tmp_path: Path):
     profile = tmp_path / "hermes"
     profile.mkdir()

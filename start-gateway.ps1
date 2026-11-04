@@ -182,10 +182,14 @@ function Set-EnvValue([string]$File, [string]$Key, [string]$Value) {
 }
 
 function Initialize-GatewayKey([string]$Root) {
-    if ($env:HERMES_GATEWAY_KEY) { return $env:HERMES_GATEWAY_KEY }
+    if ($env:HERMES_GATEWAY_KEY -and $env:HERMES_GATEWAY_KEY.Length -ge 16) { return $env:HERMES_GATEWAY_KEY }
+    if ($env:HERMES_GATEWAY_KEY) {
+        Write-Host "The existing HERMES_GATEWAY_KEY is shorter than 16 characters; regenerating it." -ForegroundColor Yellow
+        Remove-Item Env:HERMES_GATEWAY_KEY -ErrorAction SilentlyContinue
+    }
     $envFile = Join-Path $Root ".env"
     $key = Read-EnvValue $envFile "HERMES_GATEWAY_KEY"
-    if (-not $key) {
+    if (-not $key -or $key.Length -lt 16) {
         $key = [guid]::NewGuid().ToString("N")
         Set-EnvValue $envFile "HERMES_GATEWAY_KEY" $key
         Write-Host "Generated the Hermes gateway key in $envFile"

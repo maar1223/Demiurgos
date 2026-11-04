@@ -214,6 +214,11 @@ seed_profile() {
         : > "$env_file" || fail "cannot create the dedicated profile env at $env_file"
     fi
     if ! grep -q '^API_SERVER_ENABLED=' "$env_file" 2>/dev/null; then
+        # An editor may leave the last line without a newline; appending there
+        # would corrupt it and concatenate the new key (S6: preserve lines).
+        if [ -s "$env_file" ] && [ -n "$(tail -c 1 "$env_file" 2>/dev/null)" ]; then
+            printf '\n' >> "$env_file" || fail "cannot terminate the last line of $env_file"
+        fi
         printf 'API_SERVER_ENABLED=true\n' >> "$env_file" \
             || fail "cannot seed API_SERVER_ENABLED in $env_file"
     fi

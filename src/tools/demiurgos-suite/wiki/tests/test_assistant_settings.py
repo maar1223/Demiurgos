@@ -529,6 +529,23 @@ class TestConfiglessProfile:
         assert response.status_code == 200, response.text
         assert response.json()["key_configured"] is False
 
+    def test_failed_save_does_not_leave_a_new_empty_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A save that creates `config.yaml` must remove it when a later write
+        in the same transaction fails; a fresh profile never keeps a 0-byte file."""
+        client = self._client(tmp_path, monkeypatch)
+        paths = assistant_settings._resolve_profile_paths()
+        paths.env.mkdir()  # the env write fails after the config write
+
+        response = client.put(
+            "/api/profile/assistant",
+            json={"model": "qwen3.6-plus", "api_key": "some-fixture-key"},
+        )
+
+        assert response.status_code == 503
+        assert not paths.config.exists()
+
 
 class TestProviderAdapters:
     @pytest.mark.parametrize("provider", ["opencode-go", "openai", "openrouter", "compatible"])
