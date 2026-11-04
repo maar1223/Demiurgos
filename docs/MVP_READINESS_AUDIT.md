@@ -310,6 +310,22 @@ el instalador provee Python 3.12 vía `uv` y el SPA viaja precompilado.
 - **Aceptación**: la constitución y los contratos no contradicen el runtime; un
   lector puede decidir sin releer todo el código.
 
+#### AUD-18 — Launcher de Windows sin gateway ni navegador
+
+- **Estado (2026-11-03)**: resuelto — `start-demiurgos.ps1` ahora arranca el
+  gateway de Hermes en background (pid trackeado, `taskkill /T` en `stop`/`restart`,
+  log propio) y abre el navegador (respetando `DEMIURGOS_NO_BROWSER`), con paridad
+  respecto del launcher POSIX. La API sigue siendo el único gate de boot y, sin
+  Hermes, el asistente queda pendiente sin romper el arranque.
+- **Evidencia**: `start-demiurgos.ps1` solo llamaba a `Start-Api`; el header decía
+  que el gateway "nunca se arranca aquí", y no había apertura de navegador. El
+  launcher POSIX sí arranca ambos y abre el navegador. `api_server.py:1071`
+  asumía "the gateway the launcher starts", cierto en POSIX y falso en Windows.
+- **Impacto**: un tester Windows veía la app pero el asistente quedaba pendiente
+  hasta correr `start-gateway.ps1` a mano en otra ventana.
+- **Aceptación**: en Windows, `start` deja la API y el gateway arriba y abre el
+  navegador; `stop` baja ambos; sin Hermes el arranque sigue funcionando.
+
 ### P2 — higiene y cobertura
 
 | ID | Hallazgo | Evidencia | Fix mínimo |
@@ -423,3 +439,4 @@ gh run list --limit 5
 | 2026-11-03 | Ola 3: AUD-15 resuelto — puertos documentados vía `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`; README y `.env.example` actualizados (también el default de auth a `local-dev`). |
 | 2026-11-03 | Ola 3: AUD-17 resuelto — `web-config-ui` congelado con el gate `legacy_tree_frozen` (SHA-256 del árbol). |
 | 2026-11-03 | Ola 3: AUD-16 resuelto — job `windows-payload-boot` bootea el zip Windows real en `release.yml`. Validado en el run `41637335818` (`Windows payload boot`: success). |
+| 2026-11-03 | Preparación alpha: AUD-18 resuelto — el launcher de Windows arranca el gateway de Hermes en background y abre el navegador; el boot sin Hermes sigue intacto. |
