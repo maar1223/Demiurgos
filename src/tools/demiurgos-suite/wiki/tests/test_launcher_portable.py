@@ -267,6 +267,13 @@ class TestNoBrowserSuppression:
         # The guard is documented at the top of the script for humans.
         assert "DEMIURGOS_NO_BROWSER" in text[:text.index("open_browser()")]
 
+    def test_failure_is_visible_without_a_terminal(self):
+        """Terminal=false is the shipped default, so a boot failure must notify."""
+        text = _text(PORTABLE_LAUNCHER)
+        assert "notify-send" in text
+        assert "command -v notify-send" in text
+        assert "notify_failure" in text
+
     def test_start_action_still_calls_open_browser(self):
         """The suppression switch is INSIDE open_browser: `start` keeps its
         behavior in interactive use, and every caller (start, future flags)

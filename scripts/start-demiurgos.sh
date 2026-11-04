@@ -689,8 +689,19 @@ start_services() {
         # S6-2/D6: bounded boot rollback — fall back to the previous bootable
         # version when the new one fails to boot. `exec` replaces this process
         # on success, so a successful rollback never returns here.
-        rollback_if_boot_failed || return 1
+        rollback_if_boot_failed || {
+            notify_failure "Demiurgos no pudo arrancar. Revisa $API_LOG"
+            return 1
+        }
     fi
+}
+
+# Desktop launches have no terminal (desktop entries are Terminal=false), so a
+# boot failure must not be silent. Best-effort: a missing notification daemon
+# never changes the exit code.
+notify_failure() {
+    command -v notify-send >/dev/null 2>&1 || return 0
+    notify-send "Demiurgos" "$1" >/dev/null 2>&1 || true
 }
 
 open_browser() {
@@ -712,6 +723,7 @@ open_browser() {
         nohup "$opener" "$url" >/dev/null 2>&1 &
     else
         printf 'Default browser opener not found; open %s manually\n' "$url" >&2
+        notify_failure "No se pudo abrir el navegador. Entra a $url"
     fi
 }
 

@@ -66,7 +66,7 @@ install-demiurgos: done. Start Demiurgos with:
 
 | Sistema | Cómo abrirlo |
 |---|---|
-| **Linux** | Menú de aplicaciones → **Demiurgos**. Se abre una terminal que inicia los servicios y luego el navegador. |
+| **Linux** | Menú de aplicaciones → **Demiurgos**. Se abre el navegador (sin ventana de terminal). |
 | **Windows** | Menú Inicio → **Demiurgos**. Se abre el navegador. |
 | **macOS** | Todavía no hay acceso directo: ejecuta el comando de abajo. |
 
