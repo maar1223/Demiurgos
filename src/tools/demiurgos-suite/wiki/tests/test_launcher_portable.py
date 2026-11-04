@@ -215,7 +215,7 @@ class TestHermesOptional:
     def test_hermes_fail_hard_gate_is_removed(self):
         """S2-2: the launcher must NOT return 1 when Hermes is absent."""
         text = _text(PORTABLE_LAUNCHER)
-        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        start_block = text[text.index("start_services()"):text.index("open_browser()")]
         # The old gate (`:345-348` in the pre-S2a script) printed a bare
         # "Hermes CLI not found" and returned 1, aborting the whole boot.
         # The new contract prints an advisory and continues.
@@ -225,24 +225,22 @@ class TestHermesOptional:
 
     def test_gateway_started_only_when_hermes_found(self):
         text = _text(PORTABLE_LAUNCHER)
-        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        start_block = text[text.index("start_services()"):text.index("open_browser()")]
         # The gateway component start is conditional on Hermes presence...
         assert 'if [ -z "$HERMES_BIN" ] || [ ! -x "$HERMES_BIN" ]; then' in start_block
         # ...and the API start is unconditional (outside the branch).
         assert 'start_component api' in start_block
 
     def test_gateway_port_not_in_required_readiness(self):
-        """S2-2: GATEWAY_PORT is dropped from the REQUIRED readiness gate."""
+        """S2-2: the gateway never gates the boot (or the browser)."""
         text = _text(PORTABLE_LAUNCHER)
-        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        start_block = text[text.index("start_services()"):text.index("open_browser()")]
         # The API is the only REQUIRED readiness (S6-2/D6: a real HTTP 200 on
-        # /health); the gateway is best-effort and never aborts the boot.
+        # /health); the optional gateway is started best-effort and never
+        # waited on (a socket-served runtime made the TCP wait a 20 s stall).
         assert 'if wait_for_health "$API_PORT"' in start_block
-        assert 'wait_for_port "$GATEWAY_PORT"' in start_block
-        # The gateway wait must not be able to fail the boot: no `return 1`
-        # on the gateway path (it appears only in the API-required branch).
-        gateway_wait = start_block[start_block.index('wait_for_port "$GATEWAY_PORT"'):]
-        assert "return 1" not in gateway_wait[:200]
+        assert 'wait_for_port "$GATEWAY_PORT"' not in text
+        assert "wait_for_gateway" not in text
 
 
 class TestCompatAliasRemoved:
@@ -275,7 +273,7 @@ class TestNoBrowserSuppression:
         inherits the headless guard."""
         text = _text(PORTABLE_LAUNCHER)
         main_block = text[text.index("main()"):]
-        assert 'start) start_all; open_browser "http://127.0.0.1:$API_PORT"' in main_block
+        assert 'start) start_services; open_browser "http://127.0.0.1:$API_PORT"' in main_block
 
 
 class TestPowerShell51Contract:
@@ -428,7 +426,7 @@ class TestProductRuntimeContract:
         """S7: a product-owned binary is only started after the checkout pin
         check; the app still boots when the check rejects the runtime."""
         text = _text(PORTABLE_LAUNCHER)
-        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        start_block = text[text.index("start_services()"):text.index("open_browser()")]
         assert "verify_product_runtime" in start_block
         assert start_block.index("verify_product_runtime") < start_block.index(
             'if [ -z "$HERMES_BIN" ]'

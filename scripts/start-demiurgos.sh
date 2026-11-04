@@ -640,7 +640,7 @@ maybe_build_frontend() {
     build_frontend
 }
 
-start_all() {
+start_services() {
     ensure_runtime_dirs
     resolve_data_root
     load_data_root_env
@@ -691,13 +691,6 @@ start_all() {
         # on success, so a successful rollback never returns here.
         rollback_if_boot_failed || return 1
     fi
-    if [ -n "$HERMES_BIN" ] && [ -x "$HERMES_BIN" ]; then
-        if wait_for_port "$GATEWAY_PORT"; then
-            printf 'Hermes Gateway ready on 127.0.0.1:%s\n' "$GATEWAY_PORT"
-        else
-            printf 'Hermes Gateway did not become ready; check its log\n' >&2
-        fi
-    fi
 }
 
 open_browser() {
@@ -726,7 +719,10 @@ show_status() {
     printf '\nDemiurgos is running\n'
     printf 'API:      http://127.0.0.1:%s\n' "$API_PORT"
     if [ -n "$HERMES_BIN" ] && [ -x "$HERMES_BIN" ]; then
-        printf 'Hermes:   127.0.0.1:%s\n' "$GATEWAY_PORT"
+        # No readiness claim: the gateway warms in the background (and the
+        # current runtime may serve through its own socket). Waiting for a TCP
+        # port here was a guaranteed 20 s stall on every start.
+        printf 'Hermes:   starting in the background (see %s)\n' "$GATEWAY_LOG"
     else
         printf 'Hermes:   not installed (assistant unavailable)\n'
     fi
@@ -797,11 +793,15 @@ main() {
     done
     action="${action:-restart}"
     case "$action" in
-        start) start_all; open_browser "http://127.0.0.1:$API_PORT"; show_status ;;
+        # Browser FIRST: open the tab as soon as the API is healthy. The
+        # gateway is optional and warms in the background; waiting for it (a
+        # 20 s TCP timeout on a runtime that serves through a socket) made
+        # every start feel like a slow cold boot.
+        start) start_services; open_browser "http://127.0.0.1:$API_PORT"; show_status ;;
         # Restart does NOT reopen the browser: the already-open tab detects the
         # backend is back and reloads itself (auto-reload in the Navbar), so
         # opening a new tab would double-enter the app.
-        restart) stop_all; start_all; show_status ;;
+        restart) stop_all; start_services; show_status ;;
         stop) stop_all ;;
         install) install_desktop "$WITH_DESKTOP_ICON" ;;
     esac
