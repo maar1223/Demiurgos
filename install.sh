@@ -539,9 +539,15 @@ bootstrap_web_app() {
     verify_sha256 "$core_dir/lib/verify_checksum.sh" "$lib_sha"
 
     ok "Core verified (version: $DEMIURGOS_VERSION); delegating to the installer"
-    # Env passthrough: DEMIURGOS_VERSION, DEMIURGOS_HOME, DEMIURGOS_URL_BASE,
-    # DEMIURGOS_DATA_ROOT, DEMIURGOS_UV_SHA256, UV_VERSION, ... are inherited
-    # by the core. The EXIT trap removes the temp dir afterwards.
+    # The core is a CHILD process: the resolved defaults above must be
+    # EXPORTED, not merely assigned. Without this, a user running the
+    # documented one-liner (no env overrides) hits
+    # "DEMIURGOS_URL_BASE is not set". Values the user already exported keep
+    # their values; these lines only publish the resolved ones.
+    export DEMIURGOS_URL_BASE DEMIURGOS_VERSION DEMIURGOS_HOME
+    # DEMIURGOS_DATA_ROOT, DEMIURGOS_UV_SHA256, UV_VERSION, ... arrive already
+    # exported by the caller and are inherited by the core. The EXIT trap
+    # removes the temp dir afterwards.
     bash "$core_dir/install-demiurgos.sh"
 }
 
