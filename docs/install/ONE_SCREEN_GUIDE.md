@@ -69,9 +69,10 @@ En Windows:
 & "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" start
 ```
 
-La app queda disponible en `http://127.0.0.1:8000`. En Windows, ábrela en el
-navegador si no se abre sola. Si el asistente aparece pendiente, arranca su
-gateway en otra ventana:
+La app queda disponible en `http://127.0.0.1:8000`. En Windows, el launcher abre
+el navegador y, si Hermes está provisionado, arranca también el asistente. Si el
+asistente aparece pendiente, revisa `logs\demiurgos-gateway.err.log` o arranca
+el gateway manualmente en otra ventana:
 
 ```powershell
 & "$env:LOCALAPPDATA\Demiurgos\current\start-gateway.ps1"

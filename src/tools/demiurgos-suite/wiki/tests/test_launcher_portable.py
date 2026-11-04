@@ -310,6 +310,18 @@ class TestPowerShell51Contract:
         assert "npm" not in text
         assert "warmup" not in text
 
+    def test_ps_stack_starts_and_stops_the_optional_gateway(self):
+        """Windows parity with POSIX: the optional gateway starts in the
+        background and `stop` tears it down, but the API readiness remains the
+        only boot gate and the browser launch is headless-guardable."""
+        text = _text(PS_STACK)
+        assert "start-gateway.ps1" in text
+        assert "function Start-Gateway" in text
+        assert "function Stop-Gateway" in text
+        assert "taskkill" in text
+        assert "function Open-Browser" in text
+        assert "DEMIURGOS_NO_BROWSER" in text
+
     def test_ps_stack_keeps_tcp_ownership_validation(self):
         text = _text(PS_STACK)
         assert "Get-NetTCPConnection" in text

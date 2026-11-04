@@ -81,16 +81,44 @@ $logDir = Join-Path $installRoot "logs"
 $runDir = Join-Path $env:LOCALAPPDATA "Demiurgos\run"
 $apiLog = Join-Path $logDir "demiurgos-api.log"
 $apiErrLog = Join-Path $logDir "demiurgos-api.err.log"
+$gatewayLog = Join-Path $logDir "demiurgos-gateway.log"
+$gatewayErrLog = Join-Path $logDir "demiurgos-gateway.err.log"
+$gatewayPidFile = Join-Path $runDir "gateway.pid"
 
 # Ports, overridable via env for parallel instances and the CI matrix; the
 # defaults are the product ports (mirror of the POSIX launcher).
 $apiPort = if ($env:DEMIURGOS_API_PORT) { [int]$env:DEMIURGOS_API_PORT } else { 8000 }
 $gatewayPort = if ($env:DEMIURGOS_GATEWAY_PORT) { [int]$env:DEMIURGOS_GATEWAY_PORT } else { 8642 }
 
-# --- Hermes resolution (S2-2): optional, advisory only, never a boot gate ---
+# --- Product-owned Hermes resolution (S2-2/S5) ------------------------------
+# Mirror start-gateway.ps1: the pinned checkout and the installer-published
+# bin win; Get-Command / .local\bin stay as the dev fallback only. The gateway
+# is optional and never a boot gate, but when it is present the launcher starts
+# it in the background so the Windows one-command start matches POSIX.
+if ($env:DEMIURGOS_HOME) {
+    $productRoot = $env:DEMIURGOS_HOME
+} elseif ((Split-Path -Leaf $appRoot) -eq "current") {
+    $productRoot = Split-Path -Parent $appRoot
+} else {
+    $productRoot = Join-Path $env:LOCALAPPDATA "Demiurgos"
+}
+$productHermesHome = if ($env:DEMIURGOS_HERMES_HOME) { $env:DEMIURGOS_HERMES_HOME } else { Join-Path $productRoot "hermes" }
+$productAgentRoot = Join-Path $productRoot "hermes-agent"
+
 $hermesBin = $null
-$hermesCmd = Get-Command hermes -ErrorAction SilentlyContinue
-if ($hermesCmd) { $hermesBin = $hermesCmd.Source }
+$hermesCandidates = @(
+    (Join-Path $productAgentRoot ".hermes\bin\hermes.exe"),
+    (Join-Path $productAgentRoot ".hermes\bin\hermes.cmd"),
+    (Join-Path $productHermesHome "bin\hermes.exe"),
+    (Join-Path $productHermesHome "bin\hermes.cmd")
+)
+foreach ($candidate in $hermesCandidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { $hermesBin = $candidate; break }
+}
+if (-not $hermesBin) {
+    $hermesCmd = Get-Command hermes -ErrorAction SilentlyContinue
+    if ($hermesCmd) { $hermesBin = $hermesCmd.Source }
+}
 if (-not $hermesBin) {
     $fallback = Join-Path $env:USERPROFILE ".local\bin\hermes.exe"
     if (Test-Path -LiteralPath $fallback -PathType Leaf) { $hermesBin = $fallback }
@@ -240,6 +268,86 @@ function Stop-Api {
     }
 }
 
+# --- Hermes gateway (Windows parity of the POSIX launcher) ------------------
+# start-gateway.ps1 owns the product-runtime resolution and the pin check; the
+# launcher owns only its lifecycle (background start, tracked pid, stop). The
+# gateway is optional: without Hermes the API still boots and the assistant
+# reports pending.
+
+function Test-GatewayTracked {
+    if (-not (Test-Path -LiteralPath $gatewayPidFile -PathType Leaf)) { return $null }
+    $raw = Get-Content -LiteralPath $gatewayPidFile -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $raw) { return $null }
+    $procId = 0
+    if (-not [int]::TryParse(([string]$raw).Trim(), [ref]$procId)) { return $null }
+    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($proc) { return $procId }
+    return $null
+}
+
+function Start-Gateway {
+    $gatewayLauncher = Join-Path $appRoot "start-gateway.ps1"
+    if (-not (Test-Path -LiteralPath $gatewayLauncher -PathType Leaf)) {
+        Write-Host "Gateway launcher not found at $gatewayLauncher; the assistant stays unavailable." -ForegroundColor Yellow
+        return
+    }
+    $tracked = Test-GatewayTracked
+    if ($tracked) {
+        Write-Host "Already running gateway (pid $tracked)"
+        return
+    }
+    if (Test-PortListening $gatewayPort) {
+        Write-Host "Cannot start gateway: port $gatewayPort is already in use by an untracked process" -ForegroundColor Yellow
+        return
+    }
+    if (-not $hermesBin) {
+        Write-Host "Hermes CLI not found; the assistant will be unavailable." -ForegroundColor Yellow
+        Write-Host "Install Hermes later and re-run this launcher to enable it." -ForegroundColor Yellow
+        return
+    }
+    New-Item -ItemType Directory -Force -Path $logDir, $runDir | Out-Null
+    # -ArgumentList joins with spaces and does not quote, so the launcher path
+    # must be quoted when the install root contains a space (a username with one).
+    $argLine = "-NoProfile -ExecutionPolicy Bypass -File `"$gatewayLauncher`""
+    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine `
+        -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayErrLog `
+        -PassThru -WindowStyle Hidden
+    Set-Content -LiteralPath $gatewayPidFile -Value $proc.Id -Encoding ASCII
+    Write-Host "Started gateway (pid $($proc.Id))"
+}
+
+function Wait-GatewayReady {
+    for ($i = 0; $i -lt 20; $i++) {
+        if (Test-PortListening $gatewayPort) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
+function Stop-Gateway {
+    $tracked = Test-GatewayTracked
+    if ($tracked) {
+        # The tracked pid is the PowerShell wrapper; /T also kills its hermes child.
+        & taskkill /PID $tracked /T /F 2>&1 | Out-Null
+        Remove-Item -LiteralPath $gatewayPidFile -Force -ErrorAction SilentlyContinue
+        Write-Host "Stopped gateway (pid $tracked)"
+        return
+    }
+    if (Test-PortListening $gatewayPort) {
+        Write-Host "Skipped gateway: port $gatewayPort owner is not tracked by the launcher" -ForegroundColor Yellow
+    }
+}
+
+function Open-Browser {
+    $flag = [string]$env:DEMIURGOS_NO_BROWSER
+    if ($flag -in @("1", "true", "yes")) {
+        Write-Host "DEMIURGOS_NO_BROWSER is set; not opening http://127.0.0.1:$apiPort"
+        return
+    }
+    Start-Process "http://127.0.0.1:$apiPort" | Out-Null
+}
+
 # --- Bounded boot rollback (S6-2/D6): local app\<version> scan only ---------
 # Rollback ONLY: no update/download logic (G9 untouched); no network beyond
 # the loopback /health probe in Wait-ApiReady.
@@ -287,8 +395,9 @@ function Invoke-BootRollback {
         Write-Host "Check the API log: $apiErrLog" -ForegroundColor Red
         return $false
     }
-    # Best-effort: stop the broken API (pid file or port owner) so the
-    # previous version can bind the port.
+    # Best-effort: stop the broken gateway and API so the previous version can
+    # bind both ports.
+    Stop-Gateway
     Stop-Api
     Write-Host "API failed to become ready; rolling back current -> $prev" -ForegroundColor Yellow
     $current = Join-Path $installRoot "current"
@@ -330,35 +439,40 @@ if ((Split-Path -Leaf $appRoot) -eq "current") {
     if ($target) { $env:DEMIURGOS_APP_VERSION = Split-Path -Leaf @($target)[0] }
 }
 
-if (-not $hermesBin) {
-    Write-Host "Hermes CLI not found; the assistant will be unavailable." -ForegroundColor Yellow
-    Write-Host "Install Hermes later and run start-gateway.ps1 to enable it." -ForegroundColor Yellow
+function Show-Startup {
+    # Start the optional gateway and the API, then report. The browser opens as
+    # soon as the API is ready; the gateway warms in parallel and never gates
+    # the boot (S2-2).
+    Start-Gateway
+    Start-Api
+    if (Wait-ApiReady) {
+        Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
+        Open-Browser
+        if ($hermesBin) {
+            if (Wait-GatewayReady) {
+                Write-Host "Gateway ready on 127.0.0.1:$gatewayPort" -ForegroundColor Green
+            } else {
+                Write-Host "Gateway still warming; check $gatewayErrLog" -ForegroundColor Yellow
+            }
+        }
+    } else {
+        Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
+        # S6-2/D6: bounded boot rollback - one fallback to the previous
+        # bootable version, then exit non-zero when it also fails.
+        if (-not (Invoke-BootRollback)) { exit 1 }
+    }
 }
 
 switch ($Action) {
-    "start" {
-        Start-Api
-        if (Wait-ApiReady) {
-            Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
-        } else {
-            Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
-            # S6-2/D6: bounded boot rollback - one fallback to the previous
-            # bootable version, then exit non-zero when it also fails.
-            if (-not (Invoke-BootRollback)) { exit 1 }
-        }
-    }
+    "start" { Show-Startup }
     "restart" {
+        Stop-Gateway
         Stop-Api
         Start-Sleep -Seconds 1
-        Start-Api
-        if (Wait-ApiReady) {
-            Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
-        } else {
-            Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
-            # S6-2/D6: bounded boot rollback - one fallback to the previous
-            # bootable version, then exit non-zero when it also fails.
-            if (-not (Invoke-BootRollback)) { exit 1 }
-        }
+        Show-Startup
     }
-    "stop" { Stop-Api }
+    "stop" {
+        Stop-Gateway
+        Stop-Api
+    }
 }

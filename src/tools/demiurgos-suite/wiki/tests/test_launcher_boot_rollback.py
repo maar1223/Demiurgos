@@ -395,5 +395,9 @@ class TestPowerShellRollbackParity:
     def test_ps_switch_hooks_rollback_on_readiness_failure(self):
         text = _text(PS_STACK)
         switch = text[text.index("switch ($Action)"):]
-        assert "Invoke-BootRollback" in switch
-        assert "exit 1" in switch
+        # The rollback lives in the shared startup helper; the switch must route
+        # start/restart through it so a readiness failure still rolls back.
+        assert "Show-Startup" in switch
+        startup = text[text.index("function Show-Startup"):]
+        assert "Invoke-BootRollback" in startup
+        assert "exit 1" in startup
