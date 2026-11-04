@@ -194,6 +194,26 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByLabelText("Endpoint")).toHaveValue("https://opencode.ai/zen/go/v1");
   });
 
+  it("renders the wizard from the fresh-install needs-configuration status", async () => {
+    mocked.getAssistantSettings.mockResolvedValue({
+      provider: "",
+      base_url: "",
+      model: "",
+      model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+      key_configured: false,
+      models,
+      active_profile: "default",
+      revision: 0,
+      runtime_state: "saved-not-active",
+    });
+    renderPanel();
+
+    await screen.findByRole("heading", { name: "Conexión" });
+    expect(screen.queryByText(tEs("assistantSettings.loadError"))).not.toBeInTheDocument();
+    expect(screen.getByLabelText(tEs("assistantSettings.providerLabel"))).toHaveValue("opencode-go");
+    expect(screen.getByLabelText("Endpoint")).toHaveValue("https://opencode.ai/zen/go/v1");
+  });
+
   it("requires revalidation when the API key changes", async () => {
     const user = userEvent.setup();
     renderPanel();

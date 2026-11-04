@@ -97,7 +97,13 @@ export function AssistantSettingsPanel({
         if (!active) return;
         setStatus(next);
         setProvider(next.provider || "opencode-go");
-        setBaseUrl(next.base_url || "");
+        // A fresh profile has no endpoint yet: show the selected provider's
+        // known default instead of an empty field the author cannot validate.
+        setBaseUrl(
+          next.base_url ||
+            defaultBaseUrls[next.provider || "opencode-go"] ||
+            "",
+        );
         setModels(next.models);
         setSelectedModel(next.model_metadata);
       })
