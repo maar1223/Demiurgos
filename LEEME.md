@@ -8,7 +8,7 @@ Si eres un usuario nuevo, este documento es tu **Punto de Partida**.
 
 ## 1. Estado de la instalación
 
-> ✅ **La instalación oficial ya está disponible**, en un solo comando desde el canal público firmado. Linux / macOS: `curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash`; Windows (PowerShell): `irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio: clonar → crear `venv` → `npm install` → launchers (ver sección 4). `install.sh` sin flags instala la app web; el stack CLI de desarrollo (Hermes, Engram y las skills narrativas) es opt-in con `bash install.sh --with-cli-stack`.
+> ✅ **La instalación oficial ya está disponible**, en un solo comando desde el canal público firmado. Linux / macOS: `curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash`; Windows (PowerShell): `irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio: clonar → crear `venv` → `npm install` → launchers (ver sección 4). `install.sh` sin flags instala la app web; el stack CLI de desarrollo (Hermes, Engram y las skills narrativas) es opt-in con `bash install.sh --with-cli-stack`.
 
 ---
 

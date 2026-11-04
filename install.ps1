@@ -12,7 +12,7 @@
 #      which modern public channels refuse; this must precede every download;
 #   2. resolve the install root (%LOCALAPPDATA%\Demiurgos, DEMIURGOS_HOME
 #      override) and the channel base (DEMIURGOS_URL_BASE; default the public
-#      releases channel);
+#      raw channel branch);
 #   3. download the versioned installer core (scripts\install-demiurgos.ps1
 #      and scripts\lib\verify_checksum.ps1) and SHA256SUMS into a temp dir;
 #   4. verify both core files against the published checksums (download-then-
@@ -61,12 +61,16 @@ if ($withCliStack) {
 # --- paths from the environment ONLY (never the script file) -----------------
 $installRoot = if ($env:DEMIURGOS_HOME) { $env:DEMIURGOS_HOME } else { Join-Path $env:LOCALAPPDATA "Demiurgos" }
 $version = if ($env:DEMIURGOS_VERSION) { $env:DEMIURGOS_VERSION } else { "latest" }
-# Public releases channel base. The channel owner is built from parts so no
+# Public releases channel base: a raw BRANCH root, not the GitHub release
+# download URL. The branch is a flat tree (scripts\, uv\, payloads, version.json,
+# SHA256SUMS + signature, latest/latest-beta pointers), so every installer fetch
+# is a plain "<base>/<path>". The channel owner is built from parts so no
 # private address appears verbatim (D1/S4-4); the channel is a DIFFERENT repo
 # from the private source. DEMIURGOS_URL_BASE is the hermetic test seam.
 $channelOwner = "maar12" + "23"
 $channelRepo = "demiurgos-releases"
-$urlBase = if ($env:DEMIURGOS_URL_BASE) { $env:DEMIURGOS_URL_BASE } else { "https://github.com/$channelOwner/$channelRepo" }
+$channelBranch = "main"
+$urlBase = if ($env:DEMIURGOS_URL_BASE) { $env:DEMIURGOS_URL_BASE } else { "https://raw.githubusercontent.com/$channelOwner/$channelRepo/$channelBranch" }
 
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("demiurgos-bootstrap-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path (Join-Path $tempDir "scripts\lib") | Out-Null

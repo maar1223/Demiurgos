@@ -243,6 +243,17 @@ class TestNoPrivateCloneOrNpm:
         assert "maar1223" not in text
         assert "github.com" not in text
 
+    def test_bootstrap_defaults_to_the_raw_channel_branch(self):
+        """S1: the default base is the flat raw branch, not the release URL."""
+        sh = _text(_REPO_ROOT / "install.sh")
+        ps1 = _text(_REPO_ROOT / "install.ps1")
+        assert "raw.githubusercontent.com" in sh
+        assert "raw.githubusercontent.com" in ps1
+        assert "${CHANNEL_REPO}/${CHANNEL_BRANCH}" in sh
+        assert "$channelRepo/$channelBranch" in ps1
+        # the channel owner stays assembled from parts (no verbatim address)
+        assert "maar1223" not in sh and "maar1223" not in ps1
+
     def test_no_sudo(self):
         text = _text(INSTALLER)
         assert "sudo" not in text
@@ -685,6 +696,11 @@ def _sign_fixture_manifest(channel: Path, tmp_path: Path) -> None:
     (MINISIGN_PUBKEY seam). The keypair is a temp file — never committed."""
     key = tmp_path / "fixture.key"
     pub = tmp_path / "fixture.pub"
+    # Re-signing cells re-enter this helper with the same tmp_path; minisign
+    # refuses to overwrite an existing key pair.
+    for stale in (key, pub):
+        if stale.exists():
+            stale.unlink()
     subprocess.run(
         ["minisign", "-G", "-W", "-s", str(key), "-p", str(pub)],
         check=True, capture_output=True, text=True, timeout=30,
@@ -713,9 +729,37 @@ def _host_uv_target() -> str:
     return f"{arch}-unknown-linux-gnu"
 
 
+def _host_uv_env_key() -> str:
+    """The uv-shas.env key for THIS host (the installer's env-var contract).
+
+    The installer drops the toolchain triple's ``unknown`` infix, so the key is
+    ``UV_SHA_X86_64_LINUX_GNU`` — not a blind upper-case of the uv target.
+    """
+    return {
+        "x86_64-unknown-linux-gnu": "UV_SHA_X86_64_LINUX_GNU",
+        "aarch64-unknown-linux-gnu": "UV_SHA_AARCH64_LINUX_GNU",
+        "x86_64-apple-darwin": "UV_SHA_X86_64_DARWIN",
+        "aarch64-apple-darwin": "UV_SHA_AARCH64_DARWIN",
+    }[_host_uv_target()]
+
+
+def _host_payload_cell() -> str:
+    """The channel package cell for THIS host (S2 artifact naming).
+
+    The release matrix publishes ``macos-arm64`` (not ``macos-aarch64``), so the
+    macOS cell cannot be derived by the same arch mapping as the uv triple.
+    """
+    machine = platform.machine().lower()
+    arch = "x86_64" if machine in ("x86_64", "amd64") else "aarch64"
+    if platform.system() == "Darwin":
+        return "macos-arm64"
+    return f"linux-{arch}"
+
+
 def _build_fixture_channel(
     tmp_path: Path, *, with_minisig: bool = True, wrong_payload_sha: str | None = None,
-    include_core: bool = False,
+    include_core: bool = False, uv_shas: bool = False,
+    uv_shas_override: str | None = None, cell_payload: bool = False,
 ) -> tuple[Path, str, str]:
     """Build a local file:// release channel.
 
@@ -729,6 +773,12 @@ def _build_fixture_channel(
     (``scripts/install-demiurgos.sh`` + ``scripts/lib/verify_checksum.sh``)
     with their own ``SHA256SUMS`` entries. Returns ``(channel, uv_sha256,
     version)``.
+
+    ``uv_shas`` publishes the signed ``uv-shas.env`` table (the real channel
+    shape); ``uv_shas_override`` substitutes the emitted value while keeping
+    the file signed, for the malformed-table cell. ``cell_payload`` names the
+    payload with the host package cell and points ``version.json`` at a
+    nonexistent legacy name, proving the installer prefers the cell artifact.
     """
     channel = tmp_path / "channel"
     channel.mkdir()
@@ -765,7 +815,11 @@ def _build_fixture_channel(
     for name in ("requirements.lock", "requirements-optional.txt"):
         shutil.copy2(_REPO_ROOT / name, payload_root / name)
 
-    payload_name = f"demiurgos-app-{version}.tar.gz"
+    payload_name = (
+        f"demiurgos-app-{version}-{_host_payload_cell()}.tar.gz"
+        if cell_payload
+        else f"demiurgos-app-{version}.tar.gz"
+    )
     payload_tar = channel / payload_name
     with tarfile.open(payload_tar, "w:gz") as tf:
         tf.add(payload_root, arcname=".")
@@ -791,7 +845,12 @@ def _build_fixture_channel(
     version_json = {
         "version": version,
         "artifacts": {
-            "posix": payload_name,
+            # A decoy: the cell-payload cell proves the installer never needs
+            # this legacy pointer when the versioned cell entry exists.
+            "posix": (
+                "demiurgos-app-does-not-exist.tar.gz"
+                if cell_payload else payload_name
+            ),
             "windows": "demiurgos-app-windows.zip",
         },
         "sha256": {"posix": payload_sha},
@@ -804,6 +863,15 @@ def _build_fixture_channel(
         (channel / "SHA256SUMS.minisig").write_text("untrusted-test-minisig\n")
     declared_sha = payload_sha if wrong_payload_sha is None else wrong_payload_sha
     sums_lines = [f"{declared_sha}  {payload_name}\n"]
+    if uv_shas:
+        uv_env_value = uv_shas_override or uv_sha
+        uv_env = channel / "uv-shas.env"
+        uv_env.write_text(
+            f"{_host_uv_env_key()}={uv_env_value}\n", encoding="utf-8"
+        )
+        sums_lines.append(
+            f"{hashlib.sha256(uv_env.read_bytes()).hexdigest()}  uv-shas.env\n"
+        )
     if include_core:
         for rel in ("scripts/install-demiurgos.sh", "scripts/lib/verify_checksum.sh"):
             sums_lines.append(
@@ -819,16 +887,19 @@ def _build_fixture_channel(
 
 def _installer_env(
     tmp_path: Path, channel: Path, uv_sha: str, install_root: Path, *,
-    fail_pip: bool = False,
+    fail_pip: bool = False, uv_seam: bool = True,
 ) -> dict[str, str]:
     """Env for one installer run: file:// channel, stub python/log, tmp
     XDG_CONFIG_HOME/HOME/RUNTIME so the REAL ~/.demiurgos and the real
     data-root pointer are never touched. conftest's hermetic env vars are
-    deliberately NOT inherited — the installer must bootstrap its own pointer."""
+    deliberately NOT inherited — the installer must bootstrap its own pointer.
+
+    ``uv_seam=False`` removes ``DEMIURGOS_UV_SHA256`` so the run reads the
+    channel's signed ``uv-shas.env`` exactly like a real install.
+    """
     env = {
         "DEMIURGOS_URL_BASE": f"file://{channel}",
         "DEMIURGOS_HOME": str(install_root),
-        "DEMIURGOS_UV_SHA256": uv_sha,
         "UV_VERSION": STUB_UV_VERSION,
         "DEMIURGOS_STUB_PYTHON": str(_REPO_ROOT / ".venv" / "bin" / "python"),
         "DEMIURGOS_STUB_LOG": str(tmp_path / "uv-stub.log"),
@@ -843,6 +914,8 @@ def _installer_env(
         "DEMIURGOS_HERMES_SKIP": "1",
         "PATH": f"{NOOP_BROWSER_BIN}:{os.environ.get('PATH', '/usr/bin:/bin')}",
     }
+    if uv_seam:
+        env["DEMIURGOS_UV_SHA256"] = uv_sha
     if fail_pip:
         env["DEMIURGOS_STUB_FAIL_PIP"] = "1"
     # S5b: the consumer verifies the manifest signature via the MINISIGN_PUBKEY
@@ -899,6 +972,122 @@ def _read_pointer(config_dir: Path):
     import data_root  # conftest puts _WIKI on sys.path
 
     return data_root.read_pointer(config_dir=config_dir)
+
+
+@POSIX_RUNNER
+class TestUvShasEnv:
+    """S3/S4: the channel's signed uv-shas.env is the checksum source."""
+
+    def test_signed_uv_shas_env_installs_without_override(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path, uv_shas=True)
+        install_root = tmp_path / "install"
+        env = _installer_env(
+            tmp_path, channel, uv_sha, install_root, uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+        assert (install_root / "bin" / "uv").is_file()
+
+    def test_missing_uv_shas_env_fails_closed(self, tmp_path: Path):
+        # A signed channel WITHOUT the table must never silently skip the
+        # verification (the pre-fix behavior installed an unverified toolchain).
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        env = _installer_env(
+            tmp_path, channel, uv_sha, tmp_path / "install", uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "uv-shas.env" in install.stdout + install.stderr
+
+    def test_tampered_uv_shas_env_fails_closed(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path, uv_shas=True)
+        (channel / "uv-shas.env").write_text(
+            f"{_host_uv_env_key()}={'0' * 64}\n", encoding="utf-8"
+        )
+        env = _installer_env(
+            tmp_path, channel, uv_sha, tmp_path / "install", uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "checksum mismatch for uv-shas.env" in install.stdout + install.stderr
+
+    def test_malformed_uv_shas_env_fails_closed(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(
+            tmp_path, uv_shas=True, uv_shas_override="not-a-sha256"
+        )
+        env = _installer_env(
+            tmp_path, channel, uv_sha, tmp_path / "install", uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "malformed sha256" in install.stdout + install.stderr
+
+    def test_unlisted_uv_shas_env_fails_closed(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path, uv_shas=True)
+        sums = channel / "SHA256SUMS"
+        lines = [
+            line for line in sums.read_text(encoding="utf-8").splitlines()
+            if not line.endswith("  uv-shas.env")
+        ]
+        sums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        _sign_fixture_manifest(channel, tmp_path)
+        env = _installer_env(
+            tmp_path, channel, uv_sha, tmp_path / "install", uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "SHA256SUMS has no entry for uv-shas.env" in (
+            install.stdout + install.stderr
+        )
+
+    def test_unsigned_uv_shas_env_fails_closed(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path, uv_shas=True)
+        (channel / "SHA256SUMS.minisig").unlink()
+        env = _installer_env(
+            tmp_path, channel, uv_sha, tmp_path / "install", uv_seam=False
+        )
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "INVALID or missing" in install.stdout + install.stderr
+
+    def test_cell_named_payload_is_preferred_over_version_json(self, tmp_path: Path):
+        # version.json points at a nonexistent legacy name: only the
+        # platform-cell artifact can satisfy this install.
+        channel, uv_sha, version = _build_fixture_channel(
+            tmp_path, cell_payload=True
+        )
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+        install = _run_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+        assert (install_root / "app" / version).is_dir()
+
+
+@POSIX_RUNNER
+class TestVersionPointerFallback:
+    """S2: a beta-first channel still installs without an explicit version."""
+
+    def test_beta_first_channel_installs_from_the_beta_pointer(self, tmp_path: Path):
+        channel, uv_sha, version = _build_fixture_channel(tmp_path)
+        (channel / "latest").unlink()
+        (channel / "latest-beta").write_text(version + "\n", encoding="utf-8")
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+        assert "DEMIURGOS_VERSION" not in env
+        install = _run_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+        assert "beta pointer" in install.stdout + install.stderr
+        assert (install_root / "app" / version).is_dir()
+
+    def test_channel_without_pointers_fails_with_actionable_message(
+        self, tmp_path: Path
+    ):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        (channel / "latest").unlink()
+        env = _installer_env(tmp_path, channel, uv_sha, tmp_path / "install")
+        install = _run_installer(env)
+        assert install.returncode != 0
+        assert "latest-beta fallback" in install.stdout + install.stderr
 
 
 @POSIX_RUNNER

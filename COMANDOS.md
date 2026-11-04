@@ -2,7 +2,7 @@
 
 Comandos reales de la plataforma web Demiurgos, verificados contra el repositorio (`scripts/`, `frontend/package.json`, `src/tools/demiurgos-suite/`).
 
-> ✅ **La instalación oficial (Windows, Linux) ya está disponible con un solo comando**, desde el canal público firmado. Linux / macOS: `curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash`; Windows (PowerShell): `irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio con los launchers.
+> ✅ **La instalación oficial (Windows, Linux) ya está disponible con un solo comando**, desde el canal público firmado. Linux / macOS: `curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash`; Windows (PowerShell): `irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex`. También puedes arrancar Demiurgos desde el repositorio con los launchers.
 
 ---
 

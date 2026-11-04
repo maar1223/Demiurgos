@@ -24,13 +24,13 @@
 **Instalación en un solo comando** — el canal público de releases firmado ya está activo. Linux / macOS:
 
 ```bash
-curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex
 ```
 
 Instala la app web en `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` en Windows); arráncala con `~/.demiurgos/current/scripts/start-demiurgos.sh start` (ver [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). El instalador verifica una firma minisign y los checksums SHA256; no hay actualización automática ni firma de código paga, así que es esperable una advertencia de seguridad la primera vez.

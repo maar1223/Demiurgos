@@ -38,6 +38,12 @@ on:
 permissions:
   contents: read
 
+# Single source of truth for the pinned uv toolchain. The publish job downloads
+# these exact archives, hashes them into uv-shas.env, and the installer verifies
+# its download against that signed table.
+env:
+  UV_VERSION: "0.5.24"
+
 jobs:
   build-frontend:
     name: Build frontend (once)
@@ -407,20 +413,64 @@ jobs:
         with:
           pattern: package-*
           merge-multiple: true
-      - name: Merge the channel SHA256SUMS and version.json
+      - name: Classify the release (Beta gate)
         run: |
           set -euo pipefail
-          # four per-OS archive entries + the core/bootstrap scripts; plain
-          # sha256sum format ("hex  name") so the installer sha_for parsers
-          # match exactly (no binary-mode '*' marker)
-          cat SHA256SUMS.* > SHA256SUMS
-          for f in scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh \
-                   scripts/install-demiurgos.ps1 scripts/lib/verify_checksum.ps1 \
-                   scripts/provision-hermes.sh scripts/provision-hermes.ps1 \
-                   install.sh install.ps1; do
-            [ -f "$f" ] || continue
-            sha256sum "$f" >> SHA256SUMS
+          # The tag is the single authority: a prerelease iff its version core
+          # carries a '-' suffix (v0.x.y-beta.N -> 1; v0.x.y -> 0). The pointer
+          # name follows from the classification, never from an input.
+          tag="${GITHUB_REF_NAME}"; core="${tag#v}"
+          if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
+          pointer="latest"; [ "$is_prerelease" = "1" ] && pointer="latest-beta"
+          printf 'is_prerelease=%s\n' "$is_prerelease" >> "$GITHUB_ENV"
+          printf 'pointer=%s\n' "$pointer" >> "$GITHUB_ENV"
+          echo "release ${tag}: is_prerelease=${is_prerelease} pointer=${pointer}"
+      - name: Assemble the channel tree
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          # Clone the LIVE channel branch so the publish is additive: previous
+          # payloads and the OTHER channel's pointer survive untouched. The
+          # pointer itself is only moved by the post-smoke pointer job.
+          rm -rf channel
+          gh auth setup-git
+          git clone --depth 1 "https://github.com/${public_repo}.git" channel
+          mkdir -p channel/scripts/lib channel/uv
+          for f in install.sh install.ps1 \
+                   scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
+                   scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
+                   scripts/provision-hermes.sh scripts/provision-hermes.ps1; do
+            cp "$f" "channel/$f"
           done
+          # the four packaged payloads (one per supported cell)
+          cp demiurgos-app-* channel/
+          # the four pinned uv archives the installer can ask for
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                        aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            ext=tar.gz; case "$target" in *windows*) ext=zip ;; esac
+            curl -fsSL --proto '=https' --retry 3 --max-time 300 \
+              -o "channel/uv/uv-${target}-${UV_VERSION}.${ext}" \
+              "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.${ext}"
+          done
+          # uv-shas.env: one line per supported target, keyed exactly like the
+          # installer's env contract. The installer verifies this file against
+          # the signed SHA256SUMS before trusting any value.
+          {
+            for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                          aarch64-apple-darwin x86_64-pc-windows-msvc; do
+              ext=tar.gz; case "$target" in *windows*) ext=zip ;; esac
+              # Keys match the installer env contract exactly (no "unknown").
+              case "$target" in
+                x86_64-unknown-linux-gnu) key=UV_SHA_X86_64_LINUX_GNU ;;
+                aarch64-unknown-linux-gnu) key=UV_SHA_AARCH64_LINUX_GNU ;;
+                aarch64-apple-darwin) key=UV_SHA_AARCH64_DARWIN ;;
+                x86_64-pc-windows-msvc) key=UV_SHA_X86_64_WINDOWS_MSVC ;;
+              esac
+              printf '%s=%s\n' "$key" \
+                "$(sha256sum "channel/uv/uv-${target}-${UV_VERSION}.${ext}" | awk '{print $1}')"
+            done
+          } > channel/uv-shas.env
           # installer contract: version.json carries `posix` and `windows`
           jq -s '
             reduce .[] as $x ({}; .version = $x.version
@@ -430,9 +480,8 @@ jobs:
             | .windows = (.artifacts["windows-amd64"].artifact // "")
             | .sha256  = {posix:   (.artifacts["linux-x86_64"].sha256 // ""),
                           windows: (.artifacts["windows-amd64"].sha256 // "")}
-          ' version-*.json > version.json
-          sha256sum -c SHA256SUMS
-          echo "channel checksum entries: $(wc -l < SHA256SUMS)"
+          ' version-*.json > channel/version.json
+          echo "channel tree:"; find channel -maxdepth 2 -type f | sort
       - name: Sign the channel manifest (minisign; Author-owned key, S5b)
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -452,6 +501,19 @@ jobs:
             echo "scripts/install-demiurgos.sh and scripts/lib/verify_checksum.sh."
             exit 1
           fi
+          cd channel
+          # Regenerate over the WHOLE channel tree so uv-shas.env, the scripts
+          # and any payload from an older release stay listed and verifiable.
+          # '%P' yields names without './', exactly what the installer's
+          # sha_for parser matches. The manifest and its signature are excluded.
+          # The pointers are excluded: they move AFTER signing in the pointer
+          # job, so listing them here would leave a stale manifest on the
+          # branch. They carry only a version string and are never fetch-verified.
+          find . -path ./.git -prune -o -type f \
+            ! -name SHA256SUMS ! -name SHA256SUMS.minisig \
+            ! -name latest ! -name latest-beta -printf '%P\0' \
+            | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS >/dev/null
           keyfile="$RUNNER_TEMP/minisign.key"
           umask 077
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile"
@@ -468,7 +530,23 @@ jobs:
           pubkey="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
           minisign -Vm SHA256SUMS -P "$pubkey" >/dev/null \
             || { echo "FAIL: self-check signature verification failed"; exit 1; }
-          echo "manifest signed: SHA256SUMS.minisig"
+          echo "manifest signed: SHA256SUMS.minisig ($(wc -l < SHA256SUMS) entries)"
+      - name: Push the channel tree to the branch
+        run: |
+          set -euo pipefail
+          # The tree is additive and the pointer is NOT touched here: a broken
+          # artifact can never become the default before the smoke passes.
+          cd channel
+          git config user.name "demiurgos-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "channel tree unchanged"
+          else
+            git commit -m "channel: ${GITHUB_REF_NAME}"
+            git push origin HEAD:main
+            echo "channel tree pushed to main"
+          fi
       - name: Publish the release (explicit repo, explicit tag, Beta gate)
         run: |
           set -euo pipefail
@@ -476,25 +554,20 @@ jobs:
           # public channel; owner/name is the Author's pending decision (S0-E);
           # built from parts so no address appears verbatim (mirrors install.sh)
           public_repo="maar12""23/demiurgos-releases"
-          # Beta gate (S0): the tag is the single authority. A tag is a
-          # prerelease iff its version core carries a '-' suffix
-          # (v0.x.y-beta.N -> 1; v0.x.y -> 0). Reclassified inline per job
-          # (no cross-job outputs).
-          core="${tag#v}"
-          if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
           prerelease_flag=""
           [ "$is_prerelease" = "1" ] && prerelease_flag="--prerelease"
+          cd channel
           gh release create --repo "$public_repo" "$tag" \
-            demiurgos-app-* SHA256SUMS SHA256SUMS.minisig version.json \
+            demiurgos-app-* SHA256SUMS SHA256SUMS.minisig version.json uv-shas.env \
             scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
             scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
             install.sh install.ps1 \
             $prerelease_flag \
             --title "Demiurgos ${tag}" \
-            --notes "Versioned artifact release for the one-command install flow. The channel SHA256SUMS is minisign-signed (SHA256SUMS.minisig); the anonymous post-publish smoke verifies the signature + checksums and gates the channel pointer (stable: latest; beta: latest-beta; S5-5, S0)."
+            --notes "Versioned artifact release for the one-command install flow. The channel tree lives on the public branch (raw.githubusercontent.com/maar1223/demiurgos-releases/main); this release mirrors the same artifacts for traceability. SHA256SUMS is minisign-signed (SHA256SUMS.minisig) and covers uv-shas.env, the scripts and every payload. The anonymous post-publish smoke installs from the public branch and gates the channel pointer (stable: latest; beta: latest-beta; S5-5, S0)."
 
   smoke:
-    name: Post-publish anonymous smoke (latest gate)
+    name: Post-publish anonymous smoke (public raw channel)
     needs: publish
     runs-on: ubuntu-latest
     steps:
@@ -508,94 +581,38 @@ jobs:
           if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
           printf 'is_prerelease=%s\n' "$is_prerelease" >> "$GITHUB_ENV"
           echo "release ${tag}: is_prerelease=${is_prerelease}"
-      - name: Download the release assets anonymously (no credentials)
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          public_repo="maar12""23/demiurgos-releases"
-          base="https://github.com/${public_repo}/releases/download/${tag}"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
-            -o "demiurgos-app-${version}-linux-x86_64.tar.gz" \
-            "${base}/demiurgos-app-${version}-linux-x86_64.tar.gz"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o SHA256SUMS "${base}/SHA256SUMS"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o SHA256SUMS.minisig "${base}/SHA256SUMS.minisig"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o version.json "${base}/version.json"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o install.sh "${base}/install.sh"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
-            -o install-demiurgos.sh "${base}/install-demiurgos.sh"
-          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
-            -o verify_checksum.sh "${base}/verify_checksum.sh"
-          echo "anonymous download OK (plain curl, no token)"
-      - name: Verify the manifest signature BEFORE the checksums (S5b)
+      - name: Install into a clean environment and boot from the real channel
         env:
           MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
         run: |
           set -euo pipefail
-          if ! command -v minisign >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq minisign
-          fi
+          version="${GITHUB_REF_NAME#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          # The REAL public channel: a raw branch root, not a fabricated
+          # file:// fixture. Every fetch below is the one a user's machine
+          # performs, and uv is verified through the channel's signed
+          # uv-shas.env (no DEMIURGOS_UV_SHA256 override).
+          base="https://raw.githubusercontent.com/${public_repo}/main"
           if [ -z "${MINISIGN_PUBKEY:-}" ]; then
             echo "FAIL: secrets.MINISIGN_PUBKEY is not set (S5b signing-key custody note)"
             exit 1
           fi
-          pubkey="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
-          minisign -Vm SHA256SUMS -P "$pubkey" \
-            || { echo "FAIL: the published manifest signature does not verify"; exit 1; }
-          echo "manifest signature OK (verified before checksums)"
-      - name: Verify checksums
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          grep -F "demiurgos-app-${version}-linux-x86_64.tar.gz" SHA256SUMS \
-            | sha256sum -c -
-      - name: Install into a clean environment and boot
-        env:
-          MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          channel="$RUNNER_TEMP/anonymous-channel"
-          rm -rf "$channel"
-          mkdir -p "$channel/scripts/lib" "$channel/uv"
-          # fixture channel mirroring the S6 public channel layout (installer
-          # contract): version.json, SIGNED SHA256SUMS (+ .minisig), the
-          # payload archive, and the versioned uv archive. The published
-          # manifest already carries the core/bootstrap entries — nothing is
-          # appended, so the published signature stays valid.
-          cp version.json "$channel/"
-          cp SHA256SUMS "$channel/"
-          cp SHA256SUMS.minisig "$channel/"
-          cp "demiurgos-app-${version}-linux-x86_64.tar.gz" "$channel/"
-          cp install-demiurgos.sh "$channel/scripts/install-demiurgos.sh"
-          cp verify_checksum.sh "$channel/scripts/lib/verify_checksum.sh"
-          # real pinned uv, fetched from the official releases (the baked
-          # checksum table is filled in S5b; the seam is the documented seam)
-          uv_version="${UV_VERSION:-0.5.24}"
-          uv_target="x86_64-unknown-linux-gnu"
+          # the bootstrap's embedded pubkey seam: the real key from secrets
+          export MINISIGN_PUBKEY="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
           curl -fsSL --proto '=https' --retry 3 --max-time 120 \
-            -o "uv-${uv_target}.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/${uv_version}/uv-${uv_target}.tar.gz"
-          mv "uv-${uv_target}.tar.gz" "$channel/uv/uv-${uv_target}-${uv_version}.tar.gz"
-          uv_sha="$(sha256sum "$channel/uv/uv-${uv_target}-${uv_version}.tar.gz" | awk '{print $1}')"
-          # headless guard: no-op browser stubs on PATH
-          mkdir -p /tmp/opencode/noop-browser/bin
+            -o install.sh "${base}/install.sh"
+          # headless guard: no-op browser stubs on PATH (same as the payload boot)
+          mkdir -p "$RUNNER_TEMP/noop-browser/bin"
           for n in xdg-open open gio sensible-browser x-www-browser; do
-            printf '#!/bin/sh\necho "noop %s" >> /tmp/opencode/noop-browser/calls.log\nexit 0\n' "$n" \
-              > "/tmp/opencode/noop-browser/bin/$n"
-            chmod +x "/tmp/opencode/noop-browser/bin/$n"
+            printf '#!/bin/sh\necho "noop %s" >> "$RUNNER_TEMP/noop-browser/calls.log"\nexit 0\n' "$n" \
+              > "$RUNNER_TEMP/noop-browser/bin/$n"
+            chmod +x "$RUNNER_TEMP/noop-browser/bin/$n"
           done
-          export PATH="/tmp/opencode/noop-browser/bin:$PATH"
+          export PATH="$RUNNER_TEMP/noop-browser/bin:$PATH"
           export DEMIURGOS_HOME="$RUNNER_TEMP/dem-install"
           export DEMIURGOS_DATA_ROOT="$RUNNER_TEMP/dem-data"
-          export DEMIURGOS_URL_BASE="file://$channel"
+          export DEMIURGOS_URL_BASE="$base"
           export DEMIURGOS_VERSION="$version"
-          export DEMIURGOS_UV_SHA256="$uv_sha"
-          # the bootstrap's embedded pubkey seam: the real key from secrets
-          # (the RWS... line; a full .pub file is tolerated too)
-          export MINISIGN_PUBKEY="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
           export DEMIURGOS_NO_BROWSER=1
           export DEMIURGOS_API_PORT=8123
           bash install.sh
@@ -610,49 +627,80 @@ jobs:
           [ "$ok" = "1" ] || { echo "FAIL: /health never became 200"; exit 1; }
           [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8123/")" = "200" ] \
             || { echo "FAIL: / did not serve 200"; exit 1; }
-          echo "smoke OK: /health and / serve 200 from the published artifact"
-      - name: Move the channel pointer (only after the smoke passed)
-        env:
-          GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          echo "smoke OK: /health and / serve 200 from the public raw channel"
+
+  pointer:
+    name: Move the channel pointer (only after the smoke passed)
+    needs: smoke
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+    steps:
+      - name: Classify the release (Beta gate)
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          public_repo="maar12""23/demiurgos-releases"
-          # Beta gate (S0): stable advances `latest`; a prerelease advances the
-          # SEPARATE `latest-beta` pointer and MUST NOT touch `latest`.
+          tag="${GITHUB_REF_NAME}"; core="${tag#v}"
+          if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
           pointer="latest"; [ "$is_prerelease" = "1" ] && pointer="latest-beta"
+          printf 'is_prerelease=%s\n' "$is_prerelease" >> "$GITHUB_ENV"
+          printf 'pointer=%s\n' "$pointer" >> "$GITHUB_ENV"
+          echo "release ${tag}: is_prerelease=${is_prerelease} pointer=${pointer}"
+      - name: Move the pointer on the channel branch
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          rm -rf channel
+          gh auth setup-git
+          git clone --depth 1 "https://github.com/${public_repo}.git" channel
+          cd channel
           printf '%s\n' "$version" > "$pointer"
-          gh release upload --repo "$public_repo" --clobber "$tag" "$pointer"
+          git config user.name "demiurgos-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add "$pointer"
+          if git diff --cached --quiet; then
+            echo "${pointer} already points to ${version}"
+          else
+            git commit -m "channel: ${pointer} -> ${version}"
+            git push origin HEAD:main
+          fi
           echo "${pointer} pointer moved to ${version}"
       - name: Assert the pointer gating (stable latest / beta latest-beta)
-        env:
-          GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
           public_repo="maar12""23/demiurgos-releases"
+          base="https://raw.githubusercontent.com/${public_repo}/main"
           # (1) the created GitHub release must be marked prerelease iff the tag
           #     was classified as one; a mismatch is a hard failure.
           actual="$(gh release view "$tag" --repo "$public_repo" --json isPrerelease -q .isPrerelease)"
           expected=false; [ "$is_prerelease" = "1" ] && expected=true
           [ "$actual" = "$expected" ] \
             || { echo "FAIL: isPrerelease=${actual}, expected ${expected}"; exit 1; }
-          # (2) pointer gating. GitHub's /releases/latest/ download excludes
-          #     prereleases — exactly the property that proves the gate.
-          stable="$(curl -fsSL --proto '=https' --retry 3 --max-time 60 \
-            "https://github.com/${public_repo}/releases/latest/download/latest" 2>/dev/null || true)"
+          # (2) the branch pointer, read back anonymously. Raw responses are
+          #     CDN-cached briefly, so poll until the expected value appears.
+          wait_pointer() { # pointer expected
+            local got=""
+            for _ in $(seq 1 24); do
+              got="$(curl -fsSL --proto '=https' --retry 2 --max-time 60 \
+                -H 'Cache-Control: no-cache' "${base}/$1?run=${GITHUB_RUN_ID}" 2>/dev/null || true)"
+              [ "$got" = "$2" ] && { printf '%s' "$got"; return 0; }
+              sleep 5
+            done
+            printf '%s' "$got"
+            return 1
+          }
           if [ "$is_prerelease" = "1" ]; then
+            stable="$(curl -fsSL --proto '=https' --retry 3 --max-time 60 \
+              -H 'Cache-Control: no-cache' "${base}/latest?run=${GITHUB_RUN_ID}" 2>/dev/null || true)"
             [ "$stable" != "$version" ] \
               || { echo "FAIL: a prerelease moved the latest pointer"; exit 1; }
-            beta="$(curl -fsSL --proto '=https' --retry 3 --max-time 60 \
-              "https://github.com/${public_repo}/releases/download/${tag}/latest-beta")"
-            [ "$beta" = "$version" ] \
-              || { echo "FAIL: latest-beta=${beta}, expected ${version}"; exit 1; }
-            echo "beta gating OK: latest untouched, latest-beta=${version}"
+            got="$(wait_pointer latest-beta "$version")" \
+              || { echo "FAIL: latest-beta=${got}, expected ${version}"; exit 1; }
+            echo "beta gating OK: latest=${stable} untouched, latest-beta=${version}"
           else
-            [ "$stable" = "$version" ] \
-              || { echo "FAIL: latest=${stable}, expected ${version}"; exit 1; }
+            got="$(wait_pointer latest "$version")" \
+              || { echo "FAIL: latest=${got}, expected ${version}"; exit 1; }
             echo "stable gating OK: latest=${version}"
           fi

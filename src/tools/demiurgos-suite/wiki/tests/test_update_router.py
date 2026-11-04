@@ -277,6 +277,14 @@ def test_url_base_from_env_when_no_channel_json(tmp_path: Path, monkeypatch) -> 
     assert stub.urls == ["https://env.example.test/ch/latest"]
 
 
+def test_default_channel_url_is_the_raw_channel_branch() -> None:
+    """S1: the hardcoded fallback is the flat raw branch that serves both
+    pointers, not the GitHub release download URL."""
+    assert DEFAULT_CHANNEL_URL == (
+        "https://raw.githubusercontent.com/maar1223/demiurgos-releases/main"
+    )
+
+
 def test_url_base_default_when_nothing_set(tmp_path: Path) -> None:
     env = {}
     assert _resolve_url_base(None, env) == DEFAULT_CHANNEL_URL

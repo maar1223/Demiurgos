@@ -25,13 +25,13 @@ The **Hermes runtime is part of the product**, not a manual prerequisite: the in
 **One-command install** — the signed public release channel is live. Linux / macOS:
 
 ```bash
-curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex
 ```
 
 This installs the web app under `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` on Windows) plus the pinned assistant runtime under `hermes-agent/`; launch it with `~/.demiurgos/current/scripts/start-demiurgos.sh start` (see [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). The installer verifies a minisign signature and SHA256 checksums before executing anything, and ships the third-party notices in `third-party/hermes/LICENSE`; there is no auto-update and no paid code signing, so a first-run security warning is expected.
