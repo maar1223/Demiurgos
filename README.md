@@ -1,193 +1,242 @@
 # Demiurgos
 
-**Proprietary freeware, world-agnostic lore & worldbuilding web platform.** Demiurgos is a full-stack web app — React frontend, FastAPI backend, entity graph, persistent memory, and an AI assistant — that manages any fictional world you load in **OKF format** (Markdown + YAML frontmatter). It never couples to a single universe: **Vibrantes** is an example world, not a requirement.
+[English](README.en.md) · **Español**
 
-> 🚧 **Status:** In active development (beta). The Core is free; paid workshops are an optional, one-time purchase. Source code is **not** distributed publicly by default.
+**Tu mundo ficticio, ordenado y conectado.** Demiurgos es una aplicación web que se ejecuta en tu propia computadora para escribir, organizar y conectar el lore de cualquier mundo ficticio. Trabaja con archivos Markdown (formato **OKF**), incluye editor, grafo de entidades, importador de documentos y un asistente de IA. No está atada a un universo concreto: **Vibrantes** es un mundo de ejemplo, no un requisito.
+
+> **Estado:** beta, en desarrollo activo. El Core es gratuito; los talleres son opcionales y de compra única. El código fuente no se distribuye públicamente por defecto.
 
 ---
 
-## Quick start
+## Instalar en 3 pasos
 
-### 1. Prerequisites
+Demiurgos se instala **en tu carpeta de usuario** y no necesita Python, Node ni compilador. Solo hay que preparar dos herramientas una vez: `git` (para descargar el asistente) y `minisign` (para verificar la firma de los archivos). El instalador de Demiurgos no pide administrador; el bloque de preparación sí puede pedir tu contraseña para instalar esas herramientas del sistema.
 
-| Component | Purpose |
-|-----------|---------|
-| Python 3.11+ | Backend API (`uvicorn api_server:app`) |
-| Node.js 18+ & npm | Frontend (Vite) |
-| `git` | Cloning the repository |
+### Antes: prepara `git` y `minisign` (solo la primera vez)
 
-The **Hermes runtime is part of the product**, not a manual prerequisite: the installer provisions the pinned Demiurgos fork under `~/.demiurgos/hermes-agent` (`%LOCALAPPDATA%\Demiurgos\hermes-agent` on Windows) with its own `HERMES_HOME`. It never uses a `hermes` from your `PATH` and never modifies your personal `~/.hermes` (config, profiles or `.env`). A pre-existing Hermes is reported and left untouched.
+**Windows 10/11** — abre PowerShell y ejecuta el bloque completo:
 
-> `install.sh` is the one-command **web-app bootstrap**: with no flags it installs the Demiurgos web app and its assistant runtime (delegating to `scripts/install-demiurgos.sh`, fetched from the release channel). The optional **dev-CLI stack** ([Engram](https://github.com/Gentleman-Programming/engram) persistent memory and the narrative skills) is opt-in: `bash install.sh --with-cli-stack` (or `DEMIURGOS_WITH_CLI_STACK=1`). It is not required to run the web app.
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+irm get.scoop.sh | iex
+scoop install git minisign
+```
 
-### 2. Install
+**macOS (Apple Silicon, macOS 13 o superior)** — abre Terminal:
 
-**One-command install** — the signed public release channel is live. Linux / macOS:
+```bash
+# Si no tienes Homebrew:
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install git minisign
+```
+
+**Linux** — abre Terminal:
+
+```bash
+# Debian / Ubuntu
+sudo apt install git minisign
+# Fedora: sudo dnf install git minisign
+# Arch:   sudo pacman -S git minisign
+```
+
+### Paso 1 — Instala Demiurgos
+
+**Linux / macOS:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash
 ```
 
-Windows (PowerShell):
+**Windows (PowerShell):**
 
 ```powershell
 irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex
 ```
 
-This installs the web app under `~/.demiurgos` (`%LOCALAPPDATA%\Demiurgos` on Windows) plus the pinned assistant runtime under `hermes-agent/`; launch it with `~/.demiurgos/current/scripts/start-demiurgos.sh start` (see [docs/install/ONE_SCREEN_GUIDE.md](docs/install/ONE_SCREEN_GUIDE.md)). The installer verifies a minisign signature and SHA256 checksums before executing anything, and ships the third-party notices in `third-party/hermes/LICENSE`; there is no auto-update and no paid code signing, so a first-run security warning is expected.
+### Paso 2 — Espera a que termine
 
-**From source (contributors):** clone, `venv`, `npm install`, and launch with the launchers below.
+El instalador verifica la firma y los checksums de todo lo que descarga **antes** de ejecutarlo. Después instala la aplicación y el asistente. Tarda unos minutos según tu conexión; no cierres la ventana. Al final verás:
+
+```
+install-demiurgos: done. Start Demiurgos with:
+  ...
+```
+
+### Paso 3 — Abre Demiurgos
+
+| Sistema | Cómo abrirlo |
+|---|---|
+| **Linux** | Menú de aplicaciones → **Demiurgos**. Se abre una terminal que inicia los servicios y luego el navegador. |
+| **Windows** | Menú Inicio → **Demiurgos**. Se abre el navegador. |
+| **macOS** | Todavía no hay acceso directo: ejecuta el comando de abajo. |
+
+```bash
+# Linux / macOS
+~/.demiurgos/current/scripts/start-demiurgos.sh start
+```
+
+```powershell
+# Windows
+& "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" start
+```
+
+La aplicación queda en **http://127.0.0.1:8000** y el navegador se abre solo. Si no se abre, entra a esa dirección a mano. El acceso directo **en el escritorio** es opcional:
+
+```bash
+# Linux: agrega el icono al escritorio
+~/.demiurgos/current/scripts/start-demiurgos.sh install --desktop
+```
+
+```powershell
+# Windows: agrega el icono al escritorio
+& "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" install -Desktop
+```
+
+---
+
+## ¿Funciona en mi equipo?
+
+| Sistema | ¿Soportado? |
+|---|---|
+| Windows 10 / 11, 64 bits | ✅ |
+| macOS 13 o superior, **Apple Silicon** (M1/M2/M3…) | ✅ |
+| Linux 64 bits (x86_64 o ARM64), glibc 2.28 o superior | ✅ |
+| macOS con procesador **Intel** | ❌ |
+| macOS anterior a 13 | ❌ |
+| Linux musl / Alpine | ❌ |
+
+Para comprobar tu versión:
+
+```bash
+# macOS
+sw_vers -productVersion && uname -m
+# Linux
+ldd --version | head -1 && uname -m
+```
+
+```powershell
+# Windows
+winver
+```
+
+Si tu sistema no está en la lista, el instalador se detiene al principio con un mensaje claro y no deja nada a medias.
+
+---
+
+## Si algo falla
+
+| Mensaje o síntoma | Qué hacer |
+|---|---|
+| `minisign is required to verify the signed manifest` | Instala `minisign` con el bloque de arriba y vuelve a ejecutar el comando. |
+| `is git installed?` o falla el asistente | Instala `git` con el bloque de arriba y vuelve a ejecutar el comando. |
+| Windows bloquea el script (`ExecutionPolicy`) | Ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` y prueba otra vez. |
+| `Intel Macs are not supported` | Los Mac con Intel no están soportados en esta etapa. |
+| `macOS 13 or newer is required` | Actualiza macOS. |
+| `musl/Alpine is not supported` o `glibc 2.28 or newer` | Usa una distribución Linux basada en glibc (Debian, Ubuntu, Fedora…). |
+| El navegador no se abrió | Abre **http://127.0.0.1:8000** a mano. |
+| La app no arranca | Mira los registros en `~/.demiurgos/logs/` (Linux/macOS) o `%LOCALAPPDATA%\Demiurgos\logs\` (Windows). |
+| Necesitas pedir ayuda | Linux/macOS: `~/.demiurgos/current/scripts/collect-diagnostics.sh` genera un `.tar.gz`. Revísalo antes de compartirlo. Windows: usa **Perfil → Reporte de errores** dentro de la app. |
+
+Volver a ejecutar el mismo comando de instalación es seguro: no duplica nada y repara lo que falte.
+
+---
+
+## Después de instalar
+
+| Qué | Dónde |
+|---|---|
+| Programa | `~/.demiurgos` (Linux/macOS) · `%LOCALAPPDATA%\Demiurgos` (Windows) |
+| Tus mundos y datos | `Documentos/Demiurgos` (tu carpeta de Documentos) |
+| Registros | `~/.demiurgos/logs` · `%LOCALAPPDATA%\Demiurgos\logs` |
+| Acceso del menú | Linux: `~/.local/share/applications/Demiurgos.desktop` · Windows: menú Inicio |
+
+- **Actualizar:** vuelve a ejecutar el mismo comando de instalación. No hay actualizaciones silenciosas ni cambios sin que los pidas.
+- **Desinstalar:** primero detén la app y luego borra la carpeta del programa. Tus mundos quedan intactos en `Documentos/Demiurgos`; bórralos solo si tú quieres.
+- **Cambiar la carpeta de datos:** usa `--data-root RUTA` al instalar, o el ajuste dentro de la app.
+
+```bash
+# Linux / macOS: detener antes de borrar
+~/.demiurgos/current/scripts/start-demiurgos.sh stop
+rm -rf ~/.demiurgos
+rm -f ~/.local/share/applications/Demiurgos.desktop
+# Opcional: rm -rf "Documentos/Demiurgos"   ← borra tus mundos
+```
+
+```powershell
+# Windows
+& "$env:LOCALAPPDATA\Demiurgos\current\scripts\start-demiurgos.ps1" stop
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Demiurgos"
+# Opcional: borra "Documentos\Demiurgos"      ← borra tus mundos
+```
+
+---
+
+## Primeros pasos
+
+Al abrirla por primera vez, Demiurgos te guía con el **onboarding**: eliges el idioma de la interfaz, configuras el proveedor de IA y creas un mundo nuevo o importas uno existente. Las instalaciones que ya existen nunca vuelven al onboarding.
+
+- **Crear un mundo:** empieza vacío y usa el editor o el Taller de Mundo.
+- **Importar un mundo:** acepta Markdown, Word (`.docx`), PDF y exportaciones de Notion. El flujo es **subir → analizar → revisar → aprobar → ejecutar**, con rollback.
+- **Asistente:** el panel lateral conversa con el asistente. Nada se guarda sin que apruebes el diff.
+- **Papelera:** lo borrado va a una papelera de 30 días, por archivo y por mundo.
+
+---
+
+## Qué puedes hacer
+
+| Función | Qué hace |
+|---|---|
+| **Wiki y editor** | Crear, editar, restaurar y comparar archivos OKF; historial y estados `draft`/`stable`. |
+| **Grafo de entidades** | Entidades, enlaces y backlinks derivados de tus archivos, con búsqueda. |
+| **Importador** | Word, PDF, Markdown y Notion → Markdown limpio con frontmatter OKF. |
+| **Asistente de IA** | Chat con streaming, sugerencias de edición y aprobación por diff. |
+| **Creación guiada** | Taller de personajes con protocolo de confirmación y propuestas sin escribir en disco. |
+| **Ideas** | Banco de ideas con versiones y captura opcional por Telegram. |
+| **Metodologías y talleres** | Talleres editables y compilables por el autor. |
+| **Bóveda local** | Una cuenta local, contraseña opcional y palabras de recuperación EFF, 100% offline. |
+| **Papelera** | Retención de 30 días por archivo y por mundo. |
+
+---
+
+## Configuración avanzada
+
+La configuración es opcional y por variables de entorno; no hace falta un `.env` para la bóveda. Las más útiles:
+
+| Variable | Valor por defecto | Para qué |
+|---|---|---|
+| `DEMIURGOS_LANGUAGE` | `es` | Idioma de la interfaz. |
+| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | Cambiar si el puerto está ocupado. |
+| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (sesión local) o `credentials` (bóveda con contraseña). |
+| `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | Proveedor del asistente. |
+| `DEMIURGOS_DATA_ROOT` | `Documentos/Demiurgos` | Carpeta de datos (no escribe el puntero; usa `--data-root` para que sea permanente). |
+
+El detalle completo está en [`.env.example`](.env.example). Demiurgos se ejecuta como aplicación local en `127.0.0.1`; el despliegue remoto/VPS está fuera del alcance del MVP.
+
+---
+
+## Para desarrolladores
+
+La instalación de un comando es la vía soportada para usuarios. Para trabajar sobre el código:
 
 ```bash
 git clone https://github.com/maar1223/Demiurgos.git
 cd Demiurgos
-
-# Backend
 python3 -m venv .venv
 .venv/bin/pip install -r src/tools/demiurgos-suite/requirements.txt
-
-# Frontend
 cd frontend && npm install && cd ..
+./scripts/start-demiurgos.sh start
 ```
 
-### 3. Launch
-
-| Platform | Command | Starts |
-|----------|---------|--------|
-| **Linux / macOS** | `./scripts/start-demiurgos.sh start` | Hermes Gateway (8642), API + SPA (8000) |
-| **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | Same stack + graph warm-up |
-
-The launcher opens the app at **http://127.0.0.1:8000** (health check: `http://127.0.0.1:8000/health`). It is idempotent — running it twice never spawns duplicate processes. If the assistant runtime is missing or not at the pinned commit, the app still boots and readiness reports the assistant as unavailable; `runtime=accepted` only appears after a real assistant turn. Other actions: `restart`, `stop`, and `install`. On Linux the installer already adds Demiurgos to the applications menu and `install` rewrites that entry; `install --desktop` also drops a launcher icon in your desktop folder. On Windows the installer adds a Start Menu shortcut and `start-demiurgos.ps1 install -Desktop` adds the desktop icon; `start-api.ps1` starts just the API. macOS has no desktop entry in the MVP: launch it from Terminal with the command above.
-
-Remote/VPS deployment is **out of the MVP scope**: Demiurgos runs as a local desktop-class app bound to loopback. The session cookie stays scheme-aware, but no server/proxy guide is provided yet.
-
-### 4. First run
-
-The first launch shows the **onboarding** flow: pick your UI language, configure the LLM providers, and **create a new world or import an existing one**. Existing installations are never forced back into onboarding.
+Pruebas: `pytest src/tools/demiurgos-suite/wiki/tests/` y `cd frontend && npm test`. El stack técnico, las decisiones de producto y la arquitectura están en [`docs/`](docs/), y la guía de instalación detallada en [`docs/install/ONE_SCREEN_GUIDE.md`](docs/install/ONE_SCREEN_GUIDE.md).
 
 ---
 
-## How it works
+## Estado y licencia
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        DEMIURGOS PLATFORM                        │
-│                                                                 │
-│  ┌──────────────┐   ┌──────────────────────────┐   ┌─────────┐  │
-│  │  FRONTEND    │──▶│     BACKEND API          │──▶│ STORAGE │  │
-│  │  React/Vite  │   │  FastAPI api_server.py   │   │mundos/  │  │
-│  │  wiki,       │◀──│  auth · wiki · assistant │◀──│ + .pa-  │  │
-│  │  editor,     │   │  guided · graph · ideas  │   │ pelera  │  │
-│  │  workshops   │   └───────────┬──────────────┘   └─────────┘  │
-│  └──────────────┘               │                               │
-│        ▲                        ▼                               │
-│        │               ┌──────────────────┐                     │
-│        │               │  ENTITY GRAPH    │                     │
-│        │               │  graph_indexer   │                     │
-│        │               │  MCP server      │                     │
-│        │               │  (15 tools)      │                     │
-│        │               └────────┬─────────┘                     │
-│        │                        ▼                               │
-│        └───────────  HERMES (conversational provider) ──► ENGRAM│
-│   UI ◀── SSE ◀────   semantic gate · runs adapter   (persistent │
-│   (assistant)                                            memory)│
-└─────────────────────────────────────────────────────────────────┘
-```
-
-- **Worlds are data, not code.** Every world lives under `mundos/{mundo}/` in OKF (`lore/`, `personajes/`, `sagas/`, …). No platform code is coupled to a specific universe.
-- **The graph is the read source of truth** for entities; the filesystem is only written through gated API routes.
-- **Nothing persists without your approval.** AI proposals are diskless until you confirm a diff (SHA-256 digest + one-time token) — canon-safety by construction.
-- **Engram** is the mandatory persistent memory layer for the agent/ODD workflow; the shipped web app persists its own state to SQLite. **Hermes** is one interchangeable conversational provider, not the platform.
-
----
-
-## Features
-
-| Feature | What it does | Where |
-|---------|--------------|-------|
-| **Wiki & editor** | Gated CRUD (`create`/`save`/`restore`), split diff preview, history snapshots, OKF states (`draft`/`stable`), drag-and-drop file tree, frontmatter editing | `/wiki/:mundo`, `/wiki/:mundo/:section/*` |
-| **Entity graph** | Entities, links and backlinks derived from OKF; BM25 search; reference resolution | `/wiki/:mundo/entity/*`, `RelacionesCanon` |
-| **World importer** | `.md` / `.docx` / `.pdf` and **Notion exports** → clean Markdown, automatic OKF frontmatter, section classifier, review → approve → execute lifecycle, rollback | `/wiki/:mundo/importer` |
-| **AI assistant** | Chat + SSE streaming (`ai/ask`), semantic-intent gate, edit suggestions (`ai/edit-suggest`); visible name: **Asistente de Demiurgos** | Assistant sidebar |
-| **Guided character creation** | Protocol `guided-character-v1` (confirmation → conversation → review → complete), diskless proposals, durable sessions | Taller de Mundo |
-| **Ideas (Taller de Ideas)** | World-agnostic idea bank with versions and media; Telegram idea capture | `/ideas`, Integraciones → Captura de ideas |
-| **Methodology library & workshops** | Author-editable creative methodologies (compile, trust, quarantine), Core workshops | `/taller-herramientas`, `/taller-mundo` |
-| **Account vault** | Single local account, optional password, EFF recovery words — **100% offline**, no `.env` secrets | `/perfil` → Seguridad / Bóveda |
-| **Trash (papelera)** | Per-file `.papelera` **and** world-level recycle bin, both with a **30-day** retention TTL | Editor, Profile → Mundos |
-
-### World importer
-
-Import runs as a job pipeline: **upload → stream → analyze → review → approve → execute** (with `cancel` / `resume` / `rollback`). Sources: Markdown, Word (`.docx`), PDF, and Notion exports (Markdown pages + flat CSV databases with UUID renaming, wikilink rewriting and media deduplication). Before overwriting an existing file, the prior bytes are snapshotted into `.papelera` for 30-day recovery. Import jobs are persisted in SQLite (`data/import-jobs.sqlite3`).
-
-### Account vault (new — replaces Google sign-in)
-
-Demiurgos no longer depends on Google OAuth. The vault is a **single local account**:
-
-- **Username** + **optional password** (stored only as an **Argon2id** hash).
-- **EFF recovery words** (8–10 words from the EFF long wordlist, ≈104–130 bits of entropy) are the **ownership & recovery key** — also stored only as a hash.
-- Verification is **100% offline** (zero HTTP imports), with in-memory rate limiting and exponential backoff; the word list is rotated atomically.
-- The account lives in a local state registry, **not** in `.env` — no secrets file required for the vault.
-
-Enable it with `DEMIURGOS_AUTH_MODE=credentials` (see Configuration). Session: HttpOnly cookie, same-origin, scheme-aware `Secure` flag, **soft re-auth reminder after 14 days** (default), session TTL 8 h, optional "remember me" for 30 days. Without a vault, the default mode is the lighter `local-dev`: a one-click loopback session. `DEMIURGOS_AUTH_MODE=disabled` remains available only as an explicit opt-out.
-
----
-
-## Requirements
-
-| Layer | Stack |
-|-------|-------|
-| Frontend | React 18, Vite 5, TypeScript 5, Tailwind CSS 3, Vitest 2 + Testing Library, SWR, react-router-dom, react-markdown, @xyflow/react |
-| Backend | Python 3.11+ (tested on 3.12), FastAPI, uvicorn, `mcp`, `rank_bm25`, `watchdog`, `Pillow`, `markitdown[docx]` + `lxml`, `argon2-cffi` |
-| Storage | OKF files in `mundos/{mundo}/`; SQLite in `data/` (guided sessions, conversation memory, ideas, import jobs); `.papelera` trash (30-day TTL) |
-| Memory | Engram (MCP) — mandatory for the agent workflow; the web app stores durable state in SQLite; `engram_sync` CLI (run manually) |
-| AI provider | Hermes (gateway port 8642) via runs adapter + semantic gate; provider-agnostic (`DEMIURGOS_TEXT_*` / `DEMIURGOS_VISION_*`) |
-
----
-
-## Configuration
-
-Configuration is optional and environment-based — **no `.env` is required for the vault**. Copy `.env.example` to `.env` and uncomment what you need:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `DEMIURGOS_AUTH_MODE` | `local-dev` | `local-dev` (one-click loopback session) or `credentials` (account vault); `disabled` is an explicit opt-out |
-| `DEMIURGOS_REAUTH_INTERVAL_D` | `14` | Soft re-auth reminder interval (days) |
-| `DEMIURGOS_SESSION_TTL_H` / `DEMIURGOS_REMEMBER_ME_TTL_D` | `8` / `30` | Session TTL and "remember me" duration |
-| `DEMIURGOS_TEXT_PROVIDER/ENDPOINT/MODEL` | opencode-go | Text LLM (assistant, import enrichment) |
-| `DEMIURGOS_VISION_PROVIDER/ENDPOINT/MODEL` | opencode-go | Vision LLM (image analysis) |
-| `DEMIURGOS_LANGUAGE` | `es` | UI language |
-| `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT` | `8000` / `8642` | API/SPA and Hermes gateway ports; override when a port is already taken (the launcher never kills a foreign process) |
-| `TELEGRAM_BOT_TOKEN` / `GOOGLE_SHEETS_ID` | — | Optional Telegram idea capture / sync |
-| `GOOGLE_API_KEY` | — | Optional image generation |
-
----
-
-## Development
-
-```bash
-# Backend tests
-pytest tests/                    # or a single file: pytest tests/test_x.py
-
-# Frontend
-cd frontend
-npm test                         # vitest (single run)
-npm run typecheck                # tsc --noEmit
-npm run build                    # tsc + vite build
-```
-
-Dev servers (already handled by the launchers): Vite proxies `/api` to `http://localhost:8000`.
-
-Useful backend modules (under `src/tools/demiurgos-suite/wiki/`): `api_server.py` (routes), `account.py` / `emergency_key.py` (vault), `graph_indexer.py` / `graph_mcp_server.py` (graph), `import_*.py` (world importer), `world_recycle_bin.py` (trash), `guided_character_*.py` (guided creation), `semantic_intent.py` (assistant gate). Product decisions live in `docs/architecture/demiurgos-platform.md` (the platform constitution).
-
----
-
-## Product model
-
-- **Proprietary freeware** — the Core is free; optional workshops are a **one-time purchase**.
-- **The installed version never gets blocked** — an expired update window never disables or degrades what you already have.
-- **Worlds are private** — world content under `mundos/` is gitignored and never shipped with the repo.
-- Built by [@maar1223](https://github.com/maar1223).
-
----
+- **Freeware propietario:** el Core es gratuito; los talleres son una compra única opcional.
+- La versión instalada nunca se bloquea: una ventana de actualización vencida no degrada lo que ya tienes.
+- Los mundos son privados: el contenido de `mundos/` está fuera del repositorio y nunca se publica.
+- Hecho por [@maar1223](https://github.com/maar1223).
+- English version: [README.en.md](README.en.md)
 
 *"No asumir nada. Si tienes dudas, busca el contexto en el proyecto."*
