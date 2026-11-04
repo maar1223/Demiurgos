@@ -62,6 +62,13 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def test_shipped_desktop_entry_never_opens_a_terminal():
+    """The user-facing launcher opens the browser; a terminal window is noise."""
+    text = DESKTOP_TEMPLATE.read_text(encoding="utf-8")
+    assert "Terminal=false" in text
+    assert "Terminal=true" not in text
+
+
 def _env(tmp_path: Path) -> dict[str, str]:
     """Hermetic HOME + XDG roots: every write lands under tmp_path."""
     home = tmp_path / "home"

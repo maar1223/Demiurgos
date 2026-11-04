@@ -65,7 +65,7 @@ install-demiurgos: done. Start Demiurgos with:
 
 | System | How to open it |
 |---|---|
-| **Linux** | Applications menu → **Demiurgos**. A terminal starts the services and then the browser opens. |
+| **Linux** | Applications menu → **Demiurgos**. The browser opens (no terminal window). |
 | **Windows** | Start menu → **Demiurgos**. The browser opens. |
 | **macOS** | There is no shortcut yet: run the command below. |
 
