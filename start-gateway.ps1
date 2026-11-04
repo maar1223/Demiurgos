@@ -138,6 +138,73 @@ $dataRoot = Resolve-DataRoot
 $env:DEMIURGOS_ROOT = $appRoot
 $env:DEMIURGOS_DATA_ROOT = $dataRoot
 $env:HERMES_ENABLE_PROJECT_PLUGINS = "1"
+
+# --- Gateway key: generate once, persist, and bridge to the API server -----
+# A fresh install seeds the data-root .env without HERMES_GATEWAY_KEY and the
+# dedicated profile without API_SERVER_KEY. The gateway's api_server enables
+# itself only for a usable key (>= 16 chars), while the Demiurgos client
+# authenticates with HERMES_GATEWAY_KEY: both must be the same value.
+function Read-EnvValue([string]$File, [string]$Key) {
+    if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return "" }
+    foreach ($raw in @(Get-Content -LiteralPath $File)) {
+        $line = $raw.TrimEnd("`r")
+        $eq = $line.IndexOf("=")
+        if ($eq -le 0) { continue }
+        if ($line.Substring(0, $eq).Trim() -eq $Key) {
+            return $line.Substring($eq + 1).Trim().Trim('"').Trim("'")
+        }
+    }
+    return ""
+}
+
+function Set-EnvValue([string]$File, [string]$Key, [string]$Value) {
+    $want = "$Key=$Value"
+    $lines = @()
+    if (Test-Path -LiteralPath $File -PathType Leaf) { $lines = @(Get-Content -LiteralPath $File) }
+    $found = $false
+    $changed = $false
+    $out = @()
+    foreach ($raw in $lines) {
+        $line = $raw.TrimEnd("`r")
+        $eq = $line.IndexOf("=")
+        if ($eq -gt 0 -and $line.Substring(0, $eq).Trim() -eq $Key) {
+            $found = $true
+            if ($line -ceq $want) { $out += $line } else { $out += $want; $changed = $true }
+        } else {
+            $out += $line
+        }
+    }
+    if (-not $found) { $out += $want; $changed = $true }
+    if (-not $changed) { return }
+    $dir = Split-Path -Parent $File
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    Set-Content -LiteralPath $File -Value $out -Encoding ASCII
+}
+
+function Initialize-GatewayKey([string]$Root) {
+    if ($env:HERMES_GATEWAY_KEY) { return $env:HERMES_GATEWAY_KEY }
+    $envFile = Join-Path $Root ".env"
+    $key = Read-EnvValue $envFile "HERMES_GATEWAY_KEY"
+    if (-not $key) {
+        $key = [guid]::NewGuid().ToString("N")
+        Set-EnvValue $envFile "HERMES_GATEWAY_KEY" $key
+        Write-Host "Generated the Hermes gateway key in $envFile"
+    }
+    $env:HERMES_GATEWAY_KEY = $key
+    return $key
+}
+
+function Bridge-GatewayKey {
+    if (-not $env:HERMES_GATEWAY_KEY) { return }
+    $env:API_SERVER_ENABLED = "true"
+    $env:API_SERVER_KEY = $env:HERMES_GATEWAY_KEY
+    if ($env:HERMES_HOME) {
+        $profileEnv = Join-Path $env:HERMES_HOME ".env"
+        Set-EnvValue $profileEnv "API_SERVER_ENABLED" "true"
+        Set-EnvValue $profileEnv "API_SERVER_KEY" $env:HERMES_GATEWAY_KEY
+    }
+}
+
 # Dedicated product profile/checkout (S5), mirroring the POSIX launcher: export
 # HERMES_HOME only when provisioned, and the checkout root only when present so
 # the project plugin imports the bundled adapter from the pinned runtime.
@@ -150,6 +217,12 @@ if ((Test-Path -LiteralPath (Join-Path $productHermesHome "config.yaml") -PathTy
 }
 if (Test-Path -LiteralPath (Join-Path $productAgentRoot "plugins") -PathType Container) {
     $env:HERMES_AGENT_ROOT = $productAgentRoot
+}
+try {
+    Initialize-GatewayKey $dataRoot | Out-Null
+    Bridge-GatewayKey
+} catch {
+    Write-Host "Continuing without a gateway key; the API server stays unavailable." -ForegroundColor Yellow
 }
 # The current runtime reads API_SERVER_HOST/PORT; the legacy HERMES_GATEWAY_*
 # names stay exported for older builds on the same port.

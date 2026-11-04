@@ -189,10 +189,64 @@ function Load-DataRootEnv {
             $value = $value.Substring(1, $value.Length - 2)
         }
         $value = $value.TrimEnd("`r")
-        if ($key -like "DEMIURGOS_*") {
+        if ($key -like "DEMIURGOS_*" -or $key -eq "HERMES_GATEWAY_KEY") {
             Set-Item -Path ("Env:" + $key) -Value $value
         }
     }
+}
+
+# --- Gateway key (fresh-install assistant setup) ---------------------------
+# The data-root .env may carry HERMES_GATEWAY_KEY; when it does not, generate
+# one once and persist it so the API client and the gateway API server share
+# the same secret across restarts. ASCII-only and PS 5.1-compatible.
+function Read-EnvValue([string]$File, [string]$Key) {
+    if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return "" }
+    foreach ($raw in @(Get-Content -LiteralPath $File)) {
+        $line = $raw.TrimEnd("`r")
+        $eq = $line.IndexOf("=")
+        if ($eq -le 0) { continue }
+        if ($line.Substring(0, $eq).Trim() -eq $Key) {
+            return $line.Substring($eq + 1).Trim().Trim('"').Trim("'")
+        }
+    }
+    return ""
+}
+
+function Set-EnvValue([string]$File, [string]$Key, [string]$Value) {
+    $want = "$Key=$Value"
+    $lines = @()
+    if (Test-Path -LiteralPath $File -PathType Leaf) { $lines = @(Get-Content -LiteralPath $File) }
+    $found = $false
+    $changed = $false
+    $out = @()
+    foreach ($raw in $lines) {
+        $line = $raw.TrimEnd("`r")
+        $eq = $line.IndexOf("=")
+        if ($eq -gt 0 -and $line.Substring(0, $eq).Trim() -eq $Key) {
+            $found = $true
+            if ($line -ceq $want) { $out += $line } else { $out += $want; $changed = $true }
+        } else {
+            $out += $line
+        }
+    }
+    if (-not $found) { $out += $want; $changed = $true }
+    if (-not $changed) { return }
+    $dir = Split-Path -Parent $File
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    Set-Content -LiteralPath $File -Value $out -Encoding ASCII
+}
+
+function Initialize-GatewayKey([string]$Root) {
+    if ($env:HERMES_GATEWAY_KEY) { return $env:HERMES_GATEWAY_KEY }
+    $envFile = Join-Path $Root ".env"
+    $key = Read-EnvValue $envFile "HERMES_GATEWAY_KEY"
+    if (-not $key) {
+        $key = [guid]::NewGuid().ToString("N")
+        Set-EnvValue $envFile "HERMES_GATEWAY_KEY" $key
+        Write-Host "Generated the Hermes gateway key in $envFile"
+    }
+    $env:HERMES_GATEWAY_KEY = $key
+    return $key
 }
 
 # --- Process/port inspection (S2-5): Get-NetTCPConnection + cmdline ownership
@@ -428,6 +482,21 @@ function Invoke-BootRollback {
 $dataRoot = Resolve-DataRoot
 Load-DataRootEnv
 $env:DEMIURGOS_DATA_ROOT = $dataRoot
+# Dedicated product profile/checkout (S5): export HERMES_HOME to the API child
+# only when the product profile/checkout is provisioned, mirroring POSIX.
+if ((Test-Path -LiteralPath (Join-Path $productHermesHome "config.yaml") -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $productAgentRoot ".git") -PathType Container)) {
+    $env:HERMES_HOME = $productHermesHome
+}
+if (Test-Path -LiteralPath (Join-Path $productAgentRoot "plugins") -PathType Container) {
+    $env:HERMES_AGENT_ROOT = $productAgentRoot
+}
+# The API client authenticates to the gateway with this key; the gateway child
+# (start-gateway.ps1) bridges the same value into API_SERVER_KEY. The assistant
+# is optional (S2-2): a key failure never aborts the whole boot.
+try { Initialize-GatewayKey $dataRoot | Out-Null } catch {
+    Write-Host "Continuing without a gateway key; the assistant stays unavailable." -ForegroundColor Yellow
+}
 $env:DEMIURGOS_FRONTEND_DIST = Join-Path $appRoot "frontend\dist"
 $env:DEMIURGOS_ROOT = $appRoot
 # Runtime version identity (install layout): <install_root>\current -> app\<version>.

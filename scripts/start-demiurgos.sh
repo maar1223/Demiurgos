@@ -183,16 +183,18 @@ resolve_data_root() {
 }
 
 # Parse the resolved data-root .env in pure shell (S2-4/S0-A) and export every
-# DEMIURGOS_* key. The launcher is the bridge between the installer's seed
-# (DEMIURGOS_AUTH_MODE=local-dev, DEMIURGOS_LANGUAGE, optional DEMIURGOS_WORLD)
-# and the env-only backend (_auth_mode()); no system Python anywhere.
+# DEMIURGOS_* key plus the gateway credential. The launcher is the bridge
+# between the installer's seed (DEMIURGOS_AUTH_MODE=local-dev,
+# DEMIURGOS_LANGUAGE, optional DEMIURGOS_WORLD) and the env-only backend
+# (_auth_mode()); no system Python anywhere. HERMES_GATEWAY_KEY is the shared
+# secret the API client and the gateway API server must agree on.
 load_data_root_env() {
     local env_file="$DATA_ROOT/.env" key value
     [ -r "$env_file" ] || return 0
     while IFS='=' read -r key value || [ -n "$key" ]; do
         case "$key" in
             ''|'#'*) continue ;;
-            DEMIURGOS_*)
+            DEMIURGOS_*|HERMES_GATEWAY_KEY)
                 # Strip one layer of surrounding quotes and a trailing CR
                 # (CRLF .env files) so the value reaches the app cleanly.
                 value="${value%\"}"
@@ -204,6 +206,98 @@ load_data_root_env() {
                 ;;
         esac
     done < "$env_file"
+}
+
+# Generate a 32-hex gateway secret with only tools the POSIX launchers already
+# assume (openssl, then /dev/urandom; a last-resort timestamp is still > 16
+# characters, the runtime's has_usable_secret(min_length=16) guard).
+generate_gateway_key() {
+    local key=""
+    if command -v openssl >/dev/null 2>&1; then
+        key="$(openssl rand -hex 16 2>/dev/null || true)"
+    fi
+    if [ -z "$key" ]; then
+        key="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+    fi
+    if [ -z "$key" ]; then
+        key="$(date +%s%N 2>/dev/null || date +%s)$$"
+    fi
+    printf '%s' "$key"
+}
+
+# Idempotently set KEY=VALUE in an env file, preserving every other line and
+# touching nothing when the value already matches. Mode 600 keeps the secret
+# private on POSIX.
+set_env_value() {
+    local file="$1" key="$2" value="$3" tmp line found=0 changed=0 want
+    want="$key=$value"
+    tmp="$file.tmp.$$"
+    if [ -f "$file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                "$key="*)
+                    found=1
+                    if [ "$line" = "$want" ]; then
+                        printf '%s\n' "$line"
+                    else
+                        printf '%s\n' "$want"
+                        changed=1
+                    fi
+                    ;;
+                *) printf '%s\n' "$line" ;;
+            esac
+        done < "$file" > "$tmp" || { rm -f "$tmp"; return 1; }
+        if [ "$found" = "0" ]; then
+            printf '%s\n' "$want" >> "$tmp" || { rm -f "$tmp"; return 1; }
+            changed=1
+        fi
+    else
+        printf '%s\n' "$want" > "$tmp" || return 1
+        changed=1
+    fi
+    if [ "$changed" = "0" ]; then
+        rm -f "$tmp"
+        return 0
+    fi
+    mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
+    chmod 600 "$file" 2>/dev/null || true
+}
+
+# A fresh install seeds the data-root .env without HERMES_GATEWAY_KEY. Create
+# it once and persist it, so the API client and the gateway share one secret
+# across restarts. An existing key (env or .env) is never replaced.
+ensure_gateway_key() {
+    local env_file="$DATA_ROOT/.env"
+    if [ -n "${HERMES_GATEWAY_KEY:-}" ]; then
+        export HERMES_GATEWAY_KEY
+        return 0
+    fi
+    HERMES_GATEWAY_KEY="$(generate_gateway_key)"
+    [ -n "$HERMES_GATEWAY_KEY" ] || {
+        printf 'No se pudo generar la clave del gateway de Hermes.\n' >&2
+        return 1
+    }
+    if ! set_env_value "$env_file" HERMES_GATEWAY_KEY "$HERMES_GATEWAY_KEY"; then
+        printf 'No se pudo guardar HERMES_GATEWAY_KEY en %s\n' "$env_file" >&2
+        return 1
+    fi
+    export HERMES_GATEWAY_KEY
+    printf 'Generated the Hermes gateway key in %s\n' "$env_file" >&2
+}
+
+# The gateway API server enables itself ONLY when API_SERVER_KEY is usable
+# (has_usable_secret(min_length=16)); the API client authenticates with
+# HERMES_GATEWAY_KEY. Bridge both to the same value. The gateway loads
+# $HERMES_HOME/.env with override=True, so reconcile that file too: a stale
+# manual line must never shadow the bridged key.
+bridge_gateway_key() {
+    [ -n "${HERMES_GATEWAY_KEY:-}" ] || return 0
+    export API_SERVER_ENABLED=true
+    export API_SERVER_KEY="$HERMES_GATEWAY_KEY"
+    if [ -n "${HERMES_HOME:-}" ]; then
+        set_env_value "$HERMES_HOME/.env" API_SERVER_ENABLED true || true
+        set_env_value "$HERMES_HOME/.env" API_SERVER_KEY "$HERMES_GATEWAY_KEY" || true
+    fi
 }
 
 ensure_runtime_dirs() {
@@ -553,6 +647,8 @@ start_component() {
                 DEMIURGOS_ROOT="$APP_ROOT" \
                 HERMES_ENABLE_PROJECT_PLUGINS=1 \
                 API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$GATEWAY_PORT" \
+                API_SERVER_ENABLED="${API_SERVER_ENABLED:-}" \
+                API_SERVER_KEY="${API_SERVER_KEY:-}" \
                 HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT" \
                 "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
         *) return 1 ;;
@@ -666,6 +762,13 @@ start_services() {
     # Hermes dedicated profile (additive isolation): export HERMES_HOME to both
     # children before they start, only when the profile is provisioned.
     export_product_hermes_home
+    # Gateway credential bridge (fresh-install assistant setup): create the
+    # data-root secret when a fresh install has none, then hand the same value
+    # to the gateway API server and to the API client. The assistant is
+    # optional (S2-2): a key failure must never abort the whole boot.
+    ensure_gateway_key \
+        || printf 'Continuing without a gateway key; the assistant stays unavailable.\n' >&2
+    bridge_gateway_key || true
     # Fail closed on a product runtime that is not at the pinned commit (S7).
     verify_product_runtime
 
