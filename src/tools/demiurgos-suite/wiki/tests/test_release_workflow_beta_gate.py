@@ -149,3 +149,15 @@ def test_smoke_installs_from_the_real_raw_channel():
     assert "export DEMIURGOS_UV_SHA256" not in text
     assert "bash install.sh" in text
     assert "/health" in text
+
+
+def test_smoke_installs_the_consumer_prerequisite():
+    """The smoke runner must install minisign before the real installer runs.
+
+    A regression here is a false red: the channel can be perfect and the gate
+    still fails because the consumer refuses to trust an unsigned manifest.
+    """
+    text = _job_runs(_load(), "smoke")
+    assert "apt-get install -y -qq minisign" in text
+    # and it must precede the install of the published bootstrap
+    assert text.index("minisign") < text.index("bash install.sh")

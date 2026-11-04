@@ -581,6 +581,17 @@ jobs:
           if printf '%s' "$core" | grep -q '-'; then is_prerelease=1; else is_prerelease=0; fi
           printf 'is_prerelease=%s\n' "$is_prerelease" >> "$GITHUB_ENV"
           echo "release ${tag}: is_prerelease=${is_prerelease}"
+      - name: Install minisign (the consumer verifies the signed manifest)
+        run: |
+          set -euo pipefail
+          # The bootstrap refuses to install without minisign: the published
+          # manifest signature is verified before any checksum is trusted. This
+          # step is the runner-side prerequisite, not a test shim.
+          if ! command -v minisign >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq minisign
+          fi
+          minisign -v 2>&1 | head -2 || true
       - name: Install into a clean environment and boot from the real channel
         env:
           MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
