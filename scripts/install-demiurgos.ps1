@@ -14,8 +14,9 @@
 #   3. download+verify       version.json, SHA256SUMS (+ .minisig when
 #                            present), payload from DEMIURGOS_URL_BASE
 #                            (https:// or file:// for hermetic harnesses)
-#   4. uv provisioning       pinned UV_VERSION, verified against the baked
-#                            checksum (DEMIURGOS_UV_SHA256 override for tests)
+#   4. uv provisioning       pinned UV_VERSION, verified against the channel's
+#                            signed uv-shas.env (DEMIURGOS_UV_SHA256 override for
+#                            tests)
 #   5. runtime               UV_PYTHON_INSTALL_DIR uv python install 3.12,
 #                            uv venv --python 3.12 <stage>\.venv,
 #                            uv pip install --require-hashes
@@ -47,8 +48,8 @@
 #   -DataRoot PATH       install-time choice of the content folder: recorded in
 #                        the pointer, folders and .env created there. A relative
 #                        path is normalized. The installer never prompts.
-#   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
-#                        pipeline bakes the real value at publish time)
+#   DEMIURGOS_UV_SHA256  expected uv archive sha256 (single-target test seam;
+#                        a normal install reads the signed uv-shas.env)
 #   DEMIURGOS_HERMES_SKIP  "1" -> skip the assistant runtime provisioning
 #                        (hermetic installer harnesses; never a normal install).
 #                        scripts/provision-hermes.ps1 is downloaded and
@@ -263,7 +264,6 @@ function Invoke-FetchAndVerifyPayload {
     $workdir = Join-Path $stagingRoot ".work-$version-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     $workDirs.Add($workdir)
     New-Item -ItemType Directory -Force -Path $workdir | Out-Null
-    Invoke-Download "$urlBase/version.json" (Join-Path $workdir "version.json")
     Invoke-Download "$urlBase/SHA256SUMS" (Join-Path $workdir "SHA256SUMS")
     # Signature file is downloaded when present; verification is S5b's gate.
     try { Invoke-Download "$urlBase/SHA256SUMS.minisig" (Join-Path $workdir "SHA256SUMS.minisig") } catch { }
@@ -277,14 +277,22 @@ function Invoke-FetchAndVerifyPayload {
     }
     $script:sumsFile = Join-Path $workdir "SHA256SUMS"
 
-    $payloadName = Get-PayloadName (Join-Path $workdir "version.json") $version
+    # Platform-correct payload: the channel publishes one archive per package
+    # cell; Windows is windows-amd64. Older channels (and the hermetic fixtures)
+    # publish a single flat name, so fall back to version.json's `windows`
+    # pointer and then to the legacy flat name.
+    $payloadName = "demiurgos-app-$version-windows-amd64.zip"
+    $expected = Get-ShaFor $script:sumsFile $payloadName
+    if (-not $expected) {
+        Invoke-Download "$urlBase/version.json" (Join-Path $workdir "version.json")
+        $payloadName = Get-PayloadName (Join-Path $workdir "version.json") $version
+        $expected = Get-ShaFor $script:sumsFile $payloadName
+    }
+    if (-not $expected) {
+        Fail "no checksum entry for an installable payload in SHA256SUMS; fix the channel and re-run"
+    }
     $script:payloadFile = Join-Path $workdir $payloadName
     Invoke-Download "$urlBase/$payloadName" $payloadFile
-
-    $expected = Get-ShaFor (Join-Path $workdir "SHA256SUMS") $payloadName
-    if (-not $expected) {
-        Fail "no checksum entry for $payloadName in SHA256SUMS; fix the channel and re-run"
-    }
     if (-not (Verify-Sha256 -FilePath $payloadFile -Expected $expected)) {
         Fail "checksum mismatch for $payloadName; the download is corrupt or tampered - fix the channel and re-run"
     }
@@ -337,11 +345,46 @@ function Invoke-HermesProvision {
 
 # --- uv provisioning (5.3) ---------------------------------------------------
 
+function Import-UvChecksums {
+    # Load the channel's uv checksum table into UV_SHA_* environment variables.
+    # The publish job derives uv-shas.env from the exact archives it ships and
+    # lists it in the signed SHA256SUMS, so the table is verified before any
+    # value is trusted. Only whitelisted keys with a 64-hex value are accepted:
+    # the file is data, never code. DEMIURGOS_UV_SHA256 stays the single-target
+    # test seam and wins outright.
+    if ($env:DEMIURGOS_UV_SHA256) { return }
+    Get-ChannelManifest
+    $workdir = Join-Path $stagingRoot ".work-uvshas-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    $workDirs.Add($workdir)
+    New-Item -ItemType Directory -Force -Path $workdir | Out-Null
+    $file = Join-Path $workdir "uv-shas.env"
+    Invoke-Download "$urlBase/uv-shas.env" $file
+    $expected = Get-ShaFor $script:sumsFile "uv-shas.env"
+    if (-not $expected) {
+        Fail "SHA256SUMS has no entry for uv-shas.env; fix the channel and re-run"
+    }
+    if (-not (Verify-Sha256 -FilePath $file -Expected $expected)) {
+        Fail "checksum mismatch for uv-shas.env; the download is corrupt or tampered - fix the channel and re-run"
+    }
+    foreach ($raw in Get-Content -LiteralPath $file) {
+        $line = "$raw".Trim()
+        if (-not $line -or $line.StartsWith("#")) { continue }
+        $parts = $line -split "=", 2
+        if ($parts.Count -ne 2) { continue }
+        $key = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        if ($key -notmatch '^UV_SHA_[A-Z0-9_]+$') { continue }
+        if ($value -notmatch '^[0-9a-fA-F]{64}$') {
+            Fail "uv-shas.env has a malformed sha256 for $key; fix the channel and re-run"
+        }
+        Set-Item -Path "env:$key" -Value $value.ToLowerInvariant()
+    }
+}
+
 function Get-UvExpectedSha256 {
     if ($env:DEMIURGOS_UV_SHA256) { return $env:DEMIURGOS_UV_SHA256 }
-    # Baked per-target checksums live here in the release build (S5a fills the
-    # real values for the pinned UV_VERSION at publish time). Empty table with
-    # no override -> refuse to install an unverified toolchain.
+    # Filled by Import-UvChecksums from the channel's signed uv-shas.env. An
+    # empty table with no override -> refuse to install an unverified toolchain.
     $t = Get-UvTarget
     switch ($t) {
         "x86_64-pc-windows-msvc" { return $env:UV_SHA_X86_64_WINDOWS_MSVC }
@@ -351,9 +394,10 @@ function Get-UvExpectedSha256 {
 
 function Invoke-ProvisionUv {
     $target = Get-UvTarget
+    Import-UvChecksums
     $expected = Get-UvExpectedSha256
     if (-not $expected) {
-        Fail "no uv checksum available for $target; set DEMIURGOS_UV_SHA256 or rebuild with baked checksums - refusing an unverified toolchain"
+        Fail "no uv checksum available for $target; the channel's uv-shas.env has no entry for it - fix the channel and re-run"
     }
     $url = "$urlBase/uv/uv-$target-$uvVersion.zip"
     $workdir = Join-Path $stagingRoot ".uv-$version-$([guid]::NewGuid().ToString('N').Substring(0, 8))"

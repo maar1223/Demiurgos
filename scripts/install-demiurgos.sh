@@ -11,13 +11,15 @@
 #                            documented manual-install alternative (decision
 #                            #3579, supersedes #3565)
 #   2. version resolve       DEMIURGOS_VERSION else `latest`
-#   3. download+verify       version.json, SHA256SUMS + SHA256SUMS.minisig,
-#                            payload from DEMIURGOS_URL_BASE (https:// or
-#                            file:// for hermetic harnesses); the manifest
-#                            SIGNATURE is verified BEFORE the checksums (S5b)
-#   4. uv provisioning       pinned UV_VERSION, verified against the baked
-#                            checksum (DEMIURGOS_UV_SHA256 override for tests),
-#                            codesign --verify --deep --strict on macOS (M2)
+#   3. download+verify       SHA256SUMS + SHA256SUMS.minisig, then the
+#                            platform payload from DEMIURGOS_URL_BASE (https://
+#                            or file:// for hermetic harnesses); the manifest
+#                            SIGNATURE is verified BEFORE the checksums (S5b);
+#                            version.json is only the legacy-name fallback
+#   4. uv provisioning       pinned UV_VERSION, verified against the channel's
+#                            signed uv-shas.env (DEMIURGOS_UV_SHA256 override for
+#                            tests), codesign --verify --deep --strict on macOS
+#                            (M2)
 #   5. runtime               UV_PYTHON_INSTALL_DIR uv python install 3.12,
 #                            uv venv --python 3.12 <stage>/.venv,
 #                            uv pip install --require-hashes
@@ -48,8 +50,8 @@
 #                        the pointer, folders and .env created there. A relative
 #                        path is normalized against the cwd. The installer never
 #                        prompts; an unknown argument fails with usage.
-#   DEMIURGOS_UV_SHA256  expected uv archive sha256 (test seam; release
-#                        pipeline bakes the real value at publish time)
+#   DEMIURGOS_UV_SHA256  expected uv archive sha256 (single-target test seam;
+#                        a normal install reads the signed uv-shas.env)
 #   DEMIURGOS_HERMES_SKIP  "1" -> skip the assistant runtime provisioning
 #                        (hermetic installer harnesses; never a normal install).
 #                        The script is downloaded and verified against the
@@ -228,6 +230,17 @@ uv_target() {
     esac
 }
 
+payload_cell() {
+    # Package-cell name used by the channel artifacts (S2 release pipeline),
+    # derived from the SAME detection the floors use. Intel macOS and musl are
+    # rejected earlier by check_floors, so they never reach this mapping.
+    case "$OS" in
+        Linux) printf 'linux-%s\n' "$(uv_arch)" ;;
+        Darwin) printf 'macos-%s\n' "$(uv_arch)" ;;
+        *) fail "unsupported OS: $OS (this core covers Linux and macOS; Windows is S3b)" ;;
+    esac
+}
+
 # --- floors preflight (4.4) ------------------------------------------------
 
 version_ge() {  # a b  -> a >= b as dotted numbers
@@ -316,12 +329,10 @@ resolve_version() {
 }
 
 fetch_and_verify_payload() {
-    local workdir version_json sums payload_name expected
+    local workdir version_json payload_name expected
     workdir="$STAGING_ROOT/.work-$VERSION-$$"
     WORK_DIRS="$WORK_DIRS $workdir"
     mkdir -p "$workdir"
-    download "$URL_BASE/version.json" "$workdir/version.json" \
-        || fail "cannot download version.json from $URL_BASE; check the channel and re-run"
     download "$URL_BASE/SHA256SUMS" "$workdir/SHA256SUMS" \
         || fail "cannot download SHA256SUMS from $URL_BASE; check the channel and re-run"
     # Signature file (S5b / task 8.4): the channel manifest MUST be signed,
@@ -333,14 +344,27 @@ fetch_and_verify_payload() {
         || fail "the channel manifest signature is INVALID or missing; refusing to trust the channel — fix the channel and re-run"
     SUMS_FILE="$workdir/SHA256SUMS"
 
-    payload_name="$(json_str "$workdir/version.json" posix)"
-    [ -n "$payload_name" ] || payload_name="demiurgos-app-$VERSION.tar.gz"
+    # Platform-correct payload: the channel publishes one archive per package
+    # cell (linux-x86_64, linux-aarch64, macos-arm64). An Apple Silicon mac must
+    # never receive the Linux archive. Older channels (and the hermetic
+    # fixtures) publish a single flat name, so fall back to version.json's
+    # `posix` pointer and then to the legacy flat name.
+    payload_name="demiurgos-app-$VERSION-$(payload_cell).tar.gz"
+    expected="$(sha_for "$SUMS_FILE" "$payload_name")"
+    if [ -z "$expected" ]; then
+        payload_name=""
+        version_json="$workdir/version.json"
+        if download "$URL_BASE/version.json" "$version_json" 2>/dev/null; then
+            payload_name="$(json_str "$version_json" posix)"
+        fi
+        [ -n "$payload_name" ] || payload_name="demiurgos-app-$VERSION.tar.gz"
+        expected="$(sha_for "$SUMS_FILE" "$payload_name")"
+    fi
+    [ -n "$expected" ] \
+        || fail "no checksum entry for an installable payload in SHA256SUMS; fix the channel and re-run"
     PAYLOAD_FILE="$workdir/$payload_name"
     download "$URL_BASE/$payload_name" "$PAYLOAD_FILE" \
         || fail "cannot download $payload_name from $URL_BASE; check the channel and re-run"
-
-    expected="$(sha_for "$workdir/SHA256SUMS" "$payload_name")"
-    [ -n "$expected" ] || fail "no checksum entry for $payload_name in SHA256SUMS; fix the channel and re-run"
     verify_sha256 "$PAYLOAD_FILE" "$expected" \
         || fail "checksum mismatch for $payload_name; the download is corrupt or tampered — fix the channel and re-run"
 }
@@ -391,14 +415,58 @@ provision_hermes_runtime() {
 
 # --- uv provisioning (4.5/4.6, M2) ------------------------------------------
 
+# Load the channel's uv checksum table into UV_SHA_* variables.
+#
+# The publish job derives one uv-shas.env from the exact uv archives it ships
+# and lists it in the signed SHA256SUMS, so the table itself is verified before
+# any value is trusted. Only whitelisted keys with a 64-hex value are accepted:
+# an env file is data, never shell code, so it is parsed line by line instead of
+# being sourced. DEMIURGOS_UV_SHA256 stays the single-target test seam and wins
+# outright.
+load_uv_checksums() {
+    [ -n "${DEMIURGOS_UV_SHA256:-}" ] && return 0
+    local workdir file expected line key value
+    fetch_channel_manifest
+    workdir="$STAGING_ROOT/.work-uvshas-$$"
+    WORK_DIRS="$WORK_DIRS $workdir"
+    mkdir -p "$workdir"
+    file="$workdir/uv-shas.env"
+    download "$URL_BASE/uv-shas.env" "$file" \
+        || fail "cannot download uv-shas.env from $URL_BASE; the channel is incomplete — fix the channel and re-run"
+    expected="$(sha_for "$SUMS_FILE" "uv-shas.env")"
+    [ -n "$expected" ] \
+        || fail "SHA256SUMS has no entry for uv-shas.env; fix the channel and re-run"
+    verify_sha256 "$file" "$expected" \
+        || fail "checksum mismatch for uv-shas.env; the download is corrupt or tampered — fix the channel and re-run"
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        case "$key" in
+            UV_SHA_X86_64_LINUX_GNU|UV_SHA_AARCH64_LINUX_GNU|\
+            UV_SHA_X86_64_LINUX_MUSL|UV_SHA_AARCH64_LINUX_MUSL|\
+            UV_SHA_X86_64_DARWIN|UV_SHA_AARCH64_DARWIN|\
+            UV_SHA_X86_64_WINDOWS_MSVC) ;;
+            *) continue ;;
+        esac
+        case "$value" in
+            *[!0-9a-f]*) fail "uv-shas.env has a malformed sha256 for $key; fix the channel and re-run" ;;
+        esac
+        [ "${#value}" -eq 64 ] \
+            || fail "uv-shas.env has a malformed sha256 for $key; fix the channel and re-run"
+        export "$key=$value"
+    done < "$file"
+}
+
 uv_expected_sha256() {
     if [ -n "${DEMIURGOS_UV_SHA256:-}" ]; then
         printf '%s\n' "$DEMIURGOS_UV_SHA256"
         return 0
     fi
-    # Baked per-target checksums live here in the release build (S5a fills the
-    # real values for the pinned UV_VERSION at publish time). Empty table with
-    # no override -> refuse to install an unverified toolchain.
+    # Filled by load_uv_checksums from the channel's signed uv-shas.env. An
+    # empty table with no override -> refuse to install an unverified toolchain.
     local t
     t="$(uv_target)"
     case "$t" in
@@ -415,8 +483,9 @@ uv_expected_sha256() {
 provision_uv() {
     local target expected url workdir uvfile
     target="$(uv_target)"
+    load_uv_checksums
     expected="$(uv_expected_sha256)"
-    [ -n "$expected" ] || fail "no uv checksum available for $target; set DEMIURGOS_UV_SHA256 or rebuild with baked checksums — refusing an unverified toolchain"
+    [ -n "$expected" ] || fail "no uv checksum available for $target; the channel's uv-shas.env has no entry for it — fix the channel and re-run"
     url="$URL_BASE/uv/uv-$target-$UV_VERSION.tar.gz"
     workdir="$STAGING_ROOT/.uv-$VERSION-$$"
     WORK_DIRS="$WORK_DIRS $workdir"

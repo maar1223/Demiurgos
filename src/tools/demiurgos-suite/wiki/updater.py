@@ -55,11 +55,13 @@ from fastapi.responses import JSONResponse
 from local_state import LocalState
 import semver
 
-#: Public release-channel default. Mirrors the installer's channel base and is
-#: only a LAST RESORT: the installer-written ``channel.json`` (validated
-#: https/file at install time) wins on any real install, with the
-#: ``DEMIURGOS_CHANNEL_URL`` env as the operator override.
-DEFAULT_CHANNEL_URL = "https://github.com/maar1223/demiurgos-releases"
+#: Public release-channel default. Mirrors the installer's channel base (the raw
+#: BRANCH root, where the flat channel tree lives) and is only a LAST RESORT:
+#: the installer-written ``channel.json`` (validated https/file at install time)
+#: wins on any real install, with the ``DEMIURGOS_CHANNEL_URL`` env as the
+#: operator override. Both pointers (``latest`` and ``latest-beta``) live at the
+#: branch root, so one base serves both channels.
+DEFAULT_CHANNEL_URL = "https://raw.githubusercontent.com/maar1223/demiurgos-releases/main"
 
 #: The only channel types the updater understands (spec 'Channel selection').
 VALID_CHANNELS = ("Estable", "Beta")

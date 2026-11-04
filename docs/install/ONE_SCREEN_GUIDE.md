@@ -11,7 +11,7 @@
 ## Linux y macOS
 
 ```bash
-curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh | bash
 ```
 
 ## Windows
@@ -31,7 +31,7 @@ Scoop instalado, que además sirve para otras herramientas.
 ### 2. Instala Demiurgos
 
 ```powershell
-irm https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.ps1 | iex
 ```
 
 Las dos líneas van en la **misma ventana** de PowerShell.

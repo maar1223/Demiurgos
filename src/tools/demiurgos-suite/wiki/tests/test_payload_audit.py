@@ -609,12 +609,12 @@ class TestInstallerCoreSignatureGate:
         )
 
     def test_signed_channel_passes_the_gates_then_stops_at_uv(self, tmp_path):
-        """Signature + checksum gates pass; the core proceeds to uv, which has
-        no baked checksum on this host -> the honest 'refusing an unverified
-        toolchain' stop. That proves the gates were crossed BEFORE uv."""
+        """Signature + checksum gates pass; the core proceeds to uv provisioning,
+        whose channel table (uv-shas.env) is absent in this fixture -> the honest
+        fail-closed stop. Reaching uv proves the gates were crossed first."""
         channel, pubkey = self._channel(tmp_path)
         result = self._run_core(channel, pubkey, tmp_path / "home")
-        assert "no uv checksum available" in result.stderr, result.stderr
+        assert "uv-shas.env" in result.stderr, result.stderr
         assert "SIGNATURE VERIFICATION FAILED" not in result.stderr
         assert "checksum mismatch" not in result.stderr
 

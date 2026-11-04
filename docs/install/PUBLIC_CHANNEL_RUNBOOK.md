@@ -10,11 +10,12 @@
   `https://github.com/maar1223/demiurgos-releases` y los secretos del repositorio
   (`MINISIGN_SECRET_KEY`, `MINISIGN_PUBKEY`, `MINISIGN_KEY_PASSWORD`,
   `PUBLISH_TOKEN`) están cargados.
-- **Hecho.** El release **`v0.1.0` está publicado** (marcado *Latest*) y el smoke
-  anónimo posterior a la publicación pasó: firma + checksums + instalación +
-  arranque. La publicación sigue **guardada por tag**: el pipeline no hace nada
-  mientras no se empuje un tag `vX.Y.Z`. Los pasos 1–5 quedan como el
-  procedimiento para el próximo release.
+- **Corregido.** El canal pasó a ser la rama `main` del repo público (árbol
+  plano servido por `raw.githubusercontent.com`). Las releases publicadas antes
+  de ese cambio (`v0.1.0`, `v0.2.0`) usaban un layout plano que el instalador no
+  podía resolver de forma consistente; no son instalables por la vía pública y
+  se dejan solo como trazabilidad. El primer release del layout nuevo es el que
+  hay que validar.
 - La clave **pública** embebida en los cuatro archivos que la llevan (ver paso 4)
   coincide con la privada guardada en `MINISIGN_SECRET_KEY`. El consumidor
   verifica la firma *fail-closed*: si la clave pública no coincide con la que
@@ -25,6 +26,15 @@
 Crear un repositorio **público** llamado `demiurgos-releases` (nombre de trabajo
 `<owner>/demiurgos-releases`). El repo privado del código **no** se toca: el
 canal publica artefactos, no fuente del repositorio.
+
+La rama `main` de ese repo es el **árbol plano del canal**, servido por
+`https://raw.githubusercontent.com/<owner>/demiurgos-releases/main`. El workflow
+la clona en cada publicación y le agrega: los `scripts/` (core, verificador,
+provision de Hermes), `uv/` con los cuatro archives del `UV_VERSION` pineado,
+`uv-shas.env` (el SHA-256 de cada uno, cubierto por la firma), los cuatro
+payloads, `version.json`, `SHA256SUMS` + `SHA256SUMS.minisig` y los punteros
+`latest` / `latest-beta`. No hace falta crear nada a mano: la primera
+publicación arma la rama.
 
 ## 2. Generar la clave de firma
 
@@ -80,8 +90,10 @@ git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
 El pipeline construye el frontend una sola vez, empaqueta por sistema, audita el
-payload, firma `SHA256SUMS`, publica en el canal con `--repo` explícito, y
-**solo si** el smoke anónimo posterior pasa, mueve `latest`.
+payload, arma el árbol del canal, lo firma y lo empuja a la rama `main`
+**sin mover los punteros**, publica la release de GitHub para trazabilidad y
+**solo si** el smoke anónimo posterior instala desde la rama pública y arranca,
+un job aparte mueve `latest` (estable) o `latest-beta` (prerelease).
 
 Para la regla de **qué número** subir (PATCH o MINOR) y el canal según `beta`,
 ver `docs/RELEASING.md`. El procedimiento operativo del agente (pasos, checklist,
@@ -92,8 +104,8 @@ clasificación por tag) vive en la skill `skills/release-protocol/SKILL.md`.
 Sin credenciales, desde una máquina limpia:
 
 ```bash
-curl -fsSL https://github.com/maar1223/demiurgos-releases/releases/latest/download/install.sh -o install.sh
-sha256sum install.sh            # comparar con lo publicado
+curl -fsSL https://raw.githubusercontent.com/maar1223/demiurgos-releases/main/install.sh -o install.sh
+sha256sum install.sh            # comparar con lo publicado en SHA256SUMS
 ```
 
 Después: instalar de verdad, arrancar y comprobar `/health` y `/`. **Si esto no

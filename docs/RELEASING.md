@@ -35,6 +35,41 @@ canales con los nombres visibles **Recomendado** y **Anticipado**; el valor que
 la app guarda sigue siendo `Estable`/`Beta`, así que el nombre visible nunca se
 persiste ni viaja por la API.
 
+## El canal publicado (qué se sirve)
+
+El instalador y el actualizador leen una rama pública, no la descarga de la
+release:
+
+```
+https://raw.githubusercontent.com/maar1223/demiurgos-releases/main
+```
+
+Ese árbol plano contiene:
+
+| Ruta | Para qué |
+|---|---|
+| `install.sh` / `install.ps1` | el bootstrap de un solo comando |
+| `scripts/install-demiurgos.{sh,ps1}` | el core versionado |
+| `scripts/lib/verify_checksum.*` | verificación de firma y checksums |
+| `scripts/provision-hermes.*` | runtime conversacional (verificado antes de ejecutar) |
+| `uv/uv-<target>-<UV_VERSION>.(tar.gz|zip)` | toolchain pineado por plataforma |
+| `uv-shas.env` | SHA-256 de cada uv archive, cubierto por la firma |
+| `demiurgos-app-<ver>-<cell>.(tar.gz|zip)` | payload por celda (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `windows-amd64`) |
+| `version.json` | nombres de payload por plataforma (compatibilidad) |
+| `SHA256SUMS` + `SHA256SUMS.minisig` | manifiesto firmado de **todo** el árbol |
+| `latest` / `latest-beta` | punteros de versión por canal |
+
+Reglas del pipeline:
+
+- `SHA256SUMS` se regenera sobre el árbol completo en cada publicación, así una
+  instalación anclada a una versión vieja sigue verificando y funcionando.
+- El árbol se empuja **sin** mover los punteros. El smoke anónimo instala desde
+  la rama pública real (sin fixture ni override de checksum) y arranca `/health`
+  y `/`; recién entonces un job aparte mueve `latest` (estable) o `latest-beta`
+  (prerelease). Un prerelease nunca toca `latest`.
+- El `UV_VERSION` pineado vive en `.github/workflows/release.yml`; los archivos
+  `uv-shas.env` se derivan de esos mismos bytes, no se escriben a mano.
+
 ## Betas
 
 Primero `0.3.0-beta.1`, después `0.3.0-beta.2`, y así. Cuando la beta cumple los

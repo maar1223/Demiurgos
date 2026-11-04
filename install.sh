@@ -42,12 +42,16 @@ DEMIURGOS_HOME="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
 # profile == root in Hermes).
 DEMIURGOS_HERMES_HOME="${DEMIURGOS_HERMES_HOME:-${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes}"
 DEMIURGOS_VERSION="${DEMIURGOS_VERSION:-latest}"
-# Public releases channel base. Both the channel owner and the private source
-# owner are built from parts so no private address appears verbatim (D1/S4-4);
-# the channel is a DIFFERENT repo from the private source.
+# Public releases channel base: a raw BRANCH root, not the GitHub release
+# download URL. The branch is a flat tree (scripts/, uv/, payloads, version.json,
+# SHA256SUMS + signature, latest/latest-beta pointers), so every installer fetch
+# is a plain "<base>/<path>". Both the channel owner and the private source owner
+# are built from parts so no private address appears verbatim (D1/S4-4); the
+# channel is a DIFFERENT repo from the private source.
 CHANNEL_OWNER="maar12""23"
 CHANNEL_REPO="demiurgos-releases"
-DEMIURGOS_URL_BASE="${DEMIURGOS_URL_BASE:-https://github.com/${CHANNEL_OWNER}/${CHANNEL_REPO}}"
+CHANNEL_BRANCH="main"
+DEMIURGOS_URL_BASE="${DEMIURGOS_URL_BASE:-https://raw.githubusercontent.com/${CHANNEL_OWNER}/${CHANNEL_REPO}/${CHANNEL_BRANCH}}"
 # Private source repo for the CLI-stack opt-in (author tooling). Built from
 # parts so the private URL never appears verbatim in this public bootstrap.
 DEMIURGOS_REPO_OWNER="maar12""23"
@@ -556,8 +560,8 @@ no compiler, no pre-installed Python/Node, no private source clone.
                        Env equivalent: DEMIURGOS_WITH_CLI_STACK=1
 
 Env:
-  DEMIURGOS_URL_BASE   public channel base (default: the public releases
-                       channel; https:// or file:// for hermetic tests)
+  DEMIURGOS_URL_BASE   public channel base (default: the public raw branch;
+                       https:// or file:// for hermetic tests)
   DEMIURGOS_VERSION    pinned app version; default `latest`
   DEMIURGOS_HOME       install root; default ~/.demiurgos
 USAGE
