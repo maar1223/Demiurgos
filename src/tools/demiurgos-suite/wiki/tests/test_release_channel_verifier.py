@@ -12,6 +12,7 @@ Actions runtime, and no live release is claimed.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -29,14 +30,32 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _function_source(name: str) -> str:
+    """Extract one shell function from the core, for a portable bash probe.
+
+    Python extraction (not a sed range) keeps the probe identical on GNU and
+    BSD userlands: a BSD ``sed`` range produced an empty script on the macOS CI
+    runner, turning the probe into an unknown command (exit 127).
+    """
+    text = INSTALLER.read_text(encoding="utf-8")
+    match = re.search(
+        rf"^{re.escape(name)}\(\) \{{.*?^\}}", text, re.MULTILINE | re.DOTALL
+    )
+    assert match, f"{name}() not found in {INSTALLER.name}"
+    return match.group(0)
+
+
 def _payload_cell(os_name: str, arch: str) -> str:
     """Run the core's own ``payload_cell`` with a simulated host."""
-    script = (
-        'source <(sed -n "/^uv_arch()/,/^}/p;/^payload_cell()/,/^}/p" "$1"); '
-        'OS="$2"; ARCH="$3"; payload_cell'
+    script = "\n".join(
+        [
+            _function_source("uv_arch"),
+            _function_source("payload_cell"),
+            f'OS="{os_name}"; ARCH="{arch}"; payload_cell',
+        ]
     )
     result = subprocess.run(
-        ["bash", "-c", script, "_", str(INSTALLER), os_name, arch],
+        ["bash", "-c", script],
         capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
