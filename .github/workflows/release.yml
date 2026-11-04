@@ -506,8 +506,12 @@ jobs:
           # and any payload from an older release stay listed and verifiable.
           # '%P' yields names without './', exactly what the installer's
           # sha_for parser matches. The manifest and its signature are excluded.
+          # The pointers are excluded: they move AFTER signing in the pointer
+          # job, so listing them here would leave a stale manifest on the
+          # branch. They carry only a version string and are never fetch-verified.
           find . -path ./.git -prune -o -type f \
-            ! -name SHA256SUMS ! -name SHA256SUMS.minisig -printf '%P\0' \
+            ! -name SHA256SUMS ! -name SHA256SUMS.minisig \
+            ! -name latest ! -name latest-beta -printf '%P\0' \
             | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
           sha256sum -c SHA256SUMS >/dev/null
           keyfile="$RUNNER_TEMP/minisign.key"

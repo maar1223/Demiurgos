@@ -231,12 +231,18 @@ uv_target() {
 }
 
 payload_cell() {
-    # Package-cell name used by the channel artifacts (S2 release pipeline),
-    # derived from the SAME detection the floors use. Intel macOS and musl are
-    # rejected earlier by check_floors, so they never reach this mapping.
+    # Package-cell name used by the channel artifacts (S2 release pipeline). It
+    # is NOT a mechanical transform of uv_target: the release matrix publishes
+    # `macos-arm64` while the uv triple says `aarch64`, and a mismatch would
+    # silently install the Linux payload (or fail with no matching entry).
     case "$OS" in
         Linux) printf 'linux-%s\n' "$(uv_arch)" ;;
-        Darwin) printf 'macos-%s\n' "$(uv_arch)" ;;
+        Darwin)
+            case "$(uv_arch)" in
+                aarch64) printf 'macos-arm64\n' ;;
+                *) fail "unsupported macOS architecture: $(uv_arch) (Demiurgos requires Apple Silicon)" ;;
+            esac
+            ;;
         *) fail "unsupported OS: $OS (this core covers Linux and macOS; Windows is S3b)" ;;
     esac
 }
@@ -322,9 +328,17 @@ sha_for() {  # sums_file name -> first sha256 for name
 
 resolve_version() {
     if [ "$VERSION" = "latest" ]; then
-        VERSION="$(download_stdout "$URL_BASE/latest" | tr -d '[:space:]' | sed -n '1p')"
+        VERSION="$(download_stdout "$URL_BASE/latest" 2>/dev/null | tr -d '[:space:]' | sed -n '1p' || true)"
+        if [ -z "$VERSION" ]; then
+            # A channel with no stable release yet (beta-first): resolve the
+            # beta pointer explicitly and SAY SO, instead of failing a default
+            # install against a pointer that does not exist.
+            VERSION="$(download_stdout "$URL_BASE/latest-beta" 2>/dev/null | tr -d '[:space:]' | sed -n '1p' || true)"
+            [ -n "$VERSION" ] \
+                && printf 'install-demiurgos: note: no stable pointer yet; installing from the beta pointer %s\n' "$VERSION" >&2
+        fi
     fi
-    [ -n "$VERSION" ] || fail "could not resolve a version from $URL_BASE/latest; set DEMIURGOS_VERSION explicitly and re-run"
+    [ -n "$VERSION" ] || fail "could not resolve a version from $URL_BASE/latest (and no latest-beta fallback); set DEMIURGOS_VERSION explicitly and re-run"
     printf 'install-demiurgos: resolved version %s\n' "$VERSION" >&2
 }
 

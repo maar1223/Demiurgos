@@ -56,17 +56,22 @@ Ese árbol plano contiene:
 | `uv-shas.env` | SHA-256 de cada uv archive, cubierto por la firma |
 | `demiurgos-app-<ver>-<cell>.(tar.gz|zip)` | payload por celda (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `windows-amd64`) |
 | `version.json` | nombres de payload por plataforma (compatibilidad) |
-| `SHA256SUMS` + `SHA256SUMS.minisig` | manifiesto firmado de **todo** el árbol |
-| `latest` / `latest-beta` | punteros de versión por canal |
+| `SHA256SUMS` + `SHA256SUMS.minisig` | manifiesto firmado de todos los artefactos del árbol |
+| `latest` / `latest-beta` | punteros de versión por canal (no van en el manifiesto) |
 
 Reglas del pipeline:
 
-- `SHA256SUMS` se regenera sobre el árbol completo en cada publicación, así una
-  instalación anclada a una versión vieja sigue verificando y funcionando.
+- `SHA256SUMS` se regenera sobre el árbol completo en cada publicación (sin los
+  punteros, que se mueven después de firmar), así una instalación anclada a una
+  versión vieja sigue verificando y funcionando.
 - El árbol se empuja **sin** mover los punteros. El smoke anónimo instala desde
   la rama pública real (sin fixture ni override de checksum) y arranca `/health`
   y `/`; recién entonces un job aparte mueve `latest` (estable) o `latest-beta`
-  (prerelease). Un prerelease nunca toca `latest`.
+  (prerelease). Un prerelease nunca toca `latest`; el puntero del otro canal
+  queda intacto.
+- Si el canal todavía no tiene ningún release estable (`latest` ausente), el
+  instalador resuelve `latest-beta` y lo avisa en pantalla. Es el único caso en
+  que un `DEMIURGOS_VERSION=latest` implícito instala una beta.
 - El `UV_VERSION` pineado vive en `.github/workflows/release.yml`; los archivos
   `uv-shas.env` se derivan de esos mismos bytes, no se escriben a mano.
 

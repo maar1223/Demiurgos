@@ -252,10 +252,21 @@ function Get-ShaFor([string]$sumsFile, [string]$name) {
 
 function Resolve-Version {
     if ($script:version -eq "latest") {
-        $script:version = (Get-DownloadStdout "$urlBase/latest").Trim()
+        $resolved = $null
+        try { $resolved = (Get-DownloadStdout "$urlBase/latest").Trim() } catch { $resolved = $null }
+        if (-not $resolved) {
+            # A channel with no stable release yet (beta-first): resolve the
+            # beta pointer explicitly and SAY SO, instead of failing a default
+            # install against a pointer that does not exist.
+            try { $resolved = (Get-DownloadStdout "$urlBase/latest-beta").Trim() } catch { $resolved = $null }
+            if ($resolved) {
+                Write-Host "install-demiurgos: note: no stable pointer yet; installing from the beta pointer $resolved"
+            }
+        }
+        $script:version = $resolved
     }
     if (-not $script:version) {
-        Fail "could not resolve a version from $urlBase/latest; set DEMIURGOS_VERSION explicitly and re-run"
+        Fail "could not resolve a version from $urlBase/latest (and no latest-beta fallback); set DEMIURGOS_VERSION explicitly and re-run"
     }
     Write-Host "install-demiurgos: resolved version $script:version"
 }
@@ -366,6 +377,12 @@ function Import-UvChecksums {
     if (-not (Verify-Sha256 -FilePath $file -Expected $expected)) {
         Fail "checksum mismatch for uv-shas.env; the download is corrupt or tampered - fix the channel and re-run"
     }
+    $allowed = @(
+        "UV_SHA_X86_64_LINUX_GNU", "UV_SHA_AARCH64_LINUX_GNU",
+        "UV_SHA_X86_64_LINUX_MUSL", "UV_SHA_AARCH64_LINUX_MUSL",
+        "UV_SHA_X86_64_DARWIN", "UV_SHA_AARCH64_DARWIN",
+        "UV_SHA_X86_64_WINDOWS_MSVC"
+    )
     foreach ($raw in Get-Content -LiteralPath $file) {
         $line = "$raw".Trim()
         if (-not $line -or $line.StartsWith("#")) { continue }
@@ -373,7 +390,7 @@ function Import-UvChecksums {
         if ($parts.Count -ne 2) { continue }
         $key = $parts[0].Trim()
         $value = $parts[1].Trim()
-        if ($key -notmatch '^UV_SHA_[A-Z0-9_]+$') { continue }
+        if ($allowed -notcontains $key) { continue }
         if ($value -notmatch '^[0-9a-fA-F]{64}$') {
             Fail "uv-shas.env has a malformed sha256 for $key; fix the channel and re-run"
         }

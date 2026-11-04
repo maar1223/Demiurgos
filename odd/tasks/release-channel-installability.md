@@ -16,7 +16,10 @@ Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for 
   `scripts/provision-hermes.sh`, `scripts/provision-hermes.ps1`,
   `uv/uv-<uv_target>-<uv_version>.(tar.gz|zip)` for the four supported targets,
   `uv-shas.env`, the four `demiurgos-app-<version>-<cell>.(tar.gz|zip)` payloads,
-  `version.json`, `SHA256SUMS`, `SHA256SUMS.minisig`, `latest`, `latest-beta`.
+  `version.json`, `SHA256SUMS`, `SHA256SUMS.minisig`, and the `latest` / `latest-beta`
+  pointers. Each publish writes only its classified pointer and leaves the other intact;
+  pointers are excluded from the signed manifest (they move after signing). When no stable
+  release exists yet, a default install resolves `latest-beta` and prints a note.
 - **S3** `uv-shas.env` holds one `KEY=<64 lowercase hex>` line per supported uv target:
   `UV_SHA_X86_64_LINUX_GNU`, `UV_SHA_AARCH64_LINUX_GNU`, `UV_SHA_AARCH64_DARWIN`,
   `UV_SHA_X86_64_WINDOWS_MSVC`, each the SHA-256 of that archive, with `UV_VERSION=0.5.24`.
@@ -38,9 +41,11 @@ Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for 
   version; a prerelease tag moves only `latest-beta` and leaves `latest` untouched.
 - **S8** Payload selection is platform-correct: POSIX picks
   `demiurgos-app-<version>-<cell>.<ext>` from `SHA256SUMS` for `linux-x86_64`,
-  `linux-aarch64` or `macos-arm64` (host-derived); Windows picks `windows-amd64`. When that
-  entry is absent (older channels), both cores fall back to `version.json` and then to the
-  legacy flat name, so old fixtures/channels keep installing.
+  `linux-aarch64` or `macos-arm64` (host-derived, with the release matrix's own cell
+  names — `macos-arm64`, never a mechanical arch transform); Windows picks
+  `windows-amd64`. When that entry is absent (older channels), both cores fall back to
+  `version.json` and then to the legacy flat name, so old fixtures/channels keep
+  installing.
 - **S9** Docs match the shipped commands: `docs/install/ONE_SCREEN_GUIDE.md` uses the raw
   branch one-liners; `docs/RELEASING.md` describes the channel tree and the two pointers.
 - **S10** Tests pin S1, S3, S4, S8: uv-shas.env verified+parsed, tampered/missing/invalid
@@ -54,7 +59,7 @@ Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for 
 - T3 — raw-branch defaults in both bootstraps and the updater (S1). Route: inline. **Done**; `test_bootstrap_defaults_to_the_raw_channel_branch`, `test_default_channel_url_is_the_raw_channel_branch`.
 - T4 — release workflow: channel tree assembly, uv archives, uv-shas.env, full-tree signing, branch push, release assets, real-channel smoke, pointer job (S2, S5, S6, S7). Route: inline. **Done**; `test_channel_tree_is_the_documented_flat_branch`, `test_smoke_installs_from_the_real_raw_channel`, updated beta-gate tests.
 - T5 — docs (S9). Route: inline. **Done**: install one-liners on the raw branch; RELEASING channel-tree section; runbook updated.
-- T6 — tests + full suite + independent verification (S10). Route: inline + verifier. **In progress**: suite 4879 passed / 26 skipped with the one stale payload-audit expectation, fixed and re-run green (65 passed / 6 skipped).
+- T6 — tests + full suite + independent verification (S10). Route: inline + verifier. **Done**: 4888 passed / 26 skipped after the correction batch; independent verifier reported S1/S3/S4/S5/S6/S7/S9 met, and its two blockers (S8 cell name, S2 beta-first pointer) were fixed with committed regression tests.
 
 ## Log
 
@@ -86,3 +91,20 @@ Runners: `pytest src/tools/demiurgos-suite/wiki/tests/` (backend), `gh run` for 
   implementation, so no RED was captured for them. A real RED was observed for the stale
   `test_payload_audit.py` expectation after the behavior changed, and it was corrected against
   the new contract.
+- **VER1** Independent verification (gentle-ai-verify) reported two blockers and three advisories.
+  Fixed in the correction batch:
+  - **S8 blocker** — the core derived `macos-aarch64` while the matrix publishes `macos-arm64`,
+    so Apple Silicon fell back to the Linux payload or failed closed. `payload_cell` now maps
+    Darwin arm64 to `macos-arm64` (no arch transform), the fixture helper matches, and
+    `test_release_channel_verifier.py` pins every matrix cell against the core's own derivation.
+  - **S2 blocker** — a beta-first channel left `latest` absent and the default install
+    unresolvable. Both cores now fall back to `latest-beta` with a visible note when no stable
+    pointer exists; pointers stay out of the signed manifest (they move after signing), and the
+    pointer job writes only the classified pointer. Regression tests: version-fallback cells in
+    `test_installer_contract.py`, pointer contract in `test_release_channel_verifier.py`.
+  - **Advisory** — Windows uv-shas whitelist tightened to the same explicit key list as POSIX.
+  - **Advisory** — pointer/manifest drift removed by excluding `latest`/`latest-beta` from
+    `SHA256SUMS`; documented in `docs/RELEASING.md`.
+  - **Accepted as out of scope** — `scripts/provision-hermes.*` contains the literal private
+    address; pre-existing at the baseline and outside the bootstrap scope.
+- **E4** Full backend suite after the correction batch: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q` -> 4888 passed, 26 skipped (330.99s). `bash -n` both cores and the workflow YAML parse are green; Windows execution is unverified on this host (no pwsh).
