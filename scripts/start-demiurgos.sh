@@ -335,6 +335,22 @@ command_of_pid() {
     fi
 }
 
+# The pinned runtime's launcher execs a Python wrapper whose argv ends with
+# `gateway run`; only older direct builds carry the literal `hermes gateway
+# run`. Match both shapes, but never an arbitrary foreign `... gateway run`
+# (the broad form also requires a Hermes path/module in the command line).
+is_gateway_cmdline() {
+    case "$1" in
+        *"hermes gateway run"*) return 0 ;;
+        *"gateway run"*)
+            case "$1" in
+                *"hermes_cli"*|*"hermes-agent"*) return 0 ;;
+            esac
+            ;;
+    esac
+    return 1
+}
+
 owned_pid() {
     local name="$1" pid file cmdline
     file="$(pid_file "$name")"
@@ -347,7 +363,7 @@ owned_pid() {
     [ -n "$cmdline" ] || return 1
     case "$name" in
         api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] ;;
-        gateway) [[ "$cmdline" == *"hermes gateway run"* ]] ;;
+        gateway) is_gateway_cmdline "$cmdline" ;;
         *) return 1 ;;
     esac
 }
@@ -396,7 +412,7 @@ _validate_cmdline_for_name() {
     cmdline="$(command_of_pid "$pid")"
     case "$name" in
         api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] || return 1 ;;
-        gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
+        gateway) is_gateway_cmdline "$cmdline" || return 1 ;;
         *) return 1 ;;
     esac
 }
