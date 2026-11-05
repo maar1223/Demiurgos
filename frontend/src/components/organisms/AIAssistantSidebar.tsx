@@ -381,7 +381,7 @@ function ChatScreen({
     if (!consentMethodTouched) {
       setConsentMethodId(
         consentFlowKey === "character"
-          ? (guidedMethodDefault?.skill_id ?? "factory")
+          ? (guidedMethodDefault?.skill_id ?? guidedMethods[0]?.skill_id ?? "factory")
           : (guidedMethodDefault?.skill_id ?? guidedMethods[0]?.skill_id ?? ""),
       );
     }
@@ -700,7 +700,7 @@ function ChatScreen({
                     disabled={isSending}
                     className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
                   >
-                    {consentFlowKey === "character" && (
+                    {consentFlowKey === "character" && guidedMethods.length === 0 && (
                       <option value="factory">{t("guided.methodFactory")}</option>
                     )}
                     {guidedMethods.map((method) => (

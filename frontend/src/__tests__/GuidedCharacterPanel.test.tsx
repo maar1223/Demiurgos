@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GuidedCharacterPanel } from "@/components/organisms/GuidedCharacterPanel";
+import { getGuidedMethods } from "@/api/methodologies";
 import { useGuidedCharacter } from "@/hooks/useGuidedCharacter";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
@@ -25,6 +26,7 @@ vi.mock("@/api/methodologies", () => ({
 
 const useGuidedCharacterMock = vi.mocked(useGuidedCharacter);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
+const getGuidedMethodsMock = vi.mocked(getGuidedMethods);
 
 /** The hook returns `{ language, t }` (AD-3); `t` resolves the real catalogue. */
 const lang = (language: "es" | "en") => ({
@@ -106,7 +108,24 @@ describe("GuidedCharacterPanel", () => {
     });
   });
 
-  it("defaults to the factory method and shows it before the session starts (S6)", async () => {
+  it("defaults to the published foundational method before the session starts (S6)", async () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      session: null,
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-character-creation");
+    expect(
+      screen.queryByRole("option", { name: /Predeterminado/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the hidden factory contract as a fallback when no method is published", async () => {
+    getGuidedMethodsMock.mockResolvedValueOnce({ methods: [], default: null });
     useGuidedCharacterMock.mockReturnValue({
       ...baseState(),
       session: null,
@@ -118,7 +137,7 @@ describe("GuidedCharacterPanel", () => {
     });
     expect(select).toHaveValue("factory");
     expect(
-      screen.getByRole("option", { name: "De fábrica (Creación de Personajes)" }),
+      screen.getByRole("option", { name: "Predeterminado (Creación de Personajes)" }),
     ).toBeInTheDocument();
   });
 

@@ -37,7 +37,13 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
       .then((response) => {
         if (cancelled) return;
         setMethods(response.methods);
-        if (response.default) setMethodId(response.default.skill_id);
+        if (response.default) {
+          setMethodId(response.default.skill_id);
+        } else if (response.methods[0]) {
+          // The published foundational method is the official default; the
+          // builtin factory contract stays only as a hidden fallback.
+          setMethodId(response.methods[0].skill_id);
+        }
       })
       .catch(() => {
         /* Keep the factory option; the server still validates the choice. */
@@ -115,7 +121,9 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
               disabled={guided.isLoading}
               className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
             >
-              <option value="factory">{t("guided.methodFactory")}</option>
+              {methods.length === 0 && (
+                <option value="factory">{t("guided.methodFactory")}</option>
+              )}
               {methods.map((method) => (
                 <option key={method.skill_id} value={method.skill_id}>
                   {method.name} (v{method.version})

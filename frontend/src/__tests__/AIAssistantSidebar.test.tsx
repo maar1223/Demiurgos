@@ -797,6 +797,48 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(false);
   });
 
+  it("preselects the published foundational character method and hides the factory option (S6)", async () => {
+    const resolveGuidedConsent = vi.fn();
+    getGuidedMethodsMock.mockResolvedValueOnce({
+      methods: [
+        {
+          skill_id: "narrative-character-creation",
+          version: "1.3",
+          name: "Creación de Personajes",
+        },
+      ],
+      default: { skill_id: "narrative-character-creation", version: "1.3" },
+      flow: "guided-character",
+    });
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        createdAt: 1,
+        consentToken: "ct-char",
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const select = await screen.findByRole("combobox", {
+      name: "Método de esta sesión",
+    });
+    expect(select).toHaveValue("narrative-character-creation");
+    expect(
+      screen.queryByRole("option", { name: /Predeterminado/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
+      skill_id: "narrative-character-creation",
+      version: "1.3",
+    });
+  });
+
   it("renders flow-specific copy and methods for a declared flow (S3)", async () => {
     const resolveGuidedConsent = vi.fn();
     getGuidedMethodsMock.mockResolvedValueOnce({
@@ -1074,7 +1116,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
 
     render(<AIAssistantSidebar mundo="Vibrantes" />);
     expect(
-      screen.getByText("Método: De fábrica (Creación de Personajes)"),
+      screen.getByText("Método: Predeterminado (Creación de Personajes)"),
     ).toBeInTheDocument();
   });
 
