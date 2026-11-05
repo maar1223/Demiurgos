@@ -101,6 +101,56 @@ cumplen **todos** estos criterios:
 Si falta cualquiera, se publica otra `-beta.N` en el canal Anticipado. Nunca se
 mueve `latest` con una beta: la promoción es el tag sin `beta`.
 
+## Ritmo de publicación: lotes y hotfixes
+
+No se publica por cada commit ni se acumula sin criterio. La unidad de
+publicación es un **lote coherente**: uno o varios cambios relacionados que el
+usuario puede entender como un paquete.
+
+- **Hotfix inmediato (PATCH).** Se publica en cuanto está verificado si el
+  problema bloquea: instalación o arranque roto, seguridad, pérdida de datos,
+  asistente imposible de configurar, o el launcher no puede gestionar sus
+  servicios. El hotfix lleva solo el fix y sus tests; nada de cambios ajenos.
+- **Lote normal.** Copy, UX, refactors y features chicas se agrupan. Como guía,
+  3-5 cambios relacionados o una feature completa con sus fixes. Se publica
+  cuando el lote está cerrado y verificado, no cuando "hay algo que subir".
+- **Beta para lo riesgoso.** Un lote con cambios de comportamiento o de datos
+  va primero a `-beta.N` en el canal Anticipado; el estable se mueve después del
+  soak y el checklist.
+
+En Alfa, un tren cada una o dos semanas es un buen equilibrio. Dos releases el
+mismo día es la excepción que confirma la regla: significa que la versión
+anterior salió con un hueco de verificación (por ejemplo, la gestión del
+launcher en `0.2.5`, corregida en `0.2.6`).
+
+## Checklist antes de publicar
+
+Se completa **antes** de crear el tag. Si algo falla, no se publica; se corrige
+o se saca del lote.
+
+- [ ] `master` es el código a entregar, el árbol está limpio y, si ya se
+      pusheó, `master == origin/master`.
+- [ ] Suite completa de backend:
+      `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q`.
+- [ ] Frontend: `cd frontend && npm run typecheck && npm test -- --run`.
+- [ ] Instalación limpia desde el canal público (HOME temporal o máquina
+      limpia) con la versión candidata: instala, arranca `/health` y `/`.
+- [ ] Ciclo del launcher: `start-demiurgos.sh start`, `stop` y `restart`.
+      `stop` debe detener la API **y** el gateway de Hermes; `start` debe
+      levantarlos. Repetir en Windows si el lote tocó el launcher
+      (`start-demiurgos.ps1` / `start-gateway.ps1`).
+- [ ] Asistente: perfil dedicado con `config.yaml` y `.env`
+      (`API_SERVER_ENABLED=true`, `API_SERVER_KEY`); gateway `/health` 200;
+      `GET /api/profile/assistant` responde 200 (no 503) con una sesión válida y
+      el guardado desde la UI funciona.
+- [ ] Selector de método guiado: solo el método fundacional publicado (hoy 1.3),
+      sin "De fábrica"; el método que se envía es la versión publicada.
+- [ ] Menú de escritorio con `Terminal=false`.
+- [ ] Smoke post-publicación del workflow en verde y punteros del canal
+      (`latest`/`latest-beta`) en el valor esperado.
+- [ ] Sin secretos en logs, capturas ni artefactos; `git status` sin archivos
+      sueltos.
+
 ## Cómo se publica
 
 ```bash
@@ -128,6 +178,8 @@ su árbol de dependencias, pero el aviso viaja igual en el payload.
 - Publicar es **público**: requiere **pedido explícito del Owner**.
 - Se publica **solo desde el código a entregar** (la rama principal, `master`).
 - El robot **rebota** (falla) una beta que intente caer en el canal **Recomendado**.
+- Publicar por **lote coherente**, no por commit. Un hotfix solo para un fallo que bloquea.
+- Completar el **checklist antes del tag**; en particular, probar `start`/`stop`/`restart` del launcher.
 
 ## Quién lo hace
 

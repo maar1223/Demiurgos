@@ -45,6 +45,15 @@ v0.<MINOR>.<PATCH>
 
 El número es la única decisión de contenido; **no se edita ningún archivo** para "subir la versión".
 
+## Ritmo: lotes y hotfixes
+
+La unidad de publicación es un **lote coherente**, no un commit ni una fecha fija.
+
+- **Hotfix inmediato (PATCH)** solo si bloquea: instalación/arranque roto, seguridad, pérdida de datos, asistente imposible de configurar, o el launcher no puede gestionar sus servicios. El hotfix lleva solo el fix y sus tests.
+- **Lote normal:** 3-5 cambios relacionados o una feature completa con sus fixes. Copy, UX y refactors se agrupan.
+- **Beta** para lotes riesgosos (comportamiento o datos); el estable se mueve después del soak y el checklist.
+- En Alfa, un tren cada una o dos semanas más hotfixes es el equilibrio. Dos releases el mismo día es la excepción; si pasa, faltó un punto en el checklist.
+
 ## Canal Automático
 
 El canal **no se elige a mano**: lo decide el nombre del tag.
@@ -65,6 +74,7 @@ Permite publicar versiones de prueba antes de estabilizar:
 
 El agente los ejecuta **solo** con pedido explícito del Owner:
 
+0. **Completar el checklist pre-release:** suites completas de backend y frontend, instalación limpia desde el canal, ciclo `start`/`stop`/`restart` del launcher (API **y** gateway), asistente configurable, selector de método con el fundacional 1.3, menú `Terminal=false`, sin secretos en artefactos.
 1. **Confirmar el código**: verificar que se publica desde la rama principal (`master`) y que el código a publicar es el correcto.
 2. **Elegir el número**: aplicar la regla de arriba (PATCH o MINOR; `beta` si corresponde).
 3. **Tag + push**:
@@ -92,6 +102,9 @@ El tag `v*` es la **única autoridad**. La mecánica verificada:
 - **Verificar el canal resultante** después de publicar (Recomendado en `latest`; Anticipado en `latest-beta`).
 - Publicar **solo desde el código a entregar** (la rama principal, `master`).
 - Publicar **solo** con pedido explícito del Owner.
+- Publicar por **lote coherente**, no por commit; hotfix solo si bloquea.
+- Probar **`start`/`stop`/`restart`** del launcher antes del tag: debe detener y levantar la API y el gateway.
+- Verificar **instalación limpia** y **asistente configurable** antes de mover `latest`.
 
 ## Referencias
 
