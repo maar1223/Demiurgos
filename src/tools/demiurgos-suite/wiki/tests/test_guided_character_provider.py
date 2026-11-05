@@ -225,9 +225,11 @@ def test_production_adapter_probes_capabilities_and_invokes_structured_run() -> 
         assert submitted["session_id"] == "session-1"
         assert "Rhyz is a patient tactician." in submitted["input"]
         assert "filesystem" in submitted["input"]
-        assert "exactly one concise question at a time" in submitted["input"]
-        assert "no more than 5 useful options" in submitted["input"]
-        assert "recite the ficha" in submitted["input"]
+        assert "This is a conversation, not an interrogation." in submitted["input"]
+        assert "write the 'synthesis' field" in submitted["input"]
+        assert "Options are optional and a LAST RESORT" in submitted["input"]
+        assert "World lore (verified, read-only):" in submitted["input"]
+        assert "Known so far (never ask these again):" in submitted["input"]
 
     asyncio.run(scenario())
 
@@ -646,25 +648,11 @@ class TestConvergenceSpecimenB4:
             )
             assert prompts[0] == prompts[1]
             assert "[Convergence specimen" not in prompts[0]
-            expected = (
-                "Act as the guided character provider. Return ONLY one JSON object — "
-                "no markdown fences, no code blocks — matching the "
-                f"{PROTOCOL_VERSION} response envelope. Use request_id "
-                '"request-1" and session_id "session-1". '
-                "The outcome must be question or delta; never claim author acceptance. "
-                "For a question, ask exactly one concise question at a time. Keep it to one or "
-                "two short sentences and provide no more than 5 useful options. "
-                "Do not add long explanations or recite the ficha; use the reference silently. "
-                "You have no filesystem, graph, or credential access. Use only the bounded "
-                "reference material below; do not expose internal paths or provenance. "
-                "Answer all questions and provide all deltas in the same language as the author's input (English). "
-                "Keep the response JSON-only, concise, bounded to the supplied context, and never write or claim approval. "
-                "Turn mode: creation. World: vibrantes. "
-                "Guided mode: full; question depth: standard. "
-                "Verified active ficha reference:\nRhyz is a patient tactician.\n"
-                "Author input: Create a character"
-            )
-            assert prompts[0] == expected
+            assert "This is a conversation, not an interrogation." in prompts[0]
+            assert "ask exactly ONE open, focused question" in prompts[0]
+            assert "World lore (verified, read-only):" in prompts[0]
+            assert "Author input: Create a character" in prompts[0]
+            assert "no more than 5 useful options" not in prompts[0]
 
         asyncio.run(scenario())
 

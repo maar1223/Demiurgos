@@ -20,7 +20,7 @@ from guided_character_protocol import (
 )
 from demiurgos_language import resolve_domain_language
 
-_MAX_QUESTION_OPTIONS = 5
+_MAX_QUESTION_OPTIONS = 3
 
 
 def first_pending_question(text: str) -> str:
@@ -108,6 +108,8 @@ class HermesGuidedProvider:
         convergence_specimen_markdown: str | None = None,
     ) -> object:
         reference = request.reference_context or "(No active ficha reference was provided.)"
+        world_lore = request.world_context or "(No matching world lore was found for this turn.)"
+        known_state = request.known_state or "(Nothing collected yet.)"
         goal_instruction = ""
         if request.relation_goal:
             goal_instruction = (
@@ -143,22 +145,41 @@ class HermesGuidedProvider:
             # already fully built and bounded by the serving seam.
             methodology_context = f"{methodology_context}{convergence_specimen_markdown}"
         prompt = (
-            "Act as the guided character provider. Return ONLY one JSON object — "
+            "Act as the guided co-creation provider. Return ONLY one JSON object — "
             f"no markdown fences, no code blocks — matching the "
             f"{PROTOCOL_VERSION} response envelope. Use request_id "
             f"{json.dumps(request.request_id)} and session_id {json.dumps(request.session_id)}. "
             "The outcome must be question or delta; never claim author acceptance. "
-            "For a question, ask exactly one concise question at a time. Keep it to one or "
-            f"two short sentences and provide no more than {_MAX_QUESTION_OPTIONS} useful options. "
-            "Do not add long explanations or recite the ficha; use the reference silently. "
+            "For a question, return the fields question, synthesis, observations, options "
+            "and allow_custom. "
+            "This is a conversation, not an interrogation. Before asking, write the "
+            "'synthesis' field: 1-3 short sentences that reflect what you have already "
+            "understood, including any correction the author just made. Then ask exactly "
+            "ONE open, focused question. "
+            "When it genuinely helps, include your own reading or proposal inside the "
+            "synthesis, explicitly labeled as a proposal (never as canon). "
+            "Options are optional and a LAST RESORT: include at most "
+            f"{_MAX_QUESTION_OPTIONS}, and only when the author says they do not know, asks "
+            "for help, or the choice is genuinely discrete. Never make options the only "
+            "way to answer; always leave room for free text. "
+            "Put the non-canon facts you extracted from this turn in 'observations' "
+            "(an object of concise keys and values) so the session keeps what was "
+            "collected instead of asking again. "
+            "Never re-ask something already present in 'Known so far'; if the author "
+            "corrected a value, use the corrected value from now on. "
             "You have no filesystem, graph, or credential access. Use only the bounded "
-            "reference material below; do not expose internal paths or provenance. "
+            "reference, world lore and known state below; do not expose internal paths "
+            "or provenance. Treat the world lore as verified canon: never ask the author "
+            "to explain it and never invent details beyond it; if something is not "
+            "present, say so. "
             f"Answer all questions and provide all deltas in the same language as the author's input ({language}). "
             "Keep the response JSON-only, concise, bounded to the supplied context, and never write or claim approval. "
             f"Turn mode: {request.turn_mode}. World: {request.world}. "
             f"Guided mode: {request.guided_mode}; question depth: {request.question_depth}. "
             f"{fast_guidance}"
             f"{methodology_context}"
+            f"Known so far (never ask these again):\n{known_state}\n"
+            f"World lore (verified, read-only):\n{world_lore}\n"
             f"Verified active ficha reference:\n{reference}\n"
             f"{goal_instruction}"
             f"Author input: {request.author_input}"

@@ -280,45 +280,21 @@ def test_installer_never_enables_skills_toolset():
 # -- Legacy channel projection unchanged -------------------------------------
 
 
-def test_legacy_channel_projection_unchanged_vs_merge_base():
-    """Scenario 'Legacy methodology channel is untouched and still serving': the
-    legacy channel projection module (``contract_projection.py``) is
-    byte-unchanged versus the merge base with master.
-
-    The freeze is narrowed to the projection. ``skill_router.py`` is
-    intentionally advanced by the later change ``sistema-foundational-skill``,
-    which routes a transversal foundational skill (``narrative-system-creation``)
-    into the legacy router pool, so its snapshot premise no longer holds. The
-    dormant-legacy presence guard (``test_dormant_legacy_guard.py``) still
-    prevents premature deletion of the legacy channel."""
-    if not GIT_AVAILABLE:
-        pytest.skip("git unavailable")
-
-    base = subprocess.run(
-        ["git", "merge-base", "HEAD", "master"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if base.returncode != 0 or not base.stdout.strip():
-        pytest.skip("merge-base with master unavailable")
-    merge_base = base.stdout.strip()
-
-    # Router excluded: `sistema-foundational-skill` deliberately routes a
-    # transversal foundational skill into skill_router.py, so only the untouched
-    # projection module stays byte-frozen against the merge base.
-    result = subprocess.run(
-        ["git", "diff", "--quiet", merge_base, "--", _PROJECTION],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, (
-        f"legacy channel projection changed vs merge-base {merge_base}: "
-        f"{result.stdout}{result.stderr}"
-    )
+def test_legacy_channel_projection_carries_method_and_conversation_contract():
+    """The legacy projection now carries the authored behavior and the shared
+    conversation contract. It is no longer byte-frozen: the previous freeze
+    protected a projection that dropped the method body, which is exactly the
+    interrogation/lore defect this feature fixes. The legacy channel itself is
+    still the serving path."""
+    out = project_contract_markdown(_published(
+        "narrative-character-creation",
+        foundational=True,
+        source="## Principio 40/60\n\nEl 40/60 es comportamiento, no cuestionario.\n",
+    ))
+    assert "El 40/60 es comportamiento, no cuestionario." in out
+    assert "**Conversation contract**:" in out
+    assert "Options are a last resort: at most 3" in out
+    assert "synthesize in 1-3 lines" in out
 
 
 # -- Native channel flag gates: zero-ON byte-identical across the request matrix

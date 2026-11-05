@@ -94,12 +94,18 @@ class GuidedRequest:
     guided_mode: str = "full"
     question_depth: str = "standard"
     methodology: str | None = None
+    # Server-resolved, read-only world lore for this turn (S2). Bounded by the
+    # same context budget as the reference; the provider cannot fetch it.
+    world_context: str = ""
+    # Compact, server-owned summary of what the author already answered. It
+    # keeps the provider from re-asking resolved facts (S1).
+    known_state: str = ""
 
     def validate(self) -> StructuredError | None:
         if self.protocol_version != PROTOCOL_VERSION or not isinstance(self.reference_context, str) or not all(
             isinstance(value, str) and value.strip() for value in
             (self.request_id, self.session_id, self.world, self.authorization_binding, self.author_input)
-        ) or self.base_revision < 0 or self.context_budget <= 0 or len(self.reference_context) > self.context_budget or (self.reference_name is not None and (not isinstance(self.reference_name, str) or not self.reference_name.strip())) or not isinstance(self.relation_goal, str) or len(self.relation_goal) > self.context_budget or self.turn_mode not in {"creation", "factual"} or self.guided_mode not in {"full", "fast"} or self.question_depth not in {"standard", "fundamental"}:
+        ) or self.base_revision < 0 or self.context_budget <= 0 or len(self.reference_context) > self.context_budget or (self.reference_name is not None and (not isinstance(self.reference_name, str) or not self.reference_name.strip())) or not isinstance(self.relation_goal, str) or len(self.relation_goal) > self.context_budget or not isinstance(self.world_context, str) or len(self.world_context) > self.context_budget or not isinstance(self.known_state, str) or len(self.known_state) > self.context_budget or self.turn_mode not in {"creation", "factual"} or self.guided_mode not in {"full", "fast"} or self.question_depth not in {"standard", "fundamental"}:
             return StructuredError(ErrorCode.INVALID_INPUT, "The guided request is invalid.", False)
         if not 1 <= self.deadline_ms <= MAX_DEADLINE_MS:
             return StructuredError(ErrorCode.INVALID_INPUT, "The deadline is outside the allowed bounds.", False)
@@ -127,6 +133,16 @@ class GuidedResponse:
     provider_run_id: str | None = None
     retryable: bool = False
     error: StructuredError | None = None
+    # S1: a short "what we have so far" reading that accompanies a question.
+    # Optional and bounded; legacy providers that never send it keep the exact
+    # pre-change envelope.
+    synthesis: str | None = None
+    # S1: non-canon observations the provider noticed this turn. Applied to the
+    # candidate proposals (never to canon) so the session accumulates what was
+    # collected instead of starting each question from nothing.
+    observations: Mapping[str, Any] | None = None
+
+    SYNTHESIS_MAX_CHARS = 2_000
 
     @classmethod
     def from_provider(cls, value: object, request: GuidedRequest) -> "GuidedResponse | None":
@@ -147,11 +163,21 @@ class GuidedResponse:
         provenance = value.get("provenance", ())
         if not isinstance(provenance, (list, tuple)) or not all(isinstance(item, str) for item in provenance):
             return None
+        synthesis = value.get("synthesis")
+        if synthesis is not None:
+            if not isinstance(synthesis, str):
+                return None
+            synthesis = synthesis.strip()[: cls.SYNTHESIS_MAX_CHARS] or None
+        observations = value.get("observations")
+        if observations is not None and not isinstance(observations, Mapping):
+            return None
         return cls(PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision, outcome,
                    tuple(provenance), question if isinstance(question, str) else None,
                    dict(delta) if isinstance(delta, Mapping) else None,
                    value.get("provider_run_id") if isinstance(value.get("provider_run_id"), str) else None,
-                   value.get("retryable") is True)
+                   value.get("retryable") is True,
+                   synthesis=synthesis,
+                   observations=dict(observations) if isinstance(observations, Mapping) else None)
 
 
 class MessageType(StrEnum):

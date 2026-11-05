@@ -432,6 +432,8 @@ El motor dejó de estar cableado a personajes. Una metodología publicada declar
 
 **Regla práctica:** los rieles del 40% definen **qué debe ser cierto** antes de avanzar (identidad presente, deseo definido, dato etiquetado, propuesta aprobada). El 60% define **cómo se llega** a que eso sea cierto, con libertad creativa y sin formularios. Las skills editables del usuario codifican rieles y prioridades del 40% y libertad del 60%; **nunca** fuerzan preguntas numeradas. `[ACTUAL — la primera rebanada implementa el gate de mínimos y la exploración adaptativa; el 60% se comporta por contrato de skill, no por código hardcodeado]`.
 
+**Aplicación en runtime (guided-conversation-contract):** la proyección del contrato ya no descarta el cuerpo del método: incluye un extracto acotado y el contrato de conversación compartido. El provider recibe además el **estado conocido** (para no repreguntar) y el **lore del mundo** resuelto en cada turno (para no pedir al Autor que explique su propio canon). La respuesta puede llevar `synthesis` y `observations`: la síntesis se muestra antes de la pregunta y las observaciones se acumulan como propuestas no-canónicas. Aplica a los cuatro flujos guiados y a cualquier skill derivada. `[ACTUAL]`
+
 ---
 
 ## 12. Máquina de estados y ramas de fallo

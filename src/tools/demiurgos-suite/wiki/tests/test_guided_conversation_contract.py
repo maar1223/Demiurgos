@@ -1,0 +1,180 @@
+"""RED/unit tests for the shared guided conversation contract.
+
+Covers: the synthesis/observations envelope extension, its durable commit, the
+synthesis-before-question rendering, the server-owned known-state summary, and
+the bounded world-lore injection that keeps the provider from asking the author
+to explain their own canon.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_WIKI = Path(__file__).resolve().parents[1]
+if str(_WIKI) not in sys.path:
+    sys.path.insert(0, str(_WIKI))
+
+import api_server  # noqa: E402
+from guided_character_protocol import (  # noqa: E402
+    CandidateState,
+    GuidedRequest,
+    GuidedResponse,
+    Outcome,
+    PROTOCOL_VERSION,
+)
+from guided_session_store import GuidedSessionStore  # noqa: E402
+
+
+class TestEnvelope:
+    def test_accepts_synthesis_and_observations(self) -> None:
+        request = _request()
+        response = GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca ahora?",
+            "synthesis": "Lo que llevamos: Ganic saltó años y la deuda lo alcanza.",
+            "observations": {"nombre": "Ganic", "error": "saltó años"},
+        }, request)
+        assert response is not None
+        assert response.synthesis.startswith("Lo que llevamos")
+        assert response.observations == {"nombre": "Ganic", "error": "saltó años"}
+
+    def test_rejects_non_string_synthesis(self) -> None:
+        request = _request()
+        assert GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca ahora?",
+            "synthesis": {"bad": "shape"},
+        }, request) is None
+
+    def test_rejects_non_mapping_observations(self) -> None:
+        request = _request()
+        assert GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca ahora?",
+            "observations": ["not", "a", "mapping"],
+        }, request) is None
+
+
+class TestCommit:
+    def test_commit_persists_synthesis_and_accumulates_observations(self, tmp_path: Path) -> None:
+        store = GuidedSessionStore(tmp_path / "guided.sqlite3")
+        store.create("s1", "Vibrantes", "auth")
+        request = _request(revision=0)
+        response = GuidedResponse(
+            PROTOCOL_VERSION, request.request_id, request.session_id, 0,
+            Outcome.QUESTION, question="¿Qué busca ahora?",
+            synthesis="Lo que llevamos: Ganic saltó años.",
+            observations={"nombre": "Ganic"},
+        )
+        state = store.commit(request, response)
+        assert state is not None
+        assert state.messages[-1].content["synthesis"] == "Lo que llevamos: Ganic saltó años."
+        assert state.messages[-1].content["question"] == "¿Qué busca ahora?"
+        assert "nombre" in state.candidate.proposals
+        assert state.candidate.accepted_canon == {}
+
+
+class TestPublicRendering:
+    def test_synthesis_is_rendered_before_the_question(self) -> None:
+        text = api_server._guided_message_text({
+            "synthesis": "Lo que llevamos: Ganic.",
+            "question": "¿Qué busca?",
+        })
+        assert text == "Lo que llevamos: Ganic.\n\n¿Qué busca?"
+
+    def test_legacy_question_only_renders_unchanged(self) -> None:
+        assert api_server._guided_message_text({"question": "¿Qué busca?"}) == "¿Qué busca?"
+
+
+class TestKnownState:
+    def test_summarizes_accepted_and_proposed_values(self) -> None:
+        candidate = CandidateState(
+            accepted_canon={"nombre": {"value": "Ganic"}},
+            proposals={"error": {"value": "saltó años"}},
+            unknowns=["qué busca"],
+        )
+        text = api_server._guided_known_state(candidate)
+        assert "[accepted] nombre: Ganic" in text
+        assert "[proposed] error: saltó años" in text
+        assert "[unknown] qué busca" in text
+
+
+class TestWorldLore:
+    def test_returns_matching_world_lore(self, monkeypatch) -> None:
+        index = _FakeGraph()
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: index)
+        text = api_server._world_lore_context("Vibrantes", "háblame de Ekkor y su vibrastal")
+        assert "Ekkor" in text
+        assert "Reino septentrional" in text
+        assert index.searches, "the graph must be queried"
+
+    def test_returns_empty_when_nothing_matches(self, monkeypatch) -> None:
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: _FakeGraph())
+        assert api_server._world_lore_context("Vibrantes", "algo inventado sin lore") == ""
+
+    def test_returns_empty_when_graph_is_unavailable(self, monkeypatch) -> None:
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: None)
+        assert api_server._world_lore_context("Vibrantes", "Ekkor") == ""
+
+
+class TestRequestValidation:
+    def test_world_context_over_budget_is_rejected(self) -> None:
+        request = GuidedRequest(
+            PROTOCOL_VERSION, "req", "s1", "Vibrantes", 0, "auth", "hi",
+            context_budget=10, world_context="x" * 11,
+        )
+        error = request.validate()
+        assert error is not None
+        assert error.code.value == "invalid_input"
+
+    def test_known_state_over_budget_is_rejected(self) -> None:
+        request = GuidedRequest(
+            PROTOCOL_VERSION, "req", "s1", "Vibrantes", 0, "auth", "hi",
+            context_budget=10, known_state="x" * 11,
+        )
+        error = request.validate()
+        assert error is not None
+
+
+def _request(revision: int = 0) -> GuidedRequest:
+    return GuidedRequest(
+        PROTOCOL_VERSION, "req-1", "s1", "Vibrantes", revision, "auth",
+        "háblame de Ekkor",
+    )
+
+
+class _FakeGraph:
+    def __init__(self) -> None:
+        self.searches: list[str] = []
+
+    def search(self, query: str) -> list[dict[str, object]]:
+        self.searches.append(query)
+        if "ekkor" in query.casefold() or "vibrastal" in query.casefold():
+            return [{
+                "name": "Ekkor",
+                "title": "Ekkor",
+                "description": "Reino septentrional",
+                "path": "lore/ekkor.md",
+            }]
+        return []
+
+    def read(self, path: str) -> dict[str, object] | None:
+        if path == "lore/ekkor.md":
+            return {
+                "name": "Ekkor",
+                "type": "Reino",
+                "title": "Ekkor",
+                "description": "Reino septentrional",
+                "content": "El vibrastal define su economía.",
+            }
+        return None

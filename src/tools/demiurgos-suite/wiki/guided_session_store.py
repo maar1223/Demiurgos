@@ -318,16 +318,26 @@ class GuidedSessionStore:
                 next_state.reference_name = request.reference_name
                 next_state.relation_goal = request.relation_goal
             next_state.revision += 1
+            content: dict[str, object] = {}
+            if response.question:
+                content["question"] = response.question
+            if response.synthesis:
+                content["synthesis"] = response.synthesis
+            if response.outcome is Outcome.DELTA and response.delta:
+                content.update(dict(response.delta))
             next_state.messages.append(TypedMessage(
                 MessageType.ASSISTANT_RESPONSE if response.outcome is Outcome.QUESTION else MessageType.PROPOSAL,
-                {"question": response.question} if response.question else dict(response.delta or {}),
+                content,
                 next_state.revision,
             ))
             next_state.pending_question = response.question
             if response.outcome is Outcome.DELTA and response.delta:
                 apply_delta(next_state.candidate, response.delta, response.provenance)
-            elif response.provenance:
-                next_state.candidate.provenance.extend(response.provenance)
+            else:
+                if response.observations:
+                    apply_delta(next_state.candidate, response.observations, response.provenance)
+                if response.provenance:
+                    next_state.candidate.provenance.extend(response.provenance)
             # A fresh committed proposal supersedes any pending revalidation.
             self._write_state(next_state, revalidation_required=0)
             self._in_process.add(request.session_id)

@@ -21,7 +21,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Mapping
 
 import httpx
 
@@ -3238,6 +3238,20 @@ def _invalidate_guided_proposal(session_id: str) -> None:
             _GUIDED_PENDING_PROPOSALS.pop(edit_id, None)
 
 
+def _guided_message_text(content: Mapping[str, Any]) -> str:
+    """Render one guided message for the client.
+
+    S1: an assistant turn carries an optional synthesis followed by the one
+    pending question. Legacy messages (question/text/delta only) render exactly
+    as before.
+    """
+    synthesis = str(content.get("synthesis") or "").strip()
+    question = str(content.get("question", content.get("text", "")) or "").strip()
+    if synthesis and question:
+        return f"{synthesis}\n\n{question}"
+    return synthesis or question
+
+
 def _guided_public_state(state: SessionState) -> dict:
     """Serialize only the frontend-compatible, non-provenance session view."""
     payload = {
@@ -3252,7 +3266,7 @@ def _guided_public_state(state: SessionState) -> dict:
         "messages": [
             {
                 "role": "author" if message.message_type.value == "author_input" else "assistant",
-                "content": str(message.content.get("question", message.content.get("text", ""))),
+                "content": _guided_message_text(message.content),
             }
             for message in state.messages
         ],
@@ -3445,6 +3459,11 @@ async def _guided_continue(
         snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, principal.id)
         if snapshot is not None and snapshot.skill_version:
             methodology = f"{snapshot.skill_id or 'guided-character'}:{snapshot.skill_version}"
+    # S1/S2: server-owned context for this turn. The provider cannot fetch
+    # either one; the known state stops re-asking and the lore grounds the
+    # conversation in the active world.
+    world_context = _world_lore_context(mundo, author_input, budget=4_000)
+    known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
         revision, principal.id, author_input, reference_context=reference_context,
@@ -3453,6 +3472,8 @@ async def _guided_continue(
         guided_mode=mode,
         question_depth=depth,
         methodology=methodology,
+        world_context=world_context,
+        known_state=known_state,
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
@@ -9435,6 +9456,131 @@ def _active_ficha_context(mundo: str, body: AskRequest) -> str:
         return resolved.read_text(encoding="utf-8")[:4_000]
     except Exception:
         return ""
+
+
+_WORLD_LORE_STOPWORDS = frozenset({
+    "para", "como", "pero", "porque", "cuando", "donde", "sobre", "entre",
+    "desde", "hasta", "quiere", "queria", "quiero", "gustaria", "podria",
+    "hacer", "tiene", "tener", "algo", "otra", "otro", "este", "esta",
+    "estos", "estas", "mismo", "misma", "todo", "toda", "todos", "todas",
+    "with", "that", "this", "from", "into", "about", "there", "their",
+    "would", "could", "should", "have", "want", "make", "like", "some",
+})
+
+
+def _lore_value(item: Any, key: str, default: Any = "") -> Any:
+    if isinstance(item, Mapping):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _world_lore_terms(author_input: str, limit: int = 6) -> list[str]:
+    """Bounded candidate terms for a world-graph lore lookup.
+
+    Keeps content words (>= 4 chars) and capitalized tokens, preserving the
+    author's order and removing duplicates. Never returns more than ``limit``.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ][\wÁÉÍÓÚÑáéíóúñ'’-]{2,}", author_input or ""):
+        lowered = raw.casefold()
+        if lowered in seen or lowered in _WORLD_LORE_STOPWORDS:
+            continue
+        if len(lowered) < 4 and not raw[:1].isupper():
+            continue
+        seen.add(lowered)
+        terms.append(raw)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> str:
+    """Resolve bounded, read-only world lore for the terms in one author turn.
+
+    The guided provider has no graph access, so the server must inject the
+    active world's own lore (S2). Only entities whose name/title/description
+    actually contain the term are used; misses are omitted, never invented.
+    Fail-open: any graph failure returns an empty string and the turn proceeds
+    without lore.
+    """
+    if not mundo or not author_input or budget <= 0:
+        return ""
+    try:
+        index = _get_graph(mundo)
+        if index is None:
+            return ""
+        reader = index if all(callable(getattr(index, method, None)) for method in ("search", "read")) else _GuidedGraphReader(index)
+    except Exception:
+        logger.warning("guided world lore lookup unavailable", exc_info=True)
+        return ""
+    chunks: list[str] = []
+    seen_paths: set[str] = set()
+    terms = _world_lore_terms(author_input)
+    # Proper nouns first: "Ekkor" is more specific than a generic material
+    # word, and the excerpt budget must not be consumed by the first broad hit.
+    terms.sort(key=lambda term: (not term[:1].isupper(), term.casefold()))
+    for term in terms:
+        try:
+            hits = list(reader.search(term))
+        except Exception:
+            continue
+        for hit in hits:
+            path = str(_lore_value(hit, "path", ""))
+            if not path or path in seen_paths:
+                continue
+            haystack = " ".join(
+                str(_lore_value(hit, key, "") or "")
+                for key in ("name", "title", "description")
+            ).casefold()
+            if term.casefold() not in haystack:
+                continue
+            try:
+                entity = reader.read(path)
+            except Exception:
+                entity = None
+            if entity is None:
+                continue
+            seen_paths.add(path)
+            lines = [f"### {str(_lore_value(entity, 'name', term)).strip()}"]
+            for label, key in (("Type", "type"), ("Title", "title"), ("Description", "description")):
+                value = str(_lore_value(entity, key, "") or "").strip()
+                if value:
+                    lines.append(f"{label}: {value}")
+            content = str(_lore_value(entity, "content", "") or "").strip()
+            if content:
+                lines.append(content[:1_200])
+            chunks.append("\n".join(lines))
+            break  # one best entity per term keeps distinct terms represented
+        if len(chunks) >= 3:
+            break
+    if not chunks:
+        return ""
+    context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
+    return context[:budget]
+
+
+def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
+    """Compact server-owned summary of what the author already answered."""
+    lines: list[str] = []
+    for partition_name, partition in (
+        ("accepted", getattr(candidate, "accepted_canon", {})),
+        ("proposed", getattr(candidate, "proposals", {})),
+    ):
+        if not isinstance(partition, Mapping):
+            continue
+        for key, value in partition.items():
+            raw = value.get("value", value) if isinstance(value, Mapping) else value
+            text = str(raw).strip()
+            if text:
+                lines.append(f"- [{partition_name}] {key}: {text[:300]}")
+    unknowns = getattr(candidate, "unknowns", ())
+    for item in unknowns[:10] if isinstance(unknowns, (list, tuple)) else ():
+        raw = item.get("value", item) if isinstance(item, Mapping) else item
+        text = str(raw).strip()
+        if text:
+            lines.append(f"- [unknown] {text[:300]}")
+    return "\n".join(lines)[:budget]
 
 
 def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | None]:
