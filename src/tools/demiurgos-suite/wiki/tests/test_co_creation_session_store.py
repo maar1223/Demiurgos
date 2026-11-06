@@ -64,6 +64,30 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def test_commit_merges_a_validated_guided_flow_draft_patch(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1", world="nec")
+    request = _request("s-1", "author-1")
+    response = CoCreationResponse(
+        PROTOCOL_VERSION, request.request_id, request.session_id,
+        request.base_revision, CoCreationOutcome.QUESTION,
+        question="¿Crea una entidad guardable?",
+        draft_patch={
+            "guided_flow": {
+                "flow_id": "guided-system",
+                "entity_type": "sistema",
+                "ui_copy_key": "system",
+                "index": True,
+                "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+            }
+        },
+    )
+    committed = store.commit(request, response)
+    assert committed is not None
+    assert committed.draft_payload["guided_flow"]["flow_id"] == "guided-system"
+
+
 def test_create_recover_commit_roundtrip(tmp_path: Path) -> None:
     db = tmp_path / "sessions.sqlite3"
     store = CoCreationSessionStore(db)

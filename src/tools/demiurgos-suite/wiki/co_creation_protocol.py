@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol
 
 from methodology_compiler import MAX_NIVEL_LEN
+from guided_flow import guided_flow_issues
 
 
 PROTOCOL_VERSION = "co-creation-v1"
@@ -74,6 +75,7 @@ CANVAS_PAYLOAD_KEYS = frozenset({
     "pending_questions",
     "world",
     "adjuntos",
+    "guided_flow",
 })
 
 # Canvas ``adjuntos`` entry shape: the same dir-independent pin contract the
@@ -143,6 +145,36 @@ class HistorySource(StrEnum):
     AUTOSAVE = "autosave"
 
 
+_GUIDED_FLOW_UI_COPY = {
+    "guided-character": "character",
+    "guided-system": "system",
+    "guided-chronology": "chronology",
+    "guided-entity": "entity",
+}
+
+
+def normalize_guided_flow_declaration(value: object) -> object:
+    """Fill the kernel-owned defaults of a partial guided-flow declaration.
+
+    The Skill Madre chat only needs to decide ``flow_id`` and ``entity_type``;
+    the UI copy key, the index flag and an empty intent vocabulary are safe
+    server defaults. A full declaration passes through unchanged.
+    """
+    if not isinstance(value, Mapping):
+        return value
+    flow_id = str(value.get("flow_id") or "").strip()
+    normalized = dict(value)
+    normalized.setdefault("ui_copy_key", _GUIDED_FLOW_UI_COPY.get(flow_id, "entity"))
+    normalized.setdefault("index", True)
+    intent = normalized.get("intent")
+    if isinstance(intent, Mapping):
+        normalized["intent"] = {
+            "terms": list(intent.get("terms") or []),
+            "verbs": list(intent.get("verbs") or []),
+        }
+    return normalized
+
+
 def canvas_payload_issues(payload: Mapping[str, Any]) -> list[str]:
     """Validate a canvas payload against the typed editable-key contract.
 
@@ -166,7 +198,16 @@ def canvas_payload_issues(payload: Mapping[str, Any]) -> list[str]:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             issues.append(f"{key} must be a list of strings")
     issues.extend(_adjuntos_shape_issues(payload.get("adjuntos")))
-    for key in CANVAS_PAYLOAD_KEYS - {"branches", "rules", "pending_questions", "adjuntos"}:
+    guided_flow = payload.get("guided_flow")
+    if guided_flow is not None:
+        if not isinstance(guided_flow, Mapping):
+            issues.append("guided_flow must be an object")
+        else:
+            issues.extend(
+                f"guided_flow: {message}"
+                for _code, message, _field in guided_flow_issues(normalize_guided_flow_declaration(guided_flow))
+            )
+    for key in CANVAS_PAYLOAD_KEYS - {"branches", "rules", "pending_questions", "adjuntos", "guided_flow"}:
         value = payload.get(key)
         if value is not None and not isinstance(value, str):
             issues.append(f"{key} must be a string")
@@ -184,7 +225,11 @@ def reject_authority_keys(value: object, depth: int = 0) -> bool:
     the boundary.
     """
     if depth > 4:
-        return True
+        # Fail closed for any container nested beyond the bound. Scalar leaves
+        # (strings, numbers, booleans) cannot be an authority KEY by themselves;
+        # flagging them made valid deep payloads such as a guided_flow intent
+        # declaration impossible while adding no protection.
+        return isinstance(value, (Mapping, list, tuple))
     if isinstance(value, Mapping):
         return any(
             key in AUTHORITY_KEYS or reject_authority_keys(item, depth + 1)
@@ -370,6 +415,10 @@ class CoCreationResponse:
     provenance: tuple[str, ...] = ()
     provider_run_id: str | None = None
     error: StructuredError | None = None
+    # Additive structural patch for the canvas (S4): the provider can persist a
+    # validated guided-flow declaration or other canvas keys it is confident
+    # about. It is validated against ``canvas_payload_issues`` before commit.
+    draft_patch: Mapping[str, Any] | None = None
 
     @classmethod
     def from_provider(cls, value: object, request: CoCreationRequest) -> "CoCreationResponse | None":
@@ -432,6 +481,14 @@ class CoCreationResponse:
         ):
             return None
         run_id = value.get("provider_run_id")
+        draft_patch = value.get("draft_patch")
+        if draft_patch is not None:
+            if not isinstance(draft_patch, Mapping):
+                return None
+            patch_issues = canvas_payload_issues(draft_patch)
+            if patch_issues:
+                return None
+            draft_patch = dict(draft_patch)
         return cls(
             PROTOCOL_VERSION,
             request.request_id,
@@ -445,6 +502,7 @@ class CoCreationResponse:
             provenance=tuple(provenance),
             provider_run_id=run_id if isinstance(run_id, str) else None,
             error=_parse_error(value.get("error")),
+            draft_patch=draft_patch,
         )
 
 

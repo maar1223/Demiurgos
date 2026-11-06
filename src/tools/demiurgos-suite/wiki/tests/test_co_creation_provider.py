@@ -235,6 +235,41 @@ def test_up_to_three_options_are_accepted_and_tracked() -> None:
     asyncio.run(scenario())
 
 
+def test_guided_flow_draft_patch_is_preserved() -> None:
+    async def scenario() -> None:
+        class Runs:
+            async def start(self, _request: object) -> str:
+                return "run-1"
+
+            async def events(self, _run_id: str):
+                yield {
+                    "event": "run.completed",
+                    "run_id": "run-1",
+                    "output": _question_envelope(
+                        draft_patch={
+                            "guided_flow": {
+                                "flow_id": "guided-system",
+                                "entity_type": "sistema",
+                                "ui_copy_key": "system",
+                                "index": True,
+                                "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+                            }
+                        }
+                    ),
+                }
+
+        result = await invoke_bounded_co_creation(
+            HermesCoCreationProvider(Runs()).invoke,  # type: ignore[arg-type]
+            co_creation_request(),
+            capabilities(),
+        )
+        assert result.error is None
+        assert result.draft_patch is not None
+        assert result.draft_patch["guided_flow"]["flow_id"] == "guided-system"
+
+    asyncio.run(scenario())
+
+
 def test_unavailable_gateway_stays_unadmitted() -> None:
     async def scenario() -> None:
         async def unavailable(_request: httpx.Request) -> httpx.Response:

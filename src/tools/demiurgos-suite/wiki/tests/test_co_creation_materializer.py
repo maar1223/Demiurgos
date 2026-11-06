@@ -399,6 +399,28 @@ def _staged(tmp_path: Path, files: list[tuple[str, bytes]]) -> Path:
     return staging
 
 
+def test_materialize_carries_a_guided_flow_declaration(tmp_path: Path) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    result = materializer.materialize(
+        _payload(guided_flow={
+            "flow_id": "guided-system",
+            "entity_type": "sistema",
+            "ui_copy_key": "system",
+            "index": True,
+            "intent": {"terms": ["sistema"], "verbs": ["crear"]},
+        }),
+        skill_id="mi-skill",
+        version="0.1.0",
+        name="Mi skill",
+    )
+    assert result.ok is True
+    compiled = library.compile_draft(result.draft_id)
+    assert compiled.compiled is not None
+    assert compiled.compiled.guided_flow is not None
+    assert compiled.compiled.guided_flow.flow_id == "guided-system"
+
+
 def test_validate_payload_manifest_synthesizes_adjuntos_without_draft(
     tmp_path: Path,
 ) -> None:

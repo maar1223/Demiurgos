@@ -289,6 +289,7 @@ def test_canvas_payload_typed_keys_are_editable_sections() -> None:
     assert CANVAS_PAYLOAD_KEYS == {
         "name", "description", "purpose", "scope", "main_flow",
         "branches", "rules", "pending_questions", "world", "adjuntos",
+        "guided_flow",
     }
     assert CANVAS_PAYLOAD_KEYS.isdisjoint(AUTHORITY_KEYS)
 
@@ -306,6 +307,38 @@ def test_canvas_payload_issues_accepts_typed_payload() -> None:
         "world": "nec",
     }
     assert canvas_payload_issues(payload) == []
+
+
+def test_authority_keys_still_fail_closed_in_deep_containers() -> None:
+    nested = {"a": {"b": {"c": {"d": [{"acceptance": "x"}]}}}}
+    assert reject_authority_keys(nested) is True
+    safe = {"a": {"b": {"c": {"d": ["safe scalar"]}}}}
+    assert reject_authority_keys(safe) is False
+
+
+def test_canvas_payload_issues_accepts_guided_flow_with_intent() -> None:
+    payload = {
+        "guided_flow": {
+            "flow_id": "guided-system",
+            "entity_type": "sistema",
+            "ui_copy_key": "system",
+            "index": True,
+            "intent": {"terms": ["sistema", "magia"], "verbs": ["crear"]},
+        },
+    }
+    assert canvas_payload_issues(payload) == []
+
+
+def test_canvas_payload_issues_rejects_mismatched_guided_flow() -> None:
+    payload = {
+        "guided_flow": {
+            "flow_id": "guided-system",
+            "entity_type": "personaje",
+        },
+    }
+    issues = canvas_payload_issues(payload)
+    assert issues
+    assert any("guided_flow" in issue for issue in issues)
 
 
 def test_canvas_payload_issues_accepts_well_formed_adjuntos() -> None:
