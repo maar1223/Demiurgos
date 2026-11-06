@@ -802,11 +802,25 @@ export function useAIAssistantSessions(
         );
       }
       setError(null);
-    } catch {
+    } catch (err) {
+      // A consent token is short-lived and in-memory: after a restart or TTL
+      // expiry the server answers 422. Keeping the dead card makes every click
+      // fail with a generic error, so clear it and tell the Author to resend.
+      if (err instanceof ApiError && (err.status === 422 || err.code === "invalid_input")) {
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === activeSessionId
+              ? { ...session, consentToken: undefined, consentFlow: undefined }
+              : session,
+          ),
+        );
+        setError(t("assistant.consent.expired"));
+        return;
+      }
       // Fail closed: keep the suggestion and surface the safe copy.
       setError(semanticBlockedText(language));
     }
-  }, [activeSession, activeSessionId, contextMundo, language]);
+  }, [activeSession, activeSessionId, contextMundo, language, t]);
 
   const requestGuidedReview = useCallback(async () => {
     const guided = activeSession?.guided;

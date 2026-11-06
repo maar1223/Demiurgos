@@ -609,6 +609,8 @@ export const messages = {
       "Parece que quieres crear una entidad. ¿Abrimos el flujo guiado?",
     "assistant.consent.yes": "Sí, empecemos",
     "assistant.consent.no": "Seguir charlando",
+    "assistant.consent.expired":
+      "La sugerencia del flujo guiado expiró. Envía tu mensaje de nuevo para abrir una sesión nueva.",
     "assistant.proposal.title": "Detalle sugerido",
     "assistant.proposal.reject": "Rechazar",
     "assistant.proposal.accept": "Aceptar",
@@ -2930,6 +2932,8 @@ export const messages = {
       "It looks like you want to create an entity. Shall we open the guided flow?",
     "assistant.consent.yes": "Yes, let's start",
     "assistant.consent.no": "Keep chatting",
+    "assistant.consent.expired":
+      "The guided-flow suggestion expired. Send your message again to open a new session.",
     "assistant.proposal.title": "Suggested detail",
     "assistant.proposal.reject": "Reject",
     "assistant.proposal.accept": "Accept",
