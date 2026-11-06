@@ -297,6 +297,9 @@ function ChatScreen({
     activeSession?.guided?.phase === "conversation"
       ? (activeSession.guided.pending_question ?? "").trim()
       : "";
+  const guidedTargetSection = activeSession?.guided?.flow?.target_section ?? null;
+  const canReviewInCurrentSection =
+    !guidedTargetSection || !section || section === guidedTargetSection;
   const lastMessage = messages[messages.length - 1];
   const showGuidedPending =
     Boolean(guidedPendingText) &&
@@ -764,7 +767,7 @@ function ChatScreen({
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && (
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && (
             <button
               type="button"
               onClick={() => void handleGuidedReview()}

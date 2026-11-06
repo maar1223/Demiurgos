@@ -430,6 +430,42 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(requestGuidedReview).toHaveBeenCalled();
   });
 
+  it("hides the guided review action outside the proposal target section", () => {
+    const onGuidedReview = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: "What drives them?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: { desire: "freedom" }, unresolved_references: [], conflicts: [] },
+          proposal: null,
+          flow: {
+            flow_id: "guided-character",
+            entity_type: "personaje",
+            target_section: "personajes",
+            ui_copy_key: "character",
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" section="lore" onGuidedReview={onGuidedReview} />);
+    expect(
+      screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("localizes the proposal detail actions and review button in the configured language", () => {
     const onGuidedReview = vi.fn();
     useAppLanguageMock.mockReturnValue(lang("es"));

@@ -235,6 +235,10 @@ class TypedMessage:
 class CandidateState:
     accepted_canon: dict[str, Any] = field(default_factory=dict)
     proposals: dict[str, Any] = field(default_factory=dict)
+    # Internal, non-canon notes the provider extracted from a turn. They feed
+    # the "known so far" prompt but are NOT user-facing proposals: the Author
+    # never accepts/rejects them (S1).
+    observations: dict[str, Any] = field(default_factory=dict)
     unknowns: list[Any] = field(default_factory=list)
     rumors: list[Any] = field(default_factory=list)
     conflicts: list[Any] = field(default_factory=list)

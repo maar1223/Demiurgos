@@ -3238,6 +3238,30 @@ def _invalidate_guided_proposal(session_id: str) -> None:
             _GUIDED_PENDING_PROPOSALS.pop(edit_id, None)
 
 
+_GUIDED_META_PROPOSAL_KEYS = frozenset({
+    "intencion", "intent", "mundo", "world", "estado", "status",
+    "fase", "phase", "modo", "mode",
+})
+
+
+def _public_guided_proposals(candidate: Any) -> dict[str, Any]:
+    """Hide legacy session-metadata entries from the Author-facing proposals.
+
+    Before observations were separated, the provider's internal notes landed in
+    ``candidate.proposals`` and surfaced as a meaningless "Detalle sugerido"
+    (e.g. "intención: crear un personaje nuevo"). New turns store them in
+    ``candidate.observations``; this filter keeps old stored sessions readable
+    and prevents the review button from offering them.
+    """
+    proposals = getattr(candidate, "proposals", {})
+    if not isinstance(proposals, Mapping):
+        return {}
+    return {
+        key: value for key, value in proposals.items()
+        if str(key).casefold() not in _GUIDED_META_PROPOSAL_KEYS
+    }
+
+
 def _guided_message_text(content: Mapping[str, Any]) -> str:
     """Render one guided message for the client.
 
@@ -3272,7 +3296,7 @@ def _guided_public_state(state: SessionState) -> dict:
         ],
         "candidate": {
             "accepted_canon": state.candidate.accepted_canon,
-            "proposals": state.candidate.proposals,
+            "proposals": _public_guided_proposals(state.candidate),
             "unresolved_references": state.candidate.unresolved_references,
             "conflicts": state.candidate.conflicts,
         },
@@ -3280,7 +3304,7 @@ def _guided_public_state(state: SessionState) -> dict:
             {"key": key, "label": key.replace("_", " ").title(),
              "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
              **({"rationale": str(value["rationale"])} if isinstance(value, dict) and "rationale" in value else {})}
-            for key, value in state.candidate.proposals.items()
+            for key, value in _public_guided_proposals(state.candidate).items()
         ), None),
         "reference": {
             "name": state.reference_name,
@@ -9574,6 +9598,13 @@ def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
             text = str(raw).strip()
             if text:
                 lines.append(f"- [{partition_name}] {key}: {text[:300]}")
+    observations = getattr(candidate, "observations", {})
+    if isinstance(observations, Mapping):
+        for key, value in observations.items():
+            raw = value.get("value", value) if isinstance(value, Mapping) else value
+            text = str(raw).strip()
+            if text:
+                lines.append(f"- [observed] {key}: {text[:300]}")
     unknowns = getattr(candidate, "unknowns", ())
     for item in unknowns[:10] if isinstance(unknowns, (list, tuple)) else ():
         raw = item.get("value", item) if isinstance(item, Mapping) else item

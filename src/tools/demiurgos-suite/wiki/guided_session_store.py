@@ -331,13 +331,13 @@ class GuidedSessionStore:
                 next_state.revision,
             ))
             next_state.pending_question = response.question
+            if response.observations:
+                # Internal notes, never user-facing proposals.
+                next_state.candidate.observations.update(dict(response.observations))
             if response.outcome is Outcome.DELTA and response.delta:
                 apply_delta(next_state.candidate, response.delta, response.provenance)
-            else:
-                if response.observations:
-                    apply_delta(next_state.candidate, response.observations, response.provenance)
-                if response.provenance:
-                    next_state.candidate.provenance.extend(response.provenance)
+            elif response.provenance:
+                next_state.candidate.provenance.extend(response.provenance)
             # A fresh committed proposal supersedes any pending revalidation.
             self._write_state(next_state, revalidation_required=0)
             self._in_process.add(request.session_id)
@@ -422,6 +422,7 @@ class GuidedSessionStore:
         candidate_json = json.dumps({
             "accepted_canon": state.candidate.accepted_canon,
             "proposals": state.candidate.proposals,
+            "observations": state.candidate.observations,
             "unknowns": state.candidate.unknowns,
             "rumors": state.candidate.rumors,
             "conflicts": state.candidate.conflicts,
@@ -513,6 +514,7 @@ class GuidedSessionStore:
             candidate=CandidateState(
                 accepted_canon=candidate.get("accepted_canon", {}),
                 proposals=candidate.get("proposals", {}),
+                observations=candidate.get("observations", {}),
                 unknowns=candidate.get("unknowns", []),
                 rumors=candidate.get("rumors", []),
                 conflicts=candidate.get("conflicts", []),

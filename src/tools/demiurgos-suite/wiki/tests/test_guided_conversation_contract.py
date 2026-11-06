@@ -22,6 +22,7 @@ from guided_character_protocol import (  # noqa: E402
     GuidedResponse,
     Outcome,
     PROTOCOL_VERSION,
+    SessionState,
 )
 from guided_session_store import GuidedSessionStore  # noqa: E402
 
@@ -80,7 +81,8 @@ class TestCommit:
         assert state is not None
         assert state.messages[-1].content["synthesis"] == "Lo que llevamos: Ganic saltó años."
         assert state.messages[-1].content["question"] == "¿Qué busca ahora?"
-        assert "nombre" in state.candidate.proposals
+        assert state.candidate.observations == {"nombre": "Ganic"}
+        assert state.candidate.proposals == {}
         assert state.candidate.accepted_canon == {}
 
 
@@ -91,6 +93,28 @@ class TestPublicRendering:
             "question": "¿Qué busca?",
         })
         assert text == "Lo que llevamos: Ganic.\n\n¿Qué busca?"
+
+    def test_meta_proposals_are_hidden_from_the_author_facing_view(self) -> None:
+        candidate = CandidateState(
+            proposals={
+                "intencion": {"value": "crear un personaje nuevo"},
+                "nombre": {"value": "Ganic"},
+            }
+        )
+        public = api_server._public_guided_proposals(candidate)
+        assert "intencion" not in public
+        assert public["nombre"]["value"] == "Ganic"
+
+    def test_observations_feed_known_state_but_not_public_proposals(self) -> None:
+        candidate = CandidateState(observations={"mundo": "Vibrantes"})
+        state = SessionState(
+            "s", "Vibrantes", "conversation", 1, "auth", candidate=candidate,
+        )
+        payload = api_server._guided_public_state(state)
+        assert payload["candidate"]["proposals"] == {}
+        assert payload["proposal"] is None
+        known = api_server._guided_known_state(candidate)
+        assert "[observed] mundo: Vibrantes" in known
 
     def test_legacy_question_only_renders_unchanged(self) -> None:
         assert api_server._guided_message_text({"question": "¿Qué busca?"}) == "¿Qué busca?"
