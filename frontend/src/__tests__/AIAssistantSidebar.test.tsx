@@ -430,6 +430,34 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(requestGuidedReview).toHaveBeenCalled();
   });
 
+  it("does not surface a legacy session-metadata entry as a suggested detail", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: "¿Qué es lo primero que ya tienes?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: { key: "intencion", label: "Intencion", value: "crear un personaje nuevo" },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(screen.queryByText(/Intencion/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Detalle sugerido/)).not.toBeInTheDocument();
+  });
+
   it("hides the guided review action outside the proposal target section", () => {
     const onGuidedReview = vi.fn();
     useSessionsMock.mockReturnValue(createSessionsState({
