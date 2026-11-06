@@ -289,6 +289,18 @@ function ChatScreen({
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const messages = activeSession?.messages ?? [];
+  // Consent-accepted sessions carry their first question in
+  // `guided.pending_question`; older stored sessions may not have it in the
+  // top-level list. Render it as the assistant bubble unless it is already
+  // the last assistant message (prevents a reload duplicate).
+  const guidedPendingText =
+    activeSession?.guided?.phase === "conversation"
+      ? (activeSession.guided.pending_question ?? "").trim()
+      : "";
+  const lastMessage = messages[messages.length - 1];
+  const showGuidedPending =
+    Boolean(guidedPendingText) &&
+    !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
   const guidedMethodology = activeSession?.guided?.methodology ?? null;
@@ -633,6 +645,14 @@ function ChatScreen({
               </div>
             </div>
            ))}
+
+           {showGuidedPending && (
+             <div className="flex justify-start">
+               <div className="max-w-[85%] overflow-hidden rounded-lg bg-surface px-3 py-2 text-body leading-relaxed text-primary">
+                 <MarkdownBody content={guidedPendingText} mundo={mundo} className="prose-sm" />
+               </div>
+             </div>
+           )}
 
            {guidedMethodName && (
              <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">

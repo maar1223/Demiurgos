@@ -769,10 +769,25 @@ export function useAIAssistantSessions(
         // symmetric with loadSessions instead of trusting the server's type.
         const unwrapped = envelope.guided_state ?? envelope;
         const guided = isUsableGuidedSession(unwrapped) ? unwrapped : undefined;
+        // The consent click opens the guided continuation; its first question
+        // lives in `guided.pending_question`, not in the top-level message list.
+        // Append it once so the live chat does not sit empty after accepting.
+        const firstGuidedQuestion =
+          guided && guided.phase === "conversation"
+            ? guided.pending_question?.trim()
+            : undefined;
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId
-              ? { ...session, guided, consentToken: undefined, consentFlow: undefined }
+              ? {
+                  ...session,
+                  guided,
+                  consentToken: undefined,
+                  consentFlow: undefined,
+                  messages: firstGuidedQuestion
+                    ? [...session.messages, { role: "assistant", content: firstGuidedQuestion }]
+                    : session.messages,
+                }
               : session,
           ),
         );

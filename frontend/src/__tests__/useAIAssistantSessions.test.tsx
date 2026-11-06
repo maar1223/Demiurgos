@@ -370,6 +370,34 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(result.current.activeSession?.consentToken).toBeUndefined();
   });
 
+  it("appends the first guided question when consent opens a conversation session", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue({
+      ...consentAcceptEnvelope,
+      guided_state: {
+        ...guidedSession,
+        phase: "conversation" as const,
+        pending_question: "¿Cuál es el deseo que define a este personaje?",
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    expect(messages[messages.length - 1]).toEqual({
+      role: "assistant",
+      content: "¿Cuál es el deseo que define a este personaje?",
+    });
+  });
+
   it("unwraps a real consent envelope into a usable bare guided session", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);
