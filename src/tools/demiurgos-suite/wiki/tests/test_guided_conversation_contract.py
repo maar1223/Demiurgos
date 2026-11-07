@@ -213,6 +213,97 @@ class TestWorldLore:
         assert "5to Stal – Aislador" in text
         assert "9no Stal – Mediador" in text
 
+    def test_multiple_hits_in_one_section_use_the_section_index(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        section = tmp_path / "Vibrantes" / "lore" / "gremios"
+        section.mkdir(parents=True)
+        (section / "gremios.md").write_text(
+            '---\ntitle: Gremios\ndescription: "Oficios de la ciudad."\n---\n',
+            encoding="utf-8",
+        )
+        for filename, title in (
+            ("herreros", "Gremio de Herreros"),
+            ("tejedores", "Gremio de Tejedores"),
+        ):
+            (section / f"{filename}.md").write_text(
+                f'---\ntitle: {title}\ntype: organización\n'
+                'description: "Gremios de la ciudad."\n---\n',
+                encoding="utf-8",
+            )
+
+        class _FamilyGraph:
+            def search(self, query):
+                if "gremio" not in query.casefold():
+                    return []
+                return [
+                    {"name": "Herreros", "title": "Gremio de Herreros",
+                     "description": "Gremios de la ciudad.",
+                     "path": "lore/gremios/herreros.md"},
+                    {"name": "Tejedores", "title": "Gremio de Tejedores",
+                     "description": "Gremios de la ciudad.",
+                     "path": "lore/gremios/tejedores.md"},
+                ]
+
+            def read(self, path):
+                return None
+
+        monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: _FamilyGraph())
+        text = api_server._world_lore_context(
+            "Vibrantes", "háblame de los gremios de la ciudad",
+        )
+        assert "Gremio de Herreros" in text
+        assert "Gremio de Tejedores" in text
+
+    def test_flat_family_hits_are_all_listed(self, monkeypatch) -> None:
+        class _FlatGraph:
+            def search(self, query):
+                if "gremio" not in query.casefold():
+                    return []
+                return [
+                    {"name": "Herreros", "title": "Gremio de Herreros",
+                     "description": "Gremios de la ciudad.",
+                     "path": "lore/gremios/herreros.md"},
+                    {"name": "Tejedores", "title": "Gremio de Tejedores",
+                     "description": "Gremios de la ciudad.",
+                     "path": "lore/cofradias/tejedores.md"},
+                ]
+
+            def read(self, path):
+                return None
+
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: _FlatGraph())
+        text = api_server._world_lore_context(
+            "Vibrantes", "háblame de los gremios de la ciudad",
+        )
+        assert "Gremio de Herreros" in text
+        assert "Gremio de Tejedores" in text
+
+    def test_unknown_category_gets_the_generic_world_index(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        section = tmp_path / "Vibrantes" / "lore" / "gremios"
+        section.mkdir(parents=True)
+        (section / "gremios.md").write_text(
+            '---\ntitle: Gremios\ndescription: "Oficios de la ciudad."\n---\n',
+            encoding="utf-8",
+        )
+
+        class _EmptyGraph:
+            def search(self, query):
+                return []
+
+            def read(self, path):
+                return None
+
+        monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: _EmptyGraph())
+        text = api_server._world_lore_context(
+            "Vibrantes", "¿qué hay de los oficios?",
+        )
+        assert "Gremios" in text
+
     def test_lore_query_keeps_the_previous_author_topic(self) -> None:
         class _Message:
             message_type = type("_Type", (), {"value": "author_input"})

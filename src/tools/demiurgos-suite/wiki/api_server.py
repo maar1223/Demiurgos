@@ -9802,7 +9802,65 @@ def _world_lore_sections(author_input: str) -> list[str]:
     return list(dict.fromkeys(sections))
 
 
-def _world_lore_section_index(mundo: str, author_input: str, budget: int) -> str:
+def _lore_entity_block(entity: Any, fallback_name: str) -> str:
+    lines = [f"### {str(_lore_value(entity, 'name', fallback_name)).strip()}"]
+    for label, key in (("Type", "type"), ("Title", "title"), ("Description", "description")):
+        value = str(_lore_value(entity, key, "") or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    content = str(_lore_value(entity, "content", "") or "").strip()
+    if content:
+        lines.append(content[:1_200])
+    return "\n".join(lines)
+
+
+def _world_lore_index_for_dir(
+    world_root: Path, relative_dir: Path, budget: int,
+) -> str:
+    """Bounded index of one lore directory (section intro + entries)."""
+    section_dir = world_root / relative_dir
+    if not section_dir.is_dir():
+        return ""
+    section_name = section_dir.name
+    lines: list[str] = []
+    used = 0
+    intro = _lore_frontmatter(section_dir / f"{section_name}.md")
+    if intro:
+        title = str(intro.get("title") or section_name).strip()
+        description = str(intro.get("description") or "").strip()
+        lines.append(f"## {title}")
+        used += len(lines[-1]) + 1
+        if description:
+            lines.append(description[:400])
+            used += len(lines[-1]) + 1
+    for path in sorted(section_dir.glob("*.md")):
+        if path.name == f"{section_name}.md":
+            continue
+        meta = _lore_frontmatter(path)
+        title = str(meta.get("title") or path.stem).strip()
+        description = str(meta.get("description") or "").strip()
+        kind = str(meta.get("type") or "").strip()
+        entry = f"- {title}"
+        if kind:
+            entry += f" ({kind})"
+        if description:
+            entry += f": {description[:300]}"
+        lines.append(entry)
+        used += len(entry) + 1
+        if used >= budget:
+            break
+    if not lines:
+        return ""
+    return (
+        "World lore index from the active world (read-only, verified):\n\n"
+        + "\n".join(lines)
+    )[:budget]
+
+
+def _world_lore_section_index(
+    mundo: str, author_input: str, budget: int,
+    skip_sections: set[str] | None = None,
+) -> str:
     """Bounded section index for category questions ("¿qué países hay?").
 
     Term search cannot match a category word to nine differently-named country
@@ -9816,44 +9874,65 @@ def _world_lore_section_index(mundo: str, author_input: str, budget: int) -> str
     world_root = _resolve_mundo_dir(mundo)
     if world_root is None:
         return ""
-    lines: list[str] = []
+    skip = {name.casefold() for name in (skip_sections or set())}
+    blocks: list[str] = []
     used = 0
     for section in sections:
-        section_dir = world_root / "lore" / section
-        if not section_dir.is_dir():
+        if section.casefold() in skip:
             continue
-        intro = _lore_frontmatter(section_dir / f"{section}.md")
-        if intro:
-            title = str(intro.get("title") or section).strip()
-            description = str(intro.get("description") or "").strip()
-            lines.append(f"## {title}")
-            used += len(lines[-1]) + 1
-            if description:
-                lines.append(description[:400])
-                used += len(lines[-1]) + 1
-        for path in sorted(section_dir.glob("*.md")):
-            if path.name == f"{section}.md":
-                continue
-            meta = _lore_frontmatter(path)
-            title = str(meta.get("title") or path.stem).strip()
-            description = str(meta.get("description") or "").strip()
-            kind = str(meta.get("type") or "").strip()
-            entry = f"- {title}"
-            if kind:
-                entry += f" ({kind})"
-            if description:
-                entry += f": {description[:300]}"
-            lines.append(entry)
-            used += len(entry) + 1
-            if used >= budget:
-                break
+        block = _world_lore_index_for_dir(
+            world_root, Path("lore") / section, budget - used,
+        )
+        if not block:
+            continue
+        blocks.append(block)
+        used += len(block) + 2
+        if used >= budget:
+            break
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks)[:budget]
+
+
+def _world_lore_world_index(mundo: str, budget: int) -> str:
+    """Compact list of the world's own lore sections; no language assumptions.
+
+    When no term matches, the provider still needs to know what the world
+    contains. Section titles and descriptions come from the world's files, so
+    this works for any world, language or organization.
+    """
+    world_root = _resolve_mundo_dir(mundo)
+    if world_root is None:
+        return ""
+    lore_root = world_root / "lore"
+    if not lore_root.is_dir():
+        return ""
+    lines: list[str] = []
+    used = 0
+    for section_dir in sorted(p for p in lore_root.iterdir() if p.is_dir()):
+        intro = _lore_frontmatter(section_dir / f"{section_dir.name}.md")
+        title = str(intro.get("title") or section_dir.name).strip()
+        description = str(intro.get("description") or "").strip()
+        if not description:
+            for path in sorted(section_dir.glob("*.md")):
+                if path.name == f"{section_dir.name}.md":
+                    continue
+                meta = _lore_frontmatter(path)
+                description = str(meta.get("description") or "").strip()
+                if description:
+                    break
+        if not title and not description:
+            continue
+        entry = f"- {title}" + (f": {description[:160]}" if description else "")
+        lines.append(entry)
+        used += len(entry) + 1
         if used >= budget:
             break
     if not lines:
         return ""
     return (
-        "World lore index from the active world (read-only, verified):\n\n"
-        + "\n".join(lines)
+        "World lore sections (verified index; full lore only for matched terms):"
+        "\n\n" + "\n".join(lines)
     )[:budget]
 
 
@@ -9882,11 +9961,13 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
     # Proper nouns first: "Ekkor" is more specific than a generic material
     # word, and the excerpt budget must not be consumed by the first broad hit.
     terms.sort(key=lambda term: (not term[:1].isupper(), term.casefold()))
+    used_sections: set[str] = set()
     for term in terms:
         try:
             hits = list(reader.search(term))
         except Exception:
             continue
+        relevant: list[tuple[str, Any]] = []
         for hit in hits:
             path = str(_lore_value(hit, "path", ""))
             if not path or path in seen_paths:
@@ -9897,6 +9978,67 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
             ).casefold()
             if term.casefold() not in haystack:
                 continue
+            relevant.append((path, hit))
+            if len(relevant) >= 12:
+                break
+        if not relevant:
+            continue
+        by_parent: dict[str, list[tuple[str, Any]]] = {}
+        for path, hit in relevant:
+            by_parent.setdefault(str(Path(path).parent), []).append((path, hit))
+        family_parents = [
+            parent for parent, items in by_parent.items() if len(items) > 1
+        ]
+        if family_parents:
+            world_root = _resolve_mundo_dir(mundo)
+            for parent in family_parents:
+                if world_root is None:
+                    break
+                section_index = _world_lore_index_for_dir(
+                    world_root, Path(parent), budget,
+                )
+                if not section_index:
+                    continue
+                chunks.append(section_index)
+                used_sections.add(Path(parent).name)
+                for path, _ in by_parent[parent]:
+                    seen_paths.add(path)
+                if len(chunks) >= 3:
+                    break
+            if len(chunks) >= 3:
+                break
+            # A term that only hit a family is fully represented by its index.
+            if all(parent in family_parents for parent in by_parent):
+                continue
+        if len(relevant) > 1 and not family_parents:
+            # Flat families (one file per top-level section, e.g. eneatipos)
+            # cannot use one directory index; list every matched sibling
+            # compactly instead of silently keeping only the first one.
+            lines: list[str] = []
+            for path, hit in relevant:
+                title = str(
+                    _lore_value(hit, "title", "")
+                    or _lore_value(hit, "name", "")
+                    or path
+                ).strip()
+                description = str(_lore_value(hit, "description", "") or "").strip()
+                entry = f"- {title}"
+                if description:
+                    entry += f": {description[:180]}"
+                lines.append(entry)
+            if lines:
+                chunks.append(
+                    "Matched lore entries (read-only, verified):\n"
+                    + "\n".join(lines)
+                )
+                for path, _ in relevant:
+                    seen_paths.add(path)
+            if len(chunks) >= 3:
+                break
+            continue
+        for path, _ in relevant:
+            if str(Path(path).parent) in family_parents:
+                continue
             try:
                 entity = reader.read(path)
             except Exception:
@@ -9904,19 +10046,13 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
             if entity is None:
                 continue
             seen_paths.add(path)
-            lines = [f"### {str(_lore_value(entity, 'name', term)).strip()}"]
-            for label, key in (("Type", "type"), ("Title", "title"), ("Description", "description")):
-                value = str(_lore_value(entity, key, "") or "").strip()
-                if value:
-                    lines.append(f"{label}: {value}")
-            content = str(_lore_value(entity, "content", "") or "").strip()
-            if content:
-                lines.append(content[:1_200])
-            chunks.append("\n".join(lines))
-            break  # one best entity per term keeps distinct terms represented
+            chunks.append(_lore_entity_block(entity, term))
+            break
         if len(chunks) >= 3:
             break
-    family_index = _world_lore_section_index(mundo, author_input, budget)
+    family_index = _world_lore_section_index(
+        mundo, author_input, budget, skip_sections=used_sections,
+    )
     if family_index:
         # The whole family index goes first: one arbitrary sibling chunk must
         # not consume the budget before the requested archetype is represented.
@@ -9929,7 +10065,7 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
             return context[:budget]
         return family_index
     if not chunks:
-        return ""
+        return _world_lore_world_index(mundo, budget)
     context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
     return context[:budget]
 
