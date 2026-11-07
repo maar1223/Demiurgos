@@ -139,6 +139,8 @@ from guided_flow import (
     GUIDED_SYSTEM_FLOW,
     GuidedFlowProfile,
     builtin_profile,
+    detail_progress,
+    visible_proposal_key,
 )
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
@@ -3278,8 +3280,28 @@ def _guided_message_text(content: Mapping[str, Any]) -> str:
     return synthesis or question
 
 
+def _guided_proposal_view(key: str, value) -> dict:
+    return {
+        "key": key,
+        "label": key.replace("_", " ").title(),
+        "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
+        **(
+            {"rationale": str(value["rationale"])}
+            if isinstance(value, dict) and "rationale" in value
+            else {}
+        ),
+    }
+
+
 def _guided_public_state(state: SessionState) -> dict:
     """Serialize only the frontend-compatible, non-provenance session view."""
+    public_props = _public_guided_proposals(state.candidate)
+    profile = session_flow_profile(state)
+    plan = profile.detail_plan if profile is not None else ()
+    visible_key = visible_proposal_key(
+        public_props, state.candidate.accepted_canon, plan,
+    )
+    progress = detail_progress(state.candidate.accepted_canon, plan)
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3298,16 +3320,14 @@ def _guided_public_state(state: SessionState) -> dict:
         ],
         "candidate": {
             "accepted_canon": state.candidate.accepted_canon,
-            "proposals": _public_guided_proposals(state.candidate),
+            "proposals": public_props,
             "unresolved_references": state.candidate.unresolved_references,
             "conflicts": state.candidate.conflicts,
         },
-        "proposal": next((
-            {"key": key, "label": key.replace("_", " ").title(),
-             "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
-             **({"rationale": str(value["rationale"])} if isinstance(value, dict) and "rationale" in value else {})}
-            for key, value in _public_guided_proposals(state.candidate).items()
-        ), None),
+        "proposal": (
+            _guided_proposal_view(visible_key, public_props[visible_key])
+            if visible_key is not None else None
+        ),
         "reference": {
             "name": state.reference_name,
             "verified": bool(state.reference_context),
@@ -3324,6 +3344,8 @@ def _guided_public_state(state: SessionState) -> dict:
     flow = _public_flow(state)
     if flow is not None:
         payload["flow"] = flow
+    if progress is not None:
+        payload["detail_progress"] = progress
     return payload
 
 

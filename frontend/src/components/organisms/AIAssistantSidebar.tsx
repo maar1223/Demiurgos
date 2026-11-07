@@ -812,7 +812,12 @@ function ChatScreen({
            {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
               <p className="text-xs text-muted">
-                {t("assistant.proposal.title")}
+                {activeSession?.guided?.detail_progress
+                  ? t("guided.suggestedDetailProgress", {
+                      index: activeSession.guided.detail_progress.index,
+                      total: activeSession.guided.detail_progress.total,
+                    })
+                  : t("assistant.proposal.title")}
               </p>
               <p className="mt-1">{visibleGuidedProposal.label}: {visibleGuidedProposal.value}</p>
               <div className="mt-3 flex gap-2">

@@ -109,6 +109,116 @@ QUESTION_KEYS_BY_ENTITY_TYPE: dict[str, tuple[str, ...]] = {
     "entidad": ("identity", "entity_class"),
 }
 
+# Ordered, finite detail plan the guided UI surfaces. A slot is covered ONLY by
+# accepted canon; the provider may extract more fields, but only the proposal
+# for the first uncovered slot is shown. Keys outside the plan stay internal, so
+# the Author never receives a 14-card queue while the core is still undefined.
+DetailSlot = tuple[str, tuple[str, ...]]
+
+DETAIL_PLAN_BY_ENTITY_TYPE: dict[str, tuple[DetailSlot, ...]] = {
+    "personaje": (
+        ("identity", ("name", "nombre", "title", "identidad")),
+        ("desire", ("desire", "deseo", "motivacion", "motivation", "motivaciones")),
+        ("conflict", (
+            "conflict", "conflicto", "defecto", "defectos", "flaw", "herida",
+            "coste", "deuda", "precio",
+        )),
+        ("relationship", (
+            "relationship", "relacion", "relación", "relacion_anciano",
+            "vinculo", "vínculo", "antagonista",
+        )),
+        ("secret", (
+            "secret", "secreto", "origen", "origin", "pasado", "mecanismo",
+        )),
+        ("arc", ("arc", "arco", "objetivo", "goal", "meta", "voz")),
+    ),
+    "sistema": (
+        ("identity", ("name", "nombre", "title", "identidad")),
+        ("origin", ("origin", "origen")),
+        ("limit", ("limit", "limite", "límite")),
+    ),
+    "cronologia": (
+        ("identity", ("name", "nombre", "title", "identidad")),
+        ("event", ("event", "evento")),
+    ),
+    "entidad": (
+        ("identity", ("name", "nombre", "title", "identidad")),
+        ("entity_class", ("entity_class", "clase", "class")),
+    ),
+}
+
+
+def detail_plan_for(entity_type: str) -> tuple[DetailSlot, ...]:
+    return DETAIL_PLAN_BY_ENTITY_TYPE.get(entity_type, ())
+
+
+def _accepted_keys(accepted_canon: Mapping[str, Any]) -> set[str]:
+    return {str(key).strip().casefold() for key in accepted_canon}
+
+
+def accepted_detail_slots(
+    accepted_canon: Mapping[str, Any],
+    plan: tuple[DetailSlot, ...],
+) -> set[str]:
+    accepted = _accepted_keys(accepted_canon)
+    covered: set[str] = set()
+    for slot, aliases in plan:
+        if any(alias.casefold() in accepted for alias in aliases):
+            covered.add(slot)
+    return covered
+
+
+def next_detail_slot(
+    accepted_canon: Mapping[str, Any],
+    plan: tuple[DetailSlot, ...],
+) -> str | None:
+    covered = accepted_detail_slots(accepted_canon, plan)
+    return next((slot for slot, _ in plan if slot not in covered), None)
+
+
+def slot_for_key(plan: tuple[DetailSlot, ...], key: str) -> str | None:
+    normalized = str(key).strip().casefold()
+    for slot, aliases in plan:
+        if any(alias.casefold() == normalized for alias in aliases):
+            return slot
+    return None
+
+
+def detail_progress(
+    accepted_canon: Mapping[str, Any],
+    plan: tuple[DetailSlot, ...],
+) -> dict[str, Any] | None:
+    """1-based progress over the finite plan, counting accepted slots only."""
+    if not plan:
+        return None
+    covered = accepted_detail_slots(accepted_canon, plan)
+    next_slot = next((slot for slot, _ in plan if slot not in covered), None)
+    total = len(plan)
+    if next_slot is None:
+        return {"index": total, "total": total, "slot": plan[-1][0], "complete": True}
+    index = next(
+        position for position, (slot, _) in enumerate(plan, start=1)
+        if slot == next_slot
+    )
+    return {"index": index, "total": total, "slot": next_slot, "complete": False}
+
+
+def visible_proposal_key(
+    proposals: Mapping[str, Any],
+    accepted_canon: Mapping[str, Any],
+    plan: tuple[DetailSlot, ...],
+) -> str | None:
+    """The only proposal the Author should see: the next uncovered plan slot."""
+    if not plan:
+        return next(iter(proposals), None)
+    next_slot = next_detail_slot(accepted_canon, plan)
+    if next_slot is None:
+        return None
+    for key in proposals:
+        if slot_for_key(plan, key) == next_slot:
+            return key
+    return None
+
 # UI copy the client may render for a flow. The client never supplies copy,
 # only selects a key the server validates.
 UI_COPY_KEYS: frozenset[str] = frozenset({
@@ -210,6 +320,7 @@ class GuidedFlowProfile:
     # ``declarative`` (the declared terms/verbs).
     intent_matcher: str
     builtin: bool = False
+    detail_plan: tuple[DetailSlot, ...] = ()
 
     @property
     def index_target(self) -> str:
@@ -431,6 +542,7 @@ def resolve_profile(
             else "declarative"
         ),
         builtin=builtin,
+        detail_plan=detail_plan_for(entity_type),
     )
 
 

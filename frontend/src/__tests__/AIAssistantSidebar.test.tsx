@@ -544,12 +544,13 @@ describe("AIAssistantSidebar single conversation", () => {
             value: "freedom",
             rationale: "A starting point",
           },
+          detail_progress: { index: 2, total: 6, slot: "desire", complete: false },
         },
       },
     }));
 
     render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
-    expect(screen.getByText("Detalle sugerido")).toBeInTheDocument();
+    expect(screen.getByText("Detalle sugerido · 2 de 6")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rechazar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Aceptar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revisar y aprobar el diff del personaje" })).toBeInTheDocument();

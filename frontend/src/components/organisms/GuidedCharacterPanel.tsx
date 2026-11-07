@@ -147,7 +147,12 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
         {session?.proposal && (
           <div className="rounded-lg border border-edge bg-surface p-3">
             <p className="text-xs text-muted">
-              {t("guided.suggestedDetail")}
+              {session.detail_progress
+                ? t("guided.suggestedDetailProgress", {
+                    index: session.detail_progress.index,
+                    total: session.detail_progress.total,
+                  })
+                : t("guided.suggestedDetail")}
             </p>
             <p className="mt-1 text-sm text-primary">{session.proposal.label}: {session.proposal.value}</p>
             <div className="mt-3 flex gap-2">

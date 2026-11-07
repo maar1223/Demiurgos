@@ -45,3 +45,17 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 - **L13 (post-deploy bugfix, 2026-11-05):** the live sidebar now also filters legacy session-metadata proposals from cached localStorage, so an already-stored session loses the bogus "Detalle sugerido" and review action on reload without waiting for a new turn. Evidence: `AIAssistantSidebar` 58 tests; typecheck clean.
 - **L14 (UX, 2026-11-05):** the assistant composer now receives the first printable keystroke when the Author types while reading (focus on the page, a button, or the panel). It never hijacks a real editor/search/contentEditable/select, an open modal, or Space on a focused control; dead keys/IME are included so Spanish accents are not lost. Evidence: `AIAssistantSidebar` 60 tests; typecheck clean.
 - **L15 (post-deploy bugfix, 2026-11-05):** the consent token is short-lived and in-memory, so an API restart (or TTL expiry) after the card was issued makes the accept return 422 while the UI kept the dead card and showed the generic blocked copy. Fixed: a 422/`invalid_input` on accept clears `consentToken`/`consentFlow` and shows a specific "suggestion expired, send again" message. Evidence: `useAIAssistantSessions` 40 tests; typecheck clean.
+
+## Detail plan (follow-up, 2026-11-07)
+
+- **S7** The character flow surfaces a finite, ordered plan of six details: identity → desire → conflict → relationship → secret → arc. A slot is covered only by accepted canon; off-plan provider fields never become visible cards. Only the proposal for the first uncovered slot is shown, and the card reads "Detalle sugerido · N de 6".
+- **S8** Once the plan is complete, no further plan proposals are shown; the review action is the exit.
+
+Tasks (route: inline):
+- [x] T8 `guided_flow.py`: ordered `DETAIL_PLAN_BY_ENTITY_TYPE`, accepted-only coverage, `detail_progress`, `visible_proposal_key`.
+- [x] T9 `api_server._guided_public_state`: plan-aligned `proposal` + additive `detail_progress`; UI counter in `GuidedCharacterPanel` and `AIAssistantSidebar`; es/en copy.
+- [x] T10 tests: plan/progress unit, API public state, FE panel/sidebar; typecheck, build and full suites.
+
+Log:
+- **L16 (Owner request, verbatim):** "la cosa es que me parece que propone demasiadas cosas cuando al personaje aun le faltan cosas por definir" / "si, me parece bien".
+- **L17 (evidence, 2026-11-07):** live session `guided-46a4b828a5b445f3b77aeef09ebf7685` had 4 accepted + 14 pending proposals. The public state now returns `detail_progress {index: 2, total: 6, slot: desire}` and only `motivacion` as the visible card; the 13 optional keys stay hidden. BE focused 854 passed; full BE 4987 passed/26 skipped with the 4 manifest-freshness failures fixed by regenerating `payload_manifest.json`; FE 1745 passed; `npm run typecheck` clean; production build served as `assets/index-UN8IW7qu.js`.
