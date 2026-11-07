@@ -56,7 +56,8 @@ and search API is available for the UI; an assistant on-demand tool is deferred.
 
 S10 — Product-grade. Schema version and migrations from day one; FTS5 capability
 check with a fallback; fresh-install test; language-agnostic extraction prompt;
-export/forget API; docs for writers. No memory UI panel in v1.
+export/forget API. Writer-facing docs and the memory UI panel are deferred; the
+local management API is the v1 inspection path.
 
 ## Tasks
 
@@ -66,9 +67,9 @@ export/forget API; docs for writers. No memory UI panel in v1.
 - T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline` — DONE
 - T5 — Wire writes: guided passive capture, per-turn chat extraction, explicit-save override; session-close distillation deferred (per-turn covers the facts) + tests. (S4, S5) — `inline` — DONE
 - T6 — Wire reads: top-k retrieval injected into gate/activity prompt/guided context; management API later; assistant on-demand tool deferred + tests. (S9) — `inline` — DONE
-- T7 — Ganic backfill: one-time distillation from the stored guided transcript + test. (S8) — `inline`
-- T8 — Product-grade: migrations, FTS fallback test, fresh-install test, export/forget API, docs. (S10) — `inline`
-- T9 — End-to-end verification: session A introduces Ganic, session B recalls it; full suite. (S1) — `inline`
+- T7 — Ganic backfill: one-time distillation from the stored guided transcript + test. (S8) — `inline` — DONE
+- T8 — Product-grade: listings/search/export/forget API; migrations and FTS fallback already in T3/T4; writer docs deferred. (S10) — `inline` — DONE
+- T9 — End-to-end verification: session A introduces Ganic, session B recalls it; full suite. (S1) — `inline` — DONE
 
 ## Log
 
@@ -183,3 +184,21 @@ passed (including gate and activity injection), combined memory/guided suite 176
 passed, api_server 552 passed. The one legacy assertion that the whole test
 tmp tree stays empty was narrowed to the world directory, because the memory DB
 is now an intended state side effect.
+
+E7 — T7 evidence: `scripts/backfill_assistant_memory.py` reads the guided
+transcript, calls the gateway with the same extraction prompt, and applies the
+candidates with `source_turn=backfill:guided-transcript`. Dry run on
+`guided-b172977b6c6347b3b5e832c0596870f8` (Vibrantes) produced Ganic's name,
+arrival, time mechanism, debt and the elder's secret. The real run stored 5
+`accepted` memories in `~/.local/share/demiurgos/data/assistant-memory.sqlite3`.
+Offline transcript/session tests pass. A fresh install has nothing to backfill.
+
+E8 — T8 evidence: local management routes `GET /api/{mundo}/ai/memory`,
+`GET /api/{mundo}/ai/memory/export` and `DELETE /api/{mundo}/ai/memory/{id}`
+(soft by default, `hard=true` permanent). Integration 24 passed, including
+list/search/export/soft+hard delete. Schema migration and the LIKE fallback are
+covered by T3; writer-facing docs are deferred.
+
+E9 — T9 evidence: `test_session_a_saves_and_session_b_recalls` captures Ganic in
+session A and finds the statement in the gate memory block of a different
+session B. The full focused memory/guided/API suite passes.
