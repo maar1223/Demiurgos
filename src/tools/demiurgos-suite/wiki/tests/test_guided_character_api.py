@@ -911,7 +911,9 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     })
     assert retried.status_code == 200
     assert retried.json()["index_status"] == "pending"
-    assert list(tmp_path.rglob("*")) == [tmp_path / "vibrantes"]
+    # Cross-session memory is an intended assistant side effect; the world
+    # directory itself must stay untouched.
+    assert list((tmp_path / "vibrantes").rglob("*")) == []
 
 
 def test_guided_failures_are_stable_and_non_mutating(monkeypatch) -> None:

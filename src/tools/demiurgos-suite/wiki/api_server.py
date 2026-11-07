@@ -3489,6 +3489,11 @@ async def _guided_continue(
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
     world_context = _world_lore_context(mundo, author_input, budget=4_000)
+    memory_context = _memory_context(mundo, author_input)
+    if memory_context:
+        world_context = (
+            f"{world_context}\n\n{memory_context}" if world_context else memory_context
+        )
     known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
@@ -8332,6 +8337,7 @@ async def chat_endpoint(body: ChatRequest):
         mundo, user_msg,
         distilled_state=_distilled_summary(body.session_id),
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(mundo, user_msg),
     )
     payload = result.as_dict()
     if result.decision is not None:
@@ -8500,6 +8506,20 @@ async def _capture_turn_memory(
         )
     except Exception:
         logger.warning("assistant memory persist failed safely", exc_info=True)
+
+
+def _memory_context(mundo: str, query: str, *, limit: int = 5) -> str:
+    """Bounded, fail-open retrieval block for prompts and the semantic gate."""
+    try:
+        entries = _ASSISTANT_MEMORY.search(
+            query, world=_memory_world(mundo), limit=limit,
+        )
+    except Exception:
+        return ""
+    if not entries:
+        return ""
+    lines = [f"- ({entry.kind}) {entry.statement}" for entry in entries]
+    return "[Relevant memory from earlier sessions:\n" + "\n".join(lines) + "\n]"
 
 
 def _capture_guided_observations(mundo: str, session_id: str, response) -> None:
@@ -8805,6 +8825,9 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         context=context,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(
+            mundo, body.prompt + attachment_metadata_note(attachments),
+        ),
     )
     if result.decision is None:
         logger.info(
@@ -8941,7 +8964,7 @@ async def _semantic_gate(
     mundo: str, prompt: str, *, session_id: str = "",
     ficha: str | None = None, context: SemanticContext | None = None,
     request_id: str | None = None, distilled_state: str | None = None,
-    recent_turns: str | None = None,
+    recent_turns: str | None = None, memory_context: str | None = None,
 ) -> SemanticResult:
     """Mandatory Hermes-first semantic gate shared by every assistant surface.
 
@@ -8977,6 +9000,7 @@ async def _semantic_gate(
         context=context,
         distilled_state=distilled_state,
         recent_turns=recent_turns,
+        memory_context=memory_context,
     )
 
 
@@ -9795,6 +9819,7 @@ def _build_ai_ask_prompt(
     distilled_state: str | None = None,
     skill_contract: str | None = None,
     attachments: list | None = None,
+    memory_context: str | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -9902,6 +9927,8 @@ def _build_ai_ask_prompt(
         parts.append(
             f"[Conversation context (summarized): {distilled_state}]"
         )
+    if memory_context:
+        parts.append(memory_context)
     if skill_contract:
         parts.append(skill_contract)
     attachment_block = attachment_context_block(attachments or [])
@@ -10057,6 +10084,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         request_id=request_id,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(
+            mundo, body.prompt + attachment_metadata_note(attachments),
+        ),
     )
     decision = result.decision
     if decision is not None and decision.state in CONTINUATION_STATES:
@@ -10140,6 +10170,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             distilled_state=distilled_state,
             skill_contract=skill_contract,
             attachments=attachments,
+            memory_context=_memory_context(
+                mundo, body.prompt + attachment_metadata_note(attachments),
+            ),
         ),
         session_id=_channel_session_id(body.session_id),
     )

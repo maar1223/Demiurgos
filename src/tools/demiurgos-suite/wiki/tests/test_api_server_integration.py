@@ -109,17 +109,19 @@ class _RecordingProvider:
         self.inner = inner
         self.distilled = []
         self.recent_turns = []
+        self.memory_context = []
 
     async def decide(
         self, author_input, *, request_id, session_id=None, context=None,
-        distilled_state=None, recent_turns=None,
+        distilled_state=None, recent_turns=None, memory_context=None,
     ):
         self.distilled.append(distilled_state)
         self.recent_turns.append(recent_turns)
+        self.memory_context.append(memory_context)
         return await self.inner.decide(
             author_input, request_id=request_id, session_id=session_id,
             context=context, distilled_state=distilled_state,
-            recent_turns=recent_turns,
+            recent_turns=recent_turns, memory_context=memory_context,
         )
 
 
@@ -178,8 +180,10 @@ class _PartialActivityAdapter:
 
     def __init__(self):
         self.cancelled = []
+        self.last_request = None
 
     def start(self, request):
+        self.last_request = request
         return "run-1"
 
     async def events(self, run_id):
@@ -546,6 +550,48 @@ class TestCrossSessionMemoryCapture:
             topic_key="world/test_mundo/preference/voice", world="test_mundo",
         )
         assert entry is not None and entry.status == "accepted"
+
+    def test_memory_context_is_injected_into_the_gate(
+            self, client: TestClient, monkeypatch):
+        api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        recorder = _wire_semantic_provider(monkeypatch, runs, recorder=True)
+
+        client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-recall",
+        })
+
+        assert "Ganic llegó de fuera." in recorder.memory_context[-1]
+
+    def test_activity_prompt_includes_the_memory_context(
+            self, client: TestClient, monkeypatch):
+        api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = _PartialActivityAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+
+        client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-recall-2",
+        })
+
+        assert "Ganic llegó de fuera." in adapter.last_request.prompt
+
+    def test_memory_context_fails_open(self, client: TestClient, monkeypatch):
+        class _BrokenStore:
+            def search(self, *_args, **_kwargs):
+                raise RuntimeError("store down")
+
+        monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", _BrokenStore())
+        assert api_server._memory_context("test_mundo", "Ganic") == ""
 
     def test_activity_stream_captures_memory(
             self, client: TestClient, monkeypatch):

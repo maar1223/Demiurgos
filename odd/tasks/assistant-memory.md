@@ -51,7 +51,8 @@ a no-op on a fresh install.
 
 S9 — Retrieval. Each turn retrieves the top-k relevant entries with FTS5
 (`trigram`, language-agnostic) filtered by world/global and injects them into the
-assistant prompt. A deeper on-demand search is available to the assistant.
+semantic gate, the activity prompt and the guided world context. A management
+and search API is available for the UI; an assistant on-demand tool is deferred.
 
 S10 — Product-grade. Schema version and migrations from day one; FTS5 capability
 check with a fallback; fresh-install test; language-agnostic extraction prompt;
@@ -64,7 +65,7 @@ export/forget API; docs for writers. No memory UI panel in v1.
 - T3 — `assistant_memory_store.py`: schema (`memory_entries` + FTS5 trigram), `PRAGMA user_version`, FTS fallback, CRUD and retrieval + tests. (S1, S6, S10) — `inline` — DONE
 - T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline` — DONE
 - T5 — Wire writes: guided passive capture, per-turn chat extraction, explicit-save override; session-close distillation deferred (per-turn covers the facts) + tests. (S4, S5) — `inline` — DONE
-- T6 — Wire reads: top-k retrieval injected into gate/prompt; optional on-demand search tool + tests. (S9) — `inline`
+- T6 — Wire reads: top-k retrieval injected into gate/activity prompt/guided context; management API later; assistant on-demand tool deferred + tests. (S9) — `inline` — DONE
 - T7 — Ganic backfill: one-time distillation from the stored guided transcript + test. (S8) — `inline`
 - T8 — Product-grade: migrations, FTS fallback test, fresh-install test, export/forget API, docs. (S10) — `inline`
 - T9 — End-to-end verification: session A introduces Ganic, session B recalls it; full suite. (S1) — `inline`
@@ -173,3 +174,12 @@ fail-open. The conftest replaces the curator with a hermetic no-op so no test
 reaches the gateway. Integration 17 passed, guided 170 passed, api_server 552
 passed. Session-close distillation is deferred: per-turn capture already covers
 the durable facts, and the product has no close event yet.
+
+E6 — T6 evidence: `_memory_context` retrieves the top 5 entries (proposals
+excluded) and is injected into the semantic-gate prompt (`semantic_intent.py`),
+the activity prompt (`_build_ai_ask_prompt`) and the guided `world_context`.
+Every path is fail-open: a store error returns an empty context. Integration 24
+passed (including gate and activity injection), combined memory/guided suite 176
+passed, api_server 552 passed. The one legacy assertion that the whole test
+tmp tree stays empty was narrowed to the world directory, because the memory DB
+is now an intended state side effect.
