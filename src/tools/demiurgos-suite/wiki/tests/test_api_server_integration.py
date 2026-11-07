@@ -34,8 +34,10 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 import api_server  # noqa: E402
 from assistant_activity import assess_hermes_capabilities  # noqa: E402
+from assistant_memory_store import AssistantMemoryStore  # noqa: E402
 from conversation_memory_store import ConversationMemoryStore  # noqa: E402
 from guided_character_protocol import invoke_bounded  # noqa: E402
+from memory_curator import MemoryCandidate  # noqa: E402
 
 
 def _activity_capability():
@@ -190,6 +192,21 @@ class _PartialActivityAdapter:
         self.cancelled.append(run_id)
 
 
+class _NoMemoryCurator:
+    async def extract(self, **_kwargs):
+        return []
+
+
+class _FakeMemoryCurator:
+    def __init__(self, candidates):
+        self.candidates = list(candidates)
+        self.calls = []
+
+    async def extract(self, **kwargs):
+        self.calls.append(kwargs)
+        return list(self.candidates)
+
+
 class _CumulativeActivityAdapter:
     """Emits cumulative delta snapshots, as the live translator does."""
 
@@ -229,6 +246,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", ConversationMemoryStore(":memory:"))
+    monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", AssistantMemoryStore(":memory:"))
+    monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _NoMemoryCurator())
     router = _FakeRouter()
     monkeypatch.setattr(api_server, "_SKILL_ROUTER", router)
     api_server._graph_indices.clear()
@@ -476,6 +495,77 @@ class TestActivityStreamMemory:
         turns = api_server._CONVERSATION_MEMORY.get_recent_turns("sess-cum")
         assert [t.role for t in turns] == ["user", "assistant"]
         assert turns[1].content == "Muy bien"
+
+
+class TestCrossSessionMemoryCapture:
+    def test_capture_turn_memory_persists_candidates(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        curator = _FakeMemoryCurator([candidate])
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", curator)
+
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Ganic llegó de fuera", assistant_text="Anotado.",
+        ))
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/canon/ganic-origin", world="test_mundo",
+        )
+        assert entry is not None
+        assert entry.statement == "Ganic llegó de fuera."
+        assert curator.calls[0]["world"] == "test_mundo"
+
+    def test_capture_fails_open(self, client: TestClient, monkeypatch):
+        class _Broken:
+            async def extract(self, **_kwargs):
+                raise RuntimeError("gateway down")
+
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _Broken())
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Hola", assistant_text="Hola.",
+        ))  # must not raise
+
+    def test_explicit_request_bypasses_the_threshold(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "preference", "Voice", "Prefiere respuestas cortas.", 0.1,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Recuerda que prefiero respuestas cortas",
+            assistant_text="Anotado.",
+        ))
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/preference/voice", world="test_mundo",
+        )
+        assert entry is not None and entry.status == "accepted"
+
+    def test_activity_stream_captures_memory(
+            self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", _PartialActivityAdapter())
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Ganic llegó de fuera", "session_id": "sess-cap",
+        })
+        assert response.status_code == 200
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/canon/ganic-origin", world="test_mundo",
+        )
+        assert entry is not None
 
 
 class TestPersistedLocaleIntegration:

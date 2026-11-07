@@ -129,7 +129,25 @@ _STATE_BOUND_BINDINGS = (
     "_CO_CREATION_SESSIONS",
     "_CO_CREATION_MATERIALIZER",
     "_CONVERSATION_MEMORY",
+    "_ASSISTANT_MEMORY",
 )
+
+
+class _NoopMemoryCurator:
+    """Keep tests hermetic: memory extraction never reaches the real gateway."""
+
+    async def extract(self, **_kwargs):
+        return []
+
+
+@pytest.fixture(autouse=True)
+def quiet_assistant_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the extraction seam before any test can call the gateway."""
+    api_server = sys.modules.get("api_server")
+    if api_server is not None:
+        monkeypatch.setattr(
+            api_server, "_MEMORY_CURATOR", _NoopMemoryCurator(), raising=False,
+        )
 
 
 def _reset_state_bound_caches() -> None:

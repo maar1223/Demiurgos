@@ -253,6 +253,8 @@ from semantic_intent import (
     unavailable_copy,
 )
 from conversation_memory_store import ConversationMemoryStore, Turn
+from assistant_memory_store import AssistantMemoryStore
+from memory_curator import MemoryCurator, apply_candidates, slug
 from skill_router import SkillRouter, SkillRouteResult, TRANSVERSAL_SKILLS
 from contract_projection import project_contract_markdown
 from order_manifest import read_order, remove_from_order
@@ -3539,6 +3541,24 @@ async def _guided_continue(
     )
     if state is not None:
         _invalidate_guided_proposal(session_id)
+        if response.outcome not in {Outcome.ERROR, Outcome.UNAVAILABLE}:
+            assistant_text = "\n".join(
+                part for part in (response.question, response.synthesis) if part
+            )
+            if assistant_text:
+                await _capture_turn_memory(
+                    session_id=session_id,
+                    mundo=mundo,
+                    user_text=author_input,
+                    assistant_text=assistant_text,
+                    skill_hints=(
+                        [state.methodology_snapshot.skill_id]
+                        if state.methodology_snapshot
+                        and state.methodology_snapshot.skill_id
+                        else None
+                    ),
+                )
+            _capture_guided_observations(mundo, session_id, response)
     return _guided_result(response, state)
 
 
@@ -8256,6 +8276,8 @@ _SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
 # LLM classification over the same runs adapter. Both are module seams that
 # tests may replace after import. Bound lazily (WU-2).
 _CONVERSATION_MEMORY = _LazyBinding(ConversationMemoryStore)
+_ASSISTANT_MEMORY = _LazyBinding(AssistantMemoryStore)
+_MEMORY_CURATOR: MemoryCurator | None = None
 
 
 class _DeferredMethodologyLibrary:
@@ -8420,6 +8442,89 @@ def _persist_memory_turn(
         _CONVERSATION_MEMORY.add_turn(session_id, mundo, role, content, skill_id=skill_id)
     except Exception:
         logger.warning("conversation memory turn persist failed", exc_info=True)
+
+
+_EXPLICIT_MEMORY_PATTERNS = (
+    "recuerda que", "recuerda esto", "recuerda:", "memoriza", "no olvides",
+    "remember that", "remember this", "keep in mind",
+)
+
+
+def _is_explicit_memory_request(text: str) -> bool:
+    """A direct request always saves, regardless of the confidence threshold."""
+    lowered = str(text or "").casefold()
+    return any(pattern in lowered for pattern in _EXPLICIT_MEMORY_PATTERNS)
+
+
+def _memory_world(mundo: str) -> str:
+    """The world-agnostic assistant context stores no world-specific memory."""
+    return "" if mundo == GLOBAL_ASSISTANT_CONTEXT else str(mundo or "")
+
+
+def _memory_curator() -> MemoryCurator:
+    """Lazy curator seam; tests replace ``_MEMORY_CURATOR`` directly."""
+    global _MEMORY_CURATOR
+    if _MEMORY_CURATOR is None:
+        _MEMORY_CURATOR = MemoryCurator(complete=_run_hermes)
+    return _MEMORY_CURATOR
+
+
+async def _capture_turn_memory(
+    *, session_id: str, mundo: str, user_text: str, assistant_text: str,
+    skill_hints: list[str] | None = None,
+) -> None:
+    """Extract and persist durable memories from one turn (fail-open)."""
+    if not session_id or not str(user_text or "").strip() or not str(assistant_text or "").strip():
+        return
+    try:
+        curator = _memory_curator()
+        candidates = await curator.extract(
+            world=_memory_world(mundo),
+            user_text=user_text,
+            assistant_text=assistant_text,
+            skill_hints=skill_hints,
+        )
+    except Exception:
+        logger.warning("assistant memory extraction failed safely", exc_info=True)
+        return
+    if not candidates:
+        return
+    explicit = _is_explicit_memory_request(user_text)
+    try:
+        apply_candidates(
+            _ASSISTANT_MEMORY,
+            candidates,
+            world=_memory_world(mundo),
+            source_session=session_id,
+            explicit=explicit,
+        )
+    except Exception:
+        logger.warning("assistant memory persist failed safely", exc_info=True)
+
+
+def _capture_guided_observations(mundo: str, session_id: str, response) -> None:
+    """Passively store the provider's non-canon notes as proposals (no call)."""
+    observations = getattr(response, "observations", None)
+    if not observations or not session_id:
+        return
+    try:
+        store = _ASSISTANT_MEMORY
+        world = _memory_world(mundo)
+        for key, value in dict(observations).items():
+            statement = f"{key}: {value}".strip()
+            if not statement or len(statement) > 500:
+                continue
+            store.upsert(
+                world=world,
+                kind="fact",
+                topic_key=f"world/{slug(world) or 'unknown'}/observation/{slug(str(key))}",
+                statement=statement,
+                confidence=0.6,
+                status="proposal",
+                source_session=session_id,
+            )
+    except Exception:
+        logger.warning("guided observation memory capture failed safely", exc_info=True)
 
 
 async def _maybe_refresh_distilled(session_id: str, mundo: str) -> None:
@@ -8738,6 +8843,13 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                 )
                 _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
                 await _maybe_refresh_distilled(body.session_id, mundo)
+                await _capture_turn_memory(
+                    session_id=body.session_id,
+                    mundo=mundo,
+                    user_text=_memory_user_prompt(body.prompt, attachments),
+                    assistant_text=result.response,
+                    skill_hints=[skill_id] if skill_id else None,
+                )
         payload = result.as_dict()
         redirect = _skill_creation_redirect(body.prompt)
         if redirect is not None:
@@ -10155,6 +10267,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             if not disconnected and assistant_answer:
                 _persist_memory_turn(body.session_id, mundo, "assistant", assistant_answer)
                 await _maybe_refresh_distilled(body.session_id, mundo)
+                await _capture_turn_memory(
+                    session_id=body.session_id,
+                    mundo=mundo,
+                    user_text=_memory_user_prompt(body.prompt, attachments),
+                    assistant_text=assistant_answer,
+                    skill_hints=[skill_id] if skill_id else None,
+                )
 
     return StreamingResponse(
         stream(),

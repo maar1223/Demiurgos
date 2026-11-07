@@ -63,7 +63,7 @@ export/forget API; docs for writers. No memory UI panel in v1.
 - T2 — Activity path: store the final answer, not cumulative streaming snapshots; do not duplicate the gateway-replayed recent turns + test. (S7) — `inline` — DONE
 - T3 — `assistant_memory_store.py`: schema (`memory_entries` + FTS5 trigram), `PRAGMA user_version`, FTS fallback, CRUD and retrieval + tests. (S1, S6, S10) — `inline` — DONE
 - T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline` — DONE
-- T5 — Wire writes: guided passive capture, per-turn chat extraction, session-close distillation + tests. (S4, S5) — `inline`
+- T5 — Wire writes: guided passive capture, per-turn chat extraction, explicit-save override; session-close distillation deferred (per-turn covers the facts) + tests. (S4, S5) — `inline` — DONE
 - T6 — Wire reads: top-k retrieval injected into gate/prompt; optional on-demand search tool + tests. (S9) — `inline`
 - T7 — Ganic backfill: one-time distillation from the stored guided transcript + test. (S8) — `inline`
 - T8 — Product-grade: migrations, FTS fallback test, fresh-install test, export/forget API, docs. (S10) — `inline`
@@ -163,3 +163,13 @@ threshold 0.7 (bypassable by an explicit save), max 5/turn, a proposal or rumor
 never overwrites accepted canon, and a contradictory accepted statement becomes
 a separate `conflict` row instead of losing the original. 24 focused store +
 curator tests pass; manifest regenerated (189 payload files).
+
+E5 — T5 evidence: `_ASSISTANT_MEMORY` and `_MEMORY_CURATOR` are lazy seams in
+`api_server.py`. Per-turn capture runs after `/ai/ask` and `/ai/ask/activity`
+close; guided continuation captures the Author turn plus the assistant
+question/synthesis and stores provider `observations` passively as `proposal`.
+An explicit "recuerda que…" bypasses the confidence threshold. Every write is
+fail-open. The conftest replaces the curator with a hermetic no-op so no test
+reaches the gateway. Integration 17 passed, guided 170 passed, api_server 552
+passed. Session-close distillation is deferred: per-turn capture already covers
+the durable facts, and the product has no close event yet.
