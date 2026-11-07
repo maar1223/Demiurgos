@@ -18,13 +18,14 @@ for _path in (str(_WIKI), str(_SUITE)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from assistant_activity import (  # noqa: E402
+from assistant_activity import (
     ACTIVITY_UNAVAILABLE_REASON,
     ActivityTranslator,
     HermesActivityRequest,
     HermesRunsActivityAdapter,
     INCOMPLETE_EVIDENCE_WARNING,
     NEUTRAL_EVIDENCE_WARNING,
+    RunSubmissionError,
     SemanticDecisionEvent,
     assess_hermes_capabilities,
     validate_structured_world_path,
@@ -126,6 +127,32 @@ def test_runs_adapter_uses_documented_endpoints_and_fields():
         assert requests[1].url.path == "/v1/runs"
         assert json.loads(requests[1].content) == {"input": "safe prompt", "session_id": "session-1"}
         assert requests[-1].url.path == "/v1/runs/run-1/stop"
+
+    asyncio.run(scenario())
+
+
+def test_run_refusal_carries_the_upstream_status():
+    async def scenario():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/v1/runs" and request.method == "POST":
+                return httpx.Response(402)
+            return httpx.Response(404)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        adapter = HermesRunsActivityAdapter(
+            "http://hermes.test/v1",
+            api_key="redacted-test-key",
+            client_provider=lambda: client,
+        )
+        try:
+            with pytest.raises(RunSubmissionError) as caught:
+                await adapter.start(HermesActivityRequest("request-1", "safe prompt", ""))
+        finally:
+            await client.aclose()
+
+        # The status is what lets the semantic gate stop instead of retrying.
+        assert caught.value.status_code == 402
+        assert isinstance(caught.value, RuntimeError)
 
     asyncio.run(scenario())
 

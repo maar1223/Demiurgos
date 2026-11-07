@@ -164,7 +164,10 @@ class HermesRunsActivityAdapter:
             headers=self._headers(),
         )
         if response.status_code not in {200, 202}:
-            raise RuntimeError("Hermes run submission failed")
+            raise RunSubmissionError(
+                "Hermes run submission failed",
+                status_code=response.status_code,
+            )
         body = response.json()
         run_id = body.get("run_id") if isinstance(body, Mapping) else None
         status = body.get("status") if isinstance(body, Mapping) else None
@@ -227,6 +230,21 @@ class HermesRunsActivityAdapter:
 
 class ActivityUnavailable(RuntimeError):
     """Raised when the provider contract has not been admitted."""
+
+
+class RunSubmissionError(RuntimeError):
+    """A run submission the provider refused, with its HTTP status.
+
+    The status lets callers tell a refusal that will never succeed on retry
+    (authentication, quota, unsupported request) from a transient transport
+    failure. ``RuntimeError`` stays the base class so existing callers are
+    unchanged.
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 
 @dataclass(frozen=True)
