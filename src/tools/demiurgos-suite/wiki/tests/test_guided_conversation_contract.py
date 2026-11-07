@@ -182,6 +182,49 @@ class TestWorldLore:
         assert "Pannj" in text
         assert "Territorio del nororiente" in text
 
+    def test_family_question_includes_every_stal_archetype(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        section = (
+            tmp_path / "Vibrantes" / "lore" / "sistema-stal-poderes-vibrantes"
+        )
+        section.mkdir(parents=True)
+        (section / "sistema-stal-poderes-vibrantes.md").write_text(
+            "---\ntitle: Sistema Stal | Poderes Vibrantes\n"
+            "description: Los nueve arquetipos.\n---\n",
+            encoding="utf-8",
+        )
+        for filename, title in (
+            ("1er-stal-director", "1er Stal – Director"),
+            ("5to-stal-aislador", "5to Stal – Aislador"),
+            ("9no-stal-mediador", "9no Stal – Mediador"),
+        ):
+            (section / f"{filename}.md").write_text(
+                f'---\ntitle: {title}\ntype: concepto\n'
+                f'description: "Arquetipo del {title}."\n---\n',
+                encoding="utf-8",
+            )
+        monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: None)
+
+        text = api_server._world_lore_context(
+            "Vibrantes", "¿qué Stal crees que vaya bien con su personalidad?",
+        )
+        assert "5to Stal – Aislador" in text
+        assert "9no Stal – Mediador" in text
+
+    def test_lore_query_keeps_the_previous_author_topic(self) -> None:
+        class _Message:
+            message_type = type("_Type", (), {"value": "author_input"})
+            content = {"text": "¿qué Stal crees que vaya bien?"}
+
+        class _State:
+            messages = [_Message()]
+
+        query = api_server._guided_lore_query(_State(), "¿personalidad?")
+        assert "Stal" in query
+        assert "personalidad" in query
+
 
 class TestRequestValidation:
     def test_world_context_over_budget_is_rejected(self) -> None:

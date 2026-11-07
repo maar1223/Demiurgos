@@ -3510,7 +3510,9 @@ async def _guided_continue(
     # S1/S2: server-owned context for this turn. The provider cannot fetch
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
-    world_context = _world_lore_context(mundo, author_input, budget=4_000)
+    world_context = _world_lore_context(
+        mundo, _guided_lore_query(state, author_input), budget=4_000,
+    )
     memory_context = _memory_context(mundo, author_input)
     if memory_context:
         world_context = (
@@ -9756,6 +9758,15 @@ _WORLD_LORE_PLACE_TERMS = frozenset({
     "lugar", "lugares", "ubicacion", "ubicación", "mapa", "ambientar",
     "escenario", "escenarios", "entorno", "terreno", "terrenos",
 })
+# Family topics whose section index must travel whole: a term search returns
+# one arbitrary sibling (e.g. the 9th Stal) and the model then claims the
+# requested sibling (e.g. the 5th) is undescribed.
+_WORLD_LORE_FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
+    "stal": ("sistema-stal-poderes-vibrantes",),
+    "staler": ("sistema-stal-poderes-vibrantes",),
+    "ayagar": ("ayagars-reptiles-vibrantes",),
+    "vibrastal": ("vibrastal-estados-y-niveles",),
+}
 
 
 def _lore_frontmatter(path: Path) -> dict:
@@ -9785,6 +9796,9 @@ def _world_lore_sections(author_input: str) -> list[str]:
         sections.append(_WORLD_LORE_PLANET_SECTION)
     if any(term in lowered for term in _WORLD_LORE_PLACE_TERMS):
         sections.extend((_WORLD_LORE_POLITICAL_SECTION, _WORLD_LORE_PLANET_SECTION))
+    for stem, family_sections in _WORLD_LORE_FAMILY_SECTIONS.items():
+        if stem in lowered:
+            sections.extend(family_sections)
     return list(dict.fromkeys(sections))
 
 
@@ -9902,10 +9916,40 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
             break  # one best entity per term keeps distinct terms represented
         if len(chunks) >= 3:
             break
+    family_index = _world_lore_section_index(mundo, author_input, budget)
+    if family_index:
+        # The whole family index goes first: one arbitrary sibling chunk must
+        # not consume the budget before the requested archetype is represented.
+        if chunks:
+            context = (
+                family_index
+                + "\n\nWorld lore from the active world graph (read-only, verified):\n\n"
+                + "\n\n".join(chunks)
+            )
+            return context[:budget]
+        return family_index
     if not chunks:
-        return _world_lore_section_index(mundo, author_input, budget)
+        return ""
     context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
     return context[:budget]
+
+
+def _guided_lore_query(state: SessionState | None, author_input: str) -> str:
+    """Current input plus the last author topics, so a follow-up keeps its subject.
+
+    A short follow-up ("¿personalidad?") names no entity; the previous author
+    turn is usually the real subject ("¿qué Stal le va?"). Including the last two
+    author inputs lets the lore lookup resolve the family/entity without
+    injecting the assistant's own speculation.
+    """
+    if state is None:
+        return author_input
+    recent = [
+        str((message.content or {}).get("text") or "")
+        for message in state.messages
+        if message.message_type.value == "author_input"
+    ][-2:]
+    return "\n".join([author_input, *[text for text in recent if text.strip()]])
 
 
 def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
