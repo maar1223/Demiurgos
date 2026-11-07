@@ -55,7 +55,8 @@ const baseStatus = {
 
 // The panel is manual-only (spec: "Read-only frontend update panel"): nothing
 // is fetched on mount and nothing polls. These tests pin that contract, plus
-// the Slice 3 apply flow (ConfirmDialog required, logout-first, long timeout).
+// the Slice 3 apply flow (ConfirmDialog required, session cleared by the apply,
+// long timeout).
 describe("UpdateSection — Perfil → Actualizaciones", () => {
   beforeEach(() => {
     (getUpdateStatus as Mock).mockReset();
@@ -222,7 +223,8 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Slice 3 — apply flow (spec: confirmation required, logout-first, 90s)
+  // Slice 3 — apply flow (spec: confirmation required, session cleared by the
+  // accepted apply, 90s)
   // -------------------------------------------------------------------------
 
   /** Run a manual check that ends with an update available. */
@@ -257,27 +259,20 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
     ).not.toBeInTheDocument();
     expect(applyUpdate).not.toHaveBeenCalled();
 
-    // Confirming dispatches: logout first, then the apply POST.
+    // Confirming dispatches the apply POST while the session is still live.
     await user.click(screen.getByRole("button", { name: "Instalar y reiniciar" }));
     await user.click(
       within(
         screen.getByRole("dialog", { name: /instalar actualización/i }),
       ).getByRole("button", { name: "Instalar y reiniciar" }),
     );
-    await waitFor(() => expect(logoutSession).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(1));
     // The full-screen installing overlay shows once the dispatch is accepted.
     expect(await screen.findByText(/Instalando actualización/)).toBeInTheDocument();
   });
 
-  it("never dispatches the apply before the local session logout resolves (logout-first)", async () => {
+  it("never logs the session out first: the apply must stay authenticated", async () => {
     (getUpdateStatus as Mock).mockResolvedValue(baseStatus);
-    let releaseLogout!: (value: unknown) => void;
-    (logoutSession as Mock).mockReturnValue(
-      new Promise((resolve) => {
-        releaseLogout = resolve;
-      }),
-    );
     const user = userEvent.setup();
     render(<UpdateSection />);
     await checkForUpdate(user);
@@ -289,23 +284,11 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
       ).getByRole("button", { name: "Instalar y reiniciar" }),
     );
 
-    // While the logout is pending, the apply MUST NOT be dispatched — the
-    // session is closed BEFORE the installer is ever told to run.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(logoutSession).toHaveBeenCalledTimes(1);
-    expect(applyUpdate).not.toHaveBeenCalled();
-
-    releaseLogout({
-      mode: "local-dev",
-      enabled: true,
-      authenticated: false,
-      label: null,
-    });
+    // The apply endpoint is principal-gated: logging out first would make it
+    // fail closed with 401, so the client never calls logout. The server
+    // clears the caller's session as part of the accepted apply.
     await waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(1));
-    // Strict ordering: the logout call happened before the apply dispatch.
-    expect((logoutSession as Mock).mock.invocationCallOrder[0]).toBeLessThan(
-      (applyUpdate as Mock).mock.invocationCallOrder[0],
-    );
+    expect(logoutSession).not.toHaveBeenCalled();
   });
 
   it("shows an apply failure in the dialog and dispatches nothing", async () => {
