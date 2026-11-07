@@ -55,7 +55,8 @@ const baseStatus = {
 
 // The panel is manual-only (spec: "Read-only frontend update panel"): nothing
 // is fetched on mount and nothing polls. These tests pin that contract, plus
-// the Slice 3 apply flow (ConfirmDialog required, logout-first, long timeout).
+// the Slice 3 apply flow (ConfirmDialog required, session cleared by the apply,
+// long timeout).
 describe("UpdateSection — Perfil → Actualizaciones", () => {
   beforeEach(() => {
     (getUpdateStatus as Mock).mockReset();

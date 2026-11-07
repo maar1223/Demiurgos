@@ -516,6 +516,36 @@ def test_unauthenticated_apply_never_clears_or_spawns(
     assert cleared == []
 
 
+def test_every_rejection_path_keeps_the_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No rejection may clear the session: not-applicable, no advisory,
+    unparseable advisory and an unavailable installer all return first."""
+    cleared: list[str] = []
+
+    def fake_popen(argv, **kwargs):
+        raise AssertionError("a rejected apply must never spawn")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    cases = [
+        ("0.2.0", "0.1.1", True),          # current is newest -> 409
+        ("0.1.1", None, True),             # no advisory -> 409
+        ("0.1.1", "not-semver", True),     # unparseable advisory -> 409
+        ("0.1.1", "0.2.0", False),         # installer unavailable -> 503
+    ]
+    for index, (current, latest, available) in enumerate(cases):
+        app, _registry = _make_app(
+            local_state_path=tmp_path / f"case-{index}.json",
+            app_version=current,
+            channel_fetch=_ChannelStub(latest=latest),
+            install_available=available,
+            clear_session=lambda request: cleared.append("cleared"),
+        )
+        resp = TestClient(app).post("/api/update/apply")
+        assert resp.status_code in {409, 503}, (index, resp.text)
+        assert cleared == [], f"case {index} cleared the session on a rejection"
+
+
 def test_apply_dispatches_detached_installer_with_env(
     tmp_path: Path, monkeypatch
 ) -> None:
