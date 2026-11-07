@@ -14,7 +14,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
-from assistant_activity import HermesActivityRequest, HermesRunsActivityAdapter
+from assistant_activity import (
+    HermesActivityRequest,
+    HermesRunsActivityAdapter,
+    RunSubmissionError,
+)
 from demiurgos_language import normalize_language, resolve_domain_language
 
 SemanticState = Literal[
@@ -67,6 +71,27 @@ _AUTHORITATIVE_CONTINUATION_KEYS: frozenset[str] = frozenset({
 INVALID_ENVELOPE_REASON = "semantic_envelope_invalid"
 PROVIDER_UNAVAILABLE_REASON = "semantic_provider_unavailable"
 
+# Bounded, user-facing failure reasons carried by a fail-closed envelope. They
+# let the client distinguish a dead session from an exhausted provider, a
+# rejected request, or unvalidatable model output, instead of rendering one
+# opaque copy for every cause. Codes are machine values; the UI renders only
+# the localized copy.
+INVALID_OUTPUT_REASON = "invalid_output"
+PROVIDER_AUTH_REASON = "provider_auth"
+PROVIDER_QUOTA_REASON = "provider_quota"
+PROVIDER_REJECTED_REASON = "provider_rejected"
+PROVIDER_UNREACHABLE_REASON = "provider_unreachable"
+
+# Upstream statuses that a retry cannot fix (authentication, quota, unsupported
+# or malformed request, missing route). Anything else is treated as transient.
+_NON_RETRYABLE_STATUS_REASONS: Mapping[int, str] = {
+    400: PROVIDER_REJECTED_REASON,
+    401: PROVIDER_AUTH_REASON,
+    402: PROVIDER_QUOTA_REASON,
+    403: PROVIDER_AUTH_REASON,
+    404: PROVIDER_REJECTED_REASON,
+}
+
 # Localized safe fail-closed copy. User-visible unavailable text MUST NOT expose
 # Hermes/provider/internal terminology (no gateway, HTTP, timeout, quota,
 # credits, credentials, or model terms). Copy is selected from
@@ -82,14 +107,72 @@ UNAVAILABLE_COPY_BY_LANGUAGE: Mapping[str, str] = {
     ),
 }
 
+# Reason-specific copy. Every entry keeps the no-action guarantee explicit and
+# stays free of provider/internal terms.
+UNAVAILABLE_COPY_BY_REASON: Mapping[str, Mapping[str, str]] = {
+    PROVIDER_AUTH_REASON: {
+        "es": (
+            "El asistente necesita que revises su configuración en Perfil antes de "
+            "continuar. No se realizó ninguna acción ni escritura."
+        ),
+        "en": (
+            "The assistant needs its configuration reviewed in Profile before it can "
+            "continue. No action or write was made."
+        ),
+    },
+    PROVIDER_QUOTA_REASON: {
+        "es": (
+            "El servicio de IA del asistente alcanzó su límite de uso. Revisa la cuenta "
+            "del servicio o inténtalo más tarde. No se realizó ninguna acción ni escritura."
+        ),
+        "en": (
+            "The assistant's AI service reached its usage limit. Check the service "
+            "account or try again later. No action or write was made."
+        ),
+    },
+    PROVIDER_REJECTED_REASON: {
+        "es": (
+            "El asistente no pudo procesar el mensaje tal como está. Inténtalo de nuevo "
+            "o acorta el mensaje. No se realizó ninguna acción ni escritura."
+        ),
+        "en": (
+            "The assistant could not process the message as written. Try again or "
+            "shorten the message. No action or write was made."
+        ),
+    },
+    PROVIDER_UNREACHABLE_REASON: {
+        "es": (
+            "El servicio de IA del asistente no respondió. Inténtalo de nuevo en un "
+            "momento. No se realizó ninguna acción ni escritura."
+        ),
+        "en": (
+            "The assistant's AI service did not respond. Try again in a moment. "
+            "No action or write was made."
+        ),
+    },
+    INVALID_OUTPUT_REASON: {
+        "es": (
+            "El asistente devolvió una respuesta que no se pudo validar. Inténtalo de "
+            "nuevo o reformula el mensaje. No se realizó ninguna acción ni escritura."
+        ),
+        "en": (
+            "The assistant returned a response that could not be validated. Try again "
+            "or rephrase the message. No action or write was made."
+        ),
+    },
+}
 
-def unavailable_copy(language: str | None = None) -> str:
+
+def unavailable_copy(language: str | None = None, reason: str | None = None) -> str:
     """Localized safe fail-closed copy; never exposes provider/internal terms."""
     normalized = (
         normalize_language(language)
         if language is not None
         else resolve_domain_language("conversation")
     )
+    by_reason = UNAVAILABLE_COPY_BY_REASON.get(reason or "")
+    if by_reason is not None:
+        return by_reason[normalized]
     return UNAVAILABLE_COPY_BY_LANGUAGE[normalized]
 
 
@@ -351,6 +434,7 @@ class SemanticResult:
     request_id: str
     session_id: str | None = None
     unavailable: bool = False
+    reason: str | None = None
 
     @property
     def state(self) -> SemanticState:
@@ -362,7 +446,7 @@ class SemanticResult:
     def response(self) -> str:
         if self.decision is not None:
             return self.decision.response
-        return unavailable_copy()
+        return unavailable_copy(reason=self.reason)
 
     @property
     def action(self) -> str:
@@ -377,6 +461,8 @@ class SemanticResult:
             "attempts": self.attempts,
             "unavailable": self.unavailable,
         }
+        if self.decision is None and self.reason is not None:
+            result["reason"] = self.reason
         if self.decision is not None:
             result["guided"] = self.decision.guided
             if self.decision.session_id is not None:
@@ -525,7 +611,10 @@ class SemanticIntentProvider:
         recent_turns: str | None = None,
         memory_context: str | None = None,
     ) -> SemanticResult:
+        reason: str | None = None
+        attempts = 0
         for attempt in range(1, self._max_attempts + 1):
+            attempts = attempt
             try:
                 run_id = await self._runs.start(
                     HermesActivityRequest(
@@ -540,7 +629,17 @@ class SemanticIntentProvider:
                 raw_output = await self._collect_output(run_id)
                 output = self._normalize_output(raw_output)
                 validation = validate_semantic_decision(output)
+            except RunSubmissionError as exc:
+                # A refusal that a retry cannot fix stops at one attempt; the
+                # reason drives the specific fail-closed copy.
+                non_retryable = _NON_RETRYABLE_STATUS_REASONS.get(exc.status_code or 0)
+                if non_retryable is not None:
+                    reason = non_retryable
+                    break
+                reason = PROVIDER_UNREACHABLE_REASON
+                validation = SemanticValidation(False, PROVIDER_UNAVAILABLE_REASON)
             except Exception:
+                reason = PROVIDER_UNREACHABLE_REASON
                 validation = SemanticValidation(False, PROVIDER_UNAVAILABLE_REASON)
             if validation.admitted and validation.decision is not None:
                 return SemanticResult(
@@ -549,10 +648,13 @@ class SemanticIntentProvider:
                     request_id=request_id,
                     session_id=session_id,
                 )
+            if reason is None:
+                reason = INVALID_OUTPUT_REASON
         return SemanticResult(
             decision=None,
-            attempts=self._max_attempts,
+            attempts=attempts,
             request_id=request_id,
             session_id=session_id,
             unavailable=True,
+            reason=reason,
         )

@@ -9138,6 +9138,7 @@ def _semantic_blocked_result(result: SemanticResult) -> dict:
         attempts=result.attempts,
         request_id=result.request_id,
         session_id=result.session_id,
+        reason=result.reason,
     ).as_dict()
 
 

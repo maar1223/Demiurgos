@@ -14,12 +14,19 @@ _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
+from assistant_activity import RunSubmissionError  # noqa: E402
+
 from semantic_intent import (  # noqa: E402
     MAX_CONTINUATION_DELTA_KEYS,
     MAX_CONTINUATION_QUESTION_CHARS,
     MAX_CONTINUATION_VALUE_CHARS,
+    INVALID_OUTPUT_REASON,
     MAX_RESPONSE_CHARS,
     MAX_SEMANTIC_ATTEMPTS,
+    PROVIDER_AUTH_REASON,
+    PROVIDER_QUOTA_REASON,
+    PROVIDER_REJECTED_REASON,
+    PROVIDER_UNREACHABLE_REASON,
     SELF_CONTAINED_SEMANTIC_STATES,
     SemanticContext,
     SemanticContinuation,
@@ -225,7 +232,10 @@ def test_exhausted_attempts_fail_closed_blocked_without_fallback(monkeypatch) ->
         assert result.state == "blocked"
         assert result.action == "blocked_explanation"
         assert result.unavailable is True
-        assert result.response.startswith("El Asistente IA no pudo")
+        # Unvalidatable output is its own reason, not the dead-session or the
+        # provider-outage copy.
+        assert result.as_dict()["reason"] == INVALID_OUTPUT_REASON
+        assert result.response == unavailable_copy(reason=INVALID_OUTPUT_REASON)
         assert "fallback" not in result.as_dict()
         assert result.attempts == MAX_SEMANTIC_ATTEMPTS
         assert runs.starts == MAX_SEMANTIC_ATTEMPTS
@@ -268,6 +278,83 @@ def test_malformed_output_never_inferred_as_permission() -> None:
         assert result.state == "blocked"
 
     asyncio.run(scenario())
+
+
+class _RefusingRuns:
+    """Raises one typed run-refusal, recording how many attempts it saw."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.starts = 0
+
+    async def start(self, request: object) -> str:
+        self.starts += 1
+        raise RunSubmissionError("refused", status_code=self.status_code)
+
+    async def events(self, run_id: str):  # pragma: no cover - never reached
+        if False:
+            yield {}
+
+
+@pytest.mark.parametrize("status_code,reason", [
+    (401, PROVIDER_AUTH_REASON),
+    (403, PROVIDER_AUTH_REASON),
+    (402, PROVIDER_QUOTA_REASON),
+    (400, PROVIDER_REJECTED_REASON),
+    (404, PROVIDER_REJECTED_REASON),
+])
+def test_non_retryable_refusal_stops_after_one_attempt(status_code, reason) -> None:
+    async def scenario() -> None:
+        runs = _RefusingRuns(status_code)
+        result = await decide_once(SemanticIntentProvider(runs), runs)
+        assert result.decision is None
+        assert result.unavailable is True
+        assert result.as_dict()["reason"] == reason
+        assert result.response == unavailable_copy(reason=reason)
+        # A refusal a retry cannot fix must not be multiplied by three.
+        assert result.attempts == 1
+        assert runs.starts == 1
+
+    asyncio.run(scenario())
+
+
+def test_transient_failure_keeps_bounded_retries_and_its_own_reason() -> None:
+    async def scenario() -> None:
+        class FailingRuns:
+            starts = 0
+
+            async def start(self, request: object) -> str:
+                self.starts += 1
+                raise RunSubmissionError("upstream unavailable", status_code=503)
+
+        runs = FailingRuns()
+        result = await decide_once(SemanticIntentProvider(runs), runs)
+        assert result.decision is None
+        assert result.as_dict()["reason"] == PROVIDER_UNREACHABLE_REASON
+        assert result.attempts == MAX_SEMANTIC_ATTEMPTS
+        assert runs.starts == MAX_SEMANTIC_ATTEMPTS
+
+    asyncio.run(scenario())
+
+
+def test_every_failure_reason_is_safe_and_distinct(monkeypatch) -> None:
+    monkeypatch.delenv("DEMIURGOS_LANGUAGE", raising=False)
+    reasons = (
+        INVALID_OUTPUT_REASON,
+        PROVIDER_AUTH_REASON,
+        PROVIDER_QUOTA_REASON,
+        PROVIDER_REJECTED_REASON,
+        PROVIDER_UNREACHABLE_REASON,
+    )
+    copies = {reason: unavailable_copy(reason=reason) for reason in reasons}
+    assert len(set(copies.values())) == len(reasons)
+    for copy in copies.values():
+        lowered = copy.lower()
+        for term in _PROVIDER_TERMS:
+            assert term not in lowered
+        assert "acción ni escritura" in copy
+    english = {reason: unavailable_copy("en", reason) for reason in reasons}
+    assert len(set(english.values())) == len(reasons)
 
 
 def test_no_canon_or_disk_mutation_on_any_path() -> None:

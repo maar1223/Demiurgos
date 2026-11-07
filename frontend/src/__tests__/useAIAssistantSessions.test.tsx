@@ -1020,3 +1020,67 @@ describe("useAIAssistantSessions attachment progress", () => {
     });
   });
 });
+
+describe("useAIAssistantSessions dead guided session recovery", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+  const askMock = vi.mocked(askAssistant);
+
+  const deadGuided: GuidedCharacterSession = {
+    protocol_version: "guided-character-v1",
+    session_id: "guided-dead",
+    world: "Vibrantes",
+    phase: "conversation",
+    mode: "full",
+    depth: "standard",
+    revision: 7,
+    pending_question: "¿Qué lo hace temer?",
+    messages: [],
+    candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+    proposal: null,
+  };
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    askMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("drops the dead handle instead of repeating the same failure", async () => {
+    seedSessions([{ ...makeSession("s-dead"), guided: deadGuided }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-dead"));
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockRejectedValue(
+      new ApiError(
+        401,
+        "The guided session is unavailable.",
+        "The guided session is unavailable.",
+        "unauthorized",
+      ),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    expect(result.current.activeSession?.guided).toBeUndefined();
+    const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
+    expect(texts).toContain(CATALOGUE.es["assistant.session.lost"]);
+  });
+
+  it("keeps the guided handle when the failure is not the session", async () => {
+    seedSessions([{ ...makeSession("s-live"), guided: deadGuided }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-live"));
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "provider_activity_unavailable"));
+    askMock.mockRejectedValue(
+      new ApiError(503, "provider unavailable", "provider unavailable", "provider_unavailable"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    expect(result.current.activeSession?.guided).toEqual(deadGuided);
+  });
+});

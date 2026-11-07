@@ -1129,6 +1129,11 @@ export interface SemanticDecisionEnvelope {
   attempts: number;
   /** Present on the self-contained envelope; absent on guided continuations. */
   unavailable?: boolean;
+  /**
+   * Bounded fail-closed reason carried with an unavailable envelope. It only
+   * selects diagnostics/behaviour; the user-visible text is always `response`.
+   */
+  reason?: string;
   /** Present only on guided continuation envelopes; never a fallback path. */
   fallback?: boolean;
   guided?: boolean;
