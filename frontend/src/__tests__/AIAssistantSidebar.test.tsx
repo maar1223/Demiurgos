@@ -91,6 +91,30 @@ describe("AIAssistantSidebar edit action", () => {
     useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
+  it("focuses the assistant composer when the Author starts typing outside an input", async () => {
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    const composer = screen.getByPlaceholderText(tEs("assistant.composer.placeholder"));
+    expect(composer).not.toHaveFocus();
+
+    await user.keyboard("h");
+
+    expect(composer).toHaveFocus();
+  });
+
+  it("does not steal focus from another input", async () => {
+    const user = userEvent.setup();
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.keyboard("h");
+
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
+
   it("uses the latest user prompt, active session, and contextual file", async () => {
     const onProposeEdit = vi.fn();
     const user = userEvent.setup();

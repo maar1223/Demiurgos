@@ -278,6 +278,47 @@ function ChatScreen({
   const [consentMethodTouched, setConsentMethodTouched] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Type-to-focus: when the Author starts typing while reading (focus on the
+  // page, a button, or the panel), the first printable key goes to the
+  // assistant composer instead of being lost. Never hijacks real editors,
+  // search boxes, contentEditable surfaces or an open modal.
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      const tag = element.tagName;
+      return (
+        element.isContentEditable ||
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT"
+      );
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Printable characters, plus dead keys/IME so Spanish accents are not
+      // lost before the composer receives focus.
+      if (event.key.length !== 1 && event.key !== "Dead" && event.key !== "Process") return;
+      if (isTypingTarget(event.target)) return;
+      const element = event.target as HTMLElement | null;
+      // Space activates a focused control; it must not become composer focus.
+      if (
+        event.key === " " &&
+        element?.closest('button, a, [role="button"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]')
+      ) {
+        return;
+      }
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const composer = composerRef.current;
+      if (!composer || composer.disabled) return;
+      composer.focus();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   useEffect(() => {
     try {
@@ -860,6 +901,7 @@ function ChatScreen({
         )}
         <div className="flex items-end gap-2">
           <textarea
+            ref={composerRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
