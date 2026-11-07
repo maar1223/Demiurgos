@@ -8345,6 +8345,70 @@ async def chat_endpoint(body: ChatRequest):
     return payload
 
 
+def _memory_entry_dict(entry) -> dict:
+    return {
+        "id": entry.id,
+        "world": entry.world,
+        "scope": entry.scope,
+        "kind": entry.kind,
+        "entity": entry.entity,
+        "topic_key": entry.topic_key,
+        "statement": entry.statement,
+        "confidence": entry.confidence,
+        "status": entry.status,
+        "importance": entry.importance,
+        "source_session": entry.source_session,
+        "source_turn": entry.source_turn,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+    }
+
+
+@app.get("/api/{mundo}/ai/memory")
+def list_assistant_memory(mundo: str, q: str = "", limit: int = 50):
+    """Local, single-user management view of the assistant's memory."""
+    try:
+        store = _ASSISTANT_MEMORY
+        if str(q or "").strip():
+            entries = store.search(
+                q, world=_memory_world(mundo), limit=limit,
+                include_proposals=True,
+            )
+        else:
+            entries = store.list(
+                world=_memory_world(mundo), limit=limit,
+                include_proposals=True,
+            )
+    except Exception:
+        return {"entries": []}
+    return {"entries": [_memory_entry_dict(entry) for entry in entries]}
+
+
+@app.get("/api/{mundo}/ai/memory/export")
+def export_assistant_memory(mundo: str):
+    """Export every memory for backup or manual inspection."""
+    try:
+        entries = _ASSISTANT_MEMORY.list(
+            world=_memory_world(mundo), limit=10_000, include_proposals=True,
+        )
+    except Exception:
+        entries = []
+    return {
+        "world": _memory_world(mundo),
+        "entries": [_memory_entry_dict(entry) for entry in entries],
+    }
+
+
+@app.delete("/api/{mundo}/ai/memory/{entry_id}")
+def forget_assistant_memory(mundo: str, entry_id: int, hard: bool = False):
+    """Soft-delete a memory (default) or remove it permanently."""
+    try:
+        removed = _ASSISTANT_MEMORY.forget(entry_id, hard=hard)
+    except Exception:
+        removed = False
+    return {"removed": removed, "id": entry_id, "hard": hard}
+
+
 async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> str | None:
     """Route ``prompt`` to a skill_id via the skill router (non-guided path).
 

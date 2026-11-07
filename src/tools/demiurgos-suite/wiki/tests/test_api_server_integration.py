@@ -593,6 +593,30 @@ class TestCrossSessionMemoryCapture:
         monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", _BrokenStore())
         assert api_server._memory_context("test_mundo", "Ganic") == ""
 
+    def test_session_a_saves_and_session_b_recalls(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+        runs_a = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs_a)
+
+        saved = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Ganic llegó de fuera", "session_id": "sess-A",
+        })
+        assert saved.status_code == 200
+
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _NoMemoryCurator())
+        runs_b = _SemanticRuns(_semantic_payload("allow"))
+        recorder = _wire_semantic_provider(monkeypatch, runs_b, recorder=True)
+
+        recalled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-B",
+        })
+        assert recalled.status_code == 200
+        assert "Ganic llegó de fuera." in recorder.memory_context[-1]
+
     def test_activity_stream_captures_memory(
             self, client: TestClient, monkeypatch):
         runs = _SemanticRuns(_semantic_payload("allow"))
@@ -612,6 +636,49 @@ class TestCrossSessionMemoryCapture:
             topic_key="world/test_mundo/canon/ganic-origin", world="test_mundo",
         )
         assert entry is not None
+
+
+class TestAssistantMemoryManagement:
+    def _seed(self):
+        return api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+
+    def test_list_and_search(self, client: TestClient):
+        entry = self._seed()
+        listed = client.get("/api/test_mundo/ai/memory")
+        assert listed.status_code == 200
+        assert listed.json()["entries"][0]["id"] == entry.id
+
+        found = client.get(
+            "/api/test_mundo/ai/memory", params={"q": "Ganic"},
+        )
+        assert found.status_code == 200
+        assert found.json()["entries"][0]["statement"] == "Ganic llegó de fuera."
+
+    def test_export(self, client: TestClient):
+        self._seed()
+        exported = client.get("/api/test_mundo/ai/memory/export")
+        assert exported.status_code == 200
+        body = exported.json()
+        assert body["world"] == "test_mundo"
+        assert body["entries"][0]["topic_key"] == "world/test_mundo/canon/ganic-origin"
+
+    def test_forget_soft_then_hard(self, client: TestClient):
+        entry = self._seed()
+        soft = client.delete(f"/api/test_mundo/ai/memory/{entry.id}")
+        assert soft.status_code == 200
+        assert soft.json()["removed"] is True
+        assert api_server._ASSISTANT_MEMORY.get(entry.id).deleted_at is not None
+
+        hard = client.delete(
+            f"/api/test_mundo/ai/memory/{entry.id}", params={"hard": "true"},
+        )
+        assert hard.status_code == 200
+        assert hard.json()["removed"] is True
+        assert api_server._ASSISTANT_MEMORY.get(entry.id) is None
 
 
 class TestPersistedLocaleIntegration:
