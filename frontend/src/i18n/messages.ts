@@ -17,6 +17,8 @@ export const messages = {
     "document.title": "Demiurgos — Wiki",
 
     "assistant.session.defaultTitle": "Nueva sesión",
+    "assistant.session.lost":
+      "La sesión guiada anterior ya no está disponible. Inicia una nueva sesión para continuar.",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
 
@@ -2344,6 +2346,8 @@ export const messages = {
     "document.title": "Demiurgos — Wiki",
 
     "assistant.session.defaultTitle": "New session",
+    "assistant.session.lost":
+      "The previous guided session is no longer available. Start a new session to continue.",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
 

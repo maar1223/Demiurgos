@@ -634,6 +634,41 @@ export function useAIAssistantSessions(
         }));
       };
 
+      /**
+       * A guided continuation whose server-side session is gone answers 401
+       * (`unauthorized`) or 409 (`revision_conflict`). Re-sending the same dead
+       * handle would fail identically forever, so the client drops it and its
+       * dependent state instead of rendering the opaque blocked copy again.
+       */
+      const isLostGuidedSession = (error: unknown): boolean =>
+        Boolean(guided) &&
+        error instanceof ApiError &&
+        (error.code === "unauthorized" || error.code === "revision_conflict");
+
+      const recoverFromLostGuided = () => {
+        appendAssistantMessage(t("assistant.session.lost"));
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  guided: undefined,
+                  pendingReview: undefined,
+                  consentToken: undefined,
+                  consentFlow: undefined,
+                }
+              : s,
+          ),
+        );
+        setActivity((current) => ({
+          ...current,
+          accepted: true,
+          blocked: true,
+          availability: "unavailable",
+          status: "complete",
+        }));
+      };
+
       try {
         const request = requestBody;
         const result = await streamAssistantActivity(contextMundo, request, {
@@ -707,6 +742,10 @@ export function useAIAssistantSessions(
               dropStaleAttachments(legacyError);
               return;
             }
+            if (isLostGuidedSession(legacyError)) {
+              recoverFromLostGuided();
+              return;
+            }
             applyBlocked(semanticBlockedText(language), true);
           }
         } else if (
@@ -719,6 +758,8 @@ export function useAIAssistantSessions(
             status: "complete",
           }));
           appendAssistantMessage(streamedAnswer);
+        } else if (isLostGuidedSession(err)) {
+          recoverFromLostGuided();
         } else {
           applyBlocked(semanticBlockedText(language), true);
         }
