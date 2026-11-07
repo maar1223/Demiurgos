@@ -3510,14 +3510,7 @@ async def _guided_continue(
     # S1/S2: server-owned context for this turn. The provider cannot fetch
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
-    world_context = _world_lore_context(
-        mundo, _guided_lore_query(state, author_input), budget=4_000,
-    )
-    memory_context = _memory_context(mundo, author_input)
-    if memory_context:
-        world_context = (
-            f"{world_context}\n\n{memory_context}" if world_context else memory_context
-        )
+    world_context = _guided_world_context(mundo, state, author_input)
     known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
@@ -10068,6 +10061,30 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
         return _world_lore_world_index(mundo, budget)
     context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
     return context[:budget]
+
+
+GUIDED_CONTEXT_BUDGET = 4_000
+GUIDED_LORE_BUDGET = 3_000
+GUIDED_MEMORY_BUDGET = 1_000
+
+
+def _guided_world_context(
+    mundo: str, state: SessionState | None, author_input: str,
+) -> str:
+    """Lore + cross-session memory, capped to the GuidedRequest budget.
+
+    `GuidedRequest.validate` rejects any field longer than `context_budget`
+    (4_000). Appending the memory block to a 4_000-char lore index silently
+    pushed `world_context` over the limit and the API answered 422 before the
+    provider ran. Reserve room for both and cap the combined block.
+    """
+    lore = _world_lore_context(
+        mundo, _guided_lore_query(state, author_input), budget=GUIDED_LORE_BUDGET,
+    )
+    memory = _memory_context(mundo, author_input)[:GUIDED_MEMORY_BUDGET]
+    if memory:
+        lore = f"{lore}\n\n{memory}" if lore else memory
+    return lore[:GUIDED_CONTEXT_BUDGET]
 
 
 def _guided_lore_query(state: SessionState | None, author_input: str) -> str:

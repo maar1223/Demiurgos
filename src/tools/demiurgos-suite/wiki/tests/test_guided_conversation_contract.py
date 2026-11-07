@@ -317,6 +317,19 @@ class TestWorldLore:
         assert "personalidad" in query
 
 
+class TestGuidedContextBudget:
+    def test_lore_plus_memory_stays_within_the_request_budget(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            api_server, "_world_lore_context", lambda *_args, **_kwargs: "L" * 3_000,
+        )
+        monkeypatch.setattr(
+            api_server, "_memory_context", lambda *_args, **_kwargs: "M" * 1_000,
+        )
+        text = api_server._guided_world_context("Vibrantes", None, "hola")
+        assert len(text) <= api_server.GUIDED_CONTEXT_BUDGET
+        assert "M" in text
+
+
 class TestRequestValidation:
     def test_world_context_over_budget_is_rejected(self) -> None:
         request = GuidedRequest(
