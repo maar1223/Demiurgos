@@ -677,3 +677,121 @@ def test_provider_prompt_documents_the_guided_explicitness_contract() -> None:
     prompt = provider._build_prompt("Create a character", "request-1", "session-1")
     assert "guided_explicitness" in prompt
     assert "imperative" in prompt and "musing" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Bounded circuit breaker (S4): a provider that keeps failing must not be
+# called on every turn, and an account-wide refusal opens it immediately.
+# ---------------------------------------------------------------------------
+
+
+class _FlakyRuns:
+    """Fails while ``failing`` is True, then serves one valid envelope."""
+
+    def __init__(self, *, failing: bool = True) -> None:
+        self.failing = failing
+        self.starts = 0
+
+    async def start(self, request: object) -> str:
+        self.starts += 1
+        if self.failing:
+            raise RunSubmissionError("provider down", status_code=503)
+        return "run-1"
+
+    async def events(self, run_id: str):
+        yield {"event": "run.completed", "run_id": run_id, "output": valid_payload("allow")}
+
+
+def test_breaker_opens_after_bounded_failures_and_skips_the_provider() -> None:
+    now = [100.0]
+
+    async def scenario() -> None:
+        runs = _FlakyRuns()
+        provider = SemanticIntentProvider(
+            runs, breaker_threshold=2, breaker_cooldown=30.0, clock=lambda: now[0],
+        )
+        first = await decide_once(provider, runs)
+        assert first.as_dict()["reason"] == PROVIDER_UNREACHABLE_REASON
+        second = await decide_once(provider, runs)
+        assert second.attempts == MAX_SEMANTIC_ATTEMPTS
+        starts_after_failures = runs.starts
+
+        # The breaker is open: no provider call, the last reason is served.
+        third = await decide_once(provider, runs)
+        assert third.attempts == 0
+        assert third.as_dict()["reason"] == PROVIDER_UNREACHABLE_REASON
+        assert runs.starts == starts_after_failures
+
+    asyncio.run(scenario())
+
+
+def test_breaker_closes_after_the_cooldown() -> None:
+    now = [100.0]
+
+    async def scenario() -> None:
+        runs = _FlakyRuns()
+        provider = SemanticIntentProvider(
+            runs, breaker_threshold=1, breaker_cooldown=10.0, clock=lambda: now[0],
+        )
+        await decide_once(provider, runs)
+        skipped = await decide_once(provider, runs)
+        assert skipped.attempts == 0
+
+        now[0] = 111.0  # cooldown elapsed -> one probe call is allowed
+        runs.failing = False
+        recovered = await decide_once(provider, runs)
+        assert recovered.decision is not None
+        assert recovered.attempts == 1
+
+        # The successful probe closed the breaker: calls reach the provider
+        # again instead of being skipped.
+        starts_after_recovery = runs.starts
+        again = await decide_once(provider, runs)
+        assert again.decision is not None
+        assert runs.starts == starts_after_recovery + 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 402])
+def test_account_wide_refusal_opens_the_breaker_on_the_first_turn(status_code) -> None:
+    now = [50.0]
+
+    async def scenario() -> None:
+        runs = _RefusingRuns(status_code)
+        provider = SemanticIntentProvider(
+            runs, breaker_threshold=3, breaker_cooldown=60.0, clock=lambda: now[0],
+        )
+        first = await decide_once(provider, runs)
+        assert first.attempts == 1
+        starts = runs.starts
+
+        second = await decide_once(provider, runs)
+        assert second.attempts == 0
+        assert second.as_dict()["reason"] == first.as_dict()["reason"]
+        assert runs.starts == starts
+
+    asyncio.run(scenario())
+
+
+def test_success_resets_the_failure_count() -> None:
+    now = [10.0]
+
+    async def scenario() -> None:
+        runs = _FlakyRuns()
+        provider = SemanticIntentProvider(
+            runs, breaker_threshold=3, breaker_cooldown=60.0, clock=lambda: now[0],
+        )
+        await decide_once(provider, runs)
+        await decide_once(provider, runs)
+        runs.failing = False
+        assert (await decide_once(provider, runs)).decision is not None
+
+        runs.failing = True
+        await decide_once(provider, runs)
+        await decide_once(provider, runs)
+        # Two failures after the success: still below the threshold of three.
+        third = await decide_once(provider, runs)
+        assert third.attempts == MAX_SEMANTIC_ATTEMPTS
+
+    asyncio.run(scenario())

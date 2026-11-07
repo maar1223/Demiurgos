@@ -11,8 +11,9 @@ originate here.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from assistant_activity import (
     HermesActivityRequest,
@@ -38,6 +39,17 @@ ContinuationOutcome = Literal["question", "delta"]
 GuidedExplicitness = Literal["imperative", "musing"]
 
 MAX_SEMANTIC_ATTEMPTS = 3
+
+# Bounded circuit breaker: after this many consecutive fail-closed turns the
+# provider is not called for a short cool-down and the last reason/copy is
+# served instead. An account-wide refusal (authentication or quota) opens it
+# immediately: no retry and no cool-down wait can fix it.
+BREAKER_FAILURE_THRESHOLD = 3
+BREAKER_COOLDOWN_SECONDS = 60.0
+_OPEN_IMMEDIATELY_REASONS: frozenset[str] = frozenset({
+    "provider_auth",
+    "provider_quota",
+})
 MAX_RESPONSE_CHARS = 4096
 MAX_CONTINUATION_QUESTION_CHARS = 2_000
 MAX_CONTINUATION_DELTA_KEYS = 50
@@ -490,9 +502,45 @@ class SemanticIntentProvider:
         runs: HermesRunsActivityAdapter,
         *,
         max_attempts: int = MAX_SEMANTIC_ATTEMPTS,
+        breaker_threshold: int = BREAKER_FAILURE_THRESHOLD,
+        breaker_cooldown: float = BREAKER_COOLDOWN_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._runs = runs
         self._max_attempts = min(MAX_SEMANTIC_ATTEMPTS, max(1, max_attempts))
+        self._breaker_threshold = max(1, breaker_threshold)
+        self._breaker_cooldown = max(0.0, breaker_cooldown)
+        self._clock = clock
+        self._failures = 0
+        self._open_until: float | None = None
+        self._open_reason: str | None = None
+
+    def _breaker_open(self) -> str | None:
+        """Return the open breaker's reason, or None when calls are allowed.
+
+        A cooled-down breaker closes and restarts its failure count, so one
+        probe call decides whether the provider recovered.
+        """
+        if self._open_until is None:
+            return None
+        if self._clock() < self._open_until:
+            return self._open_reason
+        self._open_until = None
+        self._open_reason = None
+        self._failures = 0
+        return None
+
+    def _record_failure(self, reason: str | None) -> None:
+        self._failures += 1
+        immediate = reason in _OPEN_IMMEDIATELY_REASONS
+        if immediate or self._failures >= self._breaker_threshold:
+            self._open_until = self._clock() + self._breaker_cooldown
+            self._open_reason = reason
+
+    def _record_success(self) -> None:
+        self._failures = 0
+        self._open_until = None
+        self._open_reason = None
 
     def _render_context(self, context: SemanticContext) -> str:
         data = {
@@ -611,6 +659,17 @@ class SemanticIntentProvider:
         recent_turns: str | None = None,
         memory_context: str | None = None,
     ) -> SemanticResult:
+        open_reason = self._breaker_open()
+        if open_reason is not None:
+            # Serve the specific fail-closed copy without touching the provider.
+            return SemanticResult(
+                decision=None,
+                attempts=0,
+                request_id=request_id,
+                session_id=session_id,
+                unavailable=True,
+                reason=open_reason,
+            )
         reason: str | None = None
         attempts = 0
         for attempt in range(1, self._max_attempts + 1):
@@ -642,6 +701,7 @@ class SemanticIntentProvider:
                 reason = PROVIDER_UNREACHABLE_REASON
                 validation = SemanticValidation(False, PROVIDER_UNAVAILABLE_REASON)
             if validation.admitted and validation.decision is not None:
+                self._record_success()
                 return SemanticResult(
                     decision=validation.decision,
                     attempts=attempt,
@@ -650,6 +710,7 @@ class SemanticIntentProvider:
                 )
             if reason is None:
                 reason = INVALID_OUTPUT_REASON
+        self._record_failure(reason)
         return SemanticResult(
             decision=None,
             attempts=attempts,
