@@ -16,7 +16,7 @@ import threading
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from state_paths import resolve_state_dir
 from co_creation_protocol import (
@@ -142,12 +142,19 @@ class CoCreationSessionStore:
     writers fail closed instead of silently overwriting newer state.
     """
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        binding_normalizer: Callable[[str], str] | None = None,
+    ) -> None:
         if db_path is None:
             db_path = default_db_path()
         self._db_path = str(db_path)
         if self._db_path != ":memory:":
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        # Maps a caller-supplied authorization binding to its durable form, so a
+        # per-login principal id does not strand the session on the next login.
+        self._normalize_binding = binding_normalizer or (lambda value: value)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(
             self._db_path, check_same_thread=False,
@@ -191,6 +198,7 @@ class CoCreationSessionStore:
         draft_id: str | None = None,
         derived_from: DerivedFrom | None = None,
     ) -> CoCreationSessionState:
+        authorization_binding = self._normalize_binding(authorization_binding)
         if world is not None and (not isinstance(world, str) or not world.strip()):
             raise ValueError("world must be a non-empty string or None")
         with self._lock:
@@ -572,7 +580,13 @@ class CoCreationSessionStore:
         row = self._conn.execute(
             "SELECT * FROM co_creation_sessions WHERE session_id = ?", (session_id,),
         ).fetchone()
-        if row is None or row["authorization_binding"] != authorization_binding:
+        if row is None:
+            return None
+        # Compare in durable form on BOTH sides so a row written under the old
+        # per-login binding is still recovered after an upgrade (no 401/403).
+        if self._normalize_binding(row["authorization_binding"]) != self._normalize_binding(
+            authorization_binding
+        ):
             return None
         return row
 

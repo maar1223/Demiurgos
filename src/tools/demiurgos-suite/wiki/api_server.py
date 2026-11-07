@@ -193,6 +193,7 @@ from demiurgos_language import (
     resolve_domain_language,
 )
 from local_state import LocalState
+from bugreport_identity import install_id as _install_identity
 from account import (
     create_account as account_create_account,
     get_account as account_get_account,
@@ -2751,8 +2752,29 @@ class MethodologyCompanionDeactivateRequest(BaseModel):
 # Bound lazily (WU-2): constructing it here would resolve the data root while
 # this module is imported, which fails during pytest collection.
 _GUIDED_SESSIONS_DB = os.environ.get("DEMIURGOS_GUIDED_SESSIONS_DB")
+
+
+# Auth principal ids are minted per login (``credentials-session-*`` /
+# ``local-dev-session-*``). Durable guided/co-creation sessions must not be
+# owned by one of those: the next login (or the 8 h session TTL) would orphan
+# the session and every continuation would fail closed with HTTP 401. The
+# installation identity is stable across logins and restarts; every route still
+# requires a live authenticated principal before it reaches the store.
+_EPHEMERAL_PRINCIPAL_PREFIXES = ("credentials-session-", "local-dev-session-")
+
+
+def _durable_session_binding(value: str) -> str:
+    """Normalize an authorization binding to its durable, cross-login form."""
+    if isinstance(value, str) and value.startswith(_EPHEMERAL_PRINCIPAL_PREFIXES):
+        return f"install:{_install_identity(_local_state())}"
+    return value
+
+
 _GUIDED_SESSIONS: Any = _LazyBinding(
-    lambda: DurableGuidedSessionStore(db_path=_GUIDED_SESSIONS_DB)
+    lambda: DurableGuidedSessionStore(
+        db_path=_GUIDED_SESSIONS_DB,
+        binding_normalizer=_durable_session_binding,
+    )
 )
 _GUIDED_PROVIDER = None
 # Idea-materialization provider seam (AD2): wired to the runs adapter below
@@ -4022,7 +4044,10 @@ class CoCreationDeriveRequest(BaseModel):
 # (``DEMIURGOS_CO_CREATION_SESSIONS_DB`` overrides it). Bound lazily (WU-2).
 _CO_CREATION_SESSIONS_DB = os.environ.get("DEMIURGOS_CO_CREATION_SESSIONS_DB")
 _CO_CREATION_SESSIONS: Any = _LazyBinding(
-    lambda: CoCreationSessionStore(db_path=_CO_CREATION_SESSIONS_DB)
+    lambda: CoCreationSessionStore(
+        db_path=_CO_CREATION_SESSIONS_DB,
+        binding_normalizer=_durable_session_binding,
+    )
 )
 _CO_CREATION_PROVIDER: HermesCoCreationProvider | None = None
 _CO_CREATION_CAPABILITIES: CoCreationCapabilities | None = None
