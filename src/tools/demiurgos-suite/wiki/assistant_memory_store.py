@@ -433,6 +433,22 @@ class AssistantMemoryStore:
             ).fetchone()
         return None if row is None else self._entry_from(row)
 
+    def find(
+        self,
+        *,
+        topic_key: str,
+        world: str = "",
+        scope: str = "project",
+    ) -> MemoryEntry | None:
+        """Return the live entry for an exact ``(scope, world, topic_key)``."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memory_entries WHERE scope = ? AND world = ? "
+                "AND topic_key = ? AND deleted_at IS NULL",
+                (scope, world, normalize_topic_key(topic_key)),
+            ).fetchone()
+        return None if row is None else self._entry_from(row)
+
     @property
     def fts_mode(self) -> str:
         """``trigram``, ``fts5`` or ``like`` — the active retrieval strategy."""

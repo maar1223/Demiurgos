@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "992cd5c",
+  "source_commit": "06cdd47",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -124,6 +124,7 @@
     "src/tools/demiurgos-suite/wiki/markdown_heading.py",
     "src/tools/demiurgos-suite/wiki/mcp_adapter.py",
     "src/tools/demiurgos-suite/wiki/mcp_launcher.py",
+    "src/tools/demiurgos-suite/wiki/memory_curator.py",
     "src/tools/demiurgos-suite/wiki/methodology_compiler.py",
     "src/tools/demiurgos-suite/wiki/methodology_library.py",
     "src/tools/demiurgos-suite/wiki/methodology_seed.py",

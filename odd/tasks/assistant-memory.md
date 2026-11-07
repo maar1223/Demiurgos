@@ -62,7 +62,7 @@ export/forget API; docs for writers. No memory UI panel in v1.
 - T1 — Persist guided `author_input` in both stores (`guided_character_protocol.py`, `guided_session_store.py`) + tests. (S7) — `inline` — DONE `4aa7ef0`
 - T2 — Activity path: store the final answer, not cumulative streaming snapshots; do not duplicate the gateway-replayed recent turns + test. (S7) — `inline` — DONE
 - T3 — `assistant_memory_store.py`: schema (`memory_entries` + FTS5 trigram), `PRAGMA user_version`, FTS fallback, CRUD and retrieval + tests. (S1, S6, S10) — `inline` — DONE
-- T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline`
+- T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline` — DONE
 - T5 — Wire writes: guided passive capture, per-turn chat extraction, session-close distillation + tests. (S4, S5) — `inline`
 - T6 — Wire reads: top-k retrieval injected into gate/prompt; optional on-demand search tool + tests. (S9) — `inline`
 - T7 — Ganic backfill: one-time distillation from the stored guided transcript + test. (S8) — `inline`
@@ -155,3 +155,11 @@ dedupes by stable `topic_key` with a normalized hash, never demotes an accepted
 entry, supports soft/hard forget, and falls back to a LIKE scan. 10 focused tests
 pass; the module is in `payload_manifest.json` (188 payload files) and the
 freshness/boot suites pass.
+
+E4 — T4 evidence: `memory_curator.py` builds one language-agnostic extraction
+prompt, tolerates fenced JSON, clamps confidence, derives a deterministic
+`topic_key` from `(world, scope, kind, topic)`, and applies the policy:
+threshold 0.7 (bypassable by an explicit save), max 5/turn, a proposal or rumor
+never overwrites accepted canon, and a contradictory accepted statement becomes
+a separate `conflict` row instead of losing the original. 24 focused store +
+curator tests pass; manifest regenerated (189 payload files).

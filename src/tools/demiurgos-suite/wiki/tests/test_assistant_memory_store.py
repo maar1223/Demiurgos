@@ -69,6 +69,17 @@ def test_upsert_keeps_accepted_when_a_later_proposal_arrives(tmp_path: Path) -> 
     store.close()
 
 
+def test_find_returns_the_live_entry_for_exact_topic(tmp_path: Path) -> None:
+    store = AssistantMemoryStore(tmp_path / "memory.sqlite3")
+    entry = _save(store)
+    found = store.find(
+        topic_key="world/vibrantes/ganic", world="Vibrantes",
+    )
+    assert found is not None and found.id == entry.id
+    assert store.find(topic_key="World/Vibrantes/Ganic", world="Vibrantes") == found
+    store.close()
+
+
 def test_search_finds_spanish_phrase(tmp_path: Path) -> None:
     store = AssistantMemoryStore(tmp_path / "memory.sqlite3")
     _save(store)
