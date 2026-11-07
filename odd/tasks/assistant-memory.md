@@ -5,6 +5,8 @@ Objective: the Demiurgos assistant remembers durable facts from past sessions
 No runtime dependency on Engram. Branch: `feat/assistant-memory` (from
 `feat/guided-conversation-contract`, HEAD `9808516`). Delivery: work-unit
 commits; push/PR are the Owner's decision. Runner: `.venv/bin/python -m pytest`.
+Status: complete on branch, not pushed; the running installed build must be
+restarted/rebuilt from this branch to serve the new behavior.
 
 ## Specs
 
@@ -202,3 +204,17 @@ covered by T3; writer-facing docs are deferred.
 E9 — T9 evidence: `test_session_a_saves_and_session_b_recalls` captures Ganic in
 session A and finds the statement in the gate memory block of a different
 session B. The full focused memory/guided/API suite passes.
+
+E10 — Closure (2026-11-07): full backend suite 4983 passed, 26 skipped, 1
+pre-existing pydantic warning. The real Ganic backfill stored 5 accepted
+memories for `Vibrantes` (name, arrival, time mechanism, debt, elder's secret)
+with `source_turn=backfill:guided-transcript`. Payload manifest refreshed.
+Commits (branch `feat/assistant-memory`, not pushed): `725d7b6`, `4aa7ef0`,
+`992cd5c`, `06cdd47`, `3bae64b`, `a01d54e`, `7a45da3`, `8d40191`, `8a00b5a`,
+`d13bc01`, `570f8ff`, `13953ce`. The installed app is `v0.2.6`; restart or
+rebuild from this branch before testing the UI.
+
+E11 — Native RDD is unavailable in this checkout: `.git` is on a FUSE mount
+with a projected fixed owner, so `gentle-ai review mode status` cannot resolve
+authority. No native receipt was produced; verification is the full pytest
+suite (4983 passed, 26 skipped) plus the focused memory/guided/API suites.
