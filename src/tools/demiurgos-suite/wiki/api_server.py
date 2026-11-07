@@ -2207,47 +2207,42 @@ def auth_session_status(request: Request):
     return _session_status(request)
 
 
-def _clear_request_session(request: Request) -> None:
-    """Drop the caller's active session and persist the removal.
+def _clear_request_session(request: Request) -> tuple[str, ...]:
+    """Drop every session token the request carries; return the cookie names.
 
-    Used by the updater: the installer restarts the whole stack, so a session
-    must not survive an accepted apply. The request that authorizes the apply
-    is still authenticated when it reaches the route; clearing here (instead
-    of a client-side logout first) is what keeps that authorization intact.
+    Logout must revoke the token that authenticated, not only the token of the
+    provider the resolver calls active right now: the vault can be disabled (or
+    the auth mode switched) after a login, and the old behaviour left that
+    credentials session alive — logout returned 200 while a replayed cookie
+    authenticated again.
+
+    Used by the updater too: the installer restarts the whole stack, so a
+    session must not survive an accepted apply, and the request that authorizes
+    the apply is still authenticated when it reaches the route.
     """
-    active = _session_for_request(request)
-    if active is None:
-        return
-    if active.get("provider") == _CREDENTIALS_PROVIDER:
-        cookie = _SESSION_COOKIE
-    elif _local_auth_enabled():
-        cookie = _LOCAL_SESSION_COOKIE
-    else:
-        cookie = _SESSION_COOKIE
-    token = request.cookies.get(cookie)
-    if not token:
-        return
+    cookie_names: list[str] = []
+    for name in (_SESSION_COOKIE, _LOCAL_SESSION_COOKIE):
+        if name not in cookie_names:
+            cookie_names.append(name)
+    removed = False
     with _local_session_lock:
-        _sessions.pop(_hash_token(token), None)
-    _persist_sessions()
+        for name in cookie_names:
+            token = request.cookies.get(name)
+            if token and _sessions.pop(_hash_token(token), None) is not None:
+                removed = True
+    if removed:
+        _persist_sessions()
+    return tuple(cookie_names)
 
 
 @app.delete("/api/auth/session")
 def auth_session_logout(request: Request, response: Response):
     """Unified logout (R-AC-06): remove the active session and clear its cookie."""
-    # Clear the cookie of the ACTIVE session provider, resolving it the same
-    # way the session resolver does (R-VC-01). When the vault is active the
-    # credentials session is authoritative, so the env-derived local-dev cookie
-    # must NOT be cleared instead (that would leave the real session alive).
-    active = _session_for_request(request)
-    if active and active.get("provider") == _CREDENTIALS_PROVIDER:
-        cookie = _SESSION_COOKIE
-    elif _local_auth_enabled():
-        cookie = _LOCAL_SESSION_COOKIE
-    else:
-        cookie = _SESSION_COOKIE
-    _clear_request_session(request)
-    response.delete_cookie(cookie, path="/", samesite="lax")
+    # Revoke EVERY session cookie the request carries (R-AC-06/R-VC-01): the
+    # token that authenticated must die even when the provider resolver no
+    # longer calls its provider active (vault disabled after a login).
+    for cookie in _clear_request_session(request):
+        response.delete_cookie(cookie, path="/", samesite="lax")
     return _session_status(request)
 
 

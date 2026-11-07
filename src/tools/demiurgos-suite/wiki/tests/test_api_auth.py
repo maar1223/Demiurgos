@@ -843,6 +843,28 @@ def test_unified_logout_clears_credentials_session(
         assert api_server._hash_token(token) not in api_server._sessions
 
 
+def test_logout_revokes_a_credentials_session_even_when_the_vault_is_off(
+        credentials_client: TestClient, monkeypatch):
+    """Logout must revoke the token that authenticated, not only the token of
+    whatever provider the resolver calls active right now. Disabling the vault
+    (or the auth mode) after a login used to leave the credentials session
+    alive: logout returned 200 and a replayed cookie authenticated again."""
+    _create_account(credentials_client, password=None)
+    token = _login(credentials_client, password=None)  # passwordless account
+    token_hash = api_server._hash_token(token)
+
+    monkeypatch.setattr(api_server, "_vault_active", lambda: False)
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "disabled")
+
+    logged_out = credentials_client.delete("/api/auth/session")
+    assert logged_out.status_code == 200
+
+    with api_server._local_session_lock:
+        assert token_hash not in api_server._sessions, (
+            "a replays the cookie after the vault is re-enabled"
+        )
+
+
 # ---------------------------------------------------------------------------
 # _resolve_principal with a credentials session
 # ---------------------------------------------------------------------------
