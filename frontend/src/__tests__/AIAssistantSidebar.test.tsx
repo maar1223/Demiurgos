@@ -7,6 +7,7 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { translate } from "@/i18n/messages";
 import { tEs } from "@/__tests__/i18nTestUtils";
 import { getGuidedMethods } from "@/api/methodologies";
+import { getAssistantSettings } from "@/api/assistantSettings";
 import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
@@ -24,6 +25,26 @@ vi.mock("@/api/methodologies", () => ({
   ),
 }));
 
+vi.mock("@/api/assistantSettings", () => ({
+  getAssistantSettings: vi.fn(async () => ({
+    provider: "custom",
+    base_url: "http://127.0.0.1:8642/v1",
+    model: "deepseek-v4.1-flash",
+    model_metadata: {
+      id: "deepseek-v4.1-flash",
+      label: "DeepSeek",
+      capability: "text-only",
+      pricing: null,
+    },
+    key_configured: true,
+    models: [],
+    active_profile: "default",
+    revision: 1,
+    runtime_state: "active",
+    gateway_running: true,
+  })),
+}));
+
 vi.mock("@/hooks/useWhisper", () => ({
   useWhisper: vi.fn(() => ({
     status: "idle",
@@ -36,6 +57,7 @@ vi.mock("@/hooks/useWhisper", () => ({
 }));
 
 const useSessionsMock = vi.mocked(useAIAssistantSessions);
+const getAssistantSettingsMock = vi.mocked(getAssistantSettings);
 const getGuidedMethodsMock = vi.mocked(getGuidedMethods);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
@@ -1760,5 +1782,74 @@ describe("AIAssistantSidebar attachment progress", () => {
     expect(
       screen.getByRole("button", { name: tEs("assistant.send.aria") }),
     ).toBeDisabled();
+  });
+});
+
+describe("AIAssistantSidebar assistant health", () => {
+  const healthy = {
+    provider: "custom",
+    base_url: "http://127.0.0.1:8642/v1",
+    model: "deepseek-v4.1-flash",
+    model_metadata: {
+      id: "deepseek-v4.1-flash",
+      label: "DeepSeek",
+      capability: "text-only" as const,
+      pricing: null,
+    },
+    key_configured: true,
+    models: [],
+    active_profile: "default",
+    revision: 1,
+    runtime_state: "active" as const,
+    gateway_running: true,
+  };
+
+  beforeEach(() => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+    useAppLanguageMock.mockReturnValue(lang("es"));
+    getAssistantSettingsMock.mockResolvedValue(healthy);
+  });
+
+  it("warns before the turn when the assistant service is not running", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    expect(banner).toHaveTextContent(
+      "El servicio del asistente no está en marcha",
+    );
+  });
+
+  it("warns when the saved configuration still needs a restart", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      runtime_state: "saved-not-active",
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(await screen.findByTestId("assistant-health-banner")).toHaveTextContent(
+      "La configuración del asistente cambió",
+    );
+  });
+
+  it("stays silent when the assistant is healthy", async () => {
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await screen.findByRole("textbox");
+    expect(screen.queryByTestId("assistant-health-banner")).not.toBeInTheDocument();
+  });
+
+  it("never invents a warning when the status read fails", async () => {
+    getAssistantSettingsMock.mockRejectedValue(new Error("unauthorized"));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await screen.findByRole("textbox");
+    expect(screen.queryByTestId("assistant-health-banner")).not.toBeInTheDocument();
   });
 });

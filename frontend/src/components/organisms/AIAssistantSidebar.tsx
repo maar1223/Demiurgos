@@ -19,10 +19,12 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
 import type {
+  AssistantSettingsStatus,
   EditProposal,
   GuidedFlowEcho,
   GuidedMethodOption,
 } from "@/api/types";
+import { getAssistantSettings } from "@/api/assistantSettings";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { getGuidedMethods } from "@/api/methodologies";
 import { useWhisper } from "@/hooks/useWhisper";
@@ -280,6 +282,28 @@ function ChatScreen({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
+  // Assistant health BEFORE the turn: the panel tells the Author that the
+  // assistant cannot answer yet instead of letting every message fail with the
+  // generic blocked copy. A failed status read shows nothing (never a false
+  // banner for an auth or network error).
+  const [health, setHealth] = useState<AssistantSettingsStatus | null>(null);
+  const [healthChecked, setHealthChecked] = useState(false);
+
+  const checkHealth = useCallback(async () => {
+    try {
+      setHealth(await getAssistantSettings());
+    } catch {
+      setHealth(null);
+    } finally {
+      setHealthChecked(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkHealth();
+  }, [checkHealth]);
+
+
   // Type-to-focus: when the Author starts typing while reading (focus on the
   // page, a button, or the panel), the first printable key goes to the
   // assistant composer instead of being lost. Never hijacks real editors,
@@ -327,6 +351,17 @@ function ChatScreen({
   }, [activeSession?.messages, isSending]);
 
   const { language: appLanguage, t } = useAppLanguage();
+
+  const healthWarning =
+    !healthChecked || health === null
+      ? null
+      : health.key_configured === false
+        ? t("assistant.health.notConfigured")
+        : health.gateway_running === false
+          ? t("assistant.health.gatewayDown")
+          : health.runtime_state === "saved-not-active"
+            ? t("assistant.health.pendingReload")
+            : null;
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const messages = activeSession?.messages ?? [];
@@ -598,6 +633,23 @@ function ChatScreen({
           </button>
         </div>
       </div>
+
+      {healthWarning ? (
+        <div
+          role="status"
+          data-testid="assistant-health-banner"
+          className="flex items-start gap-2 border-b border-edge bg-surface-raised px-4 py-2 text-xs text-muted shrink-0"
+        >
+          <p className="flex-1">{healthWarning}</p>
+          <button
+            type="button"
+            onClick={() => void checkHealth()}
+            className="shrink-0 rounded-md px-2 py-0.5 font-medium text-primary underline-offset-2 hover:underline"
+          >
+            {t("assistant.health.retry")}
+          </button>
+        </div>
+      ) : null}
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-4 py-4">

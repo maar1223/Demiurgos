@@ -19,6 +19,13 @@ export const messages = {
     "assistant.session.defaultTitle": "Nueva sesión",
     "assistant.session.lost":
       "La sesión guiada anterior ya no está disponible. Inicia una nueva sesión para continuar.",
+    "assistant.health.notConfigured":
+      "El asistente no está configurado. Configúralo en Perfil para poder conversar.",
+    "assistant.health.gatewayDown":
+      "El servicio del asistente no está en marcha. Reintenta o vuelve a iniciar Demiurgos.",
+    "assistant.health.pendingReload":
+      "La configuración del asistente cambió. Reinicia Demiurgos para activarla.",
+    "assistant.health.retry": "Reintentar",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
 
@@ -2351,6 +2358,13 @@ export const messages = {
     "assistant.session.defaultTitle": "New session",
     "assistant.session.lost":
       "The previous guided session is no longer available. Start a new session to continue.",
+    "assistant.health.notConfigured":
+      "The assistant is not configured. Set it up in Profile to start chatting.",
+    "assistant.health.gatewayDown":
+      "The assistant service is not running. Retry or start Demiurgos again.",
+    "assistant.health.pendingReload":
+      "The assistant configuration changed. Restart Demiurgos to activate it.",
+    "assistant.health.retry": "Retry",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
 
