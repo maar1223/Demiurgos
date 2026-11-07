@@ -47,6 +47,7 @@ from guided_character_protocol import (
     Outcome,
     SessionState,
     TypedMessage,
+    should_record_author_input,
 )
 
 
@@ -317,6 +318,11 @@ class GuidedSessionStore:
                 next_state.reference_context = request.reference_context[:request.context_budget]
                 next_state.reference_name = request.reference_name
                 next_state.relation_goal = request.relation_goal
+            if should_record_author_input(next_state, request.author_input):
+                next_state.messages.append(TypedMessage(
+                    MessageType.AUTHOR_INPUT, {"text": request.author_input},
+                    next_state.revision,
+                ))
             next_state.revision += 1
             content: dict[str, object] = {}
             if response.question:

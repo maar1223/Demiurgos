@@ -273,6 +273,24 @@ def session_flow_profile(state: SessionState) -> GuidedFlowProfile | None:
     return GuidedFlowProfile.from_dict(snapshot.profile)
 
 
+def should_record_author_input(state: SessionState, author_input: str) -> bool:
+    """Whether a commit must append the Author's turn to the transcript.
+
+    The confirmation re-send carries the seed input that ``begin_confirmation``
+    already stored; appending it again would duplicate the Author's turn. Every
+    other turn is recorded so a durable transcript never loses the Author side.
+    """
+    if not author_input:
+        return False
+    if (
+        state.phase == "conversation"
+        and state.revision == 2
+        and state.confirmation_input == author_input
+    ):
+        return False
+    return True
+
+
 class Provider(Protocol):
     async def invoke(self, request: GuidedRequest, cancellation: "CancellationToken") -> object: ...
 
@@ -394,6 +412,11 @@ class GuidedSessionStore:
             next_state.reference_context = request.reference_context[:request.context_budget]
             next_state.reference_name = request.reference_name
             next_state.relation_goal = request.relation_goal
+        if should_record_author_input(next_state, request.author_input):
+            next_state.messages.append(TypedMessage(
+                MessageType.AUTHOR_INPUT, {"text": request.author_input},
+                next_state.revision,
+            ))
         next_state.revision += 1
         next_state.messages.append(TypedMessage(
             MessageType.ASSISTANT_RESPONSE if response.outcome is Outcome.QUESTION else MessageType.PROPOSAL,
