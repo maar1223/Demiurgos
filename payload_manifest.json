@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "2bc634f",
+  "source_commit": "992cd5c",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -40,6 +40,7 @@
     "src/tools/demiurgos-suite/wiki/account.py",
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/assistant_activity.py",
+    "src/tools/demiurgos-suite/wiki/assistant_memory_store.py",
     "src/tools/demiurgos-suite/wiki/assistant_provider_adapters.py",
     "src/tools/demiurgos-suite/wiki/assistant_settings.py",
     "src/tools/demiurgos-suite/wiki/backup/__init__.py",
