@@ -30,7 +30,7 @@ import threading
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from state_paths import resolve_state_dir
 from guided_character_domain import (
@@ -100,12 +100,21 @@ class GuidedSessionStore:
     never be trusted without fresh validation.
     """
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        binding_normalizer: Callable[[str], str] | None = None,
+    ) -> None:
         if db_path is None:
             db_path = default_db_path()
         self._db_path = str(db_path)
         if self._db_path != ":memory:":
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        # Maps a caller-supplied authorization binding to its durable form. The
+        # API passes the installation's stable identity so a per-login principal
+        # id does not strand the session on the next re-login; the default
+        # identity keeps direct store users (tests, tools) unchanged.
+        self._normalize_binding = binding_normalizer or (lambda value: value)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(
             self._db_path, check_same_thread=False,
@@ -132,6 +141,7 @@ class GuidedSessionStore:
         depth: str = "standard",
         methodology_snapshot: MethodologySnapshot | None = None,
     ) -> SessionState:
+        authorization_binding = self._normalize_binding(authorization_binding)
         if len(reference_context) > 4_000 or len(relation_goal) > 4_000:
             raise ValueError("reference context exceeds the bounded budget")
         if mode not in {"full", "fast"} or depth not in {"standard", "fundamental"}:
@@ -377,7 +387,14 @@ class GuidedSessionStore:
         row = self._conn.execute(
             "SELECT * FROM guided_sessions WHERE session_id = ?", (session_id,),
         ).fetchone()
-        if row is None or row["owner_binding"] != authorization_binding:
+        if row is None:
+            return None
+        # Compare in durable form on BOTH sides: a row written before the
+        # normalization existed still carries the old per-login binding, so the
+        # upgraded process adopts it instead of returning None (HTTP 401).
+        if self._normalize_binding(row["owner_binding"]) != self._normalize_binding(
+            authorization_binding
+        ):
             return None
         return row
 
