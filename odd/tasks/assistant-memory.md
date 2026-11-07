@@ -214,7 +214,21 @@ Commits (branch `feat/assistant-memory`, not pushed): `725d7b6`, `4aa7ef0`,
 `d13bc01`, `570f8ff`, `13953ce`. The installed app is `v0.2.6`; restart or
 rebuild from this branch before testing the UI.
 
+D7 — Post-smoke-test fix (2026-11-07): the live activity smoke test produced
+two near-duplicate topics because the Curator's LLM varied the label
+(`llegada-al-pueblo` vs `ganic-llegada-al-pueblo`) and a changed statement was
+then classified as a conflict. `_find_existing_topic` now reuses the topic of a
+statement with Jaccard similarity >= 0.7; a reused topic is a consolidation,
+not a conflict. The two test-created duplicates were hard-deleted from the real
+store, leaving the 5 backfilled memories.
+
 E11 — Native RDD is unavailable in this checkout: `.git` is on a FUSE mount
 with a projected fixed owner, so `gentle-ai review mode status` cannot resolve
 authority. No native receipt was produced; verification is the full pytest
 suite (4983 passed, 26 skipped) plus the focused memory/guided/API suites.
+
+E12 — D7 evidence: `test_apply_consolidates_near_duplicate_statements` and
+`test_apply_keeps_unrelated_facts_apart` pass (26 focused store+curator tests).
+The restarted app answered the Ganic recall from the activity path and produced
+no near-duplicate topics; the real store holds the 5 backfilled memories plus
+one legitimate new entity note.

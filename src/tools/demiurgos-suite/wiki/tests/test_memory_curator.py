@@ -111,6 +111,38 @@ def test_apply_never_demotes_canon_with_a_proposal(tmp_path: Path) -> None:
     store.close()
 
 
+def test_apply_consolidates_near_duplicate_statements(tmp_path: Path) -> None:
+    """Label drift from the LLM must not grow duplicate topics."""
+    store = _store(tmp_path)
+    first = MemoryCandidate(
+        "canon", "llegada al pueblo",
+        "Ganic llegó de joven a un pueblo de interior lejos de todo, sin decir de dónde venía.",
+        0.9, entity="Ganic",
+    )
+    apply_candidates(store, [first], world="Vibrantes")
+    second = MemoryCandidate(
+        "canon", "ganic llegada al pueblo",
+        "Ganic llegó de joven a un pueblo de interior, lejos de todo, sin decir de dónde venía.",
+        0.9, entity="Ganic",
+    )
+    apply_candidates(store, [second], world="Vibrantes")
+
+    entries = store.list(world="Vibrantes")
+    assert len(entries) == 1
+    assert entries[0].revision_count == 2
+    store.close()
+
+
+def test_apply_keeps_unrelated_facts_apart(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    apply_candidates(store, [
+        MemoryCandidate("canon", "Ganic origin", "Ganic llegó de fuera.", 0.9, entity="Ganic"),
+        MemoryCandidate("canon", "Ekkor", "El vibrastal de Ekkor canaliza el tiempo.", 0.9),
+    ], world="Vibrantes")
+    assert len(store.list(world="Vibrantes")) == 2
+    store.close()
+
+
 def test_apply_records_a_conflict_without_losing_canon(tmp_path: Path) -> None:
     store = _store(tmp_path)
     accepted = MemoryCandidate("canon", "Ganic origin", "Ganic llegó de fuera.", 0.9)

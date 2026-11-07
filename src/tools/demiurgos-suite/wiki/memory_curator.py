@@ -124,6 +124,52 @@ def parse_candidates(raw: str) -> list[MemoryCandidate]:
     return candidates
 
 
+_TOKEN_RE = re.compile(r"[^\wáéíóúüñÁÉÍÓÚÜÑ]+", re.UNICODE)
+
+
+def _tokens(text: str) -> set[str]:
+    return {token for token in _TOKEN_RE.split(str(text or "").lower()) if token}
+
+
+def _similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _find_existing_topic(
+    store: AssistantMemoryStore,
+    *,
+    scope: str,
+    world: str,
+    entity: str,
+    statement: str,
+) -> str | None:
+    """Reuse the topic of a near-duplicate statement.
+
+    LLMs are unreliable at stable labels: the same fact comes back as
+    "llegada al pueblo" and "ganic llegada al pueblo". Without this pass the
+    store would upsert on two different keys and grow duplicates. The topic key
+    stays deterministic; the label drift is absorbed by statement similarity.
+    """
+    if store.fts_mode == "like":
+        pool = store.list(world=world, limit=200, include_proposals=True)
+    else:
+        pool = store.search(statement, world=world, limit=10, include_proposals=True)
+    target = _tokens(statement)
+    best: MemoryEntry | None = None
+    best_score = 0.0
+    for entry in pool:
+        if entry.scope != scope:
+            continue
+        if entity and entry.entity and entity.casefold() != entry.entity.casefold():
+            continue
+        score = _similarity(target, _tokens(entry.statement))
+        if score > best_score:
+            best, best_score = entry, score
+    return best.topic_key if best is not None and best_score >= 0.7 else None
+
+
 def _conflict_topic_key(topic_key: str, statement: str) -> str:
     digest = hashlib.sha256(normalize_statement(statement).encode("utf-8")).hexdigest()
     return f"{topic_key}#conflict:{digest[:8]}"
@@ -146,7 +192,14 @@ def apply_candidates(
             continue
         scope = candidate.scope if candidate.scope in VALID_SCOPES else "project"
         entry_world = "" if scope == "global" else str(world or "")
-        topic_key = derive_topic_key(
+        reused_topic = _find_existing_topic(
+            store,
+            scope=scope,
+            world=entry_world,
+            entity=candidate.entity,
+            statement=candidate.statement,
+        )
+        topic_key = reused_topic or derive_topic_key(
             entry_world, scope, candidate.kind, candidate.topic,
         )
         existing = store.find(scope=scope, world=entry_world, topic_key=topic_key)
@@ -156,7 +209,8 @@ def apply_candidates(
             # A draft or an in-world rumor never overwrites established canon.
             continue
         is_conflict = (
-            existing is not None
+            reused_topic is None
+            and existing is not None
             and existing.status == "accepted"
             and candidate.status == "accepted"
             and normalize_statement(existing.statement)
