@@ -150,6 +150,38 @@ class TestWorldLore:
         monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: None)
         assert api_server._world_lore_context("Vibrantes", "Ekkor") == ""
 
+    def test_geography_category_gets_a_verified_section_index(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        section = (
+            tmp_path / "Vibrantes" / "lore"
+            / "politica-distribucion-y-territorios"
+        )
+        section.mkdir(parents=True)
+        (section / "politica-distribucion-y-territorios.md").write_text(
+            "---\ntitle: Política | Distribución Y Territorios\n"
+            "description: Regiones del mundo.\n---\n",
+            encoding="utf-8",
+        )
+        (section / "atherr.md").write_text(
+            '---\ntitle: Atherr\ntype: lugar\n'
+            'description: "Territorio del nororiente de Vibral."\n---\n',
+            encoding="utf-8",
+        )
+        (section / "pannj.md").write_text(
+            '---\ntitle: Pannj\ntype: lugar\ndescription: "Archipiélago vibrante."\n---\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _mundo: None)
+
+        text = api_server._world_lore_context(
+            "Vibrantes", "hay paises con sus descripciones, a eso me refiero",
+        )
+        assert "Atherr" in text
+        assert "Pannj" in text
+        assert "Territorio del nororiente" in text
+
 
 class TestRequestValidation:
     def test_world_context_over_budget_is_rejected(self) -> None:

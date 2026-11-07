@@ -50,6 +50,7 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 
 - **S7** The character flow surfaces a finite, ordered plan of six details: identity → desire → conflict → relationship → secret → arc. A slot is covered only by accepted canon; off-plan provider fields never become visible cards. Only the proposal for the first uncovered slot is shown, and the card reads "Detalle sugerido · N de 6".
 - **S8** Once the plan is complete, no further plan proposals are shown; the review action is the exit.
+- **S9** A category question about places ("¿qué países hay?") receives a bounded, verified index of the active world's relevant lore section; the provider never claims the world has no geography when the graph/files hold it.
 
 Tasks (route: inline):
 - [x] T8 `guided_flow.py`: ordered `DETAIL_PLAN_BY_ENTITY_TYPE`, accepted-only coverage, `detail_progress`, `visible_proposal_key`.
@@ -59,3 +60,5 @@ Tasks (route: inline):
 Log:
 - **L16 (Owner request, verbatim):** "la cosa es que me parece que propone demasiadas cosas cuando al personaje aun le faltan cosas por definir" / "si, me parece bien".
 - **L17 (evidence, 2026-11-07):** live session `guided-46a4b828a5b445f3b77aeef09ebf7685` had 4 accepted + 14 pending proposals. The public state now returns `detail_progress {index: 2, total: 6, slot: desire}` and only `motivacion` as the visible card; the 13 optional keys stay hidden. BE focused 854 passed; full BE 4987 passed/26 skipped with the 4 manifest-freshness failures fixed by regenerating `payload_manifest.json`; FE 1745 passed; `npm run typecheck` clean; production build served as `assets/index-UN8IW7qu.js`.
+- **L18 (post-deploy bugfix, 2026-11-07):** the previous `guided.pending_question` was still rendered below the Author's message while the next turn was in flight, so it looked like the assistant repeated itself; it disappeared when the new state arrived. Fixed: the sidebar suppresses the pending bubble while `isSending`, and the guided panel while `isLoading`. Evidence: `AIAssistantSidebar` 61 tests, `GuidedCharacterPanel` 12; typecheck/build clean; build `assets/index-D88NqOHx.js`.
+- **L19 (post-deploy bugfix, 2026-11-07):** "hay países con sus descripciones" produced an empty `world_context` because term search cannot map the category word to the nine named country files. Added `_world_lore_section_index`: for geography/place intents, inject a bounded verified index of the relevant lore section (title + type + description) when no entity term matched. Real probe on Vibrantes returned 2,628 chars with Atherr, Chaae, Chaart, Dottua, Ekkor, Nafaar, Pannj, Saatia and Teena. Evidence: `test_guided_conversation_contract.py` 15 passed, focused guided suite 106 passed; app restarted with the gateway healthy.

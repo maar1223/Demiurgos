@@ -9741,28 +9741,130 @@ def _world_lore_terms(author_input: str, limit: int = 6) -> list[str]:
     return terms
 
 
+_WORLD_LORE_POLITICAL_SECTION = "politica-distribucion-y-territorios"
+_WORLD_LORE_PLANET_SECTION = "planeta-vibral-naturaleza-y-biodiversidad"
+_WORLD_LORE_GEOGRAPHY_TERMS = frozenset({
+    "pais", "paises", "país", "países", "territorio", "territorios",
+    "geografia", "geografía", "region", "región", "continente",
+    "continentes", "frontera", "fronteras", "nacion", "nación", "naciones",
+})
+_WORLD_LORE_PLANET_TERMS = frozenset({
+    "planeta", "naturaleza", "biodiversidad", "ecosistema", "ecosistemas",
+    "mundo", "mundos",
+})
+_WORLD_LORE_PLACE_TERMS = frozenset({
+    "lugar", "lugares", "ubicacion", "ubicación", "mapa", "ambientar",
+    "escenario", "escenarios", "entorno", "terreno", "terrenos",
+})
+
+
+def _lore_frontmatter(path: Path) -> dict:
+    """Read one lore file's YAML frontmatter; empty on any failure."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---"):
+        return {}
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        data = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _world_lore_sections(author_input: str) -> list[str]:
+    lowered = (author_input or "").casefold()
+    sections: list[str] = []
+    if any(term in lowered for term in _WORLD_LORE_GEOGRAPHY_TERMS):
+        sections.append(_WORLD_LORE_POLITICAL_SECTION)
+    if any(term in lowered for term in _WORLD_LORE_PLANET_TERMS):
+        sections.append(_WORLD_LORE_PLANET_SECTION)
+    if any(term in lowered for term in _WORLD_LORE_PLACE_TERMS):
+        sections.extend((_WORLD_LORE_POLITICAL_SECTION, _WORLD_LORE_PLANET_SECTION))
+    return list(dict.fromkeys(sections))
+
+
+def _world_lore_section_index(mundo: str, author_input: str, budget: int) -> str:
+    """Bounded section index for category questions ("¿qué países hay?").
+
+    Term search cannot match a category word to nine differently-named country
+    files. When the author asks about geography/places, this fallback lists the
+    verified section entries (name + type + short description) so the provider
+    can choose real names instead of claiming the world has no geography.
+    """
+    sections = _world_lore_sections(author_input)
+    if not sections:
+        return ""
+    world_root = _resolve_mundo_dir(mundo)
+    if world_root is None:
+        return ""
+    lines: list[str] = []
+    used = 0
+    for section in sections:
+        section_dir = world_root / "lore" / section
+        if not section_dir.is_dir():
+            continue
+        intro = _lore_frontmatter(section_dir / f"{section}.md")
+        if intro:
+            title = str(intro.get("title") or section).strip()
+            description = str(intro.get("description") or "").strip()
+            lines.append(f"## {title}")
+            used += len(lines[-1]) + 1
+            if description:
+                lines.append(description[:400])
+                used += len(lines[-1]) + 1
+        for path in sorted(section_dir.glob("*.md")):
+            if path.name == f"{section}.md":
+                continue
+            meta = _lore_frontmatter(path)
+            title = str(meta.get("title") or path.stem).strip()
+            description = str(meta.get("description") or "").strip()
+            kind = str(meta.get("type") or "").strip()
+            entry = f"- {title}"
+            if kind:
+                entry += f" ({kind})"
+            if description:
+                entry += f": {description[:300]}"
+            lines.append(entry)
+            used += len(entry) + 1
+            if used >= budget:
+                break
+        if used >= budget:
+            break
+    if not lines:
+        return ""
+    return (
+        "World lore index from the active world (read-only, verified):\n\n"
+        + "\n".join(lines)
+    )[:budget]
+
+
 def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> str:
     """Resolve bounded, read-only world lore for the terms in one author turn.
 
     The guided provider has no graph access, so the server must inject the
     active world's own lore (S2). Only entities whose name/title/description
     actually contain the term are used; misses are omitted, never invented.
-    Fail-open: any graph failure returns an empty string and the turn proceeds
-    without lore.
+    When a category question names no entity ("¿qué países hay?"), a bounded
+    section index is injected instead. Fail-open: any graph failure still tries
+    the index and otherwise returns an empty string.
     """
     if not mundo or not author_input or budget <= 0:
         return ""
+    reader = None
     try:
         index = _get_graph(mundo)
-        if index is None:
-            return ""
-        reader = index if all(callable(getattr(index, method, None)) for method in ("search", "read")) else _GuidedGraphReader(index)
+        if index is not None:
+            reader = index if all(callable(getattr(index, method, None)) for method in ("search", "read")) else _GuidedGraphReader(index)
     except Exception:
         logger.warning("guided world lore lookup unavailable", exc_info=True)
-        return ""
     chunks: list[str] = []
     seen_paths: set[str] = set()
-    terms = _world_lore_terms(author_input)
+    terms = _world_lore_terms(author_input) if reader is not None else []
     # Proper nouns first: "Ekkor" is more specific than a generic material
     # word, and the excerpt budget must not be consumed by the first broad hit.
     terms.sort(key=lambda term: (not term[:1].isupper(), term.casefold()))
@@ -9801,7 +9903,7 @@ def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> s
         if len(chunks) >= 3:
             break
     if not chunks:
-        return ""
+        return _world_lore_section_index(mundo, author_input, budget)
     context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
     return context[:budget]
 
