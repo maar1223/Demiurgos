@@ -725,6 +725,14 @@ export interface GuidedCharacterSession {
   messages: GuidedCharacterMessage[];
   candidate: GuidedCharacterCandidate;
   proposal: GuidedCharacterProposal | null;
+  /** Finite detail plan progress. Absorbs provider label drift and hides
+   *  off-plan proposals so the Author sees one focused slot at a time. */
+  detail_progress?: {
+    index: number;
+    total: number;
+    slot: string;
+    complete: boolean;
+  } | null;
   index_status?: GuidedCharacterIndexStatus;
   retryable?: boolean;
   message?: string;

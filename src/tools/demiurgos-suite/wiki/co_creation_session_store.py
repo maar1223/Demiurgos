@@ -264,6 +264,8 @@ class CoCreationSessionStore:
             next_state.pending_question = response.question
             next_state.pending_options = response.options
             next_state.question_count += 1
+            if response.draft_patch:
+                next_state.draft_payload.update(dict(response.draft_patch))
             if response.question:
                 # REQ-CC-14: the chat owns ``pending_questions`` — every asked
                 # question lands on the canvas read-only list (state Pendiente).

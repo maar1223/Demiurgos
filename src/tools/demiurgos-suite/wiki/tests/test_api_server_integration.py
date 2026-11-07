@@ -34,8 +34,10 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 import api_server  # noqa: E402
 from assistant_activity import assess_hermes_capabilities  # noqa: E402
+from assistant_memory_store import AssistantMemoryStore  # noqa: E402
 from conversation_memory_store import ConversationMemoryStore  # noqa: E402
 from guided_character_protocol import invoke_bounded  # noqa: E402
+from memory_curator import MemoryCandidate  # noqa: E402
 
 
 def _activity_capability():
@@ -107,17 +109,19 @@ class _RecordingProvider:
         self.inner = inner
         self.distilled = []
         self.recent_turns = []
+        self.memory_context = []
 
     async def decide(
         self, author_input, *, request_id, session_id=None, context=None,
-        distilled_state=None, recent_turns=None,
+        distilled_state=None, recent_turns=None, memory_context=None,
     ):
         self.distilled.append(distilled_state)
         self.recent_turns.append(recent_turns)
+        self.memory_context.append(memory_context)
         return await self.inner.decide(
             author_input, request_id=request_id, session_id=session_id,
             context=context, distilled_state=distilled_state,
-            recent_turns=recent_turns,
+            recent_turns=recent_turns, memory_context=memory_context,
         )
 
 
@@ -176,8 +180,10 @@ class _PartialActivityAdapter:
 
     def __init__(self):
         self.cancelled = []
+        self.last_request = None
 
     def start(self, request):
+        self.last_request = request
         return "run-1"
 
     async def events(self, run_id):
@@ -185,6 +191,42 @@ class _PartialActivityAdapter:
             "event": "message.delta", "run_id": run_id, "delta": "preserve this answer",
         }
         yield {"event": "run.completed", "run_id": run_id, "output": "preserve this answer"}
+
+    def cancel(self, run_id):
+        self.cancelled.append(run_id)
+
+
+class _NoMemoryCurator:
+    async def extract(self, **_kwargs):
+        return []
+
+
+class _FakeMemoryCurator:
+    def __init__(self, candidates):
+        self.candidates = list(candidates)
+        self.calls = []
+
+    async def extract(self, **kwargs):
+        self.calls.append(kwargs)
+        return list(self.candidates)
+
+
+class _CumulativeActivityAdapter:
+    """Emits cumulative delta snapshots, as the live translator does."""
+
+    available = True
+    capability = _activity_capability()
+
+    def __init__(self):
+        self.cancelled = []
+
+    def start(self, request):
+        return "run-1"
+
+    async def events(self, run_id):
+        yield {"event": "message.delta", "run_id": run_id, "delta": "Muy"}
+        yield {"event": "message.delta", "run_id": run_id, "delta": " bien"}
+        yield {"event": "run.completed", "run_id": run_id, "output": "Muy bien"}
 
     def cancel(self, run_id):
         self.cancelled.append(run_id)
@@ -208,6 +250,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", ConversationMemoryStore(":memory:"))
+    monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", AssistantMemoryStore(":memory:"))
+    monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _NoMemoryCurator())
     router = _FakeRouter()
     monkeypatch.setattr(api_server, "_SKILL_ROUTER", router)
     api_server._graph_indices.clear()
@@ -439,6 +483,202 @@ class TestActivityStreamMemory:
         assert turns[1].content == "preserve this answer"
         # The user turn carries the routed skill.
         assert turns[0].skill_id == "narrative-draft"
+
+    def test_stream_stores_the_final_answer_not_cumulative_snapshots(
+            self, client: TestClient, monkeypatch):
+        """Delta snapshots are cumulative; memory must keep the last full answer."""
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", _CumulativeActivityAdapter())
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "sess-cum",
+        })
+        assert response.status_code == 200
+
+        turns = api_server._CONVERSATION_MEMORY.get_recent_turns("sess-cum")
+        assert [t.role for t in turns] == ["user", "assistant"]
+        assert turns[1].content == "Muy bien"
+
+
+class TestCrossSessionMemoryCapture:
+    def test_capture_turn_memory_persists_candidates(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        curator = _FakeMemoryCurator([candidate])
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", curator)
+
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Ganic llegó de fuera", assistant_text="Anotado.",
+        ))
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/canon/ganic-origin", world="test_mundo",
+        )
+        assert entry is not None
+        assert entry.statement == "Ganic llegó de fuera."
+        assert curator.calls[0]["world"] == "test_mundo"
+
+    def test_capture_fails_open(self, client: TestClient, monkeypatch):
+        class _Broken:
+            async def extract(self, **_kwargs):
+                raise RuntimeError("gateway down")
+
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _Broken())
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Hola", assistant_text="Hola.",
+        ))  # must not raise
+
+    def test_explicit_request_bypasses_the_threshold(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "preference", "Voice", "Prefiere respuestas cortas.", 0.1,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+
+        asyncio.run(api_server._capture_turn_memory(
+            session_id="sess-mem", mundo="test_mundo",
+            user_text="Recuerda que prefiero respuestas cortas",
+            assistant_text="Anotado.",
+        ))
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/preference/voice", world="test_mundo",
+        )
+        assert entry is not None and entry.status == "accepted"
+
+    def test_memory_context_is_injected_into_the_gate(
+            self, client: TestClient, monkeypatch):
+        api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        recorder = _wire_semantic_provider(monkeypatch, runs, recorder=True)
+
+        client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-recall",
+        })
+
+        assert "Ganic llegó de fuera." in recorder.memory_context[-1]
+
+    def test_activity_prompt_includes_the_memory_context(
+            self, client: TestClient, monkeypatch):
+        api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = _PartialActivityAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+
+        client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-recall-2",
+        })
+
+        assert "Ganic llegó de fuera." in adapter.last_request.prompt
+
+    def test_memory_context_fails_open(self, client: TestClient, monkeypatch):
+        class _BrokenStore:
+            def search(self, *_args, **_kwargs):
+                raise RuntimeError("store down")
+
+        monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", _BrokenStore())
+        assert api_server._memory_context("test_mundo", "Ganic") == ""
+
+    def test_session_a_saves_and_session_b_recalls(
+            self, client: TestClient, monkeypatch):
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+        runs_a = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs_a)
+
+        saved = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Ganic llegó de fuera", "session_id": "sess-A",
+        })
+        assert saved.status_code == 200
+
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _NoMemoryCurator())
+        runs_b = _SemanticRuns(_semantic_payload("allow"))
+        recorder = _wire_semantic_provider(monkeypatch, runs_b, recorder=True)
+
+        recalled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "¿Qué recuerdas de Ganic?", "session_id": "sess-B",
+        })
+        assert recalled.status_code == 200
+        assert "Ganic llegó de fuera." in recorder.memory_context[-1]
+
+    def test_activity_stream_captures_memory(
+            self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", _PartialActivityAdapter())
+        candidate = MemoryCandidate(
+            "canon", "Ganic origin", "Ganic llegó de fuera.", 0.9,
+        )
+        monkeypatch.setattr(api_server, "_MEMORY_CURATOR", _FakeMemoryCurator([candidate]))
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Ganic llegó de fuera", "session_id": "sess-cap",
+        })
+        assert response.status_code == 200
+
+        entry = api_server._ASSISTANT_MEMORY.find(
+            topic_key="world/test_mundo/canon/ganic-origin", world="test_mundo",
+        )
+        assert entry is not None
+
+
+class TestAssistantMemoryManagement:
+    def _seed(self):
+        return api_server._ASSISTANT_MEMORY.upsert(
+            world="test_mundo", kind="canon",
+            topic_key="world/test_mundo/canon/ganic-origin",
+            statement="Ganic llegó de fuera.", confidence=0.9,
+        )
+
+    def test_list_and_search(self, client: TestClient):
+        entry = self._seed()
+        listed = client.get("/api/test_mundo/ai/memory")
+        assert listed.status_code == 200
+        assert listed.json()["entries"][0]["id"] == entry.id
+
+        found = client.get(
+            "/api/test_mundo/ai/memory", params={"q": "Ganic"},
+        )
+        assert found.status_code == 200
+        assert found.json()["entries"][0]["statement"] == "Ganic llegó de fuera."
+
+    def test_export(self, client: TestClient):
+        self._seed()
+        exported = client.get("/api/test_mundo/ai/memory/export")
+        assert exported.status_code == 200
+        body = exported.json()
+        assert body["world"] == "test_mundo"
+        assert body["entries"][0]["topic_key"] == "world/test_mundo/canon/ganic-origin"
+
+    def test_forget_soft_then_hard(self, client: TestClient):
+        entry = self._seed()
+        soft = client.delete(f"/api/test_mundo/ai/memory/{entry.id}")
+        assert soft.status_code == 200
+        assert soft.json()["removed"] is True
+        assert api_server._ASSISTANT_MEMORY.get(entry.id).deleted_at is not None
+
+        hard = client.delete(
+            f"/api/test_mundo/ai/memory/{entry.id}", params={"hard": "true"},
+        )
+        assert hard.status_code == 200
+        assert hard.json()["removed"] is True
+        assert api_server._ASSISTANT_MEMORY.get(entry.id) is None
 
 
 class TestPersistedLocaleIntegration:

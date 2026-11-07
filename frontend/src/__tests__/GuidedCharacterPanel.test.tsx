@@ -82,6 +82,35 @@ describe("GuidedCharacterPanel", () => {
     expect(screen.queryByText(/workflow|provenance/i)).not.toBeInTheDocument();
   });
 
+  it("hides the previous pending question while the next turn is loading", () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      isLoading: true,
+      session: {
+        ...baseState().session,
+        messages: [{ role: "author" as const, content: "Estoy en frío" }],
+        pending_question: "¿Pregunta vieja?",
+        proposal: null,
+      },
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    expect(screen.queryByText("¿Pregunta vieja?")).not.toBeInTheDocument();
+  });
+
+  it("shows the finite detail plan progress in the proposal card", () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      session: {
+        ...baseState().session,
+        detail_progress: { index: 2, total: 6, slot: "desire", complete: false },
+      },
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    expect(screen.getByText("Detalle sugerido · 2 de 6")).toBeInTheDocument();
+  });
+
   it("chooses the method before the first message and sends it with the session start (S6)", async () => {
     const user = userEvent.setup();
     const send = vi.fn();

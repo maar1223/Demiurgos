@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from co_creation_attachments import move_staged
-from co_creation_protocol import DerivedFrom
+from co_creation_protocol import DerivedFrom, normalize_guided_flow_declaration
+from guided_flow import GuidedFlowDeclaration
 from convergence_injection import carrier_root_for, read_adjunto_bytes
 from methodology_compiler import AttachmentEntry, MethodologyIssue, compile_methodology
 from methodology_library import MethodologyLibrary
@@ -389,6 +390,10 @@ class CoCreationMaterializer:
             "categoria_funcional": payload.get("categoria_funcional"),
             "etiquetas": list(payload.get("etiquetas") or ()),
             "adjuntos": [entry.as_dict() for entry in _payload_adjuntos(payload)],
+            "guided_flow": (
+                normalize_guided_flow_declaration(payload.get("guided_flow"))
+                if isinstance(payload.get("guided_flow"), Mapping) else None
+            ),
         }
         compiled = compile_methodology(manifest, source)
         return ValidateResult(
@@ -487,6 +492,12 @@ class CoCreationMaterializer:
             "taller": taller,
             "etiquetas": tuple(etiquetas),
             "categoria_funcional": categoria_funcional, "language": language,
+            "guided_flow": (
+                GuidedFlowDeclaration.from_mapping(
+                    normalize_guided_flow_declaration(payload.get("guided_flow"))
+                )
+                if isinstance(payload.get("guided_flow"), Mapping) else None
+            ),
         }
         if entries:
             if staging_dir is None or attachments_root is None:

@@ -139,7 +139,7 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
             {message.content}
           </div>
         ))}
-        {session?.pending_question && (
+        {session?.pending_question && !guided.isLoading && (
           <p className="mb-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-sm text-primary">
             {session.pending_question}
           </p>
@@ -147,7 +147,12 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
         {session?.proposal && (
           <div className="rounded-lg border border-edge bg-surface p-3">
             <p className="text-xs text-muted">
-              {t("guided.suggestedDetail")}
+              {session.detail_progress
+                ? t("guided.suggestedDetailProgress", {
+                    index: session.detail_progress.index,
+                    total: session.detail_progress.total,
+                  })
+                : t("guided.suggestedDetail")}
             </p>
             <p className="mt-1 text-sm text-primary">{session.proposal.label}: {session.proposal.value}</p>
             <div className="mt-3 flex gap-2">

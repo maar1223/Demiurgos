@@ -24,6 +24,7 @@ if str(_WIKI) not in sys.path:
 from guided_character_protocol import (  # noqa: E402
     GuidedRequest,
     GuidedResponse,
+    MessageType,
     Outcome,
     PROTOCOL_VERSION,
 )
@@ -76,6 +77,62 @@ def test_session_younger_than_ttl_survives_durable_restart(tmp_path: Path) -> No
     assert state.revision == 0
     assert state.world == "nec"
     assert restarted.requires_revalidation("s-1", "author-1") is False
+
+
+def test_commit_persists_the_author_turn_across_restart(tmp_path: Path) -> None:
+    """The Author's message must survive a durable restart with the session."""
+    db = tmp_path / "sessions.sqlite3"
+    first = GuidedSessionStore(db)
+    first.create("s-1", "nec", "author-1")
+    req = dataclasses.replace(
+        _request("s-1", "author-1", 0),
+        author_input="Ganic came from outside",
+    )
+    response = GuidedResponse(
+        PROTOCOL_VERSION, req.request_id, req.session_id, req.base_revision,
+        Outcome.QUESTION, question="Where from?",
+    )
+    committed = first.commit(req, response)
+    assert committed is not None
+    first.close()
+
+    restarted = GuidedSessionStore(db)
+    recovered = restarted.recover("s-1", "author-1")
+    assert recovered is not None
+    author_texts = [
+        message.content.get("text")
+        for message in recovered.messages
+        if message.message_type is MessageType.AUTHOR_INPUT
+    ]
+    assert author_texts == ["Ganic came from outside"]
+
+
+def test_confirmation_turn_does_not_duplicate_the_original_author_input(
+    tmp_path: Path,
+) -> None:
+    """The confirmation re-send must not store the seed input twice."""
+    store = GuidedSessionStore(tmp_path / "sessions.sqlite3")
+    store.create("s-1", "nec", "author-1")
+    store.begin_confirmation("s-1", "author-1", "Create Rhyz's wife", "Start? (yes/no)")
+    resolved = store.resolve_confirmation("s-1", "author-1", 1, True, "")
+    assert resolved is not None
+    req = dataclasses.replace(
+        _request("s-1", "author-1", 2),
+        author_input="Create Rhyz's wife",
+    )
+    response = GuidedResponse(
+        PROTOCOL_VERSION, req.request_id, req.session_id, req.base_revision,
+        Outcome.QUESTION, question="What drives her?",
+    )
+    committed = store.commit(req, response)
+    assert committed is not None
+    author_texts = [
+        message.content.get("text")
+        for message in committed.messages
+        if message.message_type is MessageType.AUTHOR_INPUT
+    ]
+    assert author_texts.count("Create Rhyz's wife") == 1
+    assert "confirmed" in author_texts
 
 
 def test_default_configuration_resolves_to_durable_local_path(monkeypatch, tmp_path: Path) -> None:

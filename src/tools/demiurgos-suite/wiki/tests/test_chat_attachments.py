@@ -294,7 +294,7 @@ class _CapturingSemanticProvider:
         self.prompts: list[str] = []
 
     async def decide(self, prompt, *, request_id, session_id=None, context=None,
-                     distilled_state=None, recent_turns=None):
+                     distilled_state=None, recent_turns=None, memory_context=None):
         from semantic_intent import SemanticDecision, SemanticResult
 
         self.prompts.append(prompt)

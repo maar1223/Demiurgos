@@ -47,6 +47,7 @@ from guided_character_protocol import (
     Outcome,
     SessionState,
     TypedMessage,
+    should_record_author_input,
 )
 
 
@@ -327,13 +328,28 @@ class GuidedSessionStore:
                 next_state.reference_context = request.reference_context[:request.context_budget]
                 next_state.reference_name = request.reference_name
                 next_state.relation_goal = request.relation_goal
+            if should_record_author_input(next_state, request.author_input):
+                next_state.messages.append(TypedMessage(
+                    MessageType.AUTHOR_INPUT, {"text": request.author_input},
+                    next_state.revision,
+                ))
             next_state.revision += 1
+            content: dict[str, object] = {}
+            if response.question:
+                content["question"] = response.question
+            if response.synthesis:
+                content["synthesis"] = response.synthesis
+            if response.outcome is Outcome.DELTA and response.delta:
+                content.update(dict(response.delta))
             next_state.messages.append(TypedMessage(
                 MessageType.ASSISTANT_RESPONSE if response.outcome is Outcome.QUESTION else MessageType.PROPOSAL,
-                {"question": response.question} if response.question else dict(response.delta or {}),
+                content,
                 next_state.revision,
             ))
             next_state.pending_question = response.question
+            if response.observations:
+                # Internal notes, never user-facing proposals.
+                next_state.candidate.observations.update(dict(response.observations))
             if response.outcome is Outcome.DELTA and response.delta:
                 apply_delta(next_state.candidate, response.delta, response.provenance)
             elif response.provenance:
@@ -429,6 +445,7 @@ class GuidedSessionStore:
         candidate_json = json.dumps({
             "accepted_canon": state.candidate.accepted_canon,
             "proposals": state.candidate.proposals,
+            "observations": state.candidate.observations,
             "unknowns": state.candidate.unknowns,
             "rumors": state.candidate.rumors,
             "conflicts": state.candidate.conflicts,
@@ -520,6 +537,7 @@ class GuidedSessionStore:
             candidate=CandidateState(
                 accepted_canon=candidate.get("accepted_canon", {}),
                 proposals=candidate.get("proposals", {}),
+                observations=candidate.get("observations", {}),
                 unknowns=candidate.get("unknowns", []),
                 rumors=candidate.get("rumors", []),
                 conflicts=candidate.get("conflicts", []),

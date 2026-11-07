@@ -29,7 +29,7 @@ from co_creation_protocol import (
 )
 from demiurgos_language import resolve_domain_language
 
-_MAX_QUESTION_OPTIONS = 5
+_MAX_QUESTION_OPTIONS = 3
 
 # Skill Madre method rules (REQ-CC-4), embedded in the kernel prompt.
 _METHOD_RULES = (
@@ -41,6 +41,17 @@ _METHOD_RULES = (
 _MILESTONE_LIST = (
     "Milestone progress: proposito -> alcance -> flujo_principal -> ramas_reglas "
     "-> borrador_listo -> revision_publicacion."
+)
+_GUIDED_FLOW_RULE = (
+    "Guided-flow decision (S4): at the Alcance milestone ask explicitly whether "
+    "the new skill CREATES a saveable entity (guided flow) or only ACCOMPANIES "
+    "the conversation. Explain both in plain language. Guided flow means: the "
+    "assistant asks one question at a time, synthesizes what it understood, "
+    "offers its own reading as a proposal, and ends with a proposed ficha the "
+    "Author approves; nothing is saved without approval, and the kernel decides "
+    "where it is saved. Companion means: chat-only, it creates and persists "
+    "nothing. Tell the Author that switching modes after publishing requires a "
+    "new version, never a silent toggle."
 )
 
 
@@ -107,10 +118,22 @@ class HermesCoCreationProvider:
             "never claim author approval. You propose and redact only: you never write, grant "
             "permissions, skip gates, or emit authority keys (target, digest, revision, authority, "
             "reference, acceptance, accepted_canon, authorization) at any nesting level. "
-            f"{_METHOD_RULES} {_MILESTONE_LIST} "
-            "For a question, ask exactly one concise question at a time. Keep it to one or two "
-            "short sentences and provide no more than 5 useful options. Report milestone progress "
-            "in every envelope. "
+            f"{_METHOD_RULES} {_MILESTONE_LIST} {_GUIDED_FLOW_RULE} "
+            "When the Author confirms a structural decision, include a 'draft_patch' object "
+            "with only the canvas keys you are confident about. For the guided-flow decision "
+            "send draft_patch: {\"guided_flow\": {\"flow_id\": <guided-character|guided-system|"
+            "guided-chronology|guided-entidad>, \"entity_type\": <personaje|sistema|cronologia|"
+            "entidad>, \"ui_copy_key\": <character|system|chronology|entity>, \"index\": true, "
+            "\"intent\": {\"terms\": [<at least one trigger noun>], \"verbs\": [<at least one "
+            "creation verb>]}}}. The intent terms and verbs are the words the Author will use to "
+            "ask for this skill, so derive them from the purpose you just agreed. Never send "
+            "target paths, minimums, digests or authority keys. "
+            "This is a conversation, not an interrogation. Before asking, briefly report the "
+            "current milestone state and, in 2-3 short sentences, summarize what you already "
+            "understood. Then ask exactly one focused question. Options are optional and a last "
+            f"resort: at most {_MAX_QUESTION_OPTIONS}, only when the Author is stuck or the "
+            "choice is genuinely discrete; never make them the only way to answer. Report "
+            "milestone progress in every envelope. "
             "You have no filesystem, graph, or credential access. Use only the bounded session "
             "context below; do not expose internal paths or provenance. Answer all questions in "
             f"the same language as the author's input ({language}). "

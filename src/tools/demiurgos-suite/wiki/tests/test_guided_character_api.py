@@ -26,6 +26,7 @@ from guided_character_protocol import (  # noqa: E402
     MessageType,
     Outcome,
     PROTOCOL_VERSION,
+    MethodologySnapshot,
     SessionState,
     StructuredError,
     TypedMessage,
@@ -870,7 +871,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress"}
     assert session["flow"] == {
         "flow_id": "guided-character",
         "entity_type": "personaje",
@@ -911,7 +912,54 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     })
     assert retried.status_code == 200
     assert retried.json()["index_status"] == "pending"
-    assert list(tmp_path.rglob("*")) == [tmp_path / "vibrantes"]
+    # Cross-session memory is an intended assistant side effect; the world
+    # directory itself must stay untouched.
+    assert list((tmp_path / "vibrantes").rglob("*")) == []
+
+
+def test_public_state_exposes_only_the_next_plan_detail(monkeypatch) -> None:
+    store = GuidedSessionStore()
+    snapshot = MethodologySnapshot(
+        skill_id="guided-character-v1",
+        skill_version="builtin",
+        compiled_contract_digest="digest",
+        flow_type="guided-character",
+        profile=api_server.builtin_profile("guided-character").as_dict(),
+    )
+    store.create("s-plan", "vibrantes", "author-1", methodology_snapshot=snapshot)
+    request = GuidedRequest(
+        PROTOCOL_VERSION, "req-1", "s-plan", "vibrantes", 0, "author-1", "x",
+    )
+    response = GuidedResponse(
+        PROTOCOL_VERSION, "req-1", "s-plan", 0, Outcome.DELTA,
+        delta={
+            "nombre": "Ganic",
+            "motivacion": "controlar el tiempo",
+            "mundo": "Vibrantes",
+            "defectos": "obsesivo",
+        },
+    )
+    state = store.commit(request, response)
+    assert state is not None
+    state = store.accept_proposal("s-plan", "author-1", state.revision, "nombre")
+    assert state is not None
+    state = store.accept_proposal("s-plan", "author-1", state.revision, "motivacion")
+    assert state is not None
+
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+    monkeypatch.setattr(
+        api_server, "_resolve_principal",
+        lambda _request: api_server.EditPrincipal("author-1"),
+    )
+
+    recovered = client.get("/api/vibrantes/guided-character/session/s-plan")
+    assert recovered.status_code == 200
+    body = recovered.json()
+    assert body["detail_progress"] == {
+        "index": 3, "total": 6, "slot": "conflict", "complete": False,
+    }
+    # `mundo` is off-plan; the visible card is the conflict slot.
+    assert body["proposal"]["key"] == "defectos"
 
 
 def test_guided_failures_are_stable_and_non_mutating(monkeypatch) -> None:

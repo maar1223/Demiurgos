@@ -21,7 +21,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Mapping
 
 import httpx
 
@@ -139,6 +139,8 @@ from guided_flow import (
     GUIDED_SYSTEM_FLOW,
     GuidedFlowProfile,
     builtin_profile,
+    detail_progress,
+    visible_proposal_key,
 )
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
@@ -254,6 +256,8 @@ from semantic_intent import (
     unavailable_copy,
 )
 from conversation_memory_store import ConversationMemoryStore, Turn
+from assistant_memory_store import AssistantMemoryStore
+from memory_curator import MemoryCurator, apply_candidates, slug
 from skill_router import SkillRouter, SkillRouteResult, TRANSVERSAL_SKILLS
 from contract_projection import project_contract_markdown
 from order_manifest import read_order, remove_from_order
@@ -3281,8 +3285,66 @@ def _invalidate_guided_proposal(session_id: str) -> None:
             _GUIDED_PENDING_PROPOSALS.pop(edit_id, None)
 
 
+_GUIDED_META_PROPOSAL_KEYS = frozenset({
+    "intencion", "intent", "mundo", "world", "estado", "status",
+    "fase", "phase", "modo", "mode",
+})
+
+
+def _public_guided_proposals(candidate: Any) -> dict[str, Any]:
+    """Hide legacy session-metadata entries from the Author-facing proposals.
+
+    Before observations were separated, the provider's internal notes landed in
+    ``candidate.proposals`` and surfaced as a meaningless "Detalle sugerido"
+    (e.g. "intención: crear un personaje nuevo"). New turns store them in
+    ``candidate.observations``; this filter keeps old stored sessions readable
+    and prevents the review button from offering them.
+    """
+    proposals = getattr(candidate, "proposals", {})
+    if not isinstance(proposals, Mapping):
+        return {}
+    return {
+        key: value for key, value in proposals.items()
+        if str(key).casefold() not in _GUIDED_META_PROPOSAL_KEYS
+    }
+
+
+def _guided_message_text(content: Mapping[str, Any]) -> str:
+    """Render one guided message for the client.
+
+    S1: an assistant turn carries an optional synthesis followed by the one
+    pending question. Legacy messages (question/text/delta only) render exactly
+    as before.
+    """
+    synthesis = str(content.get("synthesis") or "").strip()
+    question = str(content.get("question", content.get("text", "")) or "").strip()
+    if synthesis and question:
+        return f"{synthesis}\n\n{question}"
+    return synthesis or question
+
+
+def _guided_proposal_view(key: str, value) -> dict:
+    return {
+        "key": key,
+        "label": key.replace("_", " ").title(),
+        "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
+        **(
+            {"rationale": str(value["rationale"])}
+            if isinstance(value, dict) and "rationale" in value
+            else {}
+        ),
+    }
+
+
 def _guided_public_state(state: SessionState) -> dict:
     """Serialize only the frontend-compatible, non-provenance session view."""
+    public_props = _public_guided_proposals(state.candidate)
+    profile = session_flow_profile(state)
+    plan = profile.detail_plan if profile is not None else ()
+    visible_key = visible_proposal_key(
+        public_props, state.candidate.accepted_canon, plan,
+    )
+    progress = detail_progress(state.candidate.accepted_canon, plan)
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3295,22 +3357,20 @@ def _guided_public_state(state: SessionState) -> dict:
         "messages": [
             {
                 "role": "author" if message.message_type.value == "author_input" else "assistant",
-                "content": str(message.content.get("question", message.content.get("text", ""))),
+                "content": _guided_message_text(message.content),
             }
             for message in state.messages
         ],
         "candidate": {
             "accepted_canon": state.candidate.accepted_canon,
-            "proposals": state.candidate.proposals,
+            "proposals": public_props,
             "unresolved_references": state.candidate.unresolved_references,
             "conflicts": state.candidate.conflicts,
         },
-        "proposal": next((
-            {"key": key, "label": key.replace("_", " ").title(),
-             "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
-             **({"rationale": str(value["rationale"])} if isinstance(value, dict) and "rationale" in value else {})}
-            for key, value in state.candidate.proposals.items()
-        ), None),
+        "proposal": (
+            _guided_proposal_view(visible_key, public_props[visible_key])
+            if visible_key is not None else None
+        ),
         "reference": {
             "name": state.reference_name,
             "verified": bool(state.reference_context),
@@ -3327,6 +3387,8 @@ def _guided_public_state(state: SessionState) -> dict:
     flow = _public_flow(state)
     if flow is not None:
         payload["flow"] = flow
+    if progress is not None:
+        payload["detail_progress"] = progress
     return payload
 
 
@@ -3488,6 +3550,11 @@ async def _guided_continue(
         snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, principal.id)
         if snapshot is not None and snapshot.skill_version:
             methodology = f"{snapshot.skill_id or 'guided-character'}:{snapshot.skill_version}"
+    # S1/S2: server-owned context for this turn. The provider cannot fetch
+    # either one; the known state stops re-asking and the lore grounds the
+    # conversation in the active world.
+    world_context = _guided_world_context(mundo, state, author_input)
+    known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
         revision, principal.id, author_input, reference_context=reference_context,
@@ -3496,6 +3563,8 @@ async def _guided_continue(
         guided_mode=mode,
         question_depth=depth,
         methodology=methodology,
+        world_context=world_context,
+        known_state=known_state,
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
@@ -3537,6 +3606,24 @@ async def _guided_continue(
     )
     if state is not None:
         _invalidate_guided_proposal(session_id)
+        if response.outcome not in {Outcome.ERROR, Outcome.UNAVAILABLE}:
+            assistant_text = "\n".join(
+                part for part in (response.question, response.synthesis) if part
+            )
+            if assistant_text:
+                await _capture_turn_memory(
+                    session_id=session_id,
+                    mundo=mundo,
+                    user_text=author_input,
+                    assistant_text=assistant_text,
+                    skill_hints=(
+                        [state.methodology_snapshot.skill_id]
+                        if state.methodology_snapshot
+                        and state.methodology_snapshot.skill_id
+                        else None
+                    ),
+                )
+            _capture_guided_observations(mundo, session_id, response)
     return _guided_result(response, state)
 
 
@@ -8257,6 +8344,8 @@ _SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
 # LLM classification over the same runs adapter. Both are module seams that
 # tests may replace after import. Bound lazily (WU-2).
 _CONVERSATION_MEMORY = _LazyBinding(ConversationMemoryStore)
+_ASSISTANT_MEMORY = _LazyBinding(AssistantMemoryStore)
+_MEMORY_CURATOR: MemoryCurator | None = None
 
 
 class _DeferredMethodologyLibrary:
@@ -8311,11 +8400,76 @@ async def chat_endpoint(body: ChatRequest):
         mundo, user_msg,
         distilled_state=_distilled_summary(body.session_id),
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(mundo, user_msg),
     )
     payload = result.as_dict()
     if result.decision is not None:
         payload["content"] = result.decision.response
     return payload
+
+
+def _memory_entry_dict(entry) -> dict:
+    return {
+        "id": entry.id,
+        "world": entry.world,
+        "scope": entry.scope,
+        "kind": entry.kind,
+        "entity": entry.entity,
+        "topic_key": entry.topic_key,
+        "statement": entry.statement,
+        "confidence": entry.confidence,
+        "status": entry.status,
+        "importance": entry.importance,
+        "source_session": entry.source_session,
+        "source_turn": entry.source_turn,
+        "created_at": entry.created_at,
+        "updated_at": entry.updated_at,
+    }
+
+
+@app.get("/api/{mundo}/ai/memory")
+def list_assistant_memory(mundo: str, q: str = "", limit: int = 50):
+    """Local, single-user management view of the assistant's memory."""
+    try:
+        store = _ASSISTANT_MEMORY
+        if str(q or "").strip():
+            entries = store.search(
+                q, world=_memory_world(mundo), limit=limit,
+                include_proposals=True,
+            )
+        else:
+            entries = store.list(
+                world=_memory_world(mundo), limit=limit,
+                include_proposals=True,
+            )
+    except Exception:
+        return {"entries": []}
+    return {"entries": [_memory_entry_dict(entry) for entry in entries]}
+
+
+@app.get("/api/{mundo}/ai/memory/export")
+def export_assistant_memory(mundo: str):
+    """Export every memory for backup or manual inspection."""
+    try:
+        entries = _ASSISTANT_MEMORY.list(
+            world=_memory_world(mundo), limit=10_000, include_proposals=True,
+        )
+    except Exception:
+        entries = []
+    return {
+        "world": _memory_world(mundo),
+        "entries": [_memory_entry_dict(entry) for entry in entries],
+    }
+
+
+@app.delete("/api/{mundo}/ai/memory/{entry_id}")
+def forget_assistant_memory(mundo: str, entry_id: int, hard: bool = False):
+    """Soft-delete a memory (default) or remove it permanently."""
+    try:
+        removed = _ASSISTANT_MEMORY.forget(entry_id, hard=hard)
+    except Exception:
+        removed = False
+    return {"removed": removed, "id": entry_id, "hard": hard}
 
 
 async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> str | None:
@@ -8421,6 +8575,103 @@ def _persist_memory_turn(
         _CONVERSATION_MEMORY.add_turn(session_id, mundo, role, content, skill_id=skill_id)
     except Exception:
         logger.warning("conversation memory turn persist failed", exc_info=True)
+
+
+_EXPLICIT_MEMORY_PATTERNS = (
+    "recuerda que", "recuerda esto", "recuerda:", "memoriza", "no olvides",
+    "remember that", "remember this", "keep in mind",
+)
+
+
+def _is_explicit_memory_request(text: str) -> bool:
+    """A direct request always saves, regardless of the confidence threshold."""
+    lowered = str(text or "").casefold()
+    return any(pattern in lowered for pattern in _EXPLICIT_MEMORY_PATTERNS)
+
+
+def _memory_world(mundo: str) -> str:
+    """The world-agnostic assistant context stores no world-specific memory."""
+    return "" if mundo == GLOBAL_ASSISTANT_CONTEXT else str(mundo or "")
+
+
+def _memory_curator() -> MemoryCurator:
+    """Lazy curator seam; tests replace ``_MEMORY_CURATOR`` directly."""
+    global _MEMORY_CURATOR
+    if _MEMORY_CURATOR is None:
+        _MEMORY_CURATOR = MemoryCurator(complete=_run_hermes)
+    return _MEMORY_CURATOR
+
+
+async def _capture_turn_memory(
+    *, session_id: str, mundo: str, user_text: str, assistant_text: str,
+    skill_hints: list[str] | None = None,
+) -> None:
+    """Extract and persist durable memories from one turn (fail-open)."""
+    if not session_id or not str(user_text or "").strip() or not str(assistant_text or "").strip():
+        return
+    try:
+        curator = _memory_curator()
+        candidates = await curator.extract(
+            world=_memory_world(mundo),
+            user_text=user_text,
+            assistant_text=assistant_text,
+            skill_hints=skill_hints,
+        )
+    except Exception:
+        logger.warning("assistant memory extraction failed safely", exc_info=True)
+        return
+    if not candidates:
+        return
+    explicit = _is_explicit_memory_request(user_text)
+    try:
+        apply_candidates(
+            _ASSISTANT_MEMORY,
+            candidates,
+            world=_memory_world(mundo),
+            source_session=session_id,
+            explicit=explicit,
+        )
+    except Exception:
+        logger.warning("assistant memory persist failed safely", exc_info=True)
+
+
+def _memory_context(mundo: str, query: str, *, limit: int = 5) -> str:
+    """Bounded, fail-open retrieval block for prompts and the semantic gate."""
+    try:
+        entries = _ASSISTANT_MEMORY.search(
+            query, world=_memory_world(mundo), limit=limit,
+        )
+    except Exception:
+        return ""
+    if not entries:
+        return ""
+    lines = [f"- ({entry.kind}) {entry.statement}" for entry in entries]
+    return "[Relevant memory from earlier sessions:\n" + "\n".join(lines) + "\n]"
+
+
+def _capture_guided_observations(mundo: str, session_id: str, response) -> None:
+    """Passively store the provider's non-canon notes as proposals (no call)."""
+    observations = getattr(response, "observations", None)
+    if not observations or not session_id:
+        return
+    try:
+        store = _ASSISTANT_MEMORY
+        world = _memory_world(mundo)
+        for key, value in dict(observations).items():
+            statement = f"{key}: {value}".strip()
+            if not statement or len(statement) > 500:
+                continue
+            store.upsert(
+                world=world,
+                kind="fact",
+                topic_key=f"world/{slug(world) or 'unknown'}/observation/{slug(str(key))}",
+                statement=statement,
+                confidence=0.6,
+                status="proposal",
+                source_session=session_id,
+            )
+    except Exception:
+        logger.warning("guided observation memory capture failed safely", exc_info=True)
 
 
 async def _maybe_refresh_distilled(session_id: str, mundo: str) -> None:
@@ -8701,6 +8952,9 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         context=context,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(
+            mundo, body.prompt + attachment_metadata_note(attachments),
+        ),
     )
     if result.decision is None:
         logger.info(
@@ -8739,6 +8993,13 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                 )
                 _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
                 await _maybe_refresh_distilled(body.session_id, mundo)
+                await _capture_turn_memory(
+                    session_id=body.session_id,
+                    mundo=mundo,
+                    user_text=_memory_user_prompt(body.prompt, attachments),
+                    assistant_text=result.response,
+                    skill_hints=[skill_id] if skill_id else None,
+                )
         payload = result.as_dict()
         redirect = _skill_creation_redirect(body.prompt)
         if redirect is not None:
@@ -8830,7 +9091,7 @@ async def _semantic_gate(
     mundo: str, prompt: str, *, session_id: str = "",
     ficha: str | None = None, context: SemanticContext | None = None,
     request_id: str | None = None, distilled_state: str | None = None,
-    recent_turns: str | None = None,
+    recent_turns: str | None = None, memory_context: str | None = None,
 ) -> SemanticResult:
     """Mandatory Hermes-first semantic gate shared by every assistant surface.
 
@@ -8866,6 +9127,7 @@ async def _semantic_gate(
         context=context,
         distilled_state=distilled_state,
         recent_turns=recent_turns,
+        memory_context=memory_context,
     )
 
 
@@ -9483,6 +9745,442 @@ def _active_ficha_context(mundo: str, body: AskRequest) -> str:
         return ""
 
 
+_WORLD_LORE_STOPWORDS = frozenset({
+    "para", "como", "pero", "porque", "cuando", "donde", "sobre", "entre",
+    "desde", "hasta", "quiere", "queria", "quiero", "gustaria", "podria",
+    "hacer", "tiene", "tener", "algo", "otra", "otro", "este", "esta",
+    "estos", "estas", "mismo", "misma", "todo", "toda", "todos", "todas",
+    "with", "that", "this", "from", "into", "about", "there", "their",
+    "would", "could", "should", "have", "want", "make", "like", "some",
+})
+
+
+def _lore_value(item: Any, key: str, default: Any = "") -> Any:
+    if isinstance(item, Mapping):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _world_lore_terms(author_input: str, limit: int = 6) -> list[str]:
+    """Bounded candidate terms for a world-graph lore lookup.
+
+    Keeps content words (>= 4 chars) and capitalized tokens, preserving the
+    author's order and removing duplicates. Never returns more than ``limit``.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"[A-Za-zÁÉÍÓÚÑáéíóúñ][\wÁÉÍÓÚÑáéíóúñ'’-]{2,}", author_input or ""):
+        lowered = raw.casefold()
+        if lowered in seen or lowered in _WORLD_LORE_STOPWORDS:
+            continue
+        if len(lowered) < 4 and not raw[:1].isupper():
+            continue
+        seen.add(lowered)
+        terms.append(raw)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+_WORLD_LORE_POLITICAL_SECTION = "politica-distribucion-y-territorios"
+_WORLD_LORE_PLANET_SECTION = "planeta-vibral-naturaleza-y-biodiversidad"
+_WORLD_LORE_GEOGRAPHY_TERMS = frozenset({
+    "pais", "paises", "país", "países", "territorio", "territorios",
+    "geografia", "geografía", "region", "región", "continente",
+    "continentes", "frontera", "fronteras", "nacion", "nación", "naciones",
+})
+_WORLD_LORE_PLANET_TERMS = frozenset({
+    "planeta", "naturaleza", "biodiversidad", "ecosistema", "ecosistemas",
+    "mundo", "mundos",
+})
+_WORLD_LORE_PLACE_TERMS = frozenset({
+    "lugar", "lugares", "ubicacion", "ubicación", "mapa", "ambientar",
+    "escenario", "escenarios", "entorno", "terreno", "terrenos",
+})
+# Family topics whose section index must travel whole: a term search returns
+# one arbitrary sibling (e.g. the 9th Stal) and the model then claims the
+# requested sibling (e.g. the 5th) is undescribed.
+_WORLD_LORE_FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
+    "stal": ("sistema-stal-poderes-vibrantes",),
+    "staler": ("sistema-stal-poderes-vibrantes",),
+    "ayagar": ("ayagars-reptiles-vibrantes",),
+    "vibrastal": ("vibrastal-estados-y-niveles",),
+}
+
+
+def _lore_frontmatter(path: Path) -> dict:
+    """Read one lore file's YAML frontmatter; empty on any failure."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---"):
+        return {}
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        data = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _world_lore_sections(author_input: str) -> list[str]:
+    lowered = (author_input or "").casefold()
+    sections: list[str] = []
+    if any(term in lowered for term in _WORLD_LORE_GEOGRAPHY_TERMS):
+        sections.append(_WORLD_LORE_POLITICAL_SECTION)
+    if any(term in lowered for term in _WORLD_LORE_PLANET_TERMS):
+        sections.append(_WORLD_LORE_PLANET_SECTION)
+    if any(term in lowered for term in _WORLD_LORE_PLACE_TERMS):
+        sections.extend((_WORLD_LORE_POLITICAL_SECTION, _WORLD_LORE_PLANET_SECTION))
+    for stem, family_sections in _WORLD_LORE_FAMILY_SECTIONS.items():
+        if stem in lowered:
+            sections.extend(family_sections)
+    return list(dict.fromkeys(sections))
+
+
+def _lore_entity_block(entity: Any, fallback_name: str) -> str:
+    lines = [f"### {str(_lore_value(entity, 'name', fallback_name)).strip()}"]
+    for label, key in (("Type", "type"), ("Title", "title"), ("Description", "description")):
+        value = str(_lore_value(entity, key, "") or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    content = str(_lore_value(entity, "content", "") or "").strip()
+    if content:
+        lines.append(content[:1_200])
+    return "\n".join(lines)
+
+
+def _world_lore_index_for_dir(
+    world_root: Path, relative_dir: Path, budget: int,
+) -> str:
+    """Bounded index of one lore directory (section intro + entries)."""
+    section_dir = world_root / relative_dir
+    if not section_dir.is_dir():
+        return ""
+    section_name = section_dir.name
+    lines: list[str] = []
+    used = 0
+    intro = _lore_frontmatter(section_dir / f"{section_name}.md")
+    if intro:
+        title = str(intro.get("title") or section_name).strip()
+        description = str(intro.get("description") or "").strip()
+        lines.append(f"## {title}")
+        used += len(lines[-1]) + 1
+        if description:
+            lines.append(description[:400])
+            used += len(lines[-1]) + 1
+    for path in sorted(section_dir.glob("*.md")):
+        if path.name == f"{section_name}.md":
+            continue
+        meta = _lore_frontmatter(path)
+        title = str(meta.get("title") or path.stem).strip()
+        description = str(meta.get("description") or "").strip()
+        kind = str(meta.get("type") or "").strip()
+        entry = f"- {title}"
+        if kind:
+            entry += f" ({kind})"
+        if description:
+            entry += f": {description[:300]}"
+        lines.append(entry)
+        used += len(entry) + 1
+        if used >= budget:
+            break
+    if not lines:
+        return ""
+    return (
+        "World lore index from the active world (read-only, verified):\n\n"
+        + "\n".join(lines)
+    )[:budget]
+
+
+def _world_lore_section_index(
+    mundo: str, author_input: str, budget: int,
+    skip_sections: set[str] | None = None,
+) -> str:
+    """Bounded section index for category questions ("¿qué países hay?").
+
+    Term search cannot match a category word to nine differently-named country
+    files. When the author asks about geography/places, this fallback lists the
+    verified section entries (name + type + short description) so the provider
+    can choose real names instead of claiming the world has no geography.
+    """
+    sections = _world_lore_sections(author_input)
+    if not sections:
+        return ""
+    world_root = _resolve_mundo_dir(mundo)
+    if world_root is None:
+        return ""
+    skip = {name.casefold() for name in (skip_sections or set())}
+    blocks: list[str] = []
+    used = 0
+    for section in sections:
+        if section.casefold() in skip:
+            continue
+        block = _world_lore_index_for_dir(
+            world_root, Path("lore") / section, budget - used,
+        )
+        if not block:
+            continue
+        blocks.append(block)
+        used += len(block) + 2
+        if used >= budget:
+            break
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks)[:budget]
+
+
+def _world_lore_world_index(mundo: str, budget: int) -> str:
+    """Compact list of the world's own lore sections; no language assumptions.
+
+    When no term matches, the provider still needs to know what the world
+    contains. Section titles and descriptions come from the world's files, so
+    this works for any world, language or organization.
+    """
+    world_root = _resolve_mundo_dir(mundo)
+    if world_root is None:
+        return ""
+    lore_root = world_root / "lore"
+    if not lore_root.is_dir():
+        return ""
+    lines: list[str] = []
+    used = 0
+    for section_dir in sorted(p for p in lore_root.iterdir() if p.is_dir()):
+        intro = _lore_frontmatter(section_dir / f"{section_dir.name}.md")
+        title = str(intro.get("title") or section_dir.name).strip()
+        description = str(intro.get("description") or "").strip()
+        if not description:
+            for path in sorted(section_dir.glob("*.md")):
+                if path.name == f"{section_dir.name}.md":
+                    continue
+                meta = _lore_frontmatter(path)
+                description = str(meta.get("description") or "").strip()
+                if description:
+                    break
+        if not title and not description:
+            continue
+        entry = f"- {title}" + (f": {description[:160]}" if description else "")
+        lines.append(entry)
+        used += len(entry) + 1
+        if used >= budget:
+            break
+    if not lines:
+        return ""
+    return (
+        "World lore sections (verified index; full lore only for matched terms):"
+        "\n\n" + "\n".join(lines)
+    )[:budget]
+
+
+def _world_lore_context(mundo: str, author_input: str, budget: int = 4_000) -> str:
+    """Resolve bounded, read-only world lore for the terms in one author turn.
+
+    The guided provider has no graph access, so the server must inject the
+    active world's own lore (S2). Only entities whose name/title/description
+    actually contain the term are used; misses are omitted, never invented.
+    When a category question names no entity ("¿qué países hay?"), a bounded
+    section index is injected instead. Fail-open: any graph failure still tries
+    the index and otherwise returns an empty string.
+    """
+    if not mundo or not author_input or budget <= 0:
+        return ""
+    reader = None
+    try:
+        index = _get_graph(mundo)
+        if index is not None:
+            reader = index if all(callable(getattr(index, method, None)) for method in ("search", "read")) else _GuidedGraphReader(index)
+    except Exception:
+        logger.warning("guided world lore lookup unavailable", exc_info=True)
+    chunks: list[str] = []
+    seen_paths: set[str] = set()
+    terms = _world_lore_terms(author_input) if reader is not None else []
+    # Proper nouns first: "Ekkor" is more specific than a generic material
+    # word, and the excerpt budget must not be consumed by the first broad hit.
+    terms.sort(key=lambda term: (not term[:1].isupper(), term.casefold()))
+    used_sections: set[str] = set()
+    for term in terms:
+        try:
+            hits = list(reader.search(term))
+        except Exception:
+            continue
+        relevant: list[tuple[str, Any]] = []
+        for hit in hits:
+            path = str(_lore_value(hit, "path", ""))
+            if not path or path in seen_paths:
+                continue
+            haystack = " ".join(
+                str(_lore_value(hit, key, "") or "")
+                for key in ("name", "title", "description")
+            ).casefold()
+            if term.casefold() not in haystack:
+                continue
+            relevant.append((path, hit))
+            if len(relevant) >= 12:
+                break
+        if not relevant:
+            continue
+        by_parent: dict[str, list[tuple[str, Any]]] = {}
+        for path, hit in relevant:
+            by_parent.setdefault(str(Path(path).parent), []).append((path, hit))
+        family_parents = [
+            parent for parent, items in by_parent.items() if len(items) > 1
+        ]
+        if family_parents:
+            world_root = _resolve_mundo_dir(mundo)
+            for parent in family_parents:
+                if world_root is None:
+                    break
+                section_index = _world_lore_index_for_dir(
+                    world_root, Path(parent), budget,
+                )
+                if not section_index:
+                    continue
+                chunks.append(section_index)
+                used_sections.add(Path(parent).name)
+                for path, _ in by_parent[parent]:
+                    seen_paths.add(path)
+                if len(chunks) >= 3:
+                    break
+            if len(chunks) >= 3:
+                break
+            # A term that only hit a family is fully represented by its index.
+            if all(parent in family_parents for parent in by_parent):
+                continue
+        if len(relevant) > 1 and not family_parents:
+            # Flat families (one file per top-level section, e.g. eneatipos)
+            # cannot use one directory index; list every matched sibling
+            # compactly instead of silently keeping only the first one.
+            lines: list[str] = []
+            for path, hit in relevant:
+                title = str(
+                    _lore_value(hit, "title", "")
+                    or _lore_value(hit, "name", "")
+                    or path
+                ).strip()
+                description = str(_lore_value(hit, "description", "") or "").strip()
+                entry = f"- {title}"
+                if description:
+                    entry += f": {description[:180]}"
+                lines.append(entry)
+            if lines:
+                chunks.append(
+                    "Matched lore entries (read-only, verified):\n"
+                    + "\n".join(lines)
+                )
+                for path, _ in relevant:
+                    seen_paths.add(path)
+            if len(chunks) >= 3:
+                break
+            continue
+        for path, _ in relevant:
+            if str(Path(path).parent) in family_parents:
+                continue
+            try:
+                entity = reader.read(path)
+            except Exception:
+                entity = None
+            if entity is None:
+                continue
+            seen_paths.add(path)
+            chunks.append(_lore_entity_block(entity, term))
+            break
+        if len(chunks) >= 3:
+            break
+    family_index = _world_lore_section_index(
+        mundo, author_input, budget, skip_sections=used_sections,
+    )
+    if family_index:
+        # The whole family index goes first: one arbitrary sibling chunk must
+        # not consume the budget before the requested archetype is represented.
+        if chunks:
+            context = (
+                family_index
+                + "\n\nWorld lore from the active world graph (read-only, verified):\n\n"
+                + "\n\n".join(chunks)
+            )
+            return context[:budget]
+        return family_index
+    if not chunks:
+        return _world_lore_world_index(mundo, budget)
+    context = "World lore from the active world graph (read-only, verified):\n\n" + "\n\n".join(chunks)
+    return context[:budget]
+
+
+GUIDED_CONTEXT_BUDGET = 4_000
+GUIDED_LORE_BUDGET = 3_000
+GUIDED_MEMORY_BUDGET = 1_000
+
+
+def _guided_world_context(
+    mundo: str, state: SessionState | None, author_input: str,
+) -> str:
+    """Lore + cross-session memory, capped to the GuidedRequest budget.
+
+    `GuidedRequest.validate` rejects any field longer than `context_budget`
+    (4_000). Appending the memory block to a 4_000-char lore index silently
+    pushed `world_context` over the limit and the API answered 422 before the
+    provider ran. Reserve room for both and cap the combined block.
+    """
+    lore = _world_lore_context(
+        mundo, _guided_lore_query(state, author_input), budget=GUIDED_LORE_BUDGET,
+    )
+    memory = _memory_context(mundo, author_input)[:GUIDED_MEMORY_BUDGET]
+    if memory:
+        lore = f"{lore}\n\n{memory}" if lore else memory
+    return lore[:GUIDED_CONTEXT_BUDGET]
+
+
+def _guided_lore_query(state: SessionState | None, author_input: str) -> str:
+    """Current input plus the last author topics, so a follow-up keeps its subject.
+
+    A short follow-up ("¿personalidad?") names no entity; the previous author
+    turn is usually the real subject ("¿qué Stal le va?"). Including the last two
+    author inputs lets the lore lookup resolve the family/entity without
+    injecting the assistant's own speculation.
+    """
+    if state is None:
+        return author_input
+    recent = [
+        str((message.content or {}).get("text") or "")
+        for message in state.messages
+        if message.message_type.value == "author_input"
+    ][-2:]
+    return "\n".join([author_input, *[text for text in recent if text.strip()]])
+
+
+def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
+    """Compact server-owned summary of what the author already answered."""
+    lines: list[str] = []
+    for partition_name, partition in (
+        ("accepted", getattr(candidate, "accepted_canon", {})),
+        ("proposed", getattr(candidate, "proposals", {})),
+    ):
+        if not isinstance(partition, Mapping):
+            continue
+        for key, value in partition.items():
+            raw = value.get("value", value) if isinstance(value, Mapping) else value
+            text = str(raw).strip()
+            if text:
+                lines.append(f"- [{partition_name}] {key}: {text[:300]}")
+    observations = getattr(candidate, "observations", {})
+    if isinstance(observations, Mapping):
+        for key, value in observations.items():
+            raw = value.get("value", value) if isinstance(value, Mapping) else value
+            text = str(raw).strip()
+            if text:
+                lines.append(f"- [observed] {key}: {text[:300]}")
+    unknowns = getattr(candidate, "unknowns", ())
+    for item in unknowns[:10] if isinstance(unknowns, (list, tuple)) else ():
+        raw = item.get("value", item) if isinstance(item, Mapping) else item
+        text = str(raw).strip()
+        if text:
+            lines.append(f"- [unknown] {text[:300]}")
+    return "\n".join(lines)[:budget]
+
+
 def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | None]:
     """Resolve an explicit related-entity name without selecting arbitrary hits."""
     name = named_reference_name(prompt)
@@ -9552,6 +10250,7 @@ def _build_ai_ask_prompt(
     distilled_state: str | None = None,
     skill_contract: str | None = None,
     attachments: list | None = None,
+    memory_context: str | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -9659,6 +10358,8 @@ def _build_ai_ask_prompt(
         parts.append(
             f"[Conversation context (summarized): {distilled_state}]"
         )
+    if memory_context:
+        parts.append(memory_context)
     if skill_contract:
         parts.append(skill_contract)
     attachment_block = attachment_context_block(attachments or [])
@@ -9814,6 +10515,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         request_id=request_id,
         distilled_state=distilled_state,
         recent_turns=_gate_recent_turns(body.session_id),
+        memory_context=_memory_context(
+            mundo, body.prompt + attachment_metadata_note(attachments),
+        ),
     )
     decision = result.decision
     if decision is not None and decision.state in CONTINUATION_STATES:
@@ -9897,6 +10601,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             distilled_state=distilled_state,
             skill_contract=skill_contract,
             attachments=attachments,
+            memory_context=_memory_context(
+                mundo, body.prompt + attachment_metadata_note(attachments),
+            ),
         ),
         session_id=_channel_session_id(body.session_id),
     )
@@ -9917,11 +10624,15 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     async def stream():
         # The additive authoritative semantic event comes first; compatible
         # evidence (activity/answer/terminal) follows and terminal stays final.
-        assistant_parts: list[str] = []
+        # Every AnswerEvent carries the CUMULATIVE answer so far (the translator
+        # re-emits the joined snapshot on each delta), so memory keeps the last
+        # snapshot instead of joining them, which would duplicate every prefix.
+        assistant_answer = ""
 
         def emit(event) -> str:
+            nonlocal assistant_answer
             if isinstance(event, AnswerEvent):
-                assistant_parts.append(event.response)
+                assistant_answer = event.response
             return _sse_event(event.as_dict())
 
         yield _sse_event(_semantic_decision_event(result).as_dict())
@@ -10017,9 +10728,16 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 body.session_id, mundo, "user",
                 _memory_user_prompt(body.prompt, attachments), skill_id,
             )
-            if not disconnected and assistant_parts:
-                _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
+            if not disconnected and assistant_answer:
+                _persist_memory_turn(body.session_id, mundo, "assistant", assistant_answer)
                 await _maybe_refresh_distilled(body.session_id, mundo)
+                await _capture_turn_memory(
+                    session_id=body.session_id,
+                    mundo=mundo,
+                    user_text=_memory_user_prompt(body.prompt, attachments),
+                    assistant_text=assistant_answer,
+                    skill_hints=[skill_id] if skill_id else None,
+                )
 
     return StreamingResponse(
         stream(),

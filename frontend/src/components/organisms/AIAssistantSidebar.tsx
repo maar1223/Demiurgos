@@ -330,6 +330,25 @@ function ChatScreen({
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const messages = activeSession?.messages ?? [];
+  // Consent-accepted sessions carry their first question in
+  // `guided.pending_question`; older stored sessions may not have it in the
+  // top-level list. Render it as the assistant bubble unless it is already
+  // the last assistant message (prevents a reload duplicate).
+  const guidedPendingText =
+    activeSession?.guided?.phase === "conversation"
+      ? (activeSession.guided.pending_question ?? "").trim()
+      : "";
+  const guidedTargetSection = activeSession?.guided?.flow?.target_section ?? null;
+  const canReviewInCurrentSection =
+    !guidedTargetSection || !section || section === guidedTargetSection;
+  const lastMessage = messages[messages.length - 1];
+  // While the next guided turn is in flight, `guided.pending_question` is
+  // still the PREVIOUS question. Rendering it again below the author's message
+  // looks like the assistant repeated itself; the spinner is the progress cue.
+  const showGuidedPending =
+    Boolean(guidedPendingText) &&
+    !isSending &&
+    !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
   const guidedMethodology = activeSession?.guided?.methodology ?? null;
@@ -476,9 +495,23 @@ function ChatScreen({
           ? t("assistant.propose.disabled.sending")
           : t("assistant.propose.enabled");
   const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
+  // Legacy sessions stored provider notes (intención, mundo, estado, fase) as
+  // proposals; they are session metadata, never Author-facing details.
+  const guidedMetaProposalKeys = new Set([
+    "intencion", "intent", "mundo", "world", "estado", "status",
+    "fase", "phase", "modo", "mode",
+  ]);
+  const meaningfulGuidedProposalKeys = Object.keys(
+    activeSession?.guided?.candidate?.proposals ?? {},
+  ).filter((key) => !guidedMetaProposalKeys.has(key.toLowerCase()));
+  const visibleGuidedProposal =
+    activeSession?.guided?.proposal &&
+    !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
+      ? activeSession.guided.proposal
+      : null;
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
-      Object.keys(activeSession.guided.candidate?.proposals ?? {}).length > 0 ||
+      meaningfulGuidedProposalKeys.length > 0 ||
       Object.keys(activeSession.guided.candidate?.accepted_canon ?? {}).length > 0 ||
       activeSession.guided.phase === "review" ||
       activeSession.guided.phase === "complete"
@@ -675,6 +708,14 @@ function ChatScreen({
             </div>
            ))}
 
+           {showGuidedPending && (
+             <div className="flex justify-start">
+               <div className="max-w-[85%] overflow-hidden rounded-lg bg-surface px-3 py-2 text-body leading-relaxed text-primary">
+                 <MarkdownBody content={guidedPendingText} mundo={mundo} className="prose-sm" />
+               </div>
+             </div>
+           )}
+
            {guidedMethodName && (
              <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
                {t("guided.methodCurrent", { name: guidedMethodName })}
@@ -772,12 +813,17 @@ function ChatScreen({
              </section>
            )}
 
-           {activeSession?.guided?.proposal && (
+           {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
               <p className="text-xs text-muted">
-                {t("assistant.proposal.title")}
+                {activeSession?.guided?.detail_progress
+                  ? t("guided.suggestedDetailProgress", {
+                      index: activeSession.guided.detail_progress.index,
+                      total: activeSession.guided.detail_progress.total,
+                    })
+                  : t("assistant.proposal.title")}
               </p>
-              <p className="mt-1">{activeSession.guided.proposal.label}: {activeSession.guided.proposal.value}</p>
+              <p className="mt-1">{visibleGuidedProposal.label}: {visibleGuidedProposal.value}</p>
               <div className="mt-3 flex gap-2">
                 <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50">{t("assistant.proposal.reject")}</button>
                 <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50">{t("assistant.proposal.accept")}</button>
@@ -785,7 +831,7 @@ function ChatScreen({
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && (
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && (
             <button
               type="button"
               onClick={() => void handleGuidedReview()}

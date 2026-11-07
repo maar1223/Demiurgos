@@ -78,7 +78,33 @@ def test_valid_response_commits_as_proposal_and_recovers_after_reload() -> None:
         assert state and state.revision == 1
         recovered = store.recover("session-1", "author-1")
         assert recovered and recovered.pending_question == "What drives them?"
-        assert recovered.messages[0].message_type.value == "assistant_response"
+        assert recovered.messages[0].message_type is MessageType.AUTHOR_INPUT
+        assert recovered.messages[0].content["text"] == "I need a character"
+        assert recovered.messages[1].message_type.value == "assistant_response"
+
+    asyncio.run(scenario())
+
+
+def test_commit_records_each_author_turn_in_the_transcript() -> None:
+    """Every author turn must reach the transcript, not only the first one."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+        _, first = await continue_session(store, provider_response, request(), capabilities())
+        assert first is not None
+        second_request = GuidedRequest(
+            PROTOCOL_VERSION, "req-2", "session-1", "nec", 1, "author-1",
+            "His name is Ganic",
+        )
+        _, second = await continue_session(
+            store, provider_response, second_request, capabilities())
+        assert second is not None
+        author_texts = [
+            message.content.get("text")
+            for message in second.messages
+            if message.message_type is MessageType.AUTHOR_INPUT
+        ]
+        assert author_texts == ["I need a character", "His name is Ganic"]
 
     asyncio.run(scenario())
 

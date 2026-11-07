@@ -769,10 +769,25 @@ export function useAIAssistantSessions(
         // symmetric with loadSessions instead of trusting the server's type.
         const unwrapped = envelope.guided_state ?? envelope;
         const guided = isUsableGuidedSession(unwrapped) ? unwrapped : undefined;
+        // The consent click opens the guided continuation; its first question
+        // lives in `guided.pending_question`, not in the top-level message list.
+        // Append it once so the live chat does not sit empty after accepting.
+        const firstGuidedQuestion =
+          guided && guided.phase === "conversation"
+            ? guided.pending_question?.trim()
+            : undefined;
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId
-              ? { ...session, guided, consentToken: undefined, consentFlow: undefined }
+              ? {
+                  ...session,
+                  guided,
+                  consentToken: undefined,
+                  consentFlow: undefined,
+                  messages: firstGuidedQuestion
+                    ? [...session.messages, { role: "assistant", content: firstGuidedQuestion }]
+                    : session.messages,
+                }
               : session,
           ),
         );
@@ -787,11 +802,25 @@ export function useAIAssistantSessions(
         );
       }
       setError(null);
-    } catch {
+    } catch (err) {
+      // A consent token is short-lived and in-memory: after a restart or TTL
+      // expiry the server answers 422. Keeping the dead card makes every click
+      // fail with a generic error, so clear it and tell the Author to resend.
+      if (err instanceof ApiError && (err.status === 422 || err.code === "invalid_input")) {
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === activeSessionId
+              ? { ...session, consentToken: undefined, consentFlow: undefined }
+              : session,
+          ),
+        );
+        setError(t("assistant.consent.expired"));
+        return;
+      }
       // Fail closed: keep the suggestion and surface the safe copy.
       setError(semanticBlockedText(language));
     }
-  }, [activeSession, activeSessionId, contextMundo, language]);
+  }, [activeSession, activeSessionId, contextMundo, language, t]);
 
   const requestGuidedReview = useCallback(async () => {
     const guided = activeSession?.guided;
