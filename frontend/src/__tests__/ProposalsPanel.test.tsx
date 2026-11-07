@@ -126,6 +126,36 @@ describe("ProposalsPanel", () => {
     );
   });
 
+  it("advertises no batch count before the candidates load", async () => {
+    // While the fetch is pending the panel must not claim a cost: the old
+    // default ("Revisar 5 fichas") was a fake number that also made the
+    // singular assertion race on slower runners (windows-latest CI).
+    let resolveCandidates!: (value: {
+      count: number;
+      muted: string[];
+      items: RelationCandidate[];
+    }) => void;
+    vi.mocked(fetchRelationCandidates).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCandidates = resolve;
+      }),
+    );
+
+    render(<ProposalsPanel mundo="mundo" />);
+
+    expect(screen.queryByTestId("sweep-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("candidate-remaining")).not.toBeInTheDocument();
+
+    resolveCandidates({ count: 1, muted: [], items: [candidate(1)] });
+
+    expect(await screen.findByTestId("sweep-button")).toHaveTextContent(
+      "Revisar 1 ficha",
+    );
+    expect(screen.getByTestId("candidate-remaining")).toHaveTextContent(
+      "1 ficha por revisar",
+    );
+  });
+
   it("shows progress while the batch runs and a summary after", async () => {
     let resolveSweep!: (value: RelationSweepResponse) => void;
     vi.mocked(sweepRelations).mockReturnValue(

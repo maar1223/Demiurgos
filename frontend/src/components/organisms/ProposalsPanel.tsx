@@ -144,25 +144,27 @@ export default function ProposalsPanel({ mundo }: ProposalsPanelProps) {
 
   return (
     <section data-testid="proposals-panel" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised p-4">
-        <div>
-          <p data-testid="candidate-count" className="text-body font-medium text-primary">
-            {badge}
-          </p>
-          <p data-testid="candidate-remaining" className="mt-1 text-small text-muted">
-            {remaining}
-          </p>
+      {loading ? null : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface-raised p-4">
+          <div>
+            <p data-testid="candidate-count" className="text-body font-medium text-primary">
+              {badge}
+            </p>
+            <p data-testid="candidate-remaining" className="mt-1 text-small text-muted">
+              {remaining}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="sweep-button"
+            className={buttonClass}
+            onClick={handleSweep}
+            disabled={busy || candidates.length === 0}
+          >
+            {sweepLabel}
+          </button>
         </div>
-        <button
-          type="button"
-          data-testid="sweep-button"
-          className={buttonClass}
-          onClick={handleSweep}
-          disabled={busy || loading || candidates.length === 0}
-        >
-          {sweepLabel}
-        </button>
-      </div>
+      )}
 
       {error ? (
         <p role="alert" className="text-small text-danger">
