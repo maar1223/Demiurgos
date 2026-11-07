@@ -215,6 +215,7 @@ def create_update_router(
     channel_config_path: Path | None = None,  # defaults to <install_root>/channel.json
     channel_fetch: Callable[[str], str | None] | None = None,  # (url) -> text; production uses urllib
     install_log: Path | None = None,
+    clear_session: Callable[[Request], None] | None = None,
 ) -> APIRouter:
     """Build the ``/api/update`` router (Slice 2b: status + channel).
 
@@ -222,6 +223,12 @@ def create_update_router(
     None; None maps to 401 (fail closed). The production resolver is
     ``api_server._resolve_principal``; the factory never trusts an
     unauthenticated request regardless of which resolver is injected.
+
+    ``clear_session`` drops the caller's session as part of an accepted apply:
+    the installer restarts the whole stack, so the session must not survive it.
+    The apply stays principal-gated (the caller authorizes it), and clearing
+    happens server-side right before the detached spawn — a client that logged
+    out first would send an unauthenticated request and fail closed with 401.
 
     ``app_version`` returns the running version (env -> install layout -> dev
     fallback; Slice 1). ``install_root`` is the install root when running the
@@ -377,6 +384,12 @@ def create_update_router(
                 "accepted": False,
                 "error": f"installer not available at {install_argv[-1]}",
             })
+
+        # Session must not survive an install, and only an authenticated caller
+        # may dispatch one. Both hold by clearing here, after every check that
+        # can reject the apply: a rejected request keeps the session.
+        if clear_session is not None:
+            clear_session(request)
 
         log_path = Path(install_log) if install_log is not None else _INSTALLER_LOG
         # The installer receives the channel base and the target version via

@@ -115,6 +115,7 @@ def _make_app(
     install_argv: list[str] | None = None,
     install_available: bool | None = True,
     install_log: Path | None = None,
+    clear_session=None,
 ) -> tuple[FastAPI, LocalState]:
     """Build the router over a ``LocalState`` rooted at *local_state_path*."""
     registry = LocalState(local_state_path)
@@ -134,6 +135,7 @@ def _make_app(
             channel_config_path=channel_config_path,
             channel_fetch=channel_fetch,
             install_log=install_log,
+            clear_session=clear_session,
         )
     )
     return app, registry
@@ -454,6 +456,64 @@ def test_apply_requires_principal_and_starts_no_process(
     assert resp.status_code == 401
     assert resp.json() == AUTH_REQUIRED
     assert "argv" not in calls, "an unauthenticated apply must never spawn"
+
+
+def test_apply_clears_the_caller_session_only_after_acceptance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The request that authorizes the install keeps its session until the
+    apply is accepted; only then is the session cleared (the installer restarts
+    the stack). A rejected apply never clears it."""
+    cleared: list[str] = []
+
+    def fake_popen(argv, **kwargs):
+        return _FakeProc(poll_result=None)
+
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(updater.time, "sleep", lambda _seconds: None)
+
+    checker = _ChannelStub(latest="0.1.1")  # current is newest -> 409
+    app, _registry = _make_app(
+        local_state_path=tmp_path / "local-state.json",
+        app_version="0.2.0",
+        channel_fetch=checker,
+        install_log=tmp_path / "installer.log",
+        clear_session=lambda request: cleared.append("cleared"),
+    )
+    resp = TestClient(app).post("/api/update/apply")
+    assert resp.status_code == 409
+    assert cleared == [], "a rejected apply must keep the session"
+
+    app, _registry = _make_app(
+        local_state_path=tmp_path / "local-state.json",
+        app_version="0.1.1",
+        channel_fetch=_ChannelStub(latest="0.2.0"),
+        install_log=tmp_path / "installer.log",
+        clear_session=lambda request: cleared.append("cleared"),
+    )
+    resp = TestClient(app).post("/api/update/apply")
+    assert resp.status_code == 200
+    assert cleared == ["cleared"], "an accepted apply must clear the session"
+
+
+def test_unauthenticated_apply_never_clears_or_spawns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cleared: list[str] = []
+
+    def fake_popen(argv, **kwargs):
+        raise AssertionError("must not spawn")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+    app, _registry = _make_app(
+        local_state_path=tmp_path / "local-state.json",
+        authed=False,
+        channel_fetch=_ChannelStub(latest="0.2.0"),
+        clear_session=lambda request: cleared.append("cleared"),
+    )
+    resp = TestClient(app).post("/api/update/apply")
+    assert resp.status_code == 401
+    assert cleared == []
 
 
 def test_apply_dispatches_detached_installer_with_env(

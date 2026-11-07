@@ -39,11 +39,14 @@ export function setUpdateChannel(
 
 /**
  * POST /api/update/apply — dispatch the installer for the server-resolved
- * offered version. The local session MUST be logged out BEFORE this call, and
- * the call MUST use the long install timeout (90s) instead of the apiFetch
- * default 5s (precedent: `systemControlAction` in `@/api/wiki`). A dropped
- * connection during the install is the EXPECTED outcome (the installer
- * restarts the stack) and surfaces as `ApiError(status: 0)`.
+ * offered version. The call MUST use the long install timeout (90s) instead of
+ * the apiFetch default 5s (precedent: `systemControlAction` in `@/api/wiki`).
+ * The request is principal-gated, so the caller stays authenticated until the
+ * server accepts it; the server then clears the caller's session before the
+ * detached spawn (no session survives the install). Logging out first would
+ * make this call fail closed with 401. A dropped connection during the install
+ * is the EXPECTED outcome (the installer restarts the stack) and surfaces as
+ * `ApiError(status: 0)`.
  */
 export function applyUpdate(): Promise<UpdateApplyResult> {
   return apiFetch<UpdateApplyResult>(`${API_BASE_URL}/api/update/apply`, {

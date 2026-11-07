@@ -2203,6 +2203,31 @@ def auth_session_status(request: Request):
     return _session_status(request)
 
 
+def _clear_request_session(request: Request) -> None:
+    """Drop the caller's active session and persist the removal.
+
+    Used by the updater: the installer restarts the whole stack, so a session
+    must not survive an accepted apply. The request that authorizes the apply
+    is still authenticated when it reaches the route; clearing here (instead
+    of a client-side logout first) is what keeps that authorization intact.
+    """
+    active = _session_for_request(request)
+    if active is None:
+        return
+    if active.get("provider") == _CREDENTIALS_PROVIDER:
+        cookie = _SESSION_COOKIE
+    elif _local_auth_enabled():
+        cookie = _LOCAL_SESSION_COOKIE
+    else:
+        cookie = _SESSION_COOKIE
+    token = request.cookies.get(cookie)
+    if not token:
+        return
+    with _local_session_lock:
+        _sessions.pop(_hash_token(token), None)
+    _persist_sessions()
+
+
 @app.delete("/api/auth/session")
 def auth_session_logout(request: Request, response: Response):
     """Unified logout (R-AC-06): remove the active session and clear its cookie."""
@@ -2217,11 +2242,7 @@ def auth_session_logout(request: Request, response: Response):
         cookie = _LOCAL_SESSION_COOKIE
     else:
         cookie = _SESSION_COOKIE
-    token = request.cookies.get(cookie)
-    if token:
-        with _local_session_lock:
-            _sessions.pop(_hash_token(token), None)
-        _persist_sessions()
+    _clear_request_session(request)
     response.delete_cookie(cookie, path="/", samesite="lax")
     return _session_status(request)
 
@@ -11112,6 +11133,7 @@ app.include_router(
         local_state=_local_state,
         install_argv=_update_installer_argv(),
         install_available=_UPDATE_INSTALLER_AVAILABLE,
+        clear_session=_clear_request_session,
     ),
 )
 

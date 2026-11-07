@@ -7,7 +7,7 @@ import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { getAppConfig } from "@/api/config";
 import { getUpdateStatus, setUpdateChannel, applyUpdate } from "@/api/updates";
 import { getBugReportReleases } from "@/api/bugReports";
-import { getAuthStatus, logoutSession } from "@/api/wiki";
+import { getAuthStatus } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
 import { ApiError, type UpdateChannel, type UpdateStatus } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -166,15 +166,16 @@ export function UpdateSection() {
     setApplyError(null);
   }, []);
 
-  /** Confirmed apply: logout FIRST, then dispatch, then show the overlay. */
+  /** Confirmed apply: dispatch while authenticated, then show the overlay. */
   const confirmApply = useCallback(async () => {
     setApplyBusy(true);
     setApplyError(null);
     try {
       // Session safety (spec 'Local session is logged out before apply'): the
-      // installer restarts the whole stack, so the local session must be
-      // closed BEFORE the dispatch — the server never clears it itself.
-      await logoutSession();
+      // installer restarts the whole stack, so no session may survive it. The
+      // server clears it as part of the accepted apply — the request that
+      // authorizes the install must still carry its session, so the client
+      // must NOT log out first (that request would fail closed with 401).
       try {
         await applyUpdate();
       } catch (cause: unknown) {
@@ -190,8 +191,6 @@ export function UpdateSection() {
       setApplyOpen(false);
       setApplying(true);
     } catch (cause: unknown) {
-      // logoutSession itself failed — nothing was dispatched; keep the dialog
-      // open so the user can retry or close.
       setApplyError(describeError(cause, t("profile.updates.applyError")));
     } finally {
       setApplyBusy(false);
