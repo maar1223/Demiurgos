@@ -342,8 +342,12 @@ function ChatScreen({
   const canReviewInCurrentSection =
     !guidedTargetSection || !section || section === guidedTargetSection;
   const lastMessage = messages[messages.length - 1];
+  // While the next guided turn is in flight, `guided.pending_question` is
+  // still the PREVIOUS question. Rendering it again below the author's message
+  // looks like the assistant repeated itself; the spinner is the progress cue.
   const showGuidedPending =
     Boolean(guidedPendingText) &&
+    !isSending &&
     !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;

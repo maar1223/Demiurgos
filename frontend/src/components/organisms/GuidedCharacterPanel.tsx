@@ -139,7 +139,7 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
             {message.content}
           </div>
         ))}
-        {session?.pending_question && (
+        {session?.pending_question && !guided.isLoading && (
           <p className="mb-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-sm text-primary">
             {session.pending_question}
           </p>

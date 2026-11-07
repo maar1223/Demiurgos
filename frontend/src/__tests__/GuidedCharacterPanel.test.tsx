@@ -82,6 +82,22 @@ describe("GuidedCharacterPanel", () => {
     expect(screen.queryByText(/workflow|provenance/i)).not.toBeInTheDocument();
   });
 
+  it("hides the previous pending question while the next turn is loading", () => {
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      isLoading: true,
+      session: {
+        ...baseState().session,
+        messages: [{ role: "author" as const, content: "Estoy en frío" }],
+        pending_question: "¿Pregunta vieja?",
+        proposal: null,
+      },
+    });
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    expect(screen.queryByText("¿Pregunta vieja?")).not.toBeInTheDocument();
+  });
+
   it("shows the finite detail plan progress in the proposal card", () => {
     useGuidedCharacterMock.mockReturnValue({
       ...baseState(),

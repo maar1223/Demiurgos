@@ -518,6 +518,40 @@ describe("AIAssistantSidebar single conversation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides the previous guided question while the next turn is sending", () => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+    useSessionsMock.mockReturnValue(createSessionsState({
+      isSending: true,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "Estoy en frío" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 3,
+          pending_question: "¿Pregunta vieja?",
+          messages: [],
+          candidate: {
+            accepted_canon: {},
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(screen.queryByText("¿Pregunta vieja?")).not.toBeInTheDocument();
+  });
+
   it("localizes the proposal detail actions and review button in the configured language", () => {
     const onGuidedReview = vi.fn();
     useAppLanguageMock.mockReturnValue(lang("es"));
