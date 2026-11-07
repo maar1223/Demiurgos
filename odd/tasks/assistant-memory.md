@@ -40,9 +40,10 @@ Verbatim: "cuando una persona instale Demiurgos en su PC, todo esto funcionará
 correctamente?" and "Demiurgos es monousuario tambien. No es un servicio en la
 nube ni un SAAS."
 
-S7 — Prerequisites. Guided turns persist the Author input, the activity path
-injects the recent-turn window, and the final assistant answer is stored instead
-of concatenated streaming partials.
+S7 — Prerequisites. Guided turns persist the Author input; the activity path
+relies on the Hermes gateway's per-session transcript replay and must not
+duplicate the recent-turn window; the final assistant answer is stored instead
+of concatenated cumulative streaming snapshots.
 
 S8 — Backfill. The 2026-11-04 guided session about Ganic is distilled, as far as
 the stored transcript allows, into initial memories. This one-time migration is
@@ -58,8 +59,8 @@ export/forget API; docs for writers. No memory UI panel in v1.
 
 ## Tasks
 
-- T1 — Persist guided `author_input` in both stores (`guided_character_protocol.py`, `guided_session_store.py`) + tests. (S7) — `inline`
-- T2 — Activity path: pass `memory_turns` to `_build_ai_ask_prompt`; persist the final answer, not streaming partials + tests. (S7) — `inline`
+- T1 — Persist guided `author_input` in both stores (`guided_character_protocol.py`, `guided_session_store.py`) + tests. (S7) — `inline` — DONE `4aa7ef0`
+- T2 — Activity path: store the final answer, not cumulative streaming snapshots; do not duplicate the gateway-replayed recent turns + test. (S7) — `inline` — DONE
 - T3 — `assistant_memory_store.py`: schema (`memory_entries` + FTS5 trigram), `PRAGMA user_version`, FTS fallback, CRUD and retrieval + tests. (S1, S6, S10) — `inline`
 - T4 — Memory curator + deterministic policy: extraction contract, confidence, topic-key upsert, dedupe, conflict, proposal-vs-canon + tests. (S5) — `inline`
 - T5 — Wire writes: guided passive capture, per-turn chat extraction, session-close distillation + tests. (S4, S5) — `inline`
@@ -132,3 +133,18 @@ Author turn (`guided_session_store.py:307-344`). `_build_ai_ask_prompt` accepts
 `memory_turns` but its only caller does not pass it (`api_server.py:9679`,
 `api_server.py:10026`). The activity path persists `"".join(assistant_parts)`,
 which concatenates streaming partials (`api_server.py:10151-10152`).
+
+D6 — Evidence correction (2026-11-06): not passing `memory_turns` to
+`_build_ai_ask_prompt` is deliberate. The Hermes gateway replays the session
+transcript for `_channel_session_id(body.session_id)` (`api_server.py:9986-9994`);
+embedding the window would duplicate history and inflate the context. The real
+defect was persisting `"".join(assistant_parts)` when each `AnswerEvent` already
+carries the cumulative snapshot.
+
+E2 — T1 RED/GREEN: `test_commit_records_each_author_turn_in_the_transcript` and
+`test_commit_persists_the_author_turn_across_restart` failed with no author turns;
+green after `should_record_author_input`. Guided suites 120 passed, api_server
+552 passed. T2 RED/GREEN:
+`test_stream_stores_the_final_answer_not_cumulative_snapshots` failed with
+`"MuyMuy bien"`; green after keeping the last snapshot. Integration 13 passed,
+assistant 30 passed.

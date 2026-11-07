@@ -190,6 +190,27 @@ class _PartialActivityAdapter:
         self.cancelled.append(run_id)
 
 
+class _CumulativeActivityAdapter:
+    """Emits cumulative delta snapshots, as the live translator does."""
+
+    available = True
+    capability = _activity_capability()
+
+    def __init__(self):
+        self.cancelled = []
+
+    def start(self, request):
+        return "run-1"
+
+    async def events(self, run_id):
+        yield {"event": "message.delta", "run_id": run_id, "delta": "Muy"}
+        yield {"event": "message.delta", "run_id": run_id, "delta": " bien"}
+        yield {"event": "run.completed", "run_id": run_id, "output": "Muy bien"}
+
+    def cancel(self, run_id):
+        self.cancelled.append(run_id)
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """TestClient with a temp mundos dir, in-memory conversation memory, and a
@@ -439,6 +460,22 @@ class TestActivityStreamMemory:
         assert turns[1].content == "preserve this answer"
         # The user turn carries the routed skill.
         assert turns[0].skill_id == "narrative-draft"
+
+    def test_stream_stores_the_final_answer_not_cumulative_snapshots(
+            self, client: TestClient, monkeypatch):
+        """Delta snapshots are cumulative; memory must keep the last full answer."""
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", _CumulativeActivityAdapter())
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "sess-cum",
+        })
+        assert response.status_code == 200
+
+        turns = api_server._CONVERSATION_MEMORY.get_recent_turns("sess-cum")
+        assert [t.role for t in turns] == ["user", "assistant"]
+        assert turns[1].content == "Muy bien"
 
 
 class TestPersistedLocaleIntegration:

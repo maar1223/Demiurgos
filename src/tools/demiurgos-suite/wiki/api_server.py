@@ -10048,11 +10048,15 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     async def stream():
         # The additive authoritative semantic event comes first; compatible
         # evidence (activity/answer/terminal) follows and terminal stays final.
-        assistant_parts: list[str] = []
+        # Every AnswerEvent carries the CUMULATIVE answer so far (the translator
+        # re-emits the joined snapshot on each delta), so memory keeps the last
+        # snapshot instead of joining them, which would duplicate every prefix.
+        assistant_answer = ""
 
         def emit(event) -> str:
+            nonlocal assistant_answer
             if isinstance(event, AnswerEvent):
-                assistant_parts.append(event.response)
+                assistant_answer = event.response
             return _sse_event(event.as_dict())
 
         yield _sse_event(_semantic_decision_event(result).as_dict())
@@ -10148,8 +10152,8 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 body.session_id, mundo, "user",
                 _memory_user_prompt(body.prompt, attachments), skill_id,
             )
-            if not disconnected and assistant_parts:
-                _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
+            if not disconnected and assistant_answer:
+                _persist_memory_turn(body.session_id, mundo, "assistant", assistant_answer)
                 await _maybe_refresh_distilled(body.session_id, mundo)
 
     return StreamingResponse(
