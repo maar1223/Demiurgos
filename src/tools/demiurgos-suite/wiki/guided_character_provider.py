@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Mapping
 
 from assistant_activity import (
@@ -19,6 +20,8 @@ from guided_character_protocol import (
     PROTOCOL_VERSION,
 )
 from demiurgos_language import resolve_domain_language
+
+logger = logging.getLogger(__name__)
 
 _MAX_QUESTION_OPTIONS = 3
 
@@ -90,6 +93,44 @@ def guided_capabilities(assessment: CapabilityAssessment) -> Capabilities | None
     return Capabilities(PROTOCOL_VERSION, True, True, True, MAX_DEADLINE_MS)
 
 
+def repair_truncated_json(text: str) -> str | None:
+    """Append the closers a clean-EOF truncation dropped.
+
+    The provider sometimes ends the stream after the last field but before the
+    closing brace (measured 2026-11-08: three ``{`` against two ``}``). Only
+    STRUCTURAL closers are added — a value cut mid-string, an unbalanced closer
+    or an escaping state returns ``None`` — and the caller still parses the
+    result strictly, so a truncated value can never be "repaired" into
+    something valid.
+    """
+    in_string = False
+    escaped = False
+    closers: list[str] = []
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            closers.append("}")
+        elif char == "[":
+            closers.append("]")
+        elif char in "}]":
+            if closers and closers[-1] == char:
+                closers.pop()
+            else:
+                return None
+    if in_string or escaped or not closers:
+        return None
+    return text + "".join(reversed(closers))
+
+
 class HermesGuidedProvider:
     """Adapt one Hermes run into a strictly structured guided response."""
 
@@ -151,6 +192,12 @@ class HermesGuidedProvider:
             "The outcome must be question or delta; never claim author acceptance. "
             "For a question, return the fields question, synthesis, observations, options "
             "and allow_custom. "
+            "A delta envelope carries EXACTLY request_id, session_id, outcome, synthesis, "
+            "observations and delta; it never carries question, options or allow_custom. "
+            "'delta' is a flat object of candidate fields (for example nombre, deseo, "
+            "oficio) — never a rendered document, never the finished ficha, and never "
+            "markdown blocks: the server renders the sheet from your fields. "
+            "Always close every JSON object and array you open. "
             "This is a conversation, not an interrogation. Before asking, write the "
             "'synthesis' field: at most 3 short sentences (~60 words, under 350 "
             "characters) that reflect what you have already understood, including any "
@@ -228,7 +275,19 @@ class HermesGuidedProvider:
                 try:
                     output = json.loads(text)
                 except (TypeError, ValueError):
-                    pass
+                    repaired = repair_truncated_json(text)
+                    if repaired is not None:
+                        try:
+                            output = json.loads(repaired)
+                        except (TypeError, ValueError):
+                            output = None
+                    if output is None:
+                        # Bounded diagnostics: what came back and how it broke.
+                        logger.warning(
+                            "guided provider returned unparseable output "
+                            "(len=%d head=%r tail=%r)",
+                            len(text), text[:200], text[-200:],
+                        )
             if isinstance(output, Mapping):
                 result = dict(output)
                 if "question" in result and result["question"] is not None:

@@ -655,7 +655,16 @@ class SemanticIntentProvider:
             try:
                 output = json.loads(text)
             except (TypeError, ValueError):
-                return None
+                # A clean-EOF truncation drops only the closing braces; repair
+                # them structurally and still parse strictly.
+                from guided_character_provider import repair_truncated_json
+                repaired = repair_truncated_json(text)
+                if repaired is None:
+                    return None
+                try:
+                    output = json.loads(repaired)
+                except (TypeError, ValueError):
+                    return None
         return output
 
     async def decide(
