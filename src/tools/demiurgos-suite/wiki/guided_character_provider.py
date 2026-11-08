@@ -147,8 +147,7 @@ class HermesGuidedProvider:
         prompt = (
             "Act as the guided co-creation provider. Return ONLY one JSON object "
             f"matching the {PROTOCOL_VERSION} response envelope — do not wrap the "
-            "JSON in markdown fences or code blocks. Use request_id "
-            f"{json.dumps(request.request_id)} and session_id {json.dumps(request.session_id)}. "
+            "JSON in markdown fences or code blocks. "
             "The outcome must be question or delta; never claim author acceptance. "
             "For a question, return the fields question, synthesis, observations, options "
             "and allow_custom. "
@@ -187,7 +186,12 @@ class HermesGuidedProvider:
             f"World lore (verified, read-only):\n{world_lore}\n"
             f"Verified active ficha reference:\n{reference}\n"
             f"{goal_instruction}"
-            f"Author input: {request.author_input}"
+            f"Author input: {request.author_input}\n"
+            # Volatile ids go LAST so the whole instruction block stays a stable
+            # prefix (prompt cache); they used to sit in the second sentence.
+            "Echo request_id "
+            f"{json.dumps(request.request_id)} and session_id "
+            f"{json.dumps(request.session_id)} in the JSON object."
         )
         run_id = await self._runs.start(HermesActivityRequest(
             request_id=request.request_id,

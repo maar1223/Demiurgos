@@ -86,6 +86,10 @@ class HermesActivityRequest:
     request_id: str
     prompt: str
     session_id: str = ""
+    # Per-run gateway overrides (e.g. ``{"reasoning_effort": "low"}``). Hermes
+    # accepts ``model_options`` on both /v1/runs and /v1/chat/completions; a
+    # value the gateway does not understand is ignored, never an error.
+    model_options: Mapping[str, Any] | None = None
 
 
 class HermesActivityAdapter(Protocol):
@@ -155,9 +159,11 @@ class HermesRunsActivityAdapter:
         return self.capability
 
     async def start(self, request: HermesActivityRequest) -> str:
-        payload: dict[str, str] = {"input": request.prompt}
+        payload: dict[str, Any] = {"input": request.prompt}
         if request.session_id:
             payload["session_id"] = request.session_id
+        if request.model_options:
+            payload["model_options"] = dict(request.model_options)
         response = await self._client_provider().post(
             f"{self.base_url}/runs",
             json=payload,

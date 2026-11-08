@@ -1643,7 +1643,9 @@ class TestAiAsk:
         assert second.status_code == 200
         assert second.json()["guided_session_id"] == first["guided_session_id"]
         assert second.json()["guided_revision"] == first["guided_revision"] + 1
-        assert runs.starts == 2
+        # The continuation is authorized by the pre-flight guards and skips the
+        # gate: only the first turn ran it.
+        assert runs.starts == 1
 
     def test_guided_turn_receives_bounded_active_ficha_context(self, client: TestClient, monkeypatch):
         """The authorized open ficha reaches Hermes as bounded context."""
@@ -1797,9 +1799,9 @@ class TestAiAsk:
         assert guided_calls == []
 
         # The factual shortcut is gone: a non-confirmation message during the
-        # confirmation phase is interpreted by Hermes first, then the guarded
-        # confirmation simply re-prompts without running the guided provider or
-        # a plain-chat call, so the guided state stays safe.
+        # confirmation phase is parsed by the guarded confirmation (no semantic
+        # gate, no guided provider, no plain-chat call), so the guided state
+        # stays safe.
         factual = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "me puedes indicar cual es el papel que cumple Rhyz?",
             "section": "personajes",
@@ -1813,7 +1815,7 @@ class TestAiAsk:
         assert factual_payload["guided_session_id"] == first["guided_session_id"]
         assert factual_payload["guided_state"]["phase"] == "confirmation"
         assert guided_calls == []
-        assert runs.starts == 2
+        assert runs.starts == 1
 
         confirmed = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "sí",
@@ -1881,9 +1883,7 @@ class TestAiAsk:
         ))
         runs = _SemanticRuns(
             _continuation_semantic_payload("require_confirmation"),
-            _semantic_payload("allow"),
             _continuation_semantic_payload("require_confirmation"),
-            _semantic_payload("allow"),
         )
         _wire_semantic_provider(monkeypatch, runs)
         for matches, expected in (
@@ -4550,12 +4550,12 @@ class TestSemanticSingleRunContinuation:
         assert confirmed.status_code == 200
         assert confirmed.json()["guided_state"]["phase"] == "conversation"
         assert len(guided_calls) == 1
-        assert runs.starts == 2
+        assert runs.starts == 1  # the gate ran only on the opening turn
         legacy.assert_not_awaited()
 
-    def test_semantic_decide_precedes_typed_confirmation_parsing(self, client: TestClient, monkeypatch):
-        """Typed confirmation is parsed as policy ONLY after a validated Hermes
-        interpretation: confirmation_decision never decides whether Hermes runs."""
+    def test_guided_continuation_parses_confirmation_without_the_gate(self, client: TestClient, monkeypatch):
+        """A guided continuation is authorized by the pre-flight guards and goes
+        straight to the guided machinery: the semantic gate never runs on it."""
         order = []
         runs = _SemanticRuns(_semantic_payload("allow"))
         provider = _wire_semantic_provider(monkeypatch, runs)
@@ -4592,8 +4592,8 @@ class TestSemanticSingleRunContinuation:
             "guided_revision": confirming.revision,
         })
         assert response.status_code == 200
-        assert order == ["semantic.decide", "confirmation_decision"]
-        assert runs.starts == 1
+        assert order == ["confirmation_decision"]
+        assert runs.starts == 0
 
     def test_semantic_guided_continuation_requires_auth(self, client: TestClient, monkeypatch):
         runs = _SemanticRuns(_continuation_semantic_payload("proposal_ready"))

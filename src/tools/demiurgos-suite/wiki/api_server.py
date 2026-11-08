@@ -3597,9 +3597,14 @@ async def _guided_continue(
     known_state = (
         _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
     )
-    request = GuidedRequest(
-        PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
-        revision, principal.id, author_input, reference_context=reference_context,
+    request = _compose_guided_request(
+        request_id=f"guided-{uuid.uuid4().hex}",
+        session_id=session_id,
+        mundo=mundo,
+        revision=revision,
+        principal_id=principal.id,
+        author_input=author_input,
+        reference_context=reference_context,
         reference_name=reference_name,
         relation_goal=relation_goal,
         guided_mode=mode,
@@ -3653,7 +3658,7 @@ async def _guided_continue(
                 part for part in (response.question, response.synthesis) if part
             )
             if assistant_text:
-                await _capture_turn_memory(
+                _schedule_turn_memory(
                     session_id=session_id,
                     mundo=mundo,
                     user_text=author_input,
@@ -8640,8 +8645,42 @@ def _memory_curator() -> MemoryCurator:
     """Lazy curator seam; tests replace ``_MEMORY_CURATOR`` directly."""
     global _MEMORY_CURATOR
     if _MEMORY_CURATOR is None:
-        _MEMORY_CURATOR = MemoryCurator(complete=_run_hermes)
+        _MEMORY_CURATOR = MemoryCurator(
+            complete=lambda prompt: _run_hermes(prompt, reasoning_effort="none"),
+        )
     return _MEMORY_CURATOR
+
+
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_background(coro: Any, *, label: str) -> None:
+    """Run a side effect off the request path.
+
+    Memory extraction and the distilled refresh are bookkeeping: they must
+    never hold the answer the author is waiting for. A task that cannot be
+    scheduled (no running loop) simply does not run; the coroutine is closed so
+    nothing leaks.
+    """
+    try:
+        task = asyncio.create_task(coro, name=label)
+    except RuntimeError:
+        coro.close()
+        return
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+def _schedule_turn_memory(**kwargs: Any) -> None:
+    """Queue one turn's durable-memory extraction (never blocks the answer)."""
+    _schedule_background(_capture_turn_memory(**kwargs), label="assistant-memory")
+
+
+def _schedule_distilled_refresh(session_id: str, mundo: str) -> None:
+    """Queue the distilled-summary refresh (never blocks the answer)."""
+    _schedule_background(
+        _maybe_refresh_distilled(session_id, mundo), label="assistant-distill",
+    )
 
 
 async def _capture_turn_memory(
@@ -8734,13 +8773,19 @@ async def _maybe_refresh_distilled(session_id: str, mundo: str) -> None:
         turns = memory.get_recent_turns(session_id, limit=10)
         if not turns:
             return
-        digest = "\n".join(f"{t.role}: {t.content}" for t in turns)
+        # Cap every turn and the whole digest: a single stored turn can hold a
+        # concatenated streaming snapshot (hundreds of KB), which turned this
+        # prompt into 1.16 MB / 8.4 s of prefill for a 100-word summary.
+        digest = "\n".join(
+            f"{t.role}: {t.content[:2_000]}" for t in turns
+        )[:8_000]
         summary = digest[-800:]
         try:
             condensed = await _run_hermes(
                 "Condensa esta conversación en español, máximo 100 palabras, "
                 "destacando decisiones, hechos establecidos e hilos abiertos:\n" + digest,
                 session_id,
+                reasoning_effort="none",
             )
             if condensed:
                 summary = condensed
@@ -8988,6 +9033,13 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             return _guided_error_response(StructuredError(
                 ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
             ))
+        # An authorized, revision-current guided turn continues the session that
+        # already owns the decision. The semantic gate's decision was DISCARDED
+        # on this path (``_internal_guided_turn`` never reads it), so running it
+        # only bought a full LLM round trip (~7 s) with no effect on the turn.
+        # The guards above already fail closed; the guided provider keeps its own
+        # validation and every write stays governed.
+        return await _internal_guided_turn(mundo, body, request)
     # Mandatory Hermes semantic gate (decides with bounded authorized context).
     # The named-reference resolution is performed ONCE per request and reused by
     # the guarded continuation, so the graph is never queried twice. The
@@ -9036,12 +9088,8 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     # session decline once the next same-session turn arrives ("keeps chatting").
     _mark_kept_chatting_decline(body.session_id, mundo)
     # Demiurgos policy against the validated decision:
-    # 1. Active guarded guided session -> continuation policy (typed
-    #    confirmation, next turn) applied only after Hermes interpretation.
-    if body.guided_session_id or body.guided_revision is not None:
-        guided = await _internal_guided_turn(mundo, body, request)
-        if guided is not None:
-            return guided
+    # 1. Guided continuations never reach this point: they return above, before
+    #    the gate, because the gate's decision is not used on that path.
     # 2. Self-contained decisions answer directly with Hermes' voice. On the
     #    non-guided conversational path the response is the gate's single-run
     #    answer (already distilled-aware). Memory writes + skill routing are
@@ -9064,8 +9112,8 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                     _memory_user_prompt(body.prompt, attachments), skill_id,
                 )
                 _persist_memory_turn(body.session_id, mundo, "assistant", answer)
-                await _maybe_refresh_distilled(body.session_id, mundo)
-                await _capture_turn_memory(
+                _schedule_distilled_refresh(body.session_id, mundo)
+                _schedule_turn_memory(
                     session_id=body.session_id,
                     mundo=mundo,
                     user_text=_memory_user_prompt(body.prompt, attachments),
@@ -10260,8 +10308,17 @@ def _guided_plan_state(state: Any) -> str:
         return ""
 
 
+_GUIDED_OMISSION_RESERVE = 40
+"""Headroom kept for the ``(+N facts omitted)`` marker when trimming."""
+
+
 def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
-    """Compact server-owned summary of what the author already answered."""
+    """Compact server-owned summary of what the author already answered.
+
+    Never cuts a fact in half and never hides what it dropped: when the lines
+    do not fit, the tail becomes an explicit ``(+N facts omitted)`` marker so
+    the provider (and whoever reads the logs) knows the view is partial.
+    """
     lines: list[str] = []
     for partition_name, partition in (
         ("accepted", getattr(candidate, "accepted_canon", {})),
@@ -10287,7 +10344,22 @@ def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
         text = str(raw).strip()
         if text:
             lines.append(f"- [unknown] {text[:300]}")
-    return "\n".join(lines)[:budget]
+    text = "\n".join(lines)
+    if len(text) <= budget:
+        return text
+    room = max(0, budget - _GUIDED_OMISSION_RESERVE)
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        cost = len(line) + (1 if kept else 0)
+        if used + cost > room:
+            break
+        kept.append(line)
+        used += cost
+    omitted = len(lines) - len(kept)
+    marker = f"… (+{omitted} facts omitted)" if omitted else "…"
+    value = f"{chr(10).join(kept)}{chr(10) if kept else ''}{marker}"
+    return value[:budget]
 
 
 def _guided_turn_known_state(state: SessionState, budget: int) -> str:
@@ -10310,6 +10382,71 @@ def _guided_turn_known_state(state: SessionState, budget: int) -> str:
     body = _guided_known_state(state.candidate, budget=remaining) if remaining > 0 else ""
     value = f"{plan_state}\n{body}" if body else plan_state
     return value[:budget]
+
+
+def _clamp_context_block(value: object, budget: int = GUIDED_CONTEXT_BUDGET) -> str:
+    """Coerce one server-composed context block into the request budget.
+
+    Context is FAIL-OPEN on purpose: an oversized or malformed block is trimmed
+    (or dropped) instead of raising, so the size of what this server composes
+    can never invalidate its own request. Writes keep failing closed.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if len(text) <= budget:
+        return text
+    window = text[:budget]
+    newline = window.rfind("\n")
+    return (window[:newline] if newline > budget // 2 else window).rstrip()
+
+
+def _compose_guided_request(
+    *,
+    request_id: str,
+    session_id: str,
+    mundo: str,
+    revision: int,
+    principal_id: str,
+    author_input: str,
+    reference_context: str = "",
+    reference_name: str | None = None,
+    relation_goal: str = "",
+    guided_mode: str = "full",
+    question_depth: str = "standard",
+    methodology: str | None = None,
+    world_context: str = "",
+    known_state: str = "",
+) -> GuidedRequest:
+    """The ONE place that assembles a guided request.
+
+    Every bounded context field is clamped here, so ``GuidedRequest.validate``
+    can never reject the server's own input because of size — the 2026-11-08
+    failure was facts 4 000 + plan 89 = 4 090 over a 4 000 budget. Callers
+    supply content; this function owns the budget.
+    """
+    name = (
+        reference_name.strip()
+        if isinstance(reference_name, str) and reference_name.strip()
+        else None
+    )
+    return GuidedRequest(
+        PROTOCOL_VERSION,
+        request_id,
+        session_id,
+        mundo,
+        revision,
+        principal_id,
+        author_input,
+        reference_context=_clamp_context_block(reference_context),
+        reference_name=name,
+        relation_goal=_clamp_context_block(relation_goal),
+        guided_mode=guided_mode,
+        question_depth=question_depth,
+        methodology=methodology,
+        world_context=_clamp_context_block(world_context),
+        known_state=_clamp_context_block(known_state),
+    )
 
 
 def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | None]:
@@ -10899,7 +11036,8 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         },
     )
 
-async def _run_hermes(prompt: str, session_id: str = "") -> str:
+async def _run_hermes(prompt: str, session_id: str = "",
+                      reasoning_effort: str | None = None) -> str:
     """Send prompt to Hermes Gateway via HTTP (OpenAI-compatible chat completions).
 
     Failures return the localized safe unavailable copy — never raw provider,
@@ -10917,6 +11055,11 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
             "model": "hermes-agent",
             "messages": [{"role": "user", "content": prompt}],
         }
+        if reasoning_effort:
+            # Service calls (memory extraction, distillation) are structured
+            # extraction: reasoning tokens are most of their wall clock and add
+            # nothing to the output. The gateway ignores an unknown value.
+            payload["model_options"] = {"reasoning_effort": reasoning_effort}
         headers = {}
         if session_id:
             # Opt-in session continuity: gateway keeps the conversation state.

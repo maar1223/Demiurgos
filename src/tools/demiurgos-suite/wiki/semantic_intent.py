@@ -487,6 +487,10 @@ class SemanticResult:
         return result
 
 
+_SEMANTIC_REASONING_OPTIONS: dict[str, str] = {"reasoning_effort": "low"}
+"""Per-run gateway reasoning override for the semantic gate."""
+
+
 class SemanticIntentProvider:
     """Bounded semantic decision runner over one Hermes runs adapter.
 
@@ -589,9 +593,7 @@ class SemanticIntentProvider:
             "author's input. Answer the message itself; never describe the "
             "author's intent or the classification — no 'the author wants', "
             "'the user asks' or 'the assistant should'. Use a safe refusal "
-            "only for blocked), "
-            "request_id "
-            f"{json.dumps(request_id)}{session_instruction}, guided (boolean), and "
+            "only for blocked), echoed ids (see the last line), guided (boolean), and "
             "guided_explicitness (one of imperative or musing: use imperative only "
             "when the author directly commands creating or starting a guided entity "
             "— a character or a world system — for example \"crea un personaje\" or "
@@ -613,6 +615,10 @@ class SemanticIntentProvider:
             + " Never include reference, proposal, target, digest, revision, or "
             "authority fields; those are server-owned. Never write or claim "
             "approval. Author input: " + author_input
+            # Volatile ids go LAST so the whole instruction block above stays a
+            # stable prefix (prompt cache); they used to break it ~500 chars in.
+            + " Echo request_id " + json.dumps(request_id)
+            + session_instruction + " in the JSON object."
         )
 
     async def _collect_output(self, run_id: str) -> object:
@@ -687,6 +693,10 @@ class SemanticIntentProvider:
                             distilled_state, recent_turns, memory_context,
                         ),
                         session_id=session_id or "",
+                        # Classification plus one short sentence: the model does
+                        # not need to reason at length, and reasoning tokens are
+                        # most of this call's wall clock.
+                        model_options=_SEMANTIC_REASONING_OPTIONS,
                     )
                 )
                 raw_output = await self._collect_output(run_id)

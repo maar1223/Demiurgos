@@ -339,12 +339,14 @@ class TestFirstProviderTouchE2E:
             "author_input": "Freedom",
         })
         assert response.status_code == 200
+        # The REST /guided/turn route keeps the Hermes-first gate; the chat
+        # surface (/ai/ask) is the one that skips it for continuations.
         assert order == ["semantic.decide", "confirmation_decision"]
         assert runs.starts == 1
 
-    def test_typed_confirmation_first_touch_is_semantic(self, client, monkeypatch):
-        """Typed confirmation is parsed as policy ONLY after validated Hermes
-        interpretation on the /ai/ask continuation surface."""
+    def test_typed_confirmation_continuation_skips_the_gate(self, client, monkeypatch):
+        """A guided continuation is authorized by the pre-flight guards: the
+        semantic gate never runs on the /ai/ask continuation surface."""
         order = []
         runs = _SemanticRuns(_semantic_payload("allow"))
         _wire_recorder(monkeypatch, runs, order)
@@ -372,8 +374,8 @@ class TestFirstProviderTouchE2E:
             "guided_revision": confirming.revision,
         })
         assert response.status_code == 200
-        assert order == ["semantic.decide", "confirmation_decision"]
-        assert runs.starts == 1
+        assert order == ["confirmation_decision"]
+        assert runs.starts == 0
 
     def test_chat_first_touch_is_semantic(self, client, monkeypatch):
         order = []
