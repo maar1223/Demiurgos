@@ -3380,6 +3380,7 @@ def _guided_public_state(state: SessionState) -> dict:
     )
     progress = detail_progress(state.candidate.accepted_canon, plan)
     target_preview = None
+    target_level = None
     flow_profile = profile if profile is not None else _flow_profile(state)
     if flow_profile is not None:
         from guided_character_domain import candidate_minimum_complete
@@ -3387,6 +3388,9 @@ def _guided_public_state(state: SessionState) -> dict:
         if slug and candidate_minimum_complete(state.candidate):
             # Say WHERE a completed sheet would land, before the author asks.
             target_preview = f"{flow_profile.target_section}/{slug}.md"
+            # Decision B: the narrative level is explicit, never a silent 1º.
+            if flow_profile.entity_type == "personaje":
+                target_level = resolve_candidate_nivel(state.candidate)
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3433,6 +3437,8 @@ def _guided_public_state(state: SessionState) -> dict:
         payload["detail_progress"] = progress
     if target_preview is not None:
         payload["target_preview"] = target_preview
+    if target_level is not None:
+        payload["target_level"] = target_level
     return payload
 
 
@@ -3608,6 +3614,7 @@ async def _guided_continue(
     known_state = (
         _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
     )
+    flow_profile = session_flow_profile(state) if state is not None else None
     request = _compose_guided_request(
         request_id=f"guided-{uuid.uuid4().hex}",
         session_id=session_id,
@@ -3623,6 +3630,7 @@ async def _guided_continue(
         methodology=methodology,
         world_context=world_context,
         known_state=known_state,
+        flow_entity_type=flow_profile.entity_type if flow_profile is not None else "",
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
@@ -10493,6 +10501,7 @@ def _compose_guided_request(
     methodology: str | None = None,
     world_context: str = "",
     known_state: str = "",
+    flow_entity_type: str = "",
 ) -> GuidedRequest:
     """The ONE place that assembles a guided request.
 
@@ -10522,6 +10531,7 @@ def _compose_guided_request(
         methodology=methodology,
         world_context=_clamp_context_block(world_context),
         known_state=_clamp_context_block(known_state),
+        flow_entity_type=flow_entity_type,
     )
 
 

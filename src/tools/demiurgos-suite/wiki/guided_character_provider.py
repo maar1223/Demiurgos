@@ -168,6 +168,16 @@ class HermesGuidedProvider:
             if request.guided_mode == "fast" else ""
         )
         language = "Spanish" if resolve_domain_language("conversation") == "es" else "English"
+        # Decision B: the narrative level of a character must be explicit, never
+        # a silent 1º fallback. The server asks the provider to settle it early.
+        level_instruction = (
+            "Narrative level: if 'nivel' or 'rol_narrativo' is not in Known so far, "
+            "settle it before asking for deeper details — ask whether this character "
+            "is 1º principal, 2º secundario or 3º relleno, and record the answer under "
+            "'nivel'. The level decides how much detail the sheet needs; never assume "
+            "it silently. "
+            if request.flow_entity_type == "personaje" else ""
+        )
         if compiled_contract_markdown:
             methodology_context = (
                 "[Active methodology contract (server-pinned, read-only):\n"
@@ -228,6 +238,7 @@ class HermesGuidedProvider:
             f"Turn mode: {request.turn_mode}. World: {request.world}. "
             f"Guided mode: {request.guided_mode}; question depth: {request.question_depth}. "
             f"{fast_guidance}"
+            f"{level_instruction}"
             f"{methodology_context}"
             f"Known so far (never ask these again):\n{known_state}\n"
             f"World lore (verified, read-only):\n{world_lore}\n"

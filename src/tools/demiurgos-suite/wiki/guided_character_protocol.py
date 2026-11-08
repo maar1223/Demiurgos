@@ -103,6 +103,9 @@ class GuidedRequest:
     # Compact, server-owned summary of what the author already answered. It
     # keeps the provider from re-asking resolved facts (S1).
     known_state: str = ""
+    # Kernel entity shape of the pinned flow (e.g. ``personaje``). Additive:
+    # legacy pins send the empty string and get the identical prompt.
+    flow_entity_type: str = ""
 
     def _oversized_fields(self) -> list[str]:
         """Names of the bounded fields that exceed ``context_budget``."""

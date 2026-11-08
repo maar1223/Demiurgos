@@ -729,6 +729,8 @@ export interface GuidedCharacterSession {
    *  off-plan proposals so the Author sees one focused slot at a time. */
   /** Where a completed candidate would be saved (server-owned, flow section). */
   target_preview?: string | null;
+  /** Explicit narrative level of the pending sheet (1º/2º/3º, decision B). */
+  target_level?: string | null;
   detail_progress?: {
     index: number;
     total: number;
