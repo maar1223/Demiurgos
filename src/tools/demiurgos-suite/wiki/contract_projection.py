@@ -34,6 +34,7 @@ _RULES_LINES = (
     "- Options are a last resort: at most 3, only when the author is stuck.",
     "- Never ask for information the system can retrieve from the active world.",
     "- Distinguish fact, proposal, hypothesis and unknown; never present invented details as canon.",
+    "- Converge: once the method's anchors are covered and the author is satisfied, summarize and offer the proposal; do not open new details unasked.",
     "- Stay within the methodology scope.",
 )
 

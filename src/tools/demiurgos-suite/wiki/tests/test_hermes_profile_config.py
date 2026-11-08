@@ -862,3 +862,83 @@ def test_provision_model_turn_does_not_require_owned_dir(tmp_path):
     seeded = root / SEED_DIR_NAME / SEED_SKILL_NAME / "SKILL.md"
     assert seeded.is_file()
     assert "narrative-design" in seeded.read_text(encoding="utf-8")
+
+def test_merge_platform_hints_writes_replace_block(tmp_path):
+    """The Demiurgos-owned profile can replace a platform hint (S4).
+
+    The Hermes ``api_server`` default forbids markdown, so the fix must be a
+    ``replace`` spec, not an ``append`` that leaves the prohibition in place.
+    """
+    from hermes_profile_config import merge_platform_hints
+
+    config = tmp_path / "config.yaml"
+    written = merge_platform_hints(config, "api_server", replace="MARKDOWN_RENDERS")
+
+    assert written is True
+    assert _read_yaml(config)["platform_hints"]["api_server"] == {"replace": "MARKDOWN_RENDERS"}
+
+
+def test_merge_platform_hints_is_idempotent_byte_identical(tmp_path):
+    from hermes_profile_config import merge_platform_hints
+
+    config = tmp_path / "config.yaml"
+    assert merge_platform_hints(config, "api_server", replace="MD") is True
+    before = config.read_bytes()
+    assert merge_platform_hints(config, "api_server", replace="MD") is False
+    assert config.read_bytes() == before
+
+
+def test_merge_platform_hints_preserves_sibling_hints_and_keys(tmp_path):
+    from hermes_profile_config import merge_platform_hints
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "model": {"default": "keep-me"},
+                "platform_hints": {"telegram": {"append": "keep-telegram"}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    merge_platform_hints(config, "api_server", replace="MD")
+
+    data = _read_yaml(config)
+    assert data["platform_hints"]["telegram"] == {"append": "keep-telegram"}
+    assert data["platform_hints"]["api_server"] == {"replace": "MD"}
+    assert data["model"] == {"default": "keep-me"}
+
+
+def test_merge_platform_hints_coerces_non_mapping_block(tmp_path):
+    from hermes_profile_config import merge_platform_hints
+
+    config = tmp_path / "config.yaml"
+    config.write_text("platform_hints: nope\n", encoding="utf-8")
+
+    merge_platform_hints(config, "api_server", replace="MD")
+
+    assert _read_yaml(config)["platform_hints"]["api_server"] == {"replace": "MD"}
+
+
+def test_merge_platform_hints_requires_a_spec(tmp_path):
+    from hermes_profile_config import merge_platform_hints
+
+    with pytest.raises(ValueError):
+        merge_platform_hints(tmp_path / "config.yaml", "api_server")
+
+
+def test_provision_writes_api_server_markdown_hint(tmp_path):
+    """S4: the provisioned profile replaces the plain-text api_server hint."""
+    from hermes_profile_config import API_SERVER_PLATFORM_HINT, provision_test_profile
+
+    root = tmp_path / "profile"
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["platform_hints"]["api_server"] == {
+        "replace": API_SERVER_PLATFORM_HINT
+    }
+    assert "Markdown" in API_SERVER_PLATFORM_HINT
+    assert "No markdown formatting" not in API_SERVER_PLATFORM_HINT

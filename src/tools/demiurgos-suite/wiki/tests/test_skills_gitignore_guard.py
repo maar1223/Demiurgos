@@ -98,5 +98,8 @@ def test_installer_never_enables_skills_toolset():
     """Sequencing guard: the installer-written product config never enables
     `skills` in platform_toolsets.api_server (that flip belongs to Etapa 3)."""
     text = _text(INSTALL_SH)
+    # The guard's intent is the `skills` toolset only: the installer may now
+    # write the api_server platform hint (assistant response style), which is a
+    # different key. Keep the toolset and its writer out of the installer.
     assert "platform_toolsets" not in text
-    assert "api_server" not in text
+    assert "ensure_skills_toolset" not in text

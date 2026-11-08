@@ -139,6 +139,7 @@ from guided_flow import (
     GUIDED_SYSTEM_FLOW,
     GuidedFlowProfile,
     builtin_profile,
+    detail_plan_for,
     detail_progress,
     visible_proposal_key,
 )
@@ -369,6 +370,11 @@ async def _lifespan(app: FastAPI):
         _materialize_skills()
     except Exception as exc:  # noqa: BLE001 — never crash startup
         logger.warning("Skill materialization startup sweep failed: %s", exc)
+    # The assistant speaks through the ``api_server`` platform, whose stock
+    # Hermes hint forbids markdown even though the chat renders GFM. Reconcile
+    # the Demiurgos-owned replacement before the first turn; idempotent and
+    # non-fatal.
+    _sync_assistant_platform_hint()
     # The backup engine starts once the startup sweep is done, then stops on the
     # way out. A debounce deadline still pending is DROPPED, not flushed: the
     # next start's reconciliation pass catches whatever changed (SC-BE-6.3).
@@ -1490,6 +1496,31 @@ def _sync_native_channel(world: str) -> bool:
         logger.warning(
             "native channel toolset reconcile failed for world %r", world, exc_info=True
         )
+        return False
+
+
+def _sync_assistant_platform_hint() -> bool:
+    """Ensure the dedicated profile declares GFM rendering for ``api_server``.
+
+    The stock Hermes platform hint assumes a plain-text renderer and explicitly
+    forbids markdown, while the Demiurgos chat bubble renders GFM
+    (``AIAssistantSidebar`` -> ``MarkdownBody``). The idempotent writer replaces
+    that hint on the Demiurgos-owned profile; the gateway reads it at boot, so a
+    fresh install and an existing one both converge here. Never raises: a write
+    failure is logged and startup proceeds.
+    """
+    try:
+        from hermes_profile_config import API_SERVER_PLATFORM_HINT, merge_platform_hints
+
+        return bool(
+            merge_platform_hints(
+                _dedicated_profile_config_path(),
+                "api_server",
+                replace=API_SERVER_PLATFORM_HINT,
+            )
+        )
+    except Exception:  # noqa: BLE001 — never crash startup
+        logger.warning("assistant platform hint reconcile failed", exc_info=True)
         return False
 
 
@@ -3550,6 +3581,10 @@ async def _guided_continue(
     # conversation in the active world.
     world_context = _guided_world_context(mundo, state, author_input)
     known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
+    if state is not None:
+        plan_state = _guided_plan_state(state)
+        if plan_state:
+            known_state = f"{plan_state}\n{known_state}" if known_state else plan_state
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
         revision, principal.id, author_input, reference_context=reference_context,
@@ -10147,6 +10182,37 @@ def _guided_lore_query(state: SessionState | None, author_input: str) -> str:
     return "\n".join([author_input, *[text for text in recent if text.strip()]])
 
 
+def _guided_plan_state(state: Any) -> str:
+    """Server-owned progress over the finite detail plan (S5).
+
+    The provider never saw the plan, so it could not know how close the session
+    was to done and kept opening new details. This line gives it the accepted
+    coverage and the next slot; the plan itself is kernel-owned per flow.
+    Never raises: an unknown profile or candidate degrades to an empty line.
+    """
+    try:
+        profile = _flow_profile(state)
+        entity_type = profile.entity_type if profile is not None else "personaje"
+        plan = detail_plan_for(entity_type)
+        if not plan:
+            return ""
+        progress = detail_progress(state.candidate.accepted_canon, plan)
+        if progress is None:
+            return ""
+        if progress.get("complete"):
+            return (
+                "Plan: complete. Summarize and offer the proposal; do not open "
+                "new details unless the author asks."
+            )
+        covered = max(progress["index"] - 1, 0)
+        return (
+            f"Plan: {covered}/{progress['total']} details covered; next: "
+            f"{progress['slot']}. Settle this slot before opening later details."
+        )
+    except Exception:  # noqa: BLE001 — the plan line is advisory, never fatal
+        return ""
+
+
 def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
     """Compact server-owned summary of what the author already answered."""
     lines: list[str] = []
@@ -10239,6 +10305,24 @@ _GLOBAL_ASSISTANT_GUIDANCE: dict[str, str] = {
 }
 
 
+#: Platform-owned response style for the assistant chat. Appended LAST in
+#: ``_build_ai_ask_prompt`` so it applies over every routed skill method: the
+#: skill owns the content, the platform owns how the assistant converses.
+#: S1-S3 of ``odd/tasks/assistant-response-style.md``.
+_RESPONSE_STYLE_GUIDANCE = (
+    "[Response style (applies over every skill method): answer in 3-6 sentences "
+    "(~120 words); expand only when the author asks to explain, compare, "
+    "inventory or summarize, and never beyond ~180 words. Ask exactly ONE "
+    "question per turn; if it has alternatives, allow at most three inline "
+    "inside that single question — never a second question in another "
+    "paragraph. Use GitHub-flavored Markdown only when it adds structure: "
+    "**bold** for names and key terms, - bullets for inventories or steps, ## "
+    "headings only when there are three or more distinct sections. Never "
+    "decorate a one- or two-line answer. Do not restate what is already known "
+    "or re-ask a resolved fact.]"
+)
+
+
 def _build_ai_ask_prompt(
     mundo: str, body: AskRequest, ficha_context: str | None = None,
     reference_name: str | None = None,
@@ -10300,15 +10384,10 @@ def _build_ai_ask_prompt(
         if graph_ctx:
             parts.append(graph_ctx)
 
-    # Response guidance
-    parts.append(
-        "[Visible response guidance: Answer directly and concisely. Format the answer "
-        "with markdown when it adds structure: use ## headings for distinct sections, "
-        "**bold** for key names or terms, and - bullets for short lists or steps. Do not "
-        "over-format a one-line answer; keep factual answers grounded in the provided "
-        "evidence and do not repeat the full ficha or internal context. Expand only "
-        "when requested.]"
-    )
+    # Response guidance moved to the END of the prompt (see
+    # ``_RESPONSE_STYLE_GUIDANCE`` below): a style rule placed before the
+    # routed skill contract loses to it, and the last instruction wins more
+    # often. The block now overrides every skill method.
 
     if body.file_path:
         title = None
@@ -10361,6 +10440,11 @@ def _build_ai_ask_prompt(
     attachment_block = attachment_context_block(attachments or [])
     if attachment_block:
         parts.append(attachment_block)
+    # Last instruction, after every skill contract: the platform owns how the
+    # assistant converses (length, one question, restrained markdown) while the
+    # skill owns the method's content. See S1-S3 in
+    # odd/tasks/assistant-response-style.md.
+    parts.append(_RESPONSE_STYLE_GUIDANCE)
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"

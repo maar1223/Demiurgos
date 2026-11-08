@@ -142,7 +142,9 @@ class GuidedResponse:
     # collected instead of starting each question from nothing.
     observations: Mapping[str, Any] | None = None
 
-    SYNTHESIS_MAX_CHARS = 2_000
+    # Three short sentences, not six paragraphs: the public state renders this
+    # block before the question, so a 2,000-char cap produced walls of text.
+    SYNTHESIS_MAX_CHARS = 700
 
     @classmethod
     def from_provider(cls, value: object, request: GuidedRequest) -> "GuidedResponse | None":

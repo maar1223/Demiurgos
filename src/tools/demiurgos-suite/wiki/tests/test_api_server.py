@@ -2323,7 +2323,7 @@ class TestGuidedSessionDurability:
                 # assistant identity prompt naming the world.
                 assert request.prompt.startswith("[SYSTEM OVERRIDE — IDENTITY]")
                 assert "test_mundo" in request.prompt
-                assert "with markdown when it adds structure" in request.prompt
+                assert api_server._RESPONSE_STYLE_GUIDANCE in request.prompt
                 assert request.prompt.endswith("\n\nHola")
                 self.request_id = request.request_id
                 return "run-1"

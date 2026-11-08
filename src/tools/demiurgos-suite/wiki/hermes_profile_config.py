@@ -228,6 +228,87 @@ def merge_platform_disabled(config_path: Path, platform_name: str) -> bool:
     return True
 
 
+#: Platform hint written into the Demiurgos-owned Hermes profile for the
+#: ``api_server`` surface. The stock Hermes hint assumes a plain-text renderer
+#: and explicitly forbids markdown, but the Demiurgos chat bubble renders GFM
+#: (``AIAssistantSidebar`` -> ``MarkdownBody``). A ``replace`` spec is required:
+#: an ``append`` would leave the prohibition in place. The text keeps the file
+#: and media delivery contract the stock hint also carries.
+API_SERVER_PLATFORM_HINT = (
+    "You're responding through the Demiurgos API server. The rendering layer "
+    "supports GitHub-flavored Markdown: **bold**, - bullets, ## headings, "
+    "tables and code fences all render. Use Markdown only when it adds "
+    "structure; never decorate a one- or two-line answer. Treat this like a "
+    "conversation, not a document: keep responses brief and natural, and ask "
+    "at most one question per turn. File/media delivery: images referenced as "
+    "MEDIA:/absolute/path tags (.png, .jpg, .jpeg, .gif, .webp, .bmp, up to "
+    "5MB) are inlined as base64 data URLs in responses on the chat, "
+    "completions, and responses endpoints. Non-image files are NOT intercepted "
+    "anywhere, and the runs endpoint intercepts nothing — a MEDIA: tag there "
+    "renders as literal text exposing a raw host filesystem path. For those "
+    "cases, state the plain file path in your response text instead of a "
+    "MEDIA: tag."
+)
+
+
+def merge_platform_hints(
+    config_path: Path,
+    platform_name: str,
+    *,
+    replace: str | None = None,
+    append: str | None = None,
+) -> bool:
+    """Ensure ``platform_hints.<platform_name>`` carries the given spec.
+
+    Hermes resolves this top-level key through
+    ``agent/system_prompt.py:_resolve_platform_hint``: ``replace`` substitutes
+    the built-in platform hint and ``append`` adds text to it. The Demiurgos
+    owner writes a full ``replace`` for ``api_server`` because the stock hint
+    forbids markdown and an append cannot remove that prohibition.
+
+    Same idempotent-YAML shape as :func:`merge_plugins_enabled`: preserves every
+    sibling key and every other platform hint, coerces a non-mapping
+    ``platform_hints`` block, returns True when written and False when the spec
+    already matched (byte-preserving no-op). Raises ``ValueError`` when neither
+    ``replace`` nor ``append`` is supplied.
+    """
+    if replace is None and append is None:
+        raise ValueError("merge_platform_hints requires replace or append")
+    import yaml
+
+    spec: dict[str, str] = {}
+    if replace is not None:
+        spec["replace"] = replace
+    if append is not None:
+        spec["append"] = append
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    hints = data.get("platform_hints")
+    if not isinstance(hints, dict):
+        hints = {}
+        data["platform_hints"] = hints
+    if hints.get(platform_name) == spec:
+        return False
+    hints[platform_name] = spec
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path.with_name(f".{config_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+        os.replace(str(tmp), str(config_path))
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return True
+
+
 def merge_logging_level(config_path: Path, level: str) -> bool:
     """Ensure ``logging.level`` equals ``level`` (idempotent; REQ-LPH-8).
 
@@ -261,12 +342,14 @@ def merge_logging_level(config_path: Path, level: str) -> bool:
 def provision_test_profile(root: Path, repo_root: Path) -> Path:
     """Provision a dedicated ``HERMES_HOME``-layout test profile under ``root``.
 
-    Writes ``<root>/config.yaml`` with the five effects required by the live
+    Writes ``<root>/config.yaml`` with the contract required by the live
     probe's config-level evidence: the ``demiurgos-idea-capture`` plugin opt-in
     (REQ-TPP-1), the ``skills`` toolset in ``platform_toolsets.api_server``
     (REQ-TPP-2), the owned ``skills.external_dirs`` (REQ-TPP-3), a telegram-free
-    platform block (REQ-TPP-6), and ``logging.level: DEBUG`` (REQ-LPH-8) so the
-    gateway's hook-registration lines become observable in ``agent.log``.
+    platform block (REQ-TPP-6), the ``api_server`` platform hint that permits
+    GFM markdown (assistant response style), and ``logging.level: DEBUG``
+    (REQ-LPH-8) so the gateway's hook-registration lines become observable in
+    ``agent.log``.
 
     Refuses the personal ``~/.hermes`` profile and writes nothing under it
     (REQ-TPP-4, P0-8). Re-running is a no-op for all five writers. Returns the
@@ -284,6 +367,7 @@ def provision_test_profile(root: Path, repo_root: Path) -> Path:
     ensure_skills_toolset(config, enabled=True)
     merge_skills_external_dirs(config, resolve_skills_dir(repo_root))
     merge_platform_disabled(config, "telegram")
+    merge_platform_hints(config, "api_server", replace=API_SERVER_PLATFORM_HINT)
     merge_logging_level(config, "DEBUG")
     return config
 

@@ -247,6 +247,42 @@ install_demiurgos() {
     fi
 
     merge_skills_dirs
+    merge_assistant_platform_hint
+}
+
+# El hint de plataforma ``api_server`` permite markdown en el chat: la ventana
+# renderiza GFM, pero el hint stock de Hermes asume texto plano y lo prohíbe.
+# Best-effort, igual que merge_skills_dirs: sin venv/helper se avisa y se omite.
+merge_assistant_platform_hint() {
+    step "Habilitando markdown en el asistente..."
+
+    local root wiki_dir venv_python
+    root="$(checkout_root)"
+    wiki_dir="$root/$WIKI_REL"
+    venv_python="$root/.venv/bin/python"
+
+    if [ ! -x "$venv_python" ] || [ ! -f "$wiki_dir/hermes_profile_config.py" ]; then
+        warn "No hay intérprete o módulo de merge utilizable. Se omite el hint de plataforma."
+        return 0
+    fi
+
+    if "$venv_python" - "$wiki_dir" "$HERMES_CONFIG" <<'PY'
+import sys
+from pathlib import Path
+
+# Reemplaza el hint api_server que prohíbe markdown por uno que declara GFM.
+sys.path.insert(0, sys.argv[1])
+from hermes_profile_config import API_SERVER_PLATFORM_HINT, merge_platform_hints
+
+merge_platform_hints(
+    Path(sys.argv[2]), "api_server", replace=API_SERVER_PLATFORM_HINT
+)
+PY
+    then
+        ok "Markdown habilitado en el asistente"
+    else
+        warn "No se pudo escribir el hint de plataforma; el asistente seguirá en texto plano."
+    fi
 }
 
 # Registrar el directorio de skills del checkout en el perfil de producto
