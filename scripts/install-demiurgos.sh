@@ -763,7 +763,7 @@ restart_after_install() {
         printf 'install-demiurgos: restarted with %s\n' "$VERSION" >&2
         return 0
     fi
-    printf 'install-demiurgos: automatic restart failed; start manually with:\n' >&2
+    printf '%s\n' 'install-demiurgos: automatic restart failed; start it manually:' >&2
     printf '  %s/current/scripts/start-demiurgos.sh start\n' "$INSTALL_ROOT" >&2
     return 0
 }
