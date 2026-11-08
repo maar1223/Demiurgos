@@ -519,6 +519,45 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(requestGuidedReview).toHaveBeenCalled();
   });
 
+  it("shows a pending level instead of inventing one", () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 7,
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: { identidad: { value: { nombre: "Ganic" } } },
+            proposals: { oficio: "repara Dvins" },
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          target_preview: "personajes/ganic.md",
+          target_level: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.getByText("Nivel a definir")).toBeInTheDocument();
+    expect(screen.queryByText(/Ficha de .* nivel/)).not.toBeInTheDocument();
+  });
+
   it("does not surface a legacy session-metadata entry as a suggested detail", () => {
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {

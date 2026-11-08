@@ -26,6 +26,7 @@ from guided_character_domain import (  # noqa: E402
     candidate_minimum_complete,
     has_finished_exchange,
     next_required_question,
+    resolve_candidate_level,
     resolve_candidate_nivel,
 )
 from guided_character_protocol import (  # noqa: E402
@@ -361,6 +362,29 @@ def test_ficha_is_additive_v1_and_validates_slug_collisions() -> None:
         serialize_ficha(candidate, world="vibrantes", slug="aria_storm", title="Aria Storm")
     with pytest.raises(FichaValidationError):
         serialize_ficha(candidate, world="vibrantes", slug="aria-storm", title="Aria Storm", existing_targets={proposal.target})
+
+
+def test_pending_or_ambiguous_level_never_resolves_to_a_false_level() -> None:
+    """A real Ganic session stored the option menu as the answer: the parser
+    must read that as undefined, never as 2º (2026-11-08)."""
+    candidate = CandidateState(
+        proposals={"nivel": {
+            "value": "pendiente de definir (1º principal, 2º secundario o 3º relleno)",
+        }},
+        observations={"nivel_narrativo": "sin definir por el autor"},
+    )
+    assert resolve_candidate_level(candidate) is None
+    # The specimen selector keeps its locked 1º fallback.
+    assert resolve_candidate_nivel(candidate) == "1º"
+
+
+def test_explicit_level_declaration_resolves_but_a_menu_does_not() -> None:
+    assert resolve_candidate_level(
+        CandidateState(proposals={"nivel": "es un personaje secundario"}),
+    ) == "2º"
+    assert resolve_candidate_level(CandidateState(proposals={"nivel": "principal"})) == "1º"
+    assert resolve_candidate_level(CandidateState(proposals={"nivel": "1º o 2º, aún no sé"})) is None
+    assert resolve_candidate_level(CandidateState(proposals={"nivel": "2º (por definir)"})) is None
 
 
 def _state_with(*messages: tuple[MessageType, dict]) -> SessionState:
