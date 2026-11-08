@@ -47,8 +47,28 @@ def test_synthesis_is_capped_to_three_sentences():
 
     assert response is not None
     assert response.synthesis is not None
-    assert len(response.synthesis) == GuidedResponse.SYNTHESIS_MAX_CHARS
+    assert len(response.synthesis) <= GuidedResponse.SYNTHESIS_MAX_CHARS
     assert GuidedResponse.SYNTHESIS_MAX_CHARS <= 700
+    assert response.synthesis.endswith(".")
+    assert not response.synthesis.endswith("frase")
+
+
+def test_synthesis_is_not_cut_mid_word():
+    request = _request()
+    response = GuidedResponse.from_provider(
+        {
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca?",
+            "synthesis": "x" * 690 + " " + "y" * 100,
+        },
+        request,
+    )
+
+    assert response is not None
+    assert response.synthesis == "x" * 690 + "…"
 
 
 def test_projection_carries_the_convergence_rule():

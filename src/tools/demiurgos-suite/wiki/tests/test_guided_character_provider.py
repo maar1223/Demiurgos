@@ -148,6 +148,37 @@ def test_provider_prompt_follows_configured_language_without_relaxing_constraint
     asyncio.run(scenario())
 
 
+def test_provider_prompt_separates_synthesis_from_question_and_allows_gfm() -> None:
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return "run-1"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "What drives them?",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        await invoke_bounded(provider.invoke, guided_request(), capabilities)
+
+        prompt = prompts[0]
+        assert "at most 3 short sentences" in prompt
+        assert "The 'question' field is ONLY the question" in prompt
+        assert "GitHub-flavored Markdown" in prompt
+        assert "the chat renders it" in prompt
+
+    asyncio.run(scenario())
+
+
 def test_provider_prompt_focuses_on_new_relation_character_never_reference(monkeypatch) -> None:
     async def scenario() -> None:
         prompts: list[str] = []

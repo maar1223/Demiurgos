@@ -146,6 +146,32 @@ class Outcome(StrEnum):
     ERROR = "error"
 
 
+_TRUNCATION_SENTENCE_ENDS = (".", "!", "?", "\n")
+_TRUNCATION_ELLIPSIS = "…"
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    """Bound ``text`` without cutting a word in half.
+
+    A hard slice mid-word (``"…los marcará púrp"``) reads as a broken message in
+    the chat. Prefer the last complete sentence that keeps at least half the
+    budget; otherwise cut at the last word boundary and mark the elision.
+    """
+    value = text.strip()
+    if len(value) <= limit:
+        return value
+    window = value[:limit]
+    sentence_end = max(
+        (window.rfind(mark) for mark in _TRUNCATION_SENTENCE_ENDS), default=-1
+    )
+    if sentence_end >= limit // 2:
+        return window[: sentence_end + 1].rstrip()
+    word_end = window.rfind(" ")
+    if word_end > 0:
+        return window[:word_end].rstrip() + _TRUNCATION_ELLIPSIS
+    return window + _TRUNCATION_ELLIPSIS
+
+
 @dataclass(frozen=True)
 class GuidedResponse:
     protocol_version: str
@@ -195,7 +221,7 @@ class GuidedResponse:
         if synthesis is not None:
             if not isinstance(synthesis, str):
                 return None
-            synthesis = synthesis.strip()[: cls.SYNTHESIS_MAX_CHARS] or None
+            synthesis = _bounded_text(synthesis, cls.SYNTHESIS_MAX_CHARS) or None
         observations = value.get("observations")
         if observations is not None and not isinstance(observations, Mapping):
             return None
