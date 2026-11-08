@@ -674,7 +674,12 @@ def serialize_entity(
             raw = raw["value"]
         if isinstance(raw, (str, int, float)) and str(raw).strip():
             frontmatter_values[field] = raw
-    frontmatter = "---\n" + yaml.safe_dump(frontmatter_values, sort_keys=False, allow_unicode=True) + "---\n"
+    # Accents are preserved for the character flow (S3). Every other flow keeps
+    # its historical escaped frontmatter bytes exactly (S5).
+    frontmatter = "---\n" + yaml.safe_dump(
+        frontmatter_values, sort_keys=False,
+        allow_unicode=entity_type == "personaje",
+    ) + "---\n"
     def section(name: str, values: Mapping[str, Any] | list[Any]) -> str:
         if not values:
             return ""

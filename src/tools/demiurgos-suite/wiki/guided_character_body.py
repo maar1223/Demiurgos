@@ -29,6 +29,8 @@ _META_KEYS = frozenset({
     "intencion", "intent", "mundo", "world", "estado", "status",
     "fase", "phase", "modo", "mode", "nivel", "nivel_narrativo",
     "rol_narrativo", "rol narrativo", "nivel narrativo",
+    # Container records already flattened into canonical labels.
+    "identidad", "identity",
 })
 
 
@@ -191,9 +193,14 @@ def _unwrap_records(mapping: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _extra_fields(candidate: Any, consumed: set[str]) -> list[tuple[str, str]]:
-    """Unmapped accepted-canon/proposal fields, rendered instead of dropped (S2)."""
+    """Unmapped facts, rendered instead of dropped (S2).
+
+    The session keeps non-canon facts in ``observations`` too, so they are
+    included here as a last resort; internal metadata and the container records
+    already flattened into canonical labels are filtered out.
+    """
     extras: list[tuple[str, str]] = []
-    for source in (candidate.accepted_canon, candidate.proposals):
+    for source in (candidate.accepted_canon, candidate.proposals, candidate.observations):
         for key, raw in _unwrap_records(source).items():
             normalized = str(key).strip()
             if not normalized or normalized.casefold() in consumed or normalized.casefold() in _META_KEYS:

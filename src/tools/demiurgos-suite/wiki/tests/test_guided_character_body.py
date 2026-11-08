@@ -129,15 +129,34 @@ def test_unmapped_fields_fall_back_instead_of_disappearing() -> None:
     assert "- **Color favorito:** azul profundo" in body
 
 
-def test_observations_fill_canonical_labels_but_never_the_fallback_block() -> None:
+def test_observations_fill_canonical_labels_and_keep_unmapped_facts() -> None:
     candidate = CandidateState(
         proposals={"nombre": {"value": "Nara"}},
-        observations={"lugar_origen": "Ekkor", "intencion": "crear un personaje"},
+        observations={
+            "lugar_origen": "Ekkor",
+            "intencion": "crear un personaje",
+            "color_favorito": "verde",
+        },
     )
     body = render_character_body(candidate)
     assert "- **Lugar de origen:** Ekkor" in body
-    # Internal session notes are not ficha content.
+    # Internal session metadata is not ficha content.
     assert "crear un personaje" not in body
+    # A real observation that maps to no label is still kept (S2).
+    assert "## Otros datos" in body
+    assert "- **Color favorito:** verde" in body
+
+
+def test_nested_identity_record_does_not_duplicate_the_name() -> None:
+    body = render_character_body(CandidateState(
+        accepted_canon={
+            "identidad": {"value": {"nombre": "Ganic"}},
+            "deseo": {"value": "no ser una carga"},
+        },
+        proposals={"nivel": {"value": "2"}},
+    ))
+    assert "**Nombre:** Ganic" in body
+    assert "**Identidad:**" not in body
     assert "## Otros datos" not in body
 
 
@@ -184,3 +203,17 @@ def test_generic_flows_keep_the_yaml_body_unchanged() -> None:
     assert body.startswith("## Identity\n\n```yaml\n")
     assert "## Canon Anchors" in body
     assert "## Identidad Base" not in body
+
+
+def test_generic_flows_keep_their_escaped_frontmatter_bytes() -> None:
+    """S5 / high-risk item 3: accents stay escaped outside the character flow."""
+    from guided_character_domain import serialize_entity
+
+    proposal = serialize_entity(
+        CandidateState(accepted_canon={"identity": {"value": "X"}}),
+        world="w", slug="s", title="Título Ñ", entity_type="sistema",
+        target_section="lore", type_label="Sistema",
+    )
+    frontmatter = proposal.content.split("---\n", 2)[1]
+    assert 'title: "T\\xEDtulo \\xD1"' in frontmatter
+    assert "title: Título Ñ" not in frontmatter
