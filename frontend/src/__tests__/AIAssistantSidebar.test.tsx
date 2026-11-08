@@ -504,6 +504,7 @@ describe("AIAssistantSidebar single conversation", () => {
           },
           proposal: null,
           target_preview: "personajes/ganic.md",
+          target_level: "2º",
         },
       },
     }));
@@ -512,6 +513,7 @@ describe("AIAssistantSidebar single conversation", () => {
 
     expect(screen.getByText("personajes/ganic.md")).toBeInTheDocument();
     expect(screen.getByText("La ficha quedará guardada en")).toBeInTheDocument();
+    expect(screen.getByText("Ficha de 2º nivel")).toBeInTheDocument();
     const create = screen.getByRole("button", { name: "Crear la ficha" });
     await userEvent.setup().click(create);
     expect(requestGuidedReview).toHaveBeenCalled();

@@ -108,6 +108,48 @@ def test_fast_mode_prompt_is_fundamental_and_assumption_bound() -> None:
     asyncio.run(scenario())
 
 
+def test_character_flow_prompt_makes_the_narrative_level_explicit() -> None:
+    """Decision B: the level is asked, never silently assumed, and only for
+    the character flow."""
+
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return f"run-{len(prompts)}"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "What drives them?",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        base = guided_request().__dict__
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "personaje"}),
+            capabilities,
+        )
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "sistema"}),
+            capabilities,
+        )
+
+        assert "Narrative level:" in prompts[0]
+        assert "1º principal, 2º secundario or 3º relleno" in prompts[0]
+        assert "Narrative level:" not in prompts[1]
+
+    asyncio.run(scenario())
+
+
 def test_provider_prompt_follows_configured_language_without_relaxing_constraints(monkeypatch) -> None:
     async def scenario() -> None:
         prompts: list[str] = []

@@ -685,6 +685,7 @@ export const messages = {
     "guided.methodFactory": "Predeterminado (Creación de Personajes)",
     "guided.methodCurrent": "Método: {name}",
     "guided.create.where": "La ficha quedará guardada en",
+    "guided.create.level": "Ficha de {level} nivel",
     "guided.create.action": "Crear la ficha",
     "guided.create.hint":
       "Nada se escribe hasta que apruebes el diff.",
@@ -3034,6 +3035,7 @@ export const messages = {
     "guided.methodFactory": "Default (Character Creation)",
     "guided.methodCurrent": "Method: {name}",
     "guided.create.where": "The sheet will be saved at",
+    "guided.create.level": "Level {level} sheet",
     "guided.create.action": "Create the sheet",
     "guided.create.hint":
       "Nothing is written until you approve the diff. Review it first.",
