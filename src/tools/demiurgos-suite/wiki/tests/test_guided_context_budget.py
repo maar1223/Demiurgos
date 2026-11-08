@@ -188,8 +188,30 @@ def test_public_state_names_where_the_sheet_would_land() -> None:
     )
     payload = api_server._guided_public_state(state)
     assert payload["target_preview"] == "personajes/ganic.md"
-    # Decision B: the level is visible before anything is written.
-    assert payload["target_level"] == "1º"
+    # Decision B: an undecided level is exposed as None, never invented as 1º.
+    assert "target_level" in payload
+    assert payload["target_level"] is None
+
+
+def test_public_state_does_not_invent_a_level_from_the_option_menu() -> None:
+    """The real Ganic session stored the menu as 'nivel' (2026-11-08)."""
+    state = _state_with(CandidateState(
+        accepted_canon={
+            "identidad": {"value": {"nombre": "Ganic"}},
+            "deseo": {"value": "aplazado por el autor; pendiente de definir"},
+        },
+        proposals={"nivel": {
+            "value": "pendiente de definir (1º principal, 2º secundario o 3º relleno)",
+        }},
+        observations={"nivel_narrativo": "sin definir por el autor"},
+    ))
+    profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)
+    state.methodology_snapshot = MethodologySnapshot(
+        flow_type="guided-character", profile=profile.as_dict() if profile else None,
+    )
+    payload = api_server._guided_public_state(state)
+    assert payload["target_preview"] == "personajes/ganic.md"
+    assert payload["target_level"] is None
 
 
 def test_public_state_exposes_the_recorded_level() -> None:

@@ -544,7 +544,8 @@ function ChatScreen({
   // The flow-owned destination of a completed sheet, server-resolved. Showing it
   // answers "where does it go?" BEFORE anything is written (2026-11-08).
   const guidedTargetPreview = activeSession?.guided?.target_preview ?? null;
-  const guidedTargetLevel = activeSession?.guided?.target_level ?? null;
+  // `undefined` = legacy session without the field; `null` = level not decided yet.
+  const guidedTargetLevel = activeSession?.guided?.target_level;
   const visibleGuidedProposal =
     activeSession?.guided?.proposal &&
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
@@ -782,9 +783,11 @@ function ChatScreen({
 
            {guidedTargetPreview && !isSending && onGuidedReview && requestGuidedReview && (
              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
-               {guidedTargetLevel && (
+               {guidedTargetLevel !== undefined && (
                  <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
-                   {t("guided.create.level", { level: guidedTargetLevel })}
+                   {guidedTargetLevel
+                     ? t("guided.create.level", { level: guidedTargetLevel })
+                     : t("guided.create.levelPending")}
                  </p>
                )}
                <p className="text-xs text-muted">{t("guided.create.where")}</p>

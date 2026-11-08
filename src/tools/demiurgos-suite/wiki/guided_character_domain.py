@@ -167,26 +167,64 @@ def _probe_text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def resolve_candidate_nivel(candidate: CandidateState) -> str:
-    """Resolve the candidate's narrative-density label (1º/2º/3º; D4).
+#: A value that says "not decided yet" is never a level, even if it lists the
+#: option menu (the real Ganic session stored exactly that, 2026-11-08).
+_LEVEL_UNKNOWN_MARKERS = (
+    "pendiente", "sin definir", "por definir", "a definir", "no definid",
+    "sin decidir", "por decidir", "undefined", "tbd", "unknown",
+)
 
-    Probes the free-form known fields in a fixed order (first string hit
-    wins) and normalizes: ``"2"``/``"secund"`` → 2º, ``"3"``/``"rellen"`` →
-    3º, anything else or missing → 1º (locked fallback: an unknown nivel is
-    treated as the principal exemplar, R11). Stored records
-    (``{"value": …}``) are unwrapped so a real provider delta resolves too.
+_LEVEL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("1º", re.compile(
+        r"(?<!\d)1\s*[º°o]?(?!\d)|primer[oa]|principal|protagonista|primari[oa]",
+        re.IGNORECASE,
+    )),
+    ("2º", re.compile(
+        r"(?<!\d)2\s*[º°o]?(?!\d)|secundari[oa]|segund[oa]",
+        re.IGNORECASE,
+    )),
+    ("3º", re.compile(
+        r"(?<!\d)3\s*[º°o]?(?!\d)|rellen[oa]|tercer[oa]|de fondo|\bfondo\b|\bextra\b",
+        re.IGNORECASE,
+    )),
+)
+
+
+def _declared_levels(text: str) -> tuple[str, ...]:
+    return tuple(level for level, pattern in _LEVEL_PATTERNS if pattern.search(text))
+
+
+def resolve_candidate_level(candidate: CandidateState) -> str | None:
+    """The level the session explicitly declared, or ``None`` when it is undefined.
+
+    A single unambiguous declaration wins (``"es un personaje secundario"`` →
+    2º). A value that says pending/undefined, or that lists more than one level
+    (an option menu), is NOT a declaration — it would otherwise turn
+    ``"pendiente de definir (1º, 2º o 3º)"`` into a false 2º.
     """
     known = _candidate_known_fields(candidate)
     for probe in _NIVEL_PROBES:
         value = _probe_text(known.get(probe))
-        if value is not None:
-            text = value.casefold()
-            if "2" in text or "secund" in text:
-                return "2º"
-            if "3" in text or "rellen" in text:
-                return "3º"
-            return "1º"
-    return "1º"
+        if value is None:
+            continue
+        text = value.casefold()
+        if any(marker in text for marker in _LEVEL_UNKNOWN_MARKERS):
+            continue
+        levels = _declared_levels(text)
+        if len(levels) == 1:
+            return levels[0]
+    return None
+
+
+def resolve_candidate_nivel(candidate: CandidateState) -> str:
+    """Resolve the specimen selector label (1º/2º/3º; D4).
+
+    Uses the explicit declaration when there is one; an undefined or ambiguous
+    level keeps the locked 1º fallback for the specimen (R11). Use
+    :func:`resolve_candidate_level` when the caller needs to distinguish
+    "undefined" from "1º" (the destination card does).
+    """
+    return resolve_candidate_level(candidate) or "1º"
 
 
 def _identity_question(language: str) -> str:

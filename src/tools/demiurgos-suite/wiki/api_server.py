@@ -125,6 +125,7 @@ from guided_character_domain import (
     serialize_ficha,
     candidate_minimum_complete,
     has_finished_exchange,
+    resolve_candidate_level,
     resolve_candidate_nivel,
 )
 from convergence_injection import (
@@ -3381,6 +3382,7 @@ def _guided_public_state(state: SessionState) -> dict:
     progress = detail_progress(state.candidate.accepted_canon, plan)
     target_preview = None
     target_level = None
+    level_is_flow_owned = False
     flow_profile = profile if profile is not None else _flow_profile(state)
     if flow_profile is not None:
         from guided_character_domain import candidate_minimum_complete
@@ -3389,8 +3391,11 @@ def _guided_public_state(state: SessionState) -> dict:
             # Say WHERE a completed sheet would land, before the author asks.
             target_preview = f"{flow_profile.target_section}/{slug}.md"
             # Decision B: the narrative level is explicit, never a silent 1º.
+            # ``None`` means the session has not decided it yet; the card says so
+            # instead of inventing a level from the option menu.
             if flow_profile.entity_type == "personaje":
-                target_level = resolve_candidate_nivel(state.candidate)
+                target_level = resolve_candidate_level(state.candidate)
+                level_is_flow_owned = True
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3437,7 +3442,7 @@ def _guided_public_state(state: SessionState) -> dict:
         payload["detail_progress"] = progress
     if target_preview is not None:
         payload["target_preview"] = target_preview
-    if target_level is not None:
+    if level_is_flow_owned:
         payload["target_level"] = target_level
     return payload
 
