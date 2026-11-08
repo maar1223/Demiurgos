@@ -1084,3 +1084,94 @@ describe("useAIAssistantSessions dead guided session recovery", () => {
     expect(result.current.activeSession?.guided).toEqual(deadGuided);
   });
 });
+
+describe("useAIAssistantSessions failure visibility", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+  const askMock = vi.mocked(askAssistant);
+
+  const guided: GuidedCharacterSession = {
+    protocol_version: "guided-character-v1",
+    session_id: "guided-live",
+    world: "Vibrantes",
+    phase: "conversation",
+    mode: "full",
+    depth: "standard",
+    revision: 4,
+    pending_question: "¿Cuál es el deseo que define a este personaje?",
+    messages: [],
+    candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+    proposal: null,
+  };
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    askMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("surfaces the specific timeout copy instead of the generic blocked copy", async () => {
+    seedSessions([{ ...makeSession("s-timeout"), guided }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-timeout"));
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockRejectedValue(
+      new ApiError(504, "The guided provider timed out.", "The guided provider timed out.", "timeout"),
+    );
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
+    expect(texts[texts.length - 1]).toBe(CATALOGUE.es["assistant.failure.timeout"]);
+    expect(texts).not.toContain(CATALOGUE.es["assistant.blocked"]);
+    expect(result.current.activity.blockedText).toBe(CATALOGUE.es["assistant.failure.timeout"]);
+    expect(result.current.activity.retryPrompt).toBe("sigo con la historia");
+    expect(result.current.activeSession?.guided).toEqual(guided);
+  });
+
+  it("retries the failed turn without appending the user message twice", async () => {
+    seedSessions([{ ...makeSession("s-retry"), guided }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-retry"));
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock
+      .mockRejectedValueOnce(
+        new ApiError(504, "The guided provider timed out.", "The guided provider timed out.", "timeout"),
+      )
+      .mockResolvedValueOnce({ response: "Seguimos desde donde quedamos." });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    expect(result.current.activity.retryPrompt).toBe("sigo con la historia");
+    expect((result.current.activeSession?.messages ?? []).filter((m) => m.role === "user")).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.retryLastTurn?.();
+    });
+
+    const userMessages = (result.current.activeSession?.messages ?? []).filter((m) => m.role === "user");
+    expect(userMessages).toHaveLength(1);
+    const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
+    expect(texts[texts.length - 1]).toBe("Seguimos desde donde quedamos.");
+    expect(result.current.activity.retryPrompt).toBeUndefined();
+  });
+
+  it("keeps the safe blocked copy when the failure has no specific copy", async () => {
+    seedSessions([{ ...makeSession("s-unknown"), guided }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-unknown"));
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockRejectedValue(new ApiError(500, "boom", "boom", "internal"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
+    expect(texts[texts.length - 1]).toBe(CATALOGUE.es["assistant.blocked"]);
+    expect(result.current.activity.retryPrompt).toBeUndefined();
+  });
+});

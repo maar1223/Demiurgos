@@ -28,6 +28,13 @@ export const messages = {
     "assistant.health.retry": "Reintentar",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
+    "assistant.failure.timeout":
+      "El servicio de IA del asistente tardó demasiado en responder. No se realizó ninguna acción ni escritura. Inténtalo de nuevo.",
+    "assistant.failure.unavailable":
+      "El servicio de IA del asistente no está disponible en este momento. No se realizó ninguna acción ni escritura. Inténtalo de nuevo en un momento.",
+    "assistant.failure.invalidOutput":
+      "El asistente devolvió una respuesta que no se pudo validar. No se realizó ninguna acción ni escritura. Inténtalo de nuevo.",
+    "assistant.retry": "Reintentar",
 
     "common.save": "Guardar",
     "common.saving": "Guardando…",
@@ -2367,6 +2374,13 @@ export const messages = {
     "assistant.health.retry": "Retry",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
+    "assistant.failure.timeout":
+      "The assistant's AI service took too long to respond. No action or write was made. Try again.",
+    "assistant.failure.unavailable":
+      "The assistant's AI service is not available right now. No action or write was made. Try again in a moment.",
+    "assistant.failure.invalidOutput":
+      "The assistant returned a response that could not be validated. No action or write was made. Try again.",
+    "assistant.retry": "Retry",
 
     "common.save": "Save",
     "common.saving": "Saving…",

@@ -78,7 +78,7 @@ def _isolated_flow_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(
         api_server, "_GUIDED_CAPABILITIES",
-        Capabilities("guided-character-v1", True, True, True, 30_000),
+        Capabilities("guided-character-v1", True, True, True, 90_000),
     )
     monkeypatch.setattr(
         api_server, "_named_reference_context", lambda *_args: ("", False, None),

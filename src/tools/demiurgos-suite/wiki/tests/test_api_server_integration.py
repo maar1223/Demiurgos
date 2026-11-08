@@ -390,7 +390,7 @@ class TestGuidedContractProjection:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         monkeypatch.setattr(
             api_server, "_compiled_contract_markdown",
@@ -420,7 +420,7 @@ class TestGuidedContractProjection:
         )
         result = asyncio.run(invoke_bounded(
             provider, request,
-            api_server.Capabilities("guided-character-v1", True, True, True, 30000),
+            api_server.Capabilities("guided-character-v1", True, True, True, 90_000),
         ))
         assert result.outcome.value == "question"
 
@@ -447,7 +447,7 @@ class TestGuidedContinuationProbe:
 
         async def spy():
             probe_calls.append(True)
-            return api_server.Capabilities("guided-character-v1", True, True, True, 30000)
+            return api_server.Capabilities("guided-character-v1", True, True, True, 90_000)
 
         monkeypatch.setattr(api_server, "_probe_guided_capabilities", spy)
 

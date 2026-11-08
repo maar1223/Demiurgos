@@ -1702,7 +1702,7 @@ class TestAiAsk:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         runs = _SemanticRuns(
             _continuation_semantic_payload("require_confirmation"),
@@ -1777,7 +1777,7 @@ class TestAiAsk:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         runs = _SemanticRuns(
             _continuation_semantic_payload("require_confirmation"),
@@ -1877,7 +1877,7 @@ class TestAiAsk:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         runs = _SemanticRuns(
             _continuation_semantic_payload("require_confirmation"),
@@ -1931,7 +1931,7 @@ class TestAiAsk:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         monkeypatch.setattr(api_server, "_get_graph", lambda _world: (_ for _ in ()).throw(RuntimeError("index unavailable")))
         runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
@@ -1973,7 +1973,7 @@ class TestGuidedSessionDurability:
         if provider is not None:
             monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
             monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-                "guided-character-v1", True, True, True, 30000,
+                "guided-character-v1", True, True, True, 90_000,
             ))
         if semantic_payloads:
             _wire_semantic_provider(monkeypatch, _SemanticRuns(*semantic_payloads))
@@ -2147,7 +2147,7 @@ class TestGuidedSessionDurability:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
         runs = _SemanticRuns(
@@ -2213,7 +2213,7 @@ class TestGuidedSessionDurability:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
         runs = _SemanticRuns(
@@ -2606,7 +2606,7 @@ class TestMethodologyApi:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         _wire_semantic_provider(monkeypatch, _SemanticRuns(
             _semantic_payload("allow"), _semantic_payload("allow"), _semantic_payload("allow"),
@@ -2633,7 +2633,7 @@ class TestMethodologyApi:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         _wire_semantic_provider(monkeypatch, _SemanticRuns(
             _semantic_payload("allow"), _semantic_payload("allow"), _semantic_payload("allow"),
@@ -4540,7 +4540,7 @@ class TestSemanticSingleRunContinuation:
 
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
             confirmed = client.post("/api/test_mundo/ai/ask", json={

@@ -125,6 +125,7 @@ interface ChatScreenProps {
   activity: ReturnType<typeof useAIAssistantSessions>["activity"];
   evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
   sendMessage: (prompt: string) => void;
+  retryLastTurn?: () => Promise<void>;
   attachDocument: (file: File) => Promise<void>;
   removeAttachment: (attachmentId: string) => void;
   attaching: ReturnType<typeof useAIAssistantSessions>["attaching"];
@@ -255,6 +256,7 @@ function ChatScreen({
   activity,
   evidence,
   sendMessage,
+  retryLastTurn,
   attachDocument,
   removeAttachment,
   attaching,
@@ -923,7 +925,20 @@ function ChatScreen({
           aria-label={t("assistant.blocked.aria")}
           className="mx-4 mb-2 rounded-md border border-action/30 bg-action/10 px-3 py-1.5 text-xs leading-relaxed text-primary"
         >
-          {semanticBlockedText(isSpanish ? "es" : "en")}
+          <div className="flex items-start gap-2">
+            <p className="flex-1">
+              {activity.blockedText ?? semanticBlockedText(isSpanish ? "es" : "en")}
+            </p>
+            {activity.retryPrompt && retryLastTurn && (
+              <button
+                type="button"
+                onClick={() => void retryLastTurn()}
+                className="shrink-0 rounded-md px-2 py-0.5 font-medium text-primary underline-offset-2 hover:underline"
+              >
+                {t("assistant.retry")}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1307,6 +1322,7 @@ export function AIAssistantSidebar({
           activity={sessions.activity}
           evidence={sessions.evidence}
           sendMessage={sessions.sendMessage}
+          retryLastTurn={sessions.retryLastTurn}
           attachDocument={sessions.attachDocument}
           removeAttachment={sessions.removeAttachment}
           attaching={sessions.attaching}

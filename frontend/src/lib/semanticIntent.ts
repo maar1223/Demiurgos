@@ -1,10 +1,11 @@
+import { ApiError } from "@/api/types";
 import type {
   AppLanguage,
   EditProposal,
   GuidedCharacterSession,
   GuidedFlowEcho,
 } from "@/api/types";
-import { translate } from "@/i18n/messages";
+import { translate, type MessageKey } from "@/i18n/messages";
 
 /**
  * Client-side semantic intent mapping.
@@ -27,6 +28,52 @@ export const SEMANTIC_BLOCKED_BY_LANGUAGE: Record<AppLanguage, string> = {
 /** Localized fail-closed copy; Spanish by default. Never provider/internal terms. */
 export function semanticBlockedText(language: AppLanguage = "es"): string {
   return translate(language, "assistant.blocked");
+}
+
+type AssistantFailureKey = Extract<
+  MessageKey,
+  | "assistant.failure.timeout"
+  | "assistant.failure.unavailable"
+  | "assistant.failure.invalidOutput"
+>;
+
+/**
+ * Map a transport/HTTP failure from an assistant turn to its specific,
+ * localized copy. The catalogue guarantees the no-action promise; unknown
+ * failures keep the generic blocked copy so a raw backend string never leaks.
+ */
+function assistantFailureKey(error: unknown): AssistantFailureKey | null {
+  if (!(error instanceof ApiError)) return null;
+  switch (error.code) {
+    case "timeout":
+    case "network.timeout":
+      return "assistant.failure.timeout";
+    case "provider_unavailable":
+    case "capability_unavailable":
+      return "assistant.failure.unavailable";
+    case "malformed_output":
+    case "invalid_output":
+      return "assistant.failure.invalidOutput";
+    default:
+      if (error.status === 504) return "assistant.failure.timeout";
+      if (error.status === 503) return "assistant.failure.unavailable";
+      if (error.status === 502) return "assistant.failure.invalidOutput";
+      return null;
+  }
+}
+
+/** Specific, localized copy for a failed assistant turn. */
+export function assistantFailureText(
+  error: unknown,
+  language: AppLanguage = "es",
+): string {
+  const key = assistantFailureKey(error);
+  return key ? translate(language, key) : semanticBlockedText(language);
+}
+
+/** A failed turn is retryable only when its cause has a specific, transient copy. */
+export function isRetryableAssistantFailure(error: unknown): boolean {
+  return assistantFailureKey(error) !== null;
 }
 
 /** Spanish-default blocked copy (backward-compatible constant). */

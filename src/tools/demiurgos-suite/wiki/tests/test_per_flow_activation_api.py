@@ -158,7 +158,7 @@ class TestPerFlowActivationApi:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", _delta_guided_provider())
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         _wire_semantic_provider(
             monkeypatch, _SemanticRuns(*([_semantic_payload("allow")] * payloads))

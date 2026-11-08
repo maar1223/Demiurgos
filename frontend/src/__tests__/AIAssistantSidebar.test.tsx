@@ -851,6 +851,33 @@ describe("AIAssistantSidebar semantic decision UX", () => {
     expect(screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" })).not.toBeInTheDocument();
   });
 
+  it("renders the specific failure copy with a retry action", async () => {
+    const retryLastTurn = vi.fn(async () => {});
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activity: {
+        accepted: true,
+        items: [],
+        status: "complete",
+        warning: null,
+        availability: "unavailable",
+        blocked: true,
+        blockedText: "El servicio de IA del asistente tardó demasiado en responder. No se realizó ninguna acción ni escritura. Inténtalo de nuevo.",
+        retryPrompt: "sigo con la historia",
+      },
+      retryLastTurn,
+    }));
+    const user = userEvent.setup();
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={vi.fn()} />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      "El servicio de IA del asistente tardó demasiado en responder. No se realizó ninguna acción ni escritura. Inténtalo de nuevo.",
+    );
+    await user.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(retryLastTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("hides the fail-closed alert while the assistant is sending", () => {
     useSessionsMock.mockReturnValue(createSessionsState({
       isSending: true,

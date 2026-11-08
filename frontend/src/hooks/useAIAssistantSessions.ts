@@ -28,7 +28,13 @@ import { askAssistant } from "@/api/wiki";
 import { attachmentKindFromName, uploadChatAttachment } from "@/api/chatAttachments";
 import { MAX_ATTACHMENTS_PER_TURN } from "@/api/chatAttachments";
 import { localizeApiError } from "@/i18n/errors";
-import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
+import {
+  assistantFailureText,
+  isRetryableAssistantFailure,
+  mapSemanticDecision,
+  semanticBlockedText,
+  isUsableGuidedSession,
+} from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface Message {
@@ -95,6 +101,10 @@ export interface AssistantActivityState {
   availabilityReason?: AssistantActivityUnavailableReason;
   /** Fail-closed turn: the semantic decision was blocked, missing, or malformed. */
   blocked?: boolean;
+  /** Specific localized copy for the blocked/alert banner, when known. */
+  blockedText?: string;
+  /** The prompt of a failed turn that can be safely retried without duplicating it. */
+  retryPrompt?: string;
 }
 
 export interface AIAssistantSessionsResult {
@@ -109,6 +119,8 @@ export interface AIAssistantSessionsResult {
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   sendMessage: (prompt: string) => Promise<void>;
+  /** Re-send the prompt of the last failed turn without appending it again. */
+  retryLastTurn?: () => Promise<void>;
   attachDocument: (file: File) => Promise<void>;
   removeAttachment: (attachmentId: string) => void;
   /** The file currently uploading/analyzing, or null (S18). */
@@ -342,6 +354,8 @@ export function useAIAssistantSessions(
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
+  /** Prompt of the last failed turn; only set for causes a retry can fix. */
+  const retryPromptRef = useRef<string | null>(null);
 
   // Persist sessions whenever they change
   useEffect(() => {
@@ -473,9 +487,11 @@ export function useAIAssistantSessions(
   );
 
   const sendMessage = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, options?: { appendUser?: boolean }) => {
       const trimmed = prompt.trim();
       if (!trimmed || isSending) return;
+      const appendUser = options?.appendUser !== false;
+      retryPromptRef.current = null;
 
       // Auto-create a session if none is active
       let sessionId = activeSessionId;
@@ -499,32 +515,35 @@ export function useAIAssistantSessions(
         ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
       };
 
-      // Add user message and update title on first message
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                messages: [...s.messages, userMessage],
-                // Sent once: the message keeps the record for display, and the
-                // attachment leaves the composer queue. Follow-up turns rely on
-                // the runtime's conversation history instead of re-injecting
-                // the attachment content on every message (S7/S20).
-                attachments: [],
-                // Structural default-title check: fires for every language
-                // and for legacy mojibake drafts (AD-12, SES-REQ-2).
-                title: isDefaultTitle(s.title, s.titleIsDefault)
-                  ? truncateTitle(trimmed, defaultTitle)
-                  : s.title,
-                titleIsDefault: false,
-                // Sending another message counts as "keep chatting": the
-                // pending suggestion is dismissed (REQ-GFC-06).
-                consentToken: undefined,
-                consentFlow: undefined,
-              }
-            : s,
-        ),
-      );
+      // Add user message and update title on first message. A retry reuses the
+      // failed turn's prompt, so it must not append (or re-title) again.
+      if (appendUser) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId
+              ? {
+                  ...s,
+                  messages: [...s.messages, userMessage],
+                  // Sent once: the message keeps the record for display, and the
+                  // attachment leaves the composer queue. Follow-up turns rely on
+                  // the runtime's conversation history instead of re-injecting
+                  // the attachment content on every message (S7/S20).
+                  attachments: [],
+                  // Structural default-title check: fires for every language
+                  // and for legacy mojibake drafts (AD-12, SES-REQ-2).
+                  title: isDefaultTitle(s.title, s.titleIsDefault)
+                    ? truncateTitle(trimmed, defaultTitle)
+                    : s.title,
+                  titleIsDefault: false,
+                  // Sending another message counts as "keep chatting": the
+                  // pending suggestion is dismissed (REQ-GFC-06).
+                  consentToken: undefined,
+                  consentFlow: undefined,
+                }
+              : s,
+          ),
+        );
+      }
 
       setIsSending(true);
       setError(null);
@@ -613,6 +632,7 @@ export function useAIAssistantSessions(
             blocked: true,
             status: "complete",
             availability: "unavailable",
+            blockedText: outcome.text,
           }));
           return;
         }
@@ -623,7 +643,7 @@ export function useAIAssistantSessions(
         appendAssistantMessage(outcome.text);
       };
 
-      const applyBlocked = (text: string, unavailable: boolean) => {
+      const applyBlocked = (text: string, unavailable: boolean, retryPrompt?: string) => {
         appendAssistantMessage(text);
         setActivity((current) => ({
           ...current,
@@ -631,6 +651,8 @@ export function useAIAssistantSessions(
           blocked: true,
           availability: unavailable ? "unavailable" : current.availability,
           status: "complete",
+          blockedText: text,
+          ...(retryPrompt ? { retryPrompt } : {}),
         }));
       };
 
@@ -666,6 +688,7 @@ export function useAIAssistantSessions(
           blocked: true,
           availability: "unavailable",
           status: "complete",
+          blockedText: t("assistant.session.lost"),
         }));
       };
 
@@ -746,7 +769,13 @@ export function useAIAssistantSessions(
               recoverFromLostGuided();
               return;
             }
-            applyBlocked(semanticBlockedText(language), true);
+            const retryable = isRetryableAssistantFailure(legacyError);
+            if (retryable) retryPromptRef.current = trimmed;
+            applyBlocked(
+              assistantFailureText(legacyError, language),
+              true,
+              retryable ? trimmed : undefined,
+            );
           }
         } else if (
           streamedAnswer !== null &&
@@ -761,7 +790,13 @@ export function useAIAssistantSessions(
         } else if (isLostGuidedSession(err)) {
           recoverFromLostGuided();
         } else {
-          applyBlocked(semanticBlockedText(language), true);
+          const retryable = isRetryableAssistantFailure(err);
+          if (retryable) retryPromptRef.current = trimmed;
+          applyBlocked(
+            assistantFailureText(err, language),
+            true,
+            retryable ? trimmed : undefined,
+          );
         }
       } finally {
         if (activityAbortRef.current === controller) activityAbortRef.current = null;
@@ -858,8 +893,8 @@ export function useAIAssistantSessions(
         setError(t("assistant.consent.expired"));
         return;
       }
-      // Fail closed: keep the suggestion and surface the safe copy.
-      setError(semanticBlockedText(language));
+      // Fail closed: keep the suggestion and surface the specific safe copy.
+      setError(assistantFailureText(err, language));
     }
   }, [activeSession, activeSessionId, contextMundo, language, t]);
 
@@ -875,6 +910,13 @@ export function useAIAssistantSessions(
 
   const cancelSend = useCallback(() => activityAbortRef.current?.abort(), []);
 
+  /** Re-send the failed prompt without appending a second user message. */
+  const retryLastTurn = useCallback(async () => {
+    const prompt = retryPromptRef.current;
+    if (!prompt || isSending) return;
+    await sendMessage(prompt, { appendUser: false });
+  }, [isSending, sendMessage]);
+
   return {
     sessions,
     activeSession,
@@ -887,6 +929,7 @@ export function useAIAssistantSessions(
     switchSession,
     deleteSession,
     sendMessage,
+    retryLastTurn,
     attachDocument,
     removeAttachment,
     attaching,

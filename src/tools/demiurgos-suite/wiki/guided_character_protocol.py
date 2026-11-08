@@ -17,8 +17,11 @@ from guided_flow import GuidedFlowProfile
 
 
 PROTOCOL_VERSION = "guided-character-v1"
-DEFAULT_DEADLINE_MS = 30_000
-MAX_DEADLINE_MS = 30_000
+# Guided turns are full model runs; observed latencies (31s, p95 ~63s) exceed
+# the former 30s ceiling and cancelled otherwise valid answers. Keep a single
+# bounded default and maximum so validation never widens implicitly.
+DEFAULT_DEADLINE_MS = 90_000
+MAX_DEADLINE_MS = 90_000
 
 
 class ErrorCode(StrEnum):

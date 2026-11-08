@@ -153,7 +153,7 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(
         api_server,
         "_named_reference_context",
@@ -220,7 +220,7 @@ def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatc
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=1)
 
@@ -249,7 +249,7 @@ def test_fast_guided_start_exposes_server_owned_mode_and_keeps_proposal_diskless
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=1)
 
     started = client.post("/api/vibrantes/guided-character/session", json={
@@ -290,7 +290,7 @@ def test_guided_start_accepts_descriptive_character_seeds(monkeypatch, tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
     for seed in ("Un guerrero de las sombras", "Un personaje llamado Aria"):
@@ -324,7 +324,7 @@ def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch, tm
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(
         api_server, "_named_reference_context",
         lambda *_args: ("Verified reference: Rhyz\nFacts: Patient tactician.", False, "Rhyz"),
@@ -373,7 +373,7 @@ def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkey
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
     started = client.post("/api/vibrantes/guided-character/session", json={
@@ -417,7 +417,7 @@ def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch, tmp
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
     started = client.post("/api/vibrantes/guided-character/session", json={
@@ -453,7 +453,7 @@ def test_relationship_start_requires_confirmation_and_acceptance_enters_provider
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=3)
 
@@ -496,7 +496,7 @@ def test_relationship_confirmation_decline_is_terminal_and_non_mutating(monkeypa
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=3)
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create Rhyz's spouse"}).json()
@@ -531,7 +531,7 @@ def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch, tmp
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(
         api_server, "_named_reference_context",
         lambda *_args: ("Verified reference: Rhyz\nFacts: Patient tactician.", False, "Rhyz"),
@@ -582,7 +582,7 @@ def test_english_relation_goal_follows_configured_language(monkeypatch, tmp_path
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(
         api_server, "_named_reference_context",
         lambda *_args: ("Verified reference: Rhyz\nFacts: Patient tactician.", False, "Rhyz"),
@@ -619,7 +619,7 @@ def test_plain_character_start_never_invents_a_relation(monkeypatch, tmp_path) -
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=1)
 
@@ -645,7 +645,7 @@ def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatc
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     monkeypatch.setattr(api_server, "_run_hermes", prose)
     semantic_runs = _SemanticRuns({
@@ -675,7 +675,7 @@ def test_confirmation_text_follows_configured_language_in_both_entry_paths(monke
         monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
         monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
         semantic_runs = _SemanticRuns(
             {
@@ -760,7 +760,7 @@ def test_guided_start_normalizes_structured_question_for_public_state(monkeypatc
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", HermesGuidedProvider(Runs()))
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=1)
 
     response = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
@@ -779,7 +779,7 @@ def test_guided_start_rejects_explicit_edit_requests(monkeypatch, tmp_path) -> N
     sessions = GuidedSessionStore()
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", object())
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=10)
 
     for edit_term in (
@@ -865,7 +865,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
@@ -1034,7 +1034,7 @@ def test_guided_flow_gates_semantic_then_guarded(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
 
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
@@ -1336,7 +1336,7 @@ def test_guided_start_fails_closed_when_semantic_unavailable(monkeypatch, tmp_pa
     sessions = GuidedSessionStore()
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", object())
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     monkeypatch.setattr(api_server, "route_new_character_intent", lambda *a, **k: lexical.append("lexical") or None)
 
@@ -1400,7 +1400,7 @@ def test_guided_start_semantic_decides_before_lexical_policy(monkeypatch, tmp_pa
         }
 
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     runs = _guided_semantic_allow(monkeypatch, count=1)
     provider_semantic = api_server._SEMANTIC_PROVIDER
     original_decide = provider_semantic.decide
@@ -1439,7 +1439,7 @@ def test_guided_turn_semantic_decides_before_confirmation_policy(monkeypatch, tm
     confirming = sessions.begin_confirmation("guided-1", "author-1", "Crea un personaje", "¿Sí o no?")
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", None)
-    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 30000))
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     runs = _guided_semantic_allow(monkeypatch, count=1)
     provider_semantic = api_server._SEMANTIC_PROVIDER
     original_decide = provider_semantic.decide
@@ -1544,7 +1544,7 @@ class TestConvergenceSpecimenB5:
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
-            "guided-character-v1", True, True, True, 30000,
+            "guided-character-v1", True, True, True, 90_000,
         ))
         if library is not None:
             monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
@@ -1752,7 +1752,7 @@ def test_guided_continuation_driven_by_native_skill_body_when_channel_native(
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
-        "guided-character-v1", True, True, True, 30000,
+        "guided-character-v1", True, True, True, 90_000,
     ))
 
     asyncio.run(api_server._guided_continue(
@@ -1799,7 +1799,7 @@ def test_guided_path_single_channel_flag_on_and_byte_identical_flag_off(
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", off_store)
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", off_provider)
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
-        "guided-character-v1", True, True, True, 30000,
+        "guided-character-v1", True, True, True, 90_000,
     ))
     assert api_server._active_channel_state() == "legacy"
     baseline = api_server._compiled_contract_markdown(

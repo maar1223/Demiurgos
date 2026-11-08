@@ -3494,8 +3494,14 @@ def _guided_principal(request: Request) -> tuple[EditPrincipal | None, JSONRespo
 
 def _guided_result(response, state: SessionState | None):
     if response.error:
+        logger.warning(
+            "guided turn failed: code=%s retryable=%s",
+            response.error.code.value,
+            response.error.retryable,
+        )
         return _guided_error_response(response.error)
     if state is None:
+        logger.warning("guided turn failed: stale session revision")
         return _guided_error_response(StructuredError(
             ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
         ))

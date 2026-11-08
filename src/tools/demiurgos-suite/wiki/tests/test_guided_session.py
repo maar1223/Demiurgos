@@ -48,7 +48,7 @@ def test_capabilities_require_exact_guided_contract() -> None:
 
 
 def test_default_deadline_uses_allowed_maximum_without_widening_validation() -> None:
-    assert request().deadline_ms == MAX_DEADLINE_MS == DEFAULT_DEADLINE_MS == 30_000
+    assert request().deadline_ms == MAX_DEADLINE_MS == DEFAULT_DEADLINE_MS == 90_000
     invalid = GuidedRequest(**{**request().__dict__, "deadline_ms": MAX_DEADLINE_MS + 1})
     error = invalid.validate()
     assert error and error.code is ErrorCode.INVALID_INPUT

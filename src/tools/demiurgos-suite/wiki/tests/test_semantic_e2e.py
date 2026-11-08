@@ -293,7 +293,7 @@ class TestFirstProviderTouchE2E:
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
         monkeypatch.setattr(
             api_server, "_GUIDED_CAPABILITIES",
-            api_server.Capabilities("guided-character-v1", True, True, True, 30000),
+            api_server.Capabilities("guided-character-v1", True, True, True, 90_000),
         )
         real_route = api_server.route_guided_intent
 
@@ -325,7 +325,7 @@ class TestFirstProviderTouchE2E:
         monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", None)
         monkeypatch.setattr(
             api_server, "_GUIDED_CAPABILITIES",
-            api_server.Capabilities("guided-character-v1", True, True, True, 30000),
+            api_server.Capabilities("guided-character-v1", True, True, True, 90_000),
         )
 
         def recorded_confirmation(*args, **kwargs):
