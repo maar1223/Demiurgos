@@ -131,6 +131,15 @@ describe("LoginScreen (credentials vault mode)", () => {
     await waitFor(() => expect(reloadPage).toHaveBeenCalled());
   });
 
+  it("focuses the only text field so the author can type without clicking", async () => {
+    mockCredentialsRoutes();
+
+    renderLogin();
+
+    const password = await screen.findByLabelText("Contraseña");
+    await waitFor(() => expect(password).toHaveFocus());
+  });
+
   it("logs in passwordless: hides the password field and omits it from the body", async () => {
     const fetchMock = mockCredentialsRoutes({
       "/api/auth/session/status": {

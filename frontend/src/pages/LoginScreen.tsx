@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -264,6 +264,14 @@ function CredentialsLogin({
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const passwordRef = useRef<HTMLInputElement | null>(null);
+
+  // The password field is the only input on this blocking screen: focus it on
+  // mount so the author can type straight away instead of clicking it first.
+  useEffect(() => {
+    if (hasPassword === false || recoveryOpen) return;
+    passwordRef.current?.focus();
+  }, [hasPassword, recoveryOpen]);
 
   if (recoveryOpen) {
     return (
@@ -291,6 +299,7 @@ function CredentialsLogin({
               {t("login.password")}
             </label>
             <input
+              ref={passwordRef}
               id="credentials-password"
               type="password"
               autoComplete="current-password"
