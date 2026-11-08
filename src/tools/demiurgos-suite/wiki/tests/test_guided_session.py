@@ -148,6 +148,53 @@ def delta_provider(payload: dict) -> Callable[..., Awaitable[object]]:
     return provider
 
 
+def test_incomplete_delta_is_kept_as_observations_and_keeps_its_synthesis() -> None:
+    """A demoted delta must not be thrown away, and must not become public.
+
+    The gate still asks one focused question, but the author's data survives as
+    an internal observation and the provider's synthesis stays on the message.
+    """
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+
+        async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+            return {"protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                    "session_id": req.session_id, "outcome": "delta",
+                    "delta": {"relation": "brother of Rhyz", "scene": "a storm at sea"},
+                    "synthesis": "Queda que es hermano de Rhyz."}
+
+        response, state = await continue_session(store, provider, request(), capabilities())
+        assert response.outcome is Outcome.QUESTION
+        assert response.synthesis == "Queda que es hermano de Rhyz."
+        assert state and state.pending_question == response.question
+        assert state.candidate.proposals == {}
+        assert state.candidate.accepted_canon == {}
+        assert state.candidate.observations["relation"] == "brother of Rhyz"
+        assert state.candidate.observations["scene"] == "a storm at sea"
+
+    asyncio.run(scenario())
+
+
+def test_a_demoted_delta_stops_the_gate_from_reasking_the_same_fact() -> None:
+    """Round trip: the name collected in turn one is never asked again."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+        _, first = await continue_session(store, delta_provider({"nombre": "Ganic"}), request(), capabilities())
+        assert first and first.candidate.observations["nombre"] == "Ganic"
+        assert "deseo" in (first.pending_question or "").casefold()
+
+        response, second = await continue_session(
+            store, delta_provider({"oficio": "repara Dvins"}), request(1), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert response.question and "llama" not in response.question.casefold()
+        assert second and second.candidate.observations["oficio"] == "repara Dvins"
+
+    asyncio.run(scenario())
+
+
 def test_full_mode_incomplete_delta_is_converted_to_one_focused_question() -> None:
     """Vague backstory data must keep asking one focused question, never a proposal."""
     async def scenario() -> None:

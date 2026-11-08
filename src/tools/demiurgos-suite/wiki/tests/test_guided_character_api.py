@@ -1150,6 +1150,11 @@ def test_semantic_proposal_ready_with_incomplete_delta_asks_one_question(monkeyp
     assert "proposal" not in envelope and "target" not in envelope and "digest" not in envelope
     assert semantic_runs.starts == 1
     assert not (tmp_path / "vibrantes" / "personajes").exists()
+    # The demoted delta is the author's data: preserved internally, never public.
+    recovered = api_server._GUIDED_SESSIONS.recover(envelope["guided_session_id"], "author-1")
+    assert recovered is not None
+    assert recovered.candidate.observations["relation"] == "brother of Rhyz"
+    assert recovered.candidate.observations["scene"] == "a storm at sea"
 
 
 # ---------------------------------------------------------------------------

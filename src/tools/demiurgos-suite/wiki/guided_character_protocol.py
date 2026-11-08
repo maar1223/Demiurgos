@@ -423,11 +423,18 @@ class GuidedSessionStore:
                 next_state.revision,
             ))
         next_state.revision += 1
+        content: dict[str, object] = {"question": response.question} if response.question else dict(response.delta or {})
+        if response.synthesis:
+            content["synthesis"] = response.synthesis
         next_state.messages.append(TypedMessage(
             MessageType.ASSISTANT_RESPONSE if response.outcome is Outcome.QUESTION else MessageType.PROPOSAL,
-            {"question": response.question} if response.question else dict(response.delta or {}), next_state.revision,
+            content, next_state.revision,
         ))
         next_state.pending_question = response.question
+        if response.observations:
+            # Internal notes: never a public proposal, always available to the
+            # gate and to the next provider run.
+            next_state.candidate.observations.update(dict(response.observations))
         if response.outcome is Outcome.DELTA and response.delta:
             # Keep provider deltas outside canon and attach their provenance.
             from guided_character_domain import apply_delta
@@ -580,9 +587,19 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                 question_keys=profile.question_keys if profile is not None else None,
                 ui_copy_key=profile.ui_copy_key if profile is not None else None,
             )
+            # Demoting a delta must not throw the author's data away. The fields
+            # move to the internal observations partition (read back into
+            # known_state and into the gate, never a public proposal) and the
+            # provider's synthesis stays on the message so the author still sees
+            # the summary above the question.
+            preserved = dict(response.observations or {})
+            if response.delta:
+                preserved.update(response.delta)
             response = GuidedResponse(
                 PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
                 Outcome.QUESTION, provenance=response.provenance, question=question,
                 provider_run_id=response.provider_run_id,
+                synthesis=response.synthesis,
+                observations=preserved or None,
             )
     return response, store.commit(request, response)

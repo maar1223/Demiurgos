@@ -180,6 +180,23 @@ def test_candidate_minimum_complete_requires_identity_and_desire() -> None:
     assert candidate_minimum_complete(CandidateState(accepted_canon={"name": "Pert", "desire": "freedom"}))
 
 
+def test_candidate_minimum_complete_counts_observed_facts() -> None:
+    """Facts the provider noted in `observations` are known, not missing.
+
+    The guided provider is told to keep what it collects in `observations`;
+    the gate used to read only canon and proposals, so it re-asked a name the
+    session already held (live session guided-f74775..., 2026-11-08).
+    """
+    candidate = CandidateState(observations={"nombre": "Ganic", "deseo": "no ser una carga"})
+    assert candidate_minimum_complete(candidate)
+    assert candidate_minimum_complete(CandidateState(observations={"nombre": "Ganic"}), delta={"deseo": "x"})
+    question = next_required_question(
+        CandidateState(observations={"nombre": "Ganic"}), language="es",
+    )
+    assert "llama" not in question.casefold()
+    assert "deseo" in question.casefold()
+
+
 def test_candidate_minimum_complete_considers_incoming_delta() -> None:
     assert candidate_minimum_complete(CandidateState(), delta={"name": "Pert", "desire": "freedom"})
     assert not candidate_minimum_complete(CandidateState(), delta={"age": "~30"})

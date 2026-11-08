@@ -9660,6 +9660,9 @@ async def _semantic_proposal_continuation(
             PROTOCOL_VERSION, commit_request.request_id, commit_request.session_id,
             commit_request.base_revision, Outcome.QUESTION,
             provenance=(f"semantic:run:{result.request_id}",), question=question,
+            # The demoted delta is the author's own data: keep it as an internal
+            # observation so the next turn (and the gate) still sees it.
+            observations=dict(delta) or None,
         )
         state = _GUIDED_SESSIONS.commit(commit_request, question_response)
         if state is None:

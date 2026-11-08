@@ -81,10 +81,21 @@ MINIMUM_DESIRE_FIELDS = ("desire", "deseo", "motivacion", "motivations", "motiva
 
 
 def _candidate_known_fields(candidate: CandidateState, delta: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Every fact the session already holds, whatever partition it lives in.
+
+    The provider keeps what it collects in ``observations`` (they are internal
+    notes, never public proposals). The completeness gate must read them too, or
+    a session that already knows the character's name keeps being asked for it.
+    Canon and proposals win over observations when a key exists in both.
+    """
     known = dict(candidate.accepted_canon)
     known.update(candidate.proposals)
     if delta:
         known.update(delta)
+    observations = getattr(candidate, "observations", None)
+    if isinstance(observations, Mapping):
+        for key, value in observations.items():
+            known.setdefault(key, value)
     return known
 
 
