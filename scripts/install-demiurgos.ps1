@@ -683,6 +683,24 @@ function Install-StartMenuShortcut {
     }
 }
 
+# The in-app updater sets DEMIURGOS_RESTART_AFTER_INSTALL=1: the installer is
+# detached, flips `current`, and must bring the stack up on the new bytes so the
+# running process does not keep serving the previous version. A manual/fresh
+# install leaves the flag unset and keeps the historical "start it yourself"
+# behavior.
+function Restart-StackAfterInstall {
+    Write-Host "install-demiurgos: restarting to apply $version"
+    $launcher = Join-Path $installRoot "current\scripts\start-demiurgos.ps1"
+    try {
+        & powershell.exe -NoProfile -File $launcher restart
+        if ($LASTEXITCODE -ne 0) { throw "launcher exit $LASTEXITCODE" }
+        Write-Host "install-demiurgos: restarted with $version"
+    } catch {
+        Write-Host "install-demiurgos: automatic restart failed; start manually with:"
+        Write-Host "  $launcher start"
+    }
+}
+
 # --- seed-only entry point (S0-A; test/ops seam) -----------------------------
 # DEMIURGOS_SEED_ONLY=1 performs ONLY the data-root bootstrap-once + .env seed
 # (design S3-7) and exits 0 - the exact code path the full install runs at the
@@ -731,6 +749,9 @@ try {
         # the installer without reinstalling the app.
         Install-StartMenuShortcut
         Invoke-HermesProvision
+        if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
+            Restart-StackAfterInstall
+        }
         exit 0
     }
 
@@ -743,6 +764,11 @@ try {
     Invoke-HermesProvision
     Invoke-DataRootBootstrap
     Install-StartMenuShortcut
+
+    if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
+        Restart-StackAfterInstall
+        exit 0
+    }
 
     Write-Host "install-demiurgos: done. Start Demiurgos with:"
     Write-Host "  $installRoot\current\scripts\start-demiurgos.ps1 start"

@@ -216,7 +216,7 @@ export const messages = {
       "Demiurgos se reiniciará cuando termine la instalación. No cierres esta ventana.",
     "profile.updates.applyError": "No se pudo iniciar la instalación.",
     "profile.updates.applyServerDown":
-      "El servidor tardó demasiado en volver. Recarga la página manualmente si no se reinició.",
+      "La instalación tardó más de lo esperado. Si la versión no cambió, reiniciá Demiurgos para aplicarla.",
 
     "profile.bugreport.panelTitle": "Reporte de errores",
     "profile.bugreport.intro":
@@ -2552,7 +2552,7 @@ export const messages = {
       "Demiurgos will restart when the install finishes. Keep this window open.",
     "profile.updates.applyError": "Could not start the installation.",
     "profile.updates.applyServerDown":
-      "The server took too long to come back. Reload the page manually if it did not restart.",
+      "The install took longer than expected. If the version did not change, restart Demiurgos to apply it.",
 
     "profile.bugreport.panelTitle": "Bug report",
     "profile.bugreport.intro":

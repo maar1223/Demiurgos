@@ -7,7 +7,6 @@ import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { getAppConfig } from "@/api/config";
 import { getUpdateStatus, setUpdateChannel, applyUpdate } from "@/api/updates";
 import { getBugReportReleases } from "@/api/bugReports";
-import { getAuthStatus } from "@/api/wiki";
 import { reloadPage } from "@/lib/reloadPage";
 import { ApiError, type UpdateChannel, type UpdateStatus } from "@/api/types";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
@@ -51,6 +50,15 @@ function describeError(cause: unknown, fallback: string): string {
  * dialog → logout FIRST → apply dispatch (90s timeout) → full-screen
  * transition overlay polling until the stack is back.
  */
+/** The post-apply reload is version-gated: the old backend stays up while the
+ *  installer runs, so a 200 from the same version is not success. */
+export function shouldReloadAfterApply(
+  baseline: string | null,
+  served: string,
+): boolean {
+  return baseline === null || served !== baseline;
+}
+
 export function UpdateSection() {
   const { t } = useAppLanguage();
 
@@ -78,6 +86,10 @@ export function UpdateSection() {
   const [applying, setApplying] = useState(false);
   const [applyNotice, setApplyNotice] = useState<string | null>(null);
   const applyTimerRef = useRef<number | null>(null);
+  // Version the stack served when the apply was confirmed. The post-apply
+  // poll reloads only when the served version actually changes; the old
+  // backend answering with the same version must never look like success.
+  const applyBaselineRef = useRef<string | null>(null);
 
   // Released fixes: one read on mount, matching the ids this install kept.
   useEffect(() => {
@@ -170,6 +182,7 @@ export function UpdateSection() {
   const confirmApply = useCallback(async () => {
     setApplyBusy(true);
     setApplyError(null);
+    applyBaselineRef.current = appVersion ?? status?.current_version ?? null;
     try {
       // Session safety (spec 'Local session is logged out before apply'): the
       // installer restarts the whole stack, so no session may survive it. The
@@ -206,15 +219,24 @@ export function UpdateSection() {
     applyTimerRef.current = window.setInterval(async () => {
       attempts += 1;
       try {
-        await getAuthStatus();
-        if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
-        reloadPage();
-      } catch {
-        if (attempts > 30) {
+        const config = await getAppConfig();
+        const baseline = applyBaselineRef.current;
+        // Reload only when the served version changed. The backend stays up
+        // during the install (same version) and restarts at the end; a reload
+        // on the old version would report a false success.
+        if (shouldReloadAfterApply(baseline, config.app_version)) {
           if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
-          setApplying(false);
-          setApplyNotice(t("profile.updates.applyServerDown"));
+          reloadPage();
+          return;
         }
+      } catch {
+        // The backend is down for the restart: keep polling.
+      }
+      // An install can legitimately take minutes; wait before giving up.
+      if (attempts > 150) {
+        if (applyTimerRef.current) window.clearInterval(applyTimerRef.current);
+        setApplying(false);
+        setApplyNotice(t("profile.updates.applyServerDown"));
       }
     }, 2000);
     return () => {

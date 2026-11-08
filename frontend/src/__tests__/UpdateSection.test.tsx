@@ -414,3 +414,14 @@ describe("UpdateSection — fixed reports (S12)", () => {
     expect(screen.getByTestId("update-current-version")).toBeInTheDocument();
   });
 });
+
+describe("UpdateSection — apply reload gate", () => {
+  it("reloads only when the served version actually changed", async () => {
+    const { shouldReloadAfterApply } = await import(
+      "@/components/organisms/UpdateSection"
+    );
+    expect(shouldReloadAfterApply("0.3.1", "0.4.0")).toBe(true);
+    expect(shouldReloadAfterApply("0.3.1", "0.3.1")).toBe(false);
+    expect(shouldReloadAfterApply(null, "0.3.1")).toBe(true);
+  });
+});

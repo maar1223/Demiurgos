@@ -551,8 +551,9 @@ def test_apply_dispatches_detached_installer_with_env(
 ) -> None:
     """Authenticated apply with an applicable update dispatches the installer
     DETACHED: start_new_session, stdout DEVNULL, stderr a FILE (never a PIPE),
-    env carrying DEMIURGOS_URL_BASE + DEMIURGOS_VERSION, and — on an installed
-    layout — DEMIURGOS_HOME pinned to the running install root."""
+    env carrying DEMIURGOS_URL_BASE + DEMIURGOS_VERSION +
+    DEMIURGOS_RESTART_AFTER_INSTALL, and — on an installed layout —
+    DEMIURGOS_HOME pinned to the running install root."""
     calls: dict = {}
     install_root = tmp_path / "install"
     install_root.mkdir()
@@ -596,6 +597,9 @@ def test_apply_dispatches_detached_installer_with_env(
     assert env["DEMIURGOS_URL_BASE"] == DEFAULT_CHANNEL_URL
     assert env["DEMIURGOS_VERSION"] == "0.2.0"
     assert env["DEMIURGOS_HOME"] == str(install_root)
+    # The updater's promise is "install and restart": the installer must bring
+    # the stack up on the new bytes (manual installs keep the flag unset).
+    assert env["DEMIURGOS_RESTART_AFTER_INSTALL"] == "1"
 
 
 def test_apply_uses_resolved_url_base_and_server_version(

@@ -401,6 +401,11 @@ def create_update_router(
         env = os.environ.copy()
         env["DEMIURGOS_URL_BASE"] = url_base
         env["DEMIURGOS_VERSION"] = offered_version
+        # The in-app updater's promise is "install and restart": the installer
+        # flips `current`, then restarts the stack so the running process serves
+        # the new version without a manual restart (a plain/manual install keeps
+        # its historical behavior and only prints the start hint).
+        env["DEMIURGOS_RESTART_AFTER_INSTALL"] = "1"
         if install_root is not None:
             env["DEMIURGOS_HOME"] = str(install_root)
 

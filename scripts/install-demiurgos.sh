@@ -752,6 +752,22 @@ if [ "${DEMIURGOS_SEED_ONLY:-0}" = "1" ]; then
     exit 0
 fi
 
+# The in-app updater sets DEMIURGOS_RESTART_AFTER_INSTALL=1: the installer is
+# detached, flips `current`, and must bring the stack up on the new bytes so the
+# running process does not keep serving the previous version. A manual/fresh
+# install leaves the flag unset and keeps the historical "start it yourself"
+# behavior.
+restart_after_install() {
+    printf 'install-demiurgos: restarting to apply %s\n' "$VERSION" >&2
+    if "$INSTALL_ROOT/current/scripts/start-demiurgos.sh" restart; then
+        printf 'install-demiurgos: restarted with %s\n' "$VERSION" >&2
+        return 0
+    fi
+    printf 'install-demiurgos: automatic restart failed; start manually with:\n' >&2
+    printf '  %s/current/scripts/start-demiurgos.sh start\n' "$INSTALL_ROOT" >&2
+    return 0
+}
+
 # --- main --------------------------------------------------------------------
 
 [ -n "$URL_BASE" ] || fail "DEMIURGOS_URL_BASE is not set; it is required (https:// or file:// channel base)"
@@ -771,6 +787,9 @@ if [ -L "$INSTALL_ROOT/current" ] && [ "$(readlink "$INSTALL_ROOT/current")" = "
     install_desktop_entry
     mkdir -p "$STAGING_ROOT"
     provision_hermes_runtime
+    if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
+        restart_after_install
+    fi
     exit 0
 fi
 
@@ -783,6 +802,11 @@ write_channel_config
 provision_hermes_runtime
 bootstrap_data_root
 install_desktop_entry
+
+if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
+    restart_after_install
+    exit 0
+fi
 
 printf '%s\n' "install-demiurgos: done. Start Demiurgos with:"
 printf '%s\n' "  $INSTALL_ROOT/current/scripts/start-demiurgos.sh start"
