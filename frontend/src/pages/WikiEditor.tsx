@@ -880,21 +880,42 @@ export default function WikiEditor() {
     }
   }, [filePath, review, t]);
 
+  /**
+   * ONE review path for both assistant outcomes: a brand-new ficha and an edit
+   * of an existing one. The target comes from the proposal (server-owned), so
+   * the flow is not tied to the section the author happens to be looking at.
+   *
+   * - New file: navigate to the TARGET SECTION root (the file does not exist
+   *   yet, so opening it would 404) and review there; the accept step lands on
+   *   the created ficha.
+   * - Edit: navigate to the target file (it exists) and open its diff.
+   */
   const handleGuidedReview = useCallback(async (proposal: EditProposal) => {
-    if (!mundo || !section || !proposal.is_new_file) return;
-    const prefix = `${section}/`;
-    if (!proposal.target.startsWith(prefix)) {
+    if (!mundo) return;
+    const [targetSection, ...rest] = proposal.target.split("/");
+    const targetPath = rest.join("/");
+    if (!targetSection || !targetPath) {
       setSaveError(t("wiki.error.guidedOutsideSection"));
       return;
     }
-    const path = proposal.target.slice(prefix.length);
-    setPendingNewFile({ path });
+    setSaveError(null);
+    const encodedMundo = encodeURIComponent(mundo);
+    const encodedSection = encodeURIComponent(targetSection);
+    const encodedPath = rest.map((segment) => encodeURIComponent(segment)).join("/");
+    if (proposal.is_new_file) {
+      // The file does not exist yet: browse its section, never its path.
+      if (section !== targetSection) {
+        navigate(`/wiki/${encodedMundo}/${encodedSection}`);
+      }
+    } else if (section !== targetSection || filePath !== targetPath) {
+      navigate(`/wiki/${encodedMundo}/${encodedSection}/${encodedPath}`);
+    }
+    setPendingNewFile(proposal.is_new_file ? { path: targetPath } : null);
     setEditedContent(proposal.proposed_content);
     setIsEditing(true);
     setPreviewOpen(true);
     review.startReview(proposal);
-    setSaveError(null);
-  }, [mundo, review, section, t]);
+  }, [filePath, mundo, navigate, review, section, t]);
 
   const handleRejectReview = useCallback(() => {
     review.reject();
@@ -906,8 +927,16 @@ export default function WikiEditor() {
   }, [review]);
 
   const handleAcceptReview = useCallback(async () => {
-    if (!mundo || !section || !review.proposal || !reviewPath) return;
+    if (!mundo || !review.proposal || !reviewPath) return;
     const proposal = review.proposal;
+    // The proposal owns the destination; the current route may be another
+    // section entirely (guided creations target the flow's own section).
+    const [targetSection, ...targetRest] = proposal.target.split("/");
+    const targetPath = targetRest.join("/");
+    if (!targetSection || !targetPath) {
+      setSaveError(t("wiki.error.guidedOutsideSection"));
+      return;
+    }
     const kind = proposal.is_new_file ? "new" : "edit";
     setIsSaving(true);
     setSaveError(null);
@@ -923,10 +952,10 @@ export default function WikiEditor() {
         token: confirmation.token,
       };
       if (proposal.is_new_file) {
-        await createFileConfirmed(mundo, section, reviewPath, request);
+        await createFileConfirmed(mundo, targetSection, targetPath, request);
         await retryTree();
       } else {
-        await saveFileConfirmed(mundo, section, reviewPath, request);
+        await saveFileConfirmed(mundo, targetSection, targetPath, request);
         await retryContent();
       }
       try {
@@ -941,6 +970,13 @@ export default function WikiEditor() {
       setIsEditing(false);
       setEditedContent(null);
       setSaveSuccess(true);
+      // Land on the file the author just approved, new or edited — the same
+      // destination the file tree uses.
+      navigate(
+        `/wiki/${encodeURIComponent(mundo)}/${encodeURIComponent(targetSection)}/${targetRest
+          .map((segment) => encodeURIComponent(segment))
+          .join("/")}`,
+      );
     } catch (error) {
       const apiError = error as ApiError;
       if (apiError.status === 409) {
@@ -963,7 +999,7 @@ export default function WikiEditor() {
     } finally {
       setIsSaving(false);
     }
-  }, [currentContent, mundo, retryContent, retryTree, review, reviewPath, section, t]);
+  }, [currentContent, mundo, navigate, retryContent, retryTree, review, reviewPath, t]);
 
   /**
    * Set OKF status (Borrador/Canon): a dedicated POST rewrites ONLY the

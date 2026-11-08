@@ -45,19 +45,57 @@ vi.mock("@/hooks/useImages", () => ({
 vi.mock("@/components/organisms/AIAssistantSidebar", () => ({
   AIAssistantSidebar: ({
     onProposeEdit,
+    onGuidedReview,
   }: {
     onProposeEdit?: (request: { prompt: string; sessionId: string }) => void;
-  }) => onProposeEdit ? (
-    <button
-      type="button"
-      onClick={() => onProposeEdit({
-        prompt: "Improve the opening",
-        sessionId: "assistant-session",
-      })}
-    >
-      Proponer edición
-    </button>
-  ) : null,
+    onGuidedReview?: (proposal: unknown) => void;
+  }) => (
+    <div>
+      {onProposeEdit && (
+        <button
+          type="button"
+          onClick={() => onProposeEdit({
+            prompt: "Improve the opening",
+            sessionId: "assistant-session",
+          })}
+        >
+          Proponer edición
+        </button>
+      )}
+      {onGuidedReview && (
+        <>
+          <button
+            type="button"
+            onClick={() => onGuidedReview({
+              proposal_id: "guided-new",
+              target: "personajes/ganic.md",
+              base_revision: "",
+              proposed_content: "---\ntitle: Ganic\n---\n# Ganic",
+              proposed_digest: "digest-new",
+              rationale: "new file",
+              is_new_file: true,
+            })}
+          >
+            Probar alta guiada
+          </button>
+          <button
+            type="button"
+            onClick={() => onGuidedReview({
+              proposal_id: "guided-edit",
+              target: "lore/otro.md",
+              base_revision: "rev-1",
+              proposed_content: "---\ntitle: Otro\n---\n# Otro",
+              proposed_digest: "digest-edit",
+              rationale: "edit file",
+              is_new_file: false,
+            })}
+          >
+            Probar diff guiado
+          </button>
+        </>
+      )}
+    </div>
+  ),
 }));
 
 // Mock the wiki API — secure review writes are asserted separately from the
@@ -195,9 +233,15 @@ function ConflictsProbe() {
   );
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
 function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
+      <LocationProbe />
       <Routes>
         <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
         <Route
@@ -2267,5 +2311,47 @@ describe("WikiEditor", () => {
     expect(
       screen.getByRole("button", { name: "Seleccionar fragmento del conflicto" }),
     ).toBeDisabled();
+  });
+
+  it("opens the target section for a brand-new guided ficha", async () => {
+    sessionStorage.setItem("sidebar-tab", "asistente");
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await userEvent.setup().click(
+      await screen.findByRole("button", { name: "Probar alta guiada" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "/wiki/Vibrantes/personajes",
+      ),
+    );
+  });
+
+  it("opens the target file's diff surface for a guided edit", async () => {
+    sessionStorage.setItem("sidebar-tab", "asistente");
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await userEvent.setup().click(
+      await screen.findByRole("button", { name: "Probar diff guiado" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "/wiki/Vibrantes/lore/otro",
+      ),
+    );
   });
 });
