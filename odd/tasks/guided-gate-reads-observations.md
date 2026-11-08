@@ -19,7 +19,7 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 - [x] T3 `continue_session` preserves a demoted delta as observations + keeps the synthesis (S2). Route: inline.
 - [x] T4 semantic open path preserves a demoted delta as observations (S2). Route: inline.
 - [x] T5 full backend suite + commit (S3). Route: inline.
-- [ ] T6 publish `v0.4.5` + Owner updates the app (S4). Route: inline.
+- [x] T6 publish `v0.4.5` + Owner updates the app (S4). Route: inline.
 
 ## Log
 
@@ -43,3 +43,17 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 - **Risk:** none in the code change (no migration, no contract removal, tests
   pin both rules). Delivery is item 5: publishing `v0.4.5` is public and
   irreversible and was explicitly authorized by the Owner.
+
+- **T6 (publish, 2026-11-08 15:21Z):** tag `v0.4.5` on `1c70093`; Release run
+  [42494094313](https://github.com/maar1223/Demiurgos/actions/runs/42494094313)
+  success on every job (4 payload cells, publish, Windows payload boot,
+  anonymous public-channel smoke, pointer move). `latest` reads `0.4.5`.
+  Native review assessment (`--base-ref cbee5f5 --committed-only`): risk
+  `medium`, `review_due: false` (`under_budget`), so no receipt transaction.
+- **T6b (real-session probe):** replaying the live Vibrantes candidate through
+  the patched gate returns `¿Cuál es el deseo que define a este personaje?` —
+  the name is recognised from `observations` and only the genuinely missing
+  anchor is asked.
+- **Pending:** the Owner updates the installed app from Perfil → Actualizaciones
+  (the apply endpoint is principal-gated by design, so the click is the
+  authorization).
