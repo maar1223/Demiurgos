@@ -104,12 +104,35 @@ class GuidedRequest:
     # keeps the provider from re-asking resolved facts (S1).
     known_state: str = ""
 
+    def _oversized_fields(self) -> list[str]:
+        """Names of the bounded fields that exceed ``context_budget``."""
+        return [
+            name
+            for name, value in (
+                ("reference_context", self.reference_context),
+                ("relation_goal", self.relation_goal),
+                ("world_context", self.world_context),
+                ("known_state", self.known_state),
+            )
+            if isinstance(value, str) and len(value) > self.context_budget
+        ]
+
     def validate(self) -> StructuredError | None:
         if self.protocol_version != PROTOCOL_VERSION or not isinstance(self.reference_context, str) or not all(
             isinstance(value, str) and value.strip() for value in
             (self.request_id, self.session_id, self.world, self.authorization_binding, self.author_input)
-        ) or self.base_revision < 0 or self.context_budget <= 0 or len(self.reference_context) > self.context_budget or (self.reference_name is not None and (not isinstance(self.reference_name, str) or not self.reference_name.strip())) or not isinstance(self.relation_goal, str) or len(self.relation_goal) > self.context_budget or not isinstance(self.world_context, str) or len(self.world_context) > self.context_budget or not isinstance(self.known_state, str) or len(self.known_state) > self.context_budget or self.turn_mode not in {"creation", "factual"} or self.guided_mode not in {"full", "fast"} or self.question_depth not in {"standard", "fundamental"}:
+        ) or self.base_revision < 0 or self.context_budget <= 0 or (self.reference_name is not None and (not isinstance(self.reference_name, str) or not self.reference_name.strip())) or not isinstance(self.relation_goal, str) or not isinstance(self.world_context, str) or not isinstance(self.known_state, str) or self.turn_mode not in {"creation", "factual"} or self.guided_mode not in {"full", "fast"} or self.question_depth not in {"standard", "fundamental"}:
             return StructuredError(ErrorCode.INVALID_INPUT, "The guided request is invalid.", False)
+        oversized = self._oversized_fields()
+        if oversized:
+            # Name every offending field. A bare "invalid" hid a whole
+            # session's 422s behind the generic blocked copy (2026-11-08).
+            return StructuredError(
+                ErrorCode.INVALID_INPUT,
+                "The guided request is invalid: "
+                f"{', '.join(oversized)} exceeds the context budget.",
+                False,
+            )
         if not 1 <= self.deadline_ms <= MAX_DEADLINE_MS:
             return StructuredError(ErrorCode.INVALID_INPUT, "The deadline is outside the allowed bounds.", False)
         return None

@@ -35,12 +35,25 @@ type AssistantFailureKey = Extract<
   | "assistant.failure.timeout"
   | "assistant.failure.unavailable"
   | "assistant.failure.invalidOutput"
+  | "assistant.failure.invalidInput"
+  | "assistant.failure.internal"
 >;
+
+/** Causes worth retrying with the identical request. */
+const RETRYABLE_FAILURE_CODES = new Set([
+  "timeout",
+  "network.timeout",
+  "provider_unavailable",
+  "capability_unavailable",
+  "malformed_output",
+  "invalid_output",
+]);
 
 /**
  * Map a transport/HTTP failure from an assistant turn to its specific,
- * localized copy. The catalogue guarantees the no-action promise; unknown
- * failures keep the generic blocked copy so a raw backend string never leaks.
+ * localized copy. The catalogue guarantees the no-action promise; an
+ * unrecognised failure still names its Demiurgos-owned code so the report is
+ * actionable, and a raw backend string is never leaked.
  */
 function assistantFailureKey(error: unknown): AssistantFailureKey | null {
   if (!(error instanceof ApiError)) return null;
@@ -54,10 +67,16 @@ function assistantFailureKey(error: unknown): AssistantFailureKey | null {
     case "malformed_output":
     case "invalid_output":
       return "assistant.failure.invalidOutput";
+    case "invalid_input":
+      return "assistant.failure.invalidInput";
+    case "internal":
+      return "assistant.failure.internal";
     default:
       if (error.status === 504) return "assistant.failure.timeout";
       if (error.status === 503) return "assistant.failure.unavailable";
       if (error.status === 502) return "assistant.failure.invalidOutput";
+      if (error.status === 422) return "assistant.failure.invalidInput";
+      if (error.status === 500) return "assistant.failure.internal";
       return null;
   }
 }
@@ -68,12 +87,21 @@ export function assistantFailureText(
   language: AppLanguage = "es",
 ): string {
   const key = assistantFailureKey(error);
-  return key ? translate(language, key) : semanticBlockedText(language);
+  if (key) return translate(language, key);
+  // Never answer "no pudo completar" with no reason: name the stable,
+  // Demiurgos-owned code (never provider or gateway text) so the Owner can
+  // report it and we can find the log line.
+  if (error instanceof ApiError && error.code) {
+    return translate(language, "assistant.blockedWithCode", { code: error.code });
+  }
+  return semanticBlockedText(language);
 }
 
 /** A failed turn is retryable only when its cause has a specific, transient copy. */
 export function isRetryableAssistantFailure(error: unknown): boolean {
-  return assistantFailureKey(error) !== null;
+  if (!(error instanceof ApiError)) return false;
+  if (error.code && RETRYABLE_FAILURE_CODES.has(error.code)) return true;
+  return error.status === 504 || error.status === 503 || error.status === 502;
 }
 
 /** Spanish-default blocked copy (backward-compatible constant). */

@@ -1159,11 +1159,11 @@ describe("useAIAssistantSessions failure visibility", () => {
     expect(result.current.activity.retryPrompt).toBeUndefined();
   });
 
-  it("keeps the safe blocked copy when the failure has no specific copy", async () => {
+  it("keeps the safe blocked copy when the failure carries no code at all", async () => {
     seedSessions([{ ...makeSession("s-unknown"), guided }]);
     window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-unknown"));
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
-    askMock.mockRejectedValue(new ApiError(500, "boom", "boom", "internal"));
+    askMock.mockRejectedValue(new ApiError(400, "boom", "boom"));
 
     const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
     await act(async () => {

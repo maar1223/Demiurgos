@@ -34,6 +34,12 @@ export const messages = {
       "El servicio de IA del asistente no está disponible en este momento. No se realizó ninguna acción ni escritura. Inténtalo de nuevo en un momento.",
     "assistant.failure.invalidOutput":
       "El asistente devolvió una respuesta que no se pudo validar. No se realizó ninguna acción ni escritura. Inténtalo de nuevo.",
+    "assistant.failure.invalidInput":
+      "El asistente recibió un turno que no puede procesar: el contexto de la sesión superó el límite del turno. No se realizó ninguna acción ni escritura. Inicia una sesión nueva para continuar.",
+    "assistant.failure.internal":
+      "El asistente falló dentro del servidor. No se realizó ninguna acción ni escritura. Reintenta; si vuelve a pasar, reporta el código.",
+    "assistant.blockedWithCode":
+      "El Asistente IA no pudo completar la solicitud ({code}). No se realizó ninguna acción ni escritura.",
     "assistant.retry": "Reintentar",
 
     "common.save": "Guardar",
@@ -2380,6 +2386,12 @@ export const messages = {
       "The assistant's AI service is not available right now. No action or write was made. Try again in a moment.",
     "assistant.failure.invalidOutput":
       "The assistant returned a response that could not be validated. No action or write was made. Try again.",
+    "assistant.failure.invalidInput":
+      "The assistant received a turn it cannot process: the session context exceeded the turn limit. No action or write was made. Start a new session to continue.",
+    "assistant.failure.internal":
+      "The assistant failed inside the server. No action or write was made. Try again; if it keeps happening, report the code.",
+    "assistant.blockedWithCode":
+      "The AI Assistant could not complete the request ({code}). No action or write was made.",
     "assistant.retry": "Retry",
 
     "common.save": "Save",

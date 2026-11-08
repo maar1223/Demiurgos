@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   SEMANTIC_BLOCKED_BY_LANGUAGE,
   SEMANTIC_BLOCKED_TEXT,
+  assistantFailureText,
+  isRetryableAssistantFailure,
   mapSemanticDecision,
   semanticBlockedText,
 } from "@/lib/semanticIntent";
+import { ApiError } from "@/api/types";
 import type { GuidedCharacterSession } from "@/api/types";
 
 const FORBIDDEN_TERMS = [
@@ -376,5 +379,39 @@ describe("semantic intent localized unavailable copy", () => {
       kind: "blocked",
       text: "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
     });
+  });
+});
+
+describe("assistant failure copy names the reason", () => {
+  const apiError = (status: number, code: string) =>
+    new ApiError(status, `detail ${code}`, `detail ${code}`, code);
+
+  it("maps the guided invalid_input 422 to a specific, actionable sentence", () => {
+    const text = assistantFailureText(apiError(422, "invalid_input"), "es");
+    expect(text).toContain("contexto de la sesión superó el límite");
+    expect(text).toContain("No se realizó ninguna acción ni escritura.");
+    expect(text).not.toBe(SEMANTIC_BLOCKED_TEXT);
+  });
+
+  it("maps an internal server failure to its own sentence", () => {
+    expect(assistantFailureText(apiError(500, "internal"), "es")).toContain(
+      "falló dentro del servidor",
+    );
+  });
+
+  it("names the stable code when no specific copy exists", () => {
+    const text = assistantFailureText(apiError(418, "teapot.state"), "es");
+    expect(text).toContain("(teapot.state)");
+    expect(text).not.toBe(SEMANTIC_BLOCKED_TEXT);
+  });
+
+  it("keeps the generic copy only when there is no code at all", () => {
+    expect(assistantFailureText(new Error("boom"), "es")).toBe(SEMANTIC_BLOCKED_TEXT);
+  });
+
+  it("does not offer a retry for a deterministic invalid_input", () => {
+    expect(isRetryableAssistantFailure(apiError(422, "invalid_input"))).toBe(false);
+    expect(isRetryableAssistantFailure(apiError(504, "timeout"))).toBe(true);
+    expect(isRetryableAssistantFailure(apiError(503, "provider_unavailable"))).toBe(true);
   });
 });

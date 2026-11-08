@@ -3495,9 +3495,10 @@ def _guided_principal(request: Request) -> tuple[EditPrincipal | None, JSONRespo
 def _guided_result(response, state: SessionState | None):
     if response.error:
         logger.warning(
-            "guided turn failed: code=%s retryable=%s",
+            "guided turn failed: code=%s retryable=%s detail=%s",
             response.error.code.value,
             response.error.retryable,
+            response.error.message,
         )
         return _guided_error_response(response.error)
     if state is None:
@@ -3593,11 +3594,9 @@ async def _guided_continue(
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
     world_context = _guided_world_context(mundo, state, author_input)
-    known_state = _guided_known_state(state.candidate, budget=4_000) if state is not None else ""
-    if state is not None:
-        plan_state = _guided_plan_state(state)
-        if plan_state:
-            known_state = f"{plan_state}\n{known_state}" if known_state else plan_state
+    known_state = (
+        _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
+    )
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
         revision, principal.id, author_input, reference_context=reference_context,
@@ -10289,6 +10288,28 @@ def _guided_known_state(candidate: Any, budget: int = 4_000) -> str:
         if text:
             lines.append(f"- [unknown] {text[:300]}")
     return "\n".join(lines)[:budget]
+
+
+def _guided_turn_known_state(state: SessionState, budget: int) -> str:
+    """Compose the plan progress and the collected facts inside ONE budget.
+
+    ``GuidedRequest.validate`` rejects any field longer than ``context_budget``.
+    Prefixing the plan line AFTER the fact budget had been applied pushed the
+    composed field one line over the limit (4 090 chars on a 4 000 budget on
+    2026-11-08), so every continued turn failed as ``invalid_input`` (422) and
+    the chat only showed the generic blocked copy. Both parts now share the
+    same budget and the result is hard-capped, so composition can never
+    invalidate the request again.
+    """
+    if budget <= 0:
+        return ""
+    plan_state = _guided_plan_state(state)[:budget]
+    if not plan_state:
+        return _guided_known_state(state.candidate, budget=budget)
+    remaining = budget - len(plan_state) - 1
+    body = _guided_known_state(state.candidate, budget=remaining) if remaining > 0 else ""
+    value = f"{plan_state}\n{body}" if body else plan_state
+    return value[:budget]
 
 
 def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | None]:
