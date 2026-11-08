@@ -782,15 +782,22 @@ def health():
 
 
 def _install_root() -> Path | None:
-    """``<install_root>`` when running the ``current`` layout, else None.
+    """``<install_root>`` when running an installed layout, else None.
 
-    In an installed layout the code root is the ``<install_root>/current``
-    junction/symlink (the launcher re-executes itself from it), so the parent
-    of the checkout IS the install root. A dev checkout's root is not named
-    ``current`` and has no install root.
+    Three shapes resolve to the same root, because ``__file__`` may resolve the
+    ``current`` symlink: ``<root>/current`` (launcher path), ``DEMIURGOS_ROOT``
+    ending in ``current`` (launcher env), and ``<root>/app/<version>`` (resolved
+    symlink). A dev checkout matches none of them and has no install root.
     """
     if _CODE_ROOT.name == "current":
         return _CODE_ROOT.parent
+    env_root = os.environ.get("DEMIURGOS_ROOT", "").strip()
+    if env_root:
+        candidate = Path(env_root)
+        if candidate.name == "current":
+            return candidate.parent
+    if _CODE_ROOT.parent.name == "app":
+        return _CODE_ROOT.parent.parent
     return None
 
 
@@ -11900,28 +11907,36 @@ app.include_router(
 #
 # The launcher path comes from the frozen layout contract (S0-C) per OS:
 # POSIX ships ``scripts/start-demiurgos.sh``, Windows ships
-# ``scripts/start-demiurgos.ps1``. The resolved path is validated at BOOT:
-# if it does not exist, /api/system reports a clear error instead of ever
-# dispatching a stale path (S2-7).
+# ``scripts/start-demiurgos.ps1``. It is resolved at DISPATCH time through the
+# installed root's ``current`` so a restart after an update starts the newly
+# installed version, not the one this process loaded at boot; a dev checkout
+# keeps ``_CODE_ROOT``.
 def _system_launcher_path() -> Path:
+    install_root = _install_root()
+    if install_root is None:
+        # Dev checkout. Keep the literal _CODE_ROOT-relative resolutions: the
+        # payload manifest derives shipped resources from them.
+        if os.name == "nt":
+            return _CODE_ROOT / "scripts" / "start-demiurgos.ps1"
+        return _CODE_ROOT / "scripts" / "start-demiurgos.sh"
+    base = install_root / "current"
     if os.name == "nt":
-        return _CODE_ROOT / "scripts" / "start-demiurgos.ps1"
-    return _CODE_ROOT / "scripts" / "start-demiurgos.sh"
+        return base / "scripts" / "start-demiurgos.ps1"
+    return base / "scripts" / "start-demiurgos.sh"
 
 
-_SYSTEM_LAUNCHER = _system_launcher_path()
-_SYSTEM_LAUNCHER_AVAILABLE = _SYSTEM_LAUNCHER.is_file()
-if not _SYSTEM_LAUNCHER_AVAILABLE:
+_SYSTEM_LAUNCHER = _system_launcher_path
+if not _SYSTEM_LAUNCHER().is_file():
     logger.warning(
         "System launcher missing at %s; /api/system restart/shutdown will fail closed",
-        _SYSTEM_LAUNCHER,
+        _SYSTEM_LAUNCHER(),
     )
 
 app.include_router(
     create_system_control_router(
         require_principal=lambda request: _resolve_principal(request),
         launcher_path=_SYSTEM_LAUNCHER,
-        launcher_available=_SYSTEM_LAUNCHER_AVAILABLE,
+        launcher_available=None,
     ),
 )
 

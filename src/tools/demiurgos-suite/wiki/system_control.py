@@ -84,7 +84,7 @@ def _stderr_excerpt(log_path: Path | None, exit_code: int) -> str:
 
 def create_system_control_router(
     require_principal: Callable[[Request], Any],
-    launcher_path: Path,
+    launcher_path: Path | Callable[[], Path],
     launcher_log: Path | None = None,
     launcher_available: bool | None = None,
 ) -> APIRouter:
@@ -96,9 +96,12 @@ def create_system_control_router(
     loopback peer + session cookie; the factory never trusts an
     unauthenticated request regardless of what resolver is injected.
 
-    ``launcher_path`` is the Demiurgos launcher script. Only the hardcoded
-    actions ``restart`` (POST /restart) and ``stop`` (POST /shutdown) are ever
-    dispatched — no user input reaches the shell.
+    ``launcher_path`` is the Demiurgos launcher script, or a zero-argument
+    callable resolved at DISPATCH time (the installed layout resolves
+    ``<install_root>/current/scripts/...`` so an update that flips ``current``
+    while this process runs is honored). Only the hardcoded actions ``restart``
+    (POST /restart) and ``stop`` (POST /shutdown) are ever dispatched — no user
+    input reaches the shell.
 
     ``launcher_log`` is where the detached launcher's stderr is captured. It
     MUST NOT be a pipe (see the module docstring); the default is
@@ -117,11 +120,12 @@ def create_system_control_router(
             raise HTTPException(status_code=401, detail=_AUTH_REQUIRED_DETAIL)
 
     def _dispatch(api_action: str, launcher_arg: str) -> JSONResponse:
+        path = launcher_path() if callable(launcher_path) else launcher_path
         if launcher_available is False:
             return JSONResponse(status_code=503, content={
                 "action": api_action,
                 "accepted": False,
-                "error": f"launcher not available at {launcher_path}",
+                "error": f"launcher not available at {path}",
             })
         # Detached dispatch: the launcher outlives this request. The server
         # answers BEFORE the launcher stops/restarts the stack (shutdown kills
@@ -138,7 +142,7 @@ def create_system_control_router(
 
         try:
             proc = subprocess.Popen(
-                [str(launcher_path), launcher_arg],
+                [str(path), launcher_arg],
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_target if stderr_target is not None else subprocess.DEVNULL,

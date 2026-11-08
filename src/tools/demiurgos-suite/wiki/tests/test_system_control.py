@@ -425,3 +425,32 @@ def test_registered_in_api_server_app() -> None:
     paths = api_server.app.openapi()["paths"]
     assert "/api/system/restart" in paths
     assert "/api/system/shutdown" in paths
+
+def test_restart_resolves_a_callable_launcher_at_dispatch(tmp_path: Path, monkeypatch) -> None:
+    """S1: an installed restart must honor a ``current`` flipped after boot."""
+    first = tmp_path / "first.sh"
+    second = tmp_path / "second.sh"
+    pending = [first, second]
+    calls: list = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append(argv)
+        return _FakeProc(poll_result=None)
+
+    monkeypatch.setattr(system_control.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(system_control.time, "sleep", lambda _seconds: None)
+
+    app = FastAPI()
+    app.include_router(
+        create_system_control_router(
+            require_principal=lambda request: _FakePrincipal(),
+            launcher_path=lambda: pending.pop(0),
+            launcher_log=tmp_path / "demiurgos-launcher.log",
+        )
+    )
+    client = TestClient(app)
+
+    assert client.post("/api/system/restart").status_code == 200
+    assert client.post("/api/system/restart").status_code == 200
+    assert calls[0] == [str(first), "restart"]
+    assert calls[1] == [str(second), "restart"]
