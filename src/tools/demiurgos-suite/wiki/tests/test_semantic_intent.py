@@ -795,3 +795,18 @@ def test_success_resets_the_failure_count() -> None:
         assert third.attempts == MAX_SEMANTIC_ATTEMPTS
 
     asyncio.run(scenario())
+
+
+def test_provider_prompt_requests_a_user_facing_answer_not_a_meta_note() -> None:
+    """S1: ``response`` is the author-facing reply, never an interpretation.
+
+    The legacy ``/ai/ask`` fallback surfaces this field as the assistant's
+    answer, so a meta sentence ("Author wants to continue…") must be forbidden
+    by the prompt itself.
+    """
+    provider = SemanticIntentProvider(Runs())
+    prompt = provider._build_prompt("sigamos con ganic", "request-1", "session-1")
+
+    assert "author-facing reply" in prompt
+    assert "same language as the author's input" in prompt
+    assert "the author wants" in prompt

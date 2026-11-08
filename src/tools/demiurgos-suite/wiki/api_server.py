@@ -8913,6 +8913,34 @@ def get_chat_attachment_thumbnail(mundo: str, attachment_id: str):
     )
 
 
+_META_RESPONSE_MARKERS = (
+    "author wants",
+    "the author",
+    "author asks",
+    "author is",
+    "user wants",
+    "the user asks",
+    "the assistant should",
+)
+
+
+def _author_facing_response(text: str) -> str:
+    """Never surface a classifier interpretation as the Assistant's answer.
+
+    The legacy ``/ai/ask`` path returns ``SemanticResult.response`` as the
+    chat answer. On the activity path that field is display-only (the real
+    answer arrives in the ``answer`` event), but the fallback has no generated
+    answer, so a meta sentence ("Author wants to continue…") would reach the
+    Author. The prompt now asks for a user-facing reply; this guard is the
+    fail-safe for a model that still emits an interpretation.
+    """
+    value = (text or "").strip()
+    if value and any(marker in value.casefold() for marker in _META_RESPONSE_MARKERS):
+        logger.warning("semantic gate returned a meta response; using the safe copy")
+        return unavailable_copy()
+    return value
+
+
 @app.post("/api/{mundo}/ai/ask")
 async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     """Endpoint for the AI Assistant sidebar (Hermes-first).
@@ -9011,7 +9039,9 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             "ai_ask: semantic state=%s attempts=%s",
             result.decision.state, result.attempts,
         )
+        answer = result.response
         if result.decision.state in {"allow", "clarify"}:
+            answer = _author_facing_response(result.response)
             # Memory + routing are side effects only for a real session; the
             # empty-string session never names a conversation (fricción 4), so
             # it neither persists nor triggers a routing/LLM call.
@@ -9021,16 +9051,18 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                     body.session_id, mundo, "user",
                     _memory_user_prompt(body.prompt, attachments), skill_id,
                 )
-                _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
+                _persist_memory_turn(body.session_id, mundo, "assistant", answer)
                 await _maybe_refresh_distilled(body.session_id, mundo)
                 await _capture_turn_memory(
                     session_id=body.session_id,
                     mundo=mundo,
                     user_text=_memory_user_prompt(body.prompt, attachments),
-                    assistant_text=result.response,
+                    assistant_text=answer,
                     skill_hints=[skill_id] if skill_id else None,
                 )
         payload = result.as_dict()
+        if result.decision.state in {"allow", "clarify"}:
+            payload["response"] = answer
         redirect = _skill_creation_redirect(body.prompt)
         if redirect is not None:
             # REQ-CC-2: chat-level recommendation only — no semantic-gate
@@ -10566,6 +10598,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # Pre-flight non-classifier guards: active guided sessions stream through
     # the normal assistant path so activity never double-runs Hermes.
     if body.guided_session_id or body.guided_revision is not None:
+        logger.info("ai_ask_activity: 503 guided_handoff")
         return JSONResponse(
             status_code=503,
             content={
@@ -10576,6 +10609,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         )
     context_kind, world_root = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
+        logger.info("ai_ask_activity: 503 context unknown")
         return _activity_unavailable()
     attachments = _resolve_chat_attachments(body.attachment_ids)
 

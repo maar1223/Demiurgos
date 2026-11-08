@@ -10330,3 +10330,35 @@ class TestConflictSweepEndpoint:
         )
 
         assert resp.status_code == 404
+
+
+def test_ai_ask_never_returns_a_meta_interpretation(client: TestClient, monkeypatch):
+    """S1: the legacy /ai/ask answer must never be a classifier meta note."""
+    _principal(monkeypatch)
+    runs = _SemanticRuns(_semantic_payload(
+        "allow", response="Author wants to continue developing Ganic.",
+    ))
+    _wire_semantic_provider(monkeypatch, runs)
+
+    response = client.post(
+        "/api/test_mundo/ai/ask", json={"prompt": "sigamos con ganic"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "author wants" not in body["response"].casefold()
+    assert body["response"]
+
+
+def test_ai_ask_keeps_a_normal_author_facing_answer(client: TestClient, monkeypatch):
+    _principal(monkeypatch)
+    answer = "Sigamos con Ganic. ¿Qué querés resolver primero?"
+    runs = _SemanticRuns(_semantic_payload("allow", response=answer))
+    _wire_semantic_provider(monkeypatch, runs)
+
+    response = client.post(
+        "/api/test_mundo/ai/ask", json={"prompt": "sigamos con ganic"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["response"] == answer
