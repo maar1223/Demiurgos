@@ -342,10 +342,18 @@ def test_ficha_is_additive_v1_and_validates_slug_collisions() -> None:
         "status": "proposed",
         "provenance": ["graph:read:lore/a.md"],
     }
-    for section in ("Identity", "Canon Anchors", "Exploratory Friction", "Relationships", "Unresolved References"):
-        assert f"## {section}" in body
+    for section in ("## Identidad Base", "## Psicología y Carácter", "## Arco de Personaje"):
+        assert section in body
+    # The character body is the level specimen, not the old YAML dump.
+    assert "- **Deseo:** freedom" in body
+    assert "- **Teme:** the sea" in body
+    assert "## Identity" not in body
+    assert "## Canon Anchors" not in body
+    assert "```yaml" not in body
+    assert "two origins" in body
     assert "Unknown Order" in body
-    assert "graph:search:order" in body
+    # Provenance stays in the frontmatter; the body never leaks it.
+    assert "graph:search:order" not in body
     # A legacy ficha remains an untouched collision target; serialization is diskless and additive.
     legacy_target = "personajes/legacy-aria.md"
     assert serialize_ficha(candidate, world="vibrantes", slug="aria-storm", title="Aria Storm", existing_targets={legacy_target}).target == proposal.target
@@ -415,6 +423,13 @@ def test_resolve_candidate_nivel_table() -> None:
     # accepted canon counts too (first probe order: nivel before others).
     assert resolve_candidate_nivel(CandidateState(
         accepted_canon={"nivel": "secundario"}, proposals={"nivel_narrativo": "3"},
+    )) == "2º"
+    # A real provider delta is stored as a record; it must resolve the same.
+    assert resolve_candidate_nivel(CandidateState(
+        proposals={"nivel": {"value": "3", "certainty": "proposed"}},
+    )) == "3º"
+    assert resolve_candidate_nivel(CandidateState(
+        observations={"rol_narrativo": {"value": "Secundario"}},
     )) == "2º"
 
 

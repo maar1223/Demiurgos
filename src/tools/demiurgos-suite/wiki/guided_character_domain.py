@@ -15,6 +15,7 @@ from typing import Any, Mapping, Protocol
 
 import yaml
 
+from guided_character_body import render_character_body
 from guided_character_protocol import CandidateState, MessageType, SessionState, TypedMessage
 from demiurgos_language import normalize_language, resolve_domain_language
 
@@ -159,18 +160,26 @@ def has_finished_exchange(state: SessionState) -> bool:
     )
 
 
+def _probe_text(value: Any) -> str | None:
+    """Read a free-form probe value, unwrapping the stored ``{"value": …}``."""
+    if isinstance(value, Mapping) and "value" in value:
+        return _probe_text(value["value"])
+    return value if isinstance(value, str) else None
+
+
 def resolve_candidate_nivel(candidate: CandidateState) -> str:
     """Resolve the candidate's narrative-density label (1º/2º/3º; D4).
 
     Probes the free-form known fields in a fixed order (first string hit
     wins) and normalizes: ``"2"``/``"secund"`` → 2º, ``"3"``/``"rellen"`` →
     3º, anything else or missing → 1º (locked fallback: an unknown nivel is
-    treated as the principal exemplar, R11).
+    treated as the principal exemplar, R11). Stored records
+    (``{"value": …}``) are unwrapped so a real provider delta resolves too.
     """
     known = _candidate_known_fields(candidate)
     for probe in _NIVEL_PROBES:
-        value = known.get(probe)
-        if isinstance(value, str):
+        value = _probe_text(known.get(probe))
+        if value is not None:
             text = value.casefold()
             if "2" in text or "secund" in text:
                 return "2º"
@@ -635,8 +644,11 @@ def serialize_entity(
 ) -> FichaProposal:
     """Serialize an additive OKF v1 entity and validate its authorized target.
 
-    The flow profile supplies the kernel-owned section and type label; the body
-    shape is shared by every flow so the character output stays byte-identical.
+    The flow profile supplies the kernel-owned section and type label. Every
+    non-character flow keeps the shared YAML body shape unchanged; the character
+    flow renders its body from the pinned narrative-level specimen instead
+    (structure and labels only, accents intact, no duplicated Identity/Canon
+    Anchors sections).
     """
     if not world.strip() or not _SLUG.fullmatch(slug):
         raise FichaValidationError("invalid entity slug")
@@ -662,18 +674,21 @@ def serialize_entity(
             raw = raw["value"]
         if isinstance(raw, (str, int, float)) and str(raw).strip():
             frontmatter_values[field] = raw
-    frontmatter = "---\n" + yaml.safe_dump(frontmatter_values, sort_keys=False, allow_unicode=False) + "---\n"
+    frontmatter = "---\n" + yaml.safe_dump(frontmatter_values, sort_keys=False, allow_unicode=True) + "---\n"
     def section(name: str, values: Mapping[str, Any] | list[Any]) -> str:
         if not values:
             return ""
         return f"## {name}\n\n```yaml\n{yaml.safe_dump(values, sort_keys=False, allow_unicode=False)}```\n\n"
-    body = (
-        section("Identity", candidate.accepted_canon) +
-        section("Canon Anchors", candidate.accepted_canon) +
-        section("Exploratory Friction", candidate.proposals) +
-        section("Relationships", candidate.conflicts) +
-        section("Unresolved References", candidate.unresolved_references)
-    )
+    if entity_type == "personaje":
+        body = render_character_body(candidate)
+    else:
+        body = (
+            section("Identity", candidate.accepted_canon) +
+            section("Canon Anchors", candidate.accepted_canon) +
+            section("Exploratory Friction", candidate.proposals) +
+            section("Relationships", candidate.conflicts) +
+            section("Unresolved References", candidate.unresolved_references)
+        )
     return FichaProposal(target, frontmatter + body, "\n".join((target, title, repr(candidate.accepted_canon), repr(candidate.provenance))))
 
 
