@@ -871,7 +871,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview"}
     assert session["flow"] == {
         "flow_id": "guided-character",
         "entity_type": "personaje",

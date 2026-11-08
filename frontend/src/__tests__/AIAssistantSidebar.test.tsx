@@ -476,6 +476,47 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(requestGuidedReview).toHaveBeenCalled();
   });
 
+  it("names where the guided sheet will be saved and offers to create it", async () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 7,
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: { identidad: { value: { nombre: "Ganic" } } },
+            proposals: { oficio: "repara Dvins" },
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          target_preview: "personajes/ganic.md",
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.getByText("personajes/ganic.md")).toBeInTheDocument();
+    expect(screen.getByText("La ficha quedará guardada en")).toBeInTheDocument();
+    const create = screen.getByRole("button", { name: "Crear la ficha" });
+    await userEvent.setup().click(create);
+    expect(requestGuidedReview).toHaveBeenCalled();
+  });
+
   it("does not surface a legacy session-metadata entry as a suggested detail", () => {
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {

@@ -541,6 +541,9 @@ function ChatScreen({
   const meaningfulGuidedProposalKeys = Object.keys(
     activeSession?.guided?.candidate?.proposals ?? {},
   ).filter((key) => !guidedMetaProposalKeys.has(key.toLowerCase()));
+  // The flow-owned destination of a completed sheet, server-resolved. Showing it
+  // answers "where does it go?" BEFORE anything is written (2026-11-08).
+  const guidedTargetPreview = activeSession?.guided?.target_preview ?? null;
   const visibleGuidedProposal =
     activeSession?.guided?.proposal &&
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
@@ -774,6 +777,23 @@ function ChatScreen({
              <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
                {t("guided.methodCurrent", { name: guidedMethodName })}
              </p>
+           )}
+
+           {guidedTargetPreview && !isSending && onGuidedReview && requestGuidedReview && (
+             <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
+               <p className="text-xs text-muted">{t("guided.create.where")}</p>
+               <p className="mt-1 font-mono text-xs text-primary">{guidedTargetPreview}</p>
+               <button
+                 type="button"
+                 onClick={() => void handleGuidedReview()}
+                 className="mt-2 w-full rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text disabled:opacity-50"
+               >
+                 {t("guided.create.action")}
+               </button>
+               <p className="mt-2 text-[11px] leading-snug text-muted">
+                 {t("guided.create.hint")}
+               </p>
+             </div>
            )}
 
            {confirmationPending && (

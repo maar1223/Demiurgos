@@ -92,6 +92,15 @@ def _candidate_known_fields(candidate: CandidateState, delta: Mapping[str, Any] 
     known.update(candidate.proposals)
     if delta:
         known.update(delta)
+    # A name may be stored once, as a nested identity record
+    # (``identidad: {value: {nombre: …}}``); the gate must see it.
+    for key in ("identidad", "identity"):
+        record = known.get(key)
+        value = record.get("value", record) if isinstance(record, Mapping) else record
+        if isinstance(value, Mapping):
+            for inner in ("name", "nombre", "title"):
+                if inner in value:
+                    known.setdefault(inner, value[inner])
     observations = getattr(candidate, "observations", None)
     if isinstance(observations, Mapping):
         for key, value in observations.items():

@@ -727,6 +727,8 @@ export interface GuidedCharacterSession {
   proposal: GuidedCharacterProposal | null;
   /** Finite detail plan progress. Absorbs provider label drift and hides
    *  off-plan proposals so the Author sees one focused slot at a time. */
+  /** Where a completed candidate would be saved (server-owned, flow section). */
+  target_preview?: string | null;
   detail_progress?: {
     index: number;
     total: number;

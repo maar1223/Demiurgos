@@ -23,6 +23,7 @@ from guided_character_protocol import (  # noqa: E402
     PROTOCOL_VERSION,
     CandidateState,
     GuidedRequest,
+    MethodologySnapshot,
     SessionState,
 )
 
@@ -170,3 +171,29 @@ def test_identity_is_none_when_the_session_has_no_name() -> None:
     state = _state_with(CandidateState())
     assert api_server._guided_entity_title(state) is None
     assert api_server._guided_entity_slug(state) is None
+
+
+def test_public_state_names_where_the_sheet_would_land() -> None:
+    """The author must see the destination BEFORE anything is written."""
+    state = _state_with(CandidateState(
+        accepted_canon={
+            "identidad": {"value": {"nombre": "Ganic"}},
+            "deseo": {"value": "no ser una carga"},
+        },
+    ))
+    profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)
+    assert profile is not None
+    state.methodology_snapshot = MethodologySnapshot(
+        flow_type="guided-character", profile=profile.as_dict(),
+    )
+    payload = api_server._guided_public_state(state)
+    assert payload["target_preview"] == "personajes/ganic.md"
+
+
+def test_public_state_has_no_target_preview_while_the_candidate_is_incomplete() -> None:
+    state = _state_with(CandidateState())
+    profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)
+    state.methodology_snapshot = MethodologySnapshot(
+        flow_type="guided-character", profile=profile.as_dict() if profile else None,
+    )
+    assert "target_preview" not in api_server._guided_public_state(state)

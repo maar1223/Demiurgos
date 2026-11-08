@@ -684,6 +684,10 @@ export const messages = {
     "guided.methodTitle": "Método de esta sesión",
     "guided.methodFactory": "Predeterminado (Creación de Personajes)",
     "guided.methodCurrent": "Método: {name}",
+    "guided.create.where": "La ficha quedará guardada en",
+    "guided.create.action": "Crear la ficha",
+    "guided.create.hint":
+      "Nada se escribe hasta que apruebes el diff.",
     "guided.suggestedDetail": "Detalle sugerido",
     "guided.suggestedDetailProgress": "Detalle sugerido · {index} de {total}",
     "guided.reject": "Rechazar",
@@ -3029,6 +3033,10 @@ export const messages = {
     "guided.methodTitle": "Method for this session",
     "guided.methodFactory": "Default (Character Creation)",
     "guided.methodCurrent": "Method: {name}",
+    "guided.create.where": "The sheet will be saved at",
+    "guided.create.action": "Create the sheet",
+    "guided.create.hint":
+      "Nothing is written until you approve the diff. Review it first.",
     "guided.suggestedDetail": "Suggested detail",
     "guided.suggestedDetailProgress": "Suggested detail · {index} of {total}",
     "guided.reject": "Reject",

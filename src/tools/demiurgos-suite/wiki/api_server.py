@@ -3379,6 +3379,14 @@ def _guided_public_state(state: SessionState) -> dict:
         public_props, state.candidate.accepted_canon, plan,
     )
     progress = detail_progress(state.candidate.accepted_canon, plan)
+    target_preview = None
+    flow_profile = profile if profile is not None else _flow_profile(state)
+    if flow_profile is not None:
+        from guided_character_domain import candidate_minimum_complete
+        slug = _guided_entity_slug(state)
+        if slug and candidate_minimum_complete(state.candidate):
+            # Say WHERE a completed sheet would land, before the author asks.
+            target_preview = f"{flow_profile.target_section}/{slug}.md"
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3423,6 +3431,8 @@ def _guided_public_state(state: SessionState) -> dict:
         payload["flow"] = flow
     if progress is not None:
         payload["detail_progress"] = progress
+    if target_preview is not None:
+        payload["target_preview"] = target_preview
     return payload
 
 
