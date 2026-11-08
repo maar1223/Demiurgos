@@ -14,11 +14,11 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 
 ## Tasks
 
-- [ ] T1 feature document + Engram mirror. Route: inline.
-- [ ] T2 domain gate counts `observations` (S1). Route: inline.
-- [ ] T3 `continue_session` preserves a demoted delta as observations + keeps the synthesis (S2). Route: inline.
-- [ ] T4 semantic open path preserves a demoted delta as observations (S2). Route: inline.
-- [ ] T5 full backend suite + commit (S3). Route: inline.
+- [x] T1 feature document + Engram mirror. Route: inline.
+- [x] T2 domain gate counts `observations` (S1). Route: inline.
+- [x] T3 `continue_session` preserves a demoted delta as observations + keeps the synthesis (S2). Route: inline.
+- [x] T4 semantic open path preserves a demoted delta as observations (S2). Route: inline.
+- [x] T5 full backend suite + commit (S3). Route: inline.
 - [ ] T6 publish `v0.4.5` + Owner updates the app (S4). Route: inline.
 
 ## Log
@@ -27,3 +27,19 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 - **L2 (Owner instruction, verbatim):** "si, adelante y acualiza la app de una vez para probarlo"
 - **L3 (diagnosis, 2026-11-08):** live session `guided-f74775b2529e4fe4924ceaaa2a39a288` (Vibrantes, rev 14) in `~/.local/share/demiurgos/data/guided-sessions.sqlite3`: `accepted_canon={}`, `proposals={}`, `observations` with 40+ facts including `nombre: "Ganic (ya declarado por el autor; corregido: no volver a preguntar)"`. `_candidate_known_fields` (`guided_character_domain.py:83`) reads only canon + proposals + the turn delta, while the provider prompt sends every collected fact to `observations` (persisted at `guided_session_store.py:350`) and `_guided_known_state` feeds them back to the model — so the model summarises correctly while the gate believes nothing was collected. `continue_session` (`guided_character_protocol.py:591-613`) then replaces the delta with `next_required_question()` and drops both the delta and the synthesis.
 - **L4 (scope note):** the uncommitted `assistant-response-style` T7 work stays out of this hotfix (stashed, restored after the release).
+
+## Evidence
+
+- **T2–T5 (2026-11-08):** RED observed for both rules before the fix
+  (`test_candidate_minimum_complete_counts_observed_facts` failed with
+  `assert False`; both protocol tests failed with `KeyError: 'nombre'`).
+  GREEN after the change. Full backend suite: 5067 passed / 26 skipped.
+  Frontend suite: 1759 passed. `derive_payload_manifest.py --check` fresh
+  (189 payload files). One live-gateway test
+  (`test_live_guided_start_semantic_first`) failed once in the filtered run and
+  was proven pre-existing on a clean `cbee5f5` worktree; it passed in the full
+  suite run.
+- **Commit:** `3ab2b22 fix(assistant): stop the guided gate from re-asking known facts`.
+- **Risk:** none in the code change (no migration, no contract removal, tests
+  pin both rules). Delivery is item 5: publishing `v0.4.5` is public and
+  irreversible and was explicitly authorized by the Owner.
