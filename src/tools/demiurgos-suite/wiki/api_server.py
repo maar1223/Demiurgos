@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import unicodedata
 import io
 import inspect
 import json
@@ -4003,8 +4004,12 @@ def serialize_guided_proposal(mundo: str, body: GuidedSerializeRequest, request:
             "The guided flow profile is unavailable; start a new session.",
             False,
         ))
-    slug = body.slug or f"guided-{body.session_id.removeprefix('guided-')[-12:]}"
-    title = body.title or profile.default_title
+    slug = (
+        body.slug
+        or _guided_entity_slug(state)
+        or f"guided-{body.session_id.removeprefix('guided-')[-12:]}"
+    )
+    title = body.title or _guided_entity_title(state) or profile.default_title
     existing_targets = _existing_targets(_resolve_mundo_dir(mundo), profile.target_section)
     try:
         proposal = serialize_entity(
@@ -9796,22 +9801,83 @@ def _candidate_proposal_value(state, key: str):
     return item
 
 
+_GUIDED_IDENTITY_KEYS = ("name", "nombre", "title")
+_GUIDED_IDENTITY_NESTS = ("identidad", "identity")
+
+
+def _unwrap_record(item: object) -> object:
+    """Strip the ``{"value": …}`` wrapper a candidate record may carry."""
+    if isinstance(item, Mapping) and "value" in item:
+        return item.get("value")
+    return item
+
+
+def _clean_identity(value: object) -> str | None:
+    """Turn a stored identity note into a usable name.
+
+    Observations carry notes like ``"Ganic (ya declarado por el autor; no
+    volver a preguntar)"``. Only the leading name is the identity; the note is
+    discarded, never rendered into a title or a filename.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    for separator in (" (", " [", " —", " –", " -", ";", "\n"):
+        if separator in text:
+            text = text.split(separator, 1)[0]
+    text = text.strip().strip("*_`#").strip()
+    return text or None
+
+
+def _candidate_identity_value(state) -> str | None:
+    """The entity name, wherever the session actually stored it.
+
+    The provider keeps the name in ``observations`` and often nests it under
+    ``identidad``; reading only ``proposals`` produced the session id as the
+    target filename (2026-11-08: ``personajes/guided-eaaa2a39a288.md``).
+    Order: proposed field, accepted canon, then internal observations.
+    """
+    candidate = getattr(state, "candidate", None)
+    if candidate is None:
+        return None
+    for source in (
+        getattr(candidate, "proposals", {}),
+        getattr(candidate, "accepted_canon", {}),
+        getattr(candidate, "observations", {}),
+    ):
+        if not isinstance(source, Mapping):
+            continue
+        for key in _GUIDED_IDENTITY_KEYS:
+            cleaned = _clean_identity(_unwrap_record(source.get(key)))
+            if cleaned:
+                return cleaned
+        for key in _GUIDED_IDENTITY_NESTS:
+            nested = _unwrap_record(source.get(key))
+            if not isinstance(nested, Mapping):
+                continue
+            for inner in _GUIDED_IDENTITY_KEYS:
+                cleaned = _clean_identity(_unwrap_record(nested.get(inner)))
+                if cleaned:
+                    return cleaned
+    return None
+
+
+def _slugify_identity(value: str) -> str | None:
+    """ASCII slug: ``Ñandú Pérez`` → ``nandu-perez`` (accents are dropped)."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(char for char in decomposed if not unicodedata.combining(char))
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    return slug if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) else None
+
+
 def _guided_entity_slug(state) -> str | None:
     """Derive the server-owned target slug from the candidate, never provider authority."""
-    for key in ("name", "nombre", "title"):
-        value = _candidate_proposal_value(state, key)
-        if isinstance(value, str) and value.strip():
-            slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
-            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
-                return slug
-    return None
+    identity = _candidate_identity_value(state)
+    return _slugify_identity(identity) if identity else None
 
 
 def _guided_entity_title(state) -> str | None:
-    value = _candidate_proposal_value(state, "name") or _candidate_proposal_value(state, "nombre")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
+    return _candidate_identity_value(state)
 
 
 async def _internal_guided_turn(mundo: str, body: AskRequest, request: Request):

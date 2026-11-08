@@ -125,3 +125,48 @@ def test_a_trimmed_fact_list_says_how_many_it_dropped() -> None:
     assert value.count("\n") >= 1
     # The last kept line is whole: no marker glued onto a truncated value.
     assert "vvv…" not in value and "… (" in value
+
+
+def _state_with(candidate: CandidateState) -> SessionState:
+    state = SessionState("session-1", "nec", "conversation", 3, "author-1")
+    state.candidate = candidate
+    return state
+
+
+def test_identity_is_read_from_the_nested_canon_record() -> None:
+    """The name can live under ``identidad``; the target must still be named."""
+    state = _state_with(CandidateState(
+        accepted_canon={"identidad": {"value": {"nombre": "Ganic", "origen": "Chaart"}}},
+    ))
+    assert api_server._guided_entity_title(state) == "Ganic"
+    assert api_server._guided_entity_slug(state) == "ganic"
+
+
+def test_identity_cleans_an_observation_note() -> None:
+    """``"Ganic (ya declarado…)"`` is a note, not a title."""
+    state = _state_with(CandidateState(
+        observations={"nombre": "Ganic (ya declarado por el autor; no volver a preguntar)"},
+    ))
+    assert api_server._guided_entity_title(state) == "Ganic"
+    assert api_server._guided_entity_slug(state) == "ganic"
+
+
+def test_identity_prefers_a_proposed_field_over_internal_notes() -> None:
+    state = _state_with(CandidateState(
+        proposals={"nombre": {"value": "Ganic de Chaart"}},
+        observations={"nombre": "Ganic (nota vieja)"},
+    ))
+    assert api_server._guided_entity_title(state) == "Ganic de Chaart"
+    assert api_server._guided_entity_slug(state) == "ganic-de-chaart"
+
+
+def test_slug_drops_accents_and_stays_a_valid_filename() -> None:
+    state = _state_with(CandidateState(proposals={"nombre": "Ñandú Pérez"}))
+    assert api_server._guided_entity_slug(state) == "nandu-perez"
+    assert api_server._guided_entity_title(state) == "Ñandú Pérez"
+
+
+def test_identity_is_none_when_the_session_has_no_name() -> None:
+    state = _state_with(CandidateState())
+    assert api_server._guided_entity_title(state) is None
+    assert api_server._guided_entity_slug(state) is None
