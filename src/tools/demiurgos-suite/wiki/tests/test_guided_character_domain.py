@@ -343,7 +343,7 @@ def test_ficha_is_additive_v1_and_validates_slug_collisions() -> None:
         "status": "proposed",
         "provenance": ["graph:read:lore/a.md"],
     }
-    for section in ("## Identidad Base", "## Psicología y Carácter", "## Arco de Personaje"):
+    for section in ("## Psicología y Carácter", "## Motivaciones", "## Pendientes"):
         assert section in body
     # The character body is the level specimen, not the old YAML dump.
     assert "- **Deseo:** freedom" in body

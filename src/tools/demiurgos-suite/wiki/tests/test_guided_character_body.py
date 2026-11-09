@@ -12,7 +12,12 @@ _WIKI = Path(__file__).resolve().parent.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
-from guided_character_body import labels_for, render_character_body  # noqa: E402
+from guided_character_body import (  # noqa: E402
+    ADDITIVE_LABELS,
+    labels_for,
+    plan_for,
+    render_character_body,
+)
 from guided_character_protocol import CandidateState  # noqa: E402
 
 _REPO = Path(__file__).resolve().parents[5]
@@ -42,16 +47,15 @@ def test_level_one_renders_sectioned_bullets_with_specimen_labels() -> None:
         trasfondo="Nació dentro de la estructura.",
     ))
 
+    # Only sections with data are rendered; the empty ones become pendientes.
     for heading in (
         "## Identidad Base",
-        "## Aspecto Físico",
         "## Psicología y Carácter",
-        "## Psique (sistema)",
         "## Motivaciones",
         "## Trasfondo",
-        "## Arco de Personaje",
     ):
         assert heading in body
+    assert "## Aspecto Físico" not in body
     assert "- **Nombre:** Nara Veless" in body
     assert "- **Apodo:** Dos Llaves" in body
     assert "- **Edad:** 34 años" in body
@@ -60,9 +64,10 @@ def test_level_one_renders_sectioned_bullets_with_specimen_labels() -> None:
     assert "- **Virtudes:** Precisión; Templanza" in body
     assert "- **Conflicto interno:** Pertenece al orden que empieza a parecerle injusto" in body
     assert "Nació dentro de la estructura." in body
-    # A label with no value is a visible gap, never a silent omission.
-    assert "- **Familia:** _(pendiente)_" in body
-    assert "- **Eneatipo:** _(pendiente)_" in body
+    # Missing labels are a compact footer, not a wall of _(pendiente)_.
+    assert "## Pendientes" in body
+    assert "Familia" in body.split("## Pendientes")[1]
+    assert "Eneatipo" in body.split("## Pendientes")[1]
 
 
 def test_level_two_renders_flat_bold_labels() -> None:
@@ -79,7 +84,8 @@ def test_level_two_renders_flat_bold_labels() -> None:
     assert "**Relación con el protagonista:** Mentor a regañadientes" in body
     # 2º omits the 1º-only sectioned skeleton.
     assert "## Identidad Base" not in body
-    assert "**Edad:** _(pendiente)_" in body
+    assert "**Edad:**" not in body
+    assert "Edad" in body.split("## Pendientes")[1]
 
 
 def test_level_three_renders_only_its_minimal_card() -> None:
@@ -129,7 +135,7 @@ def test_unmapped_fields_fall_back_instead_of_disappearing() -> None:
     assert "- **Color favorito:** azul profundo" in body
 
 
-def test_observations_fill_canonical_labels_and_keep_unmapped_facts() -> None:
+def test_observations_fill_canonical_labels_but_are_never_dumped() -> None:
     candidate = CandidateState(
         proposals={"nombre": {"value": "Nara"}},
         observations={
@@ -140,11 +146,39 @@ def test_observations_fill_canonical_labels_and_keep_unmapped_facts() -> None:
     )
     body = render_character_body(candidate)
     assert "- **Lugar de origen:** Ekkor" in body
-    # Internal session metadata is not ficha content.
+    # Observations are internal notes: they never become ficha content.
     assert "crear un personaje" not in body
-    # A real observation that maps to no label is still kept (S2).
-    assert "## Otros datos" in body
-    assert "- **Color favorito:** verde" in body
+    assert "verde" not in body
+    assert "## Otros datos" not in body
+
+
+def test_real_provider_keys_land_in_their_canonical_labels() -> None:
+    """The real Ganic candidate shape must not dump narrative facts as 'Otros datos'."""
+    candidate = CandidateState(
+        accepted_canon={
+            "identidad": {"value": {"nombre": "Ganic"}},
+            "conflicto": {"value": "La deuda que crea quien se queda"},
+            "arco propuesto": {"value": "De la tregua al quiebre"},
+        },
+        proposals={
+            "caracter": {"value": "Reservado y funcional"},
+            "miedo central": {"value": "Ser una carga"},
+            "alineamiento": {"value": "Antihéroe"},
+            "vinculos": {"value": "Hesia, su novia"},
+            "detonante": {"value": "Colapsa un día entero"},
+            "tension a resolver": {"value": "Evitar el dolor o buscar algo"},
+        },
+    )
+    body = render_character_body(candidate)
+    assert "- **Conflicto:** La deuda que crea quien se queda" in body
+    assert "- **Arco:** De la tregua al quiebre" in body
+    assert "**Carácter:** Reservado y funcional" in body
+    assert "- **Teme:** Ser una carga" in body
+    assert "**Alineamiento:** Antihéroe" in body
+    assert "- **Vínculos:** Hesia, su novia" in body
+    assert "**Detonante:** Colapsa un día entero" in body
+    assert "- **Conflicto interno:** Evitar el dolor o buscar algo" in body
+    assert "## Otros datos" not in body
 
 
 def test_nested_identity_record_does_not_duplicate_the_name() -> None:
@@ -185,9 +219,18 @@ def test_every_rendered_label_still_exists_in_the_pinned_carrier(nivel: str) -> 
     """S6: carrier drift must be caught, not silently tolerated."""
     carrier = (_SEEDS / _CARRIERS[nivel]).read_text(encoding="utf-8")
     for label in labels_for(nivel):
-        if label == "Deseo":  # documented additive label (platform minimum)
+        if label in ADDITIVE_LABELS:  # documented platform additions
             continue
         assert label in carrier, f"{nivel}: label {label!r} is missing from the pinned specimen"
+
+
+def test_field_plan_exposes_the_questionnaire_order() -> None:
+    plan = plan_for("1º")
+    assert plan.fields()[0].key == "nombre"
+    assert plan.field("aspecto_fisico") is not None
+    assert plan.field("aspecto_fisico").hint
+    assert plan.field("aspecto_fisico").examples
+    assert plan_for("3º").fields()[1].key == "funcion_escena"
 
 
 def test_generic_flows_keep_the_yaml_body_unchanged() -> None:
