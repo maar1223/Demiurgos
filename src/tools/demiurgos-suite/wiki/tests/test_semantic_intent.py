@@ -78,6 +78,34 @@ def test_all_five_states_validate() -> None:
         assert result.decision.state == state
 
 
+def test_echoed_ids_are_normalized_to_the_flat_envelope() -> None:
+    """The model may wrap the ids as ``echoed_ids``; normalize the shape.
+
+    Observed with deepseek-v4.1-flash on 2026-11-09: the semantic gate blocked
+    every create turn because the envelope carried ``echoed_ids`` (array or
+    object) instead of the flat ``request_id``.
+    """
+    provider = SemanticIntentProvider(object())
+    variants = [
+        '{"state":"clarify","response":"ok","echoed_ids":["r1","s1"],"guided":true}',
+        '{"state":"clarify","response":"ok","echoed_ids":{"request_id":"r1","session_id":"s1"},"guided":true}',
+        '{"state":"clarify","response":"ok","echoed_ids":"r1","guided":true}',
+    ]
+    for raw in variants:
+        normalized = provider._normalize_output(raw)
+        result = validate_semantic_decision(normalized)
+        assert result.admitted, raw
+        assert result.decision is not None and result.decision.request_id == "r1"
+
+
+def test_flat_request_id_is_untouched() -> None:
+    provider = SemanticIntentProvider(object())
+    normalized = provider._normalize_output(valid_payload("allow"))
+    result = validate_semantic_decision(normalized)
+    assert result.admitted
+    assert result.decision is not None and result.decision.request_id == "request-1"
+
+
 def test_action_is_derived_server_side_for_every_state() -> None:
     for state in _ALL_STATES:
         assert action_for_state(state) == _ACTIONS[state]

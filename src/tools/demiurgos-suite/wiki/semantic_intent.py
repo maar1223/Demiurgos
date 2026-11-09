@@ -593,7 +593,8 @@ class SemanticIntentProvider:
             "author's input. Answer the message itself; never describe the "
             "author's intent or the classification — no 'the author wants', "
             "'the user asks' or 'the assistant should'. Use a safe refusal "
-            "only for blocked), echoed ids (see the last line), guided (boolean), and "
+            "only for blocked), request_id (the exact id echoed on the last line), "
+            "session_id when one is given, guided (boolean), and "
             "guided_explicitness (one of imperative or musing: use imperative only "
             "when the author directly commands creating or starting a guided entity "
             "— a character or a world system — for example \"crea un personaje\" or "
@@ -665,6 +666,38 @@ class SemanticIntentProvider:
                     output = json.loads(repaired)
                 except (TypeError, ValueError):
                     return None
+        if isinstance(output, Mapping):
+            output = self._normalize_echoed_ids(dict(output))
+        return output
+
+    @staticmethod
+    def _normalize_echoed_ids(output: dict) -> dict:
+        """Accept the model's ``echoed_ids`` container as the flat id fields.
+
+        The prompt asks for top-level ``request_id``/``session_id``, but the
+        model (deepseek-v4.1-flash, 2026-11-09) sometimes returns
+        ``echoed_ids`` as a string, an array, or an object. The values are the
+        same server-issued ids; normalizing the shape keeps the strict envelope
+        validator and avoids a false blocked turn.
+        """
+        if "request_id" in output:
+            return output
+        echoed = output.get("echoed_ids")
+        if isinstance(echoed, str) and echoed.strip():
+            output["request_id"] = echoed.strip()
+        elif isinstance(echoed, (list, tuple)):
+            ids = [item for item in echoed if isinstance(item, str) and item.strip()]
+            if ids:
+                output["request_id"] = ids[0].strip()
+            if len(ids) > 1:
+                output.setdefault("session_id", ids[1].strip())
+        elif isinstance(echoed, Mapping):
+            request_id = echoed.get("request_id")
+            if isinstance(request_id, str) and request_id.strip():
+                output["request_id"] = request_id.strip()
+            session_id = echoed.get("session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                output.setdefault("session_id", session_id.strip())
         return output
 
     async def decide(
