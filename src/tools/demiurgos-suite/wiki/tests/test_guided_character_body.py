@@ -17,6 +17,7 @@ from guided_character_body import (  # noqa: E402
     current_field,
     labels_for,
     plan_for,
+    questionnaire_fields,
     render_character_body,
 )
 from guided_character_protocol import CandidateState  # noqa: E402
@@ -232,7 +233,7 @@ def test_current_field_walks_the_plan_and_respects_skips() -> None:
     field, progress = current_field(candidate)
     assert field is not None and field.key == "apodo"
     assert progress["index"] == 2
-    assert progress["total"] == len(plan_for("1º").fields())
+    assert progress["total"] == len(questionnaire_fields("1º"))
     assert progress["complete"] is False
 
     field, progress = current_field(candidate, skipped=["apodo"])
@@ -245,10 +246,10 @@ def test_current_field_walks_the_plan_and_respects_skips() -> None:
 
 
 def test_current_field_reports_completion_when_everything_is_visited() -> None:
-    plan = plan_for("3º")
+    plan = questionnaire_fields("3º")
     candidate = CandidateState(proposals={
         "nivel": {"value": "3"},
-        **{field.key: {"value": f"valor-{field.key}"} for field in plan.fields()},
+        **{field.key: {"value": f"valor-{field.key}"} for field in plan},
     })
     field, progress = current_field(candidate)
     assert field is None
@@ -262,6 +263,16 @@ def test_field_plan_exposes_the_questionnaire_order() -> None:
     assert plan.field("aspecto_fisico").hint
     assert plan.field("aspecto_fisico").examples
     assert plan_for("3º").fields()[1].key == "funcion_escena"
+    # The questionnaire asks exactly the specimen labels: renderer-only facts
+    # (Carácter, Vínculos, Conflicto, Detonante, Condición, Alineamiento) are not
+    # extra questions.
+    asked = {field.key for field in questionnaire_fields("1º")}
+    assert "caracter" not in asked
+    assert "vinculos" not in asked
+    assert "conflicto" not in asked
+    assert "detonante" not in asked
+    assert "condicion" not in asked
+    assert "deseo" in asked  # platform minimum, documented additive question
 
 
 def test_generic_flows_keep_the_yaml_body_unchanged() -> None:

@@ -87,6 +87,13 @@ describe("guided character API compatibility", () => {
     ]);
   });
 
+  it("sends the chosen creation path on consent accept (S1)", async () => {
+    await acceptGuidedConsent("nec", "ct-1", undefined, "guided-character", "fields");
+    expect(mockApiFetch.mock.calls[0][1]?.body).toBe(
+      JSON.stringify({ token: "ct-1", flow_id: "guided-character", path: "fields" }),
+    );
+  });
+
   it("wires the one-shot consent accept/decline calls with the token body", async () => {
     const consentEnvelope: SemanticDecisionEnvelope = {
       state: "require_confirmation",

@@ -256,6 +256,10 @@ def test_field_skip_input_is_narrow_and_explicit() -> None:
     assert api_server._is_field_skip_input("Saltar este campo.")
     assert api_server._is_field_skip_input("siguiente")
     assert api_server._is_field_skip_input("no sé")
+    # The English UI control must work too.
+    assert api_server._is_field_skip_input("Skip this field")
+    assert api_server._is_field_skip_input("skip this field.")
+    assert api_server._is_field_skip_input("Skip field")
     # A real answer that merely mentions moving on is not a skip.
     assert not api_server._is_field_skip_input("su aspecto es alto y delgado")
     assert not api_server._is_field_skip_input("")

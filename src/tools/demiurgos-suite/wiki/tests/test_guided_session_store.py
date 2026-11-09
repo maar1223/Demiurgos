@@ -444,3 +444,44 @@ def test_legacy_database_is_migrated_without_losing_sessions(tmp_path: Path) -> 
     assert recovered is not None
     assert recovered.path == "explore"
     assert recovered.skipped_fields == []
+
+
+def test_legacy_migration_preserves_existing_session_data(tmp_path: Path) -> None:
+    """S1/T3: the additive migration keeps the pre-path row's data intact."""
+    db = tmp_path / "legacy-data.sqlite3"
+    now = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(db)
+    con.execute(
+        """
+        CREATE TABLE guided_sessions (
+            session_id TEXT PRIMARY KEY, world TEXT NOT NULL, phase TEXT NOT NULL,
+            revision INTEGER NOT NULL, owner_binding TEXT NOT NULL,
+            messages_json TEXT NOT NULL, pending_question TEXT,
+            candidate_json TEXT NOT NULL, reference_context TEXT NOT NULL DEFAULT '',
+            reference_name TEXT, relation_goal TEXT NOT NULL DEFAULT '',
+            confirmation_input TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL,
+            depth TEXT NOT NULL, methodology_snapshot_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            revalidation_required INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO guided_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "legacy", "vibrantes", "conversation", 3, "author",
+            '[{"message_type":"author_input","content":{"text":"hola"},"revision":1}]',
+            None, '{"accepted_canon":{"nombre":{"value":"Ganic"}}}',
+            "ctx", "Rhyz", "goal", "", "fast", "fundamental", None, now, now, 0,
+        ),
+    )
+    con.commit()
+    con.close()
+
+    recovered = GuidedSessionStore(db_path=db).recover("legacy", "author")
+    assert recovered is not None
+    assert recovered.path == "explore" and recovered.skipped_fields == []
+    assert recovered.candidate.accepted_canon["nombre"]["value"] == "Ganic"
+    assert recovered.mode == "fast" and recovered.depth == "fundamental"
+    assert recovered.reference_name == "Rhyz" and recovered.revision == 3
+    assert recovered.messages[0].content["text"] == "hola"

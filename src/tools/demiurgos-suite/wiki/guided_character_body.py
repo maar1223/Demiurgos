@@ -56,6 +56,10 @@ class Field:
     optional: bool = False
     hint: str = ""
     examples: tuple[str, ...] = ()
+    #: Whether the questionnaire asks this label. Renderer-only additions keep
+    #: the sheet faithful to facts the provider already produced without
+    #: widening the questionnaire beyond the level's specimen.
+    ask: bool = True
 
 
 @dataclass(frozen=True)
@@ -113,9 +117,9 @@ _LEVEL_1 = FieldPlan("1º", (
               hint="Lo que persigue, aunque no lo diga en voz alta."),
         Field("condicion", "Condición", ("condicion", "condición", "condition"),
               hint="Un estado o marca que lo define y no eligió.",
-              examples=("Inerte de nacimiento, no curable",)),
+              examples=("Inerte de nacimiento, no curable",), ask=False),
         Field("vinculos", "Vínculos", ("vinculos", "vínculos", "relaciones", "relaciones_clave", "relacion", "relación"),
-              hint="Personas o fuerzas a las que está atado; nombrá el vínculo, no solo el nombre."),
+              hint="Personas o fuerzas a las que está atado; nombrá el vínculo, no solo el nombre.", ask=False),
     ), bullet=True),
     Section("Aspecto Físico", (
         Field("aspecto_fisico", "Aspecto Físico", ("aspecto_fisico", "aspecto físico", "aspecto", "apariencia", "fisico", "físico", "appearance"),
@@ -137,7 +141,7 @@ _LEVEL_1 = FieldPlan("1º", (
         Field("fortalezas", "Fortalezas", ("fortalezas", "strengths")),
         Field("debilidades", "Debilidades", ("debilidades", "debilidad", "weaknesses")),
         Field("caracter", "Carácter", ("caracter", "carácter", "personality"), prose=True,
-              hint="Un párrafo que sintetice cómo se comporta cuando lo presionan."),
+              hint="Un párrafo que sintetice cómo se comporta cuando lo presionan.", ask=False),
     ), bullet=True),
     Section("Psique (sistema)", (
         Field("eneatipo", "Eneatipo", ("eneatipo", "enneatype", "eneagrama")),
@@ -146,18 +150,18 @@ _LEVEL_1 = FieldPlan("1º", (
         Field("alineamiento_inicial", "Alineamiento inicial", ("alineamiento_inicial", "alineamiento inicial")),
         Field("alineamiento_revelado", "Alineamiento revelado", ("alineamiento_revelado", "alineamiento revelado"), optional=True),
         Field("alineamiento", "Alineamiento", ("alineamiento", "alignment"), prose=True,
-              hint="Cómo lee el mundo en términos morales; si solo hay uno, describilo acá."),
+              hint="Cómo lee el mundo en términos morales; si solo hay uno, describilo acá.", ask=False),
     ), bullet=True),
     Section("Motivaciones", (
         Field("deseo", "Deseo", ("deseo", "desire", "deseo_definidor"),
               hint="Lo que quiere conseguir o evitar; no la meta externa, sino lo que lo mueve.",
               examples=("Salir del sistema con la posición intacta", "Que no lo vuelvan a levantar")),
         Field("conflicto", "Conflicto", ("conflicto", "conflict", "conflicto_central"), prose=True,
-              hint="La tensión que lo parte; podés contarla como una escena."),
+              hint="La tensión que lo parte; podés contarla como una escena.", ask=False),
         Field("conflicto_interno", "Conflicto interno", ("conflicto_interno", "conflicto interno", "tension a resolver", "tensión a resolver", "tension_a_resolver")),
         Field("conflicto_externo", "Conflicto externo", ("conflicto_externo", "conflicto externo")),
         Field("detonante", "Detonante", ("detonante", "trigger", "inciting_incident"), prose=True,
-              hint="El hecho concreto que lo pone en movimiento."),
+              hint="El hecho concreto que lo pone en movimiento.", ask=False),
         Field("rol_historia", "Rol en la historia", ("rol_historia", "rol en la historia", "rol_en_la_historia", "rol", "funcion", "función", "role", "function")),
     ), bullet=True),
     Section("Trasfondo", (
@@ -190,7 +194,7 @@ _LEVEL_2 = FieldPlan("2º", (
         Field("aspecto_fisico", "Aspecto físico (con algún defecto)", ("aspecto_fisico", "aspecto físico", "aspecto", "apariencia", "fisico", "físico", "appearance")),
         Field("virtudes", "Virtudes", ("virtudes", "virtues")),
         Field("defectos", "Defectos", ("defectos", "defects", "flaws")),
-        Field("caracter", "Carácter", ("caracter", "carácter", "personality")),
+        Field("caracter", "Carácter", ("caracter", "carácter", "personality"), ask=False),
         Field("adora", "Adora", ("adora", "loves")),
         Field("odia", "Odia", ("odia", "hates")),
         Field("teme", "Teme", ("teme", "temor", "miedo", "miedo_central", "fear")),
@@ -241,23 +245,31 @@ def field_value(field: Field, known: Mapping[str, Any]) -> str:
     return _value_for(known, field.probes)
 
 
+def questionnaire_fields(nivel: str) -> tuple[Field, ...]:
+    """The fields the questionnaire asks: exactly the level's specimen labels.
+
+    Renderer-only additions (``ask=False``) keep mapping facts the provider
+    already produced without widening the questionnaire past the specimen.
+    """
+    return tuple(field for field in plan_for(nivel).fields() if field.ask)
+
+
 def current_field(
     candidate: Any, skipped: tuple[str, ...] | list[str] = (),
 ) -> tuple[Field | None, dict[str, Any]]:
-    """Resolve the questionnaire cursor: the first field neither covered nor skipped.
+    """Resolve the questionnaire cursor: the first asked field neither covered nor skipped.
 
     Returns ``(field, progress)``. ``progress`` is the public shape used by the
-    API/UI: 1-based plan position, total, the current field brief, and whether
-    every field was visited (covered or skipped).
+    API/UI: 1-based questionnaire position, total asked fields, the current
+    field brief, and whether every asked field was visited (covered or skipped).
     """
     # Imported lazily: same cycle-avoidance as the renderer.
     from guided_character_domain import _candidate_known_fields, resolve_candidate_nivel
 
     nivel = resolve_candidate_nivel(candidate)
-    plan = plan_for(nivel)
     known = _candidate_known_fields(candidate)
     skipped_set = {str(key) for key in skipped}
-    fields = plan.fields()
+    fields = questionnaire_fields(nivel)
     covered: list[str] = []
     for index, field in enumerate(fields, start=1):
         if field_value(field, known):

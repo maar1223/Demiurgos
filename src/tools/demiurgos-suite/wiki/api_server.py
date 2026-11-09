@@ -3582,10 +3582,12 @@ def _guided_revalidation_block(session_id: str, principal_id: str) -> JSONRespon
 _FIELD_SKIP_TOKENS = frozenset({
     "saltar", "saltalo", "siguiente", "skip", "next", "pasar", "pasá",
     "no sé", "no se", "no lo sé", "ns",
+    "skip this field", "skip field", "next field",
 })
 _FIELD_SKIP_PHRASES = (
     "saltar este campo", "saltemos este campo", "saltar el campo",
     "pasemos al siguiente", "pasar al siguiente", "siguiente campo",
+    "skip this field", "skip field", "next field", "move on",
 )
 
 
