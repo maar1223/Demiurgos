@@ -546,6 +546,14 @@ function ChatScreen({
   const guidedTargetPreview = activeSession?.guided?.target_preview ?? null;
   // `undefined` = legacy session without the field; `null` = level not decided yet.
   const guidedTargetLevel = activeSession?.guided?.target_level;
+  // Once the author is already on the created sheet, offering to create it (or
+  // to re-open its diff) is noise: the target file IS the current file.
+  const guidedTargetIsCurrentFile = Boolean(
+    guidedTargetPreview &&
+      section &&
+      filePath &&
+      guidedTargetPreview.toLowerCase() === `${section}/${filePath}`.toLowerCase(),
+  );
   const visibleGuidedProposal =
     activeSession?.guided?.proposal &&
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
@@ -781,7 +789,7 @@ function ChatScreen({
              </p>
            )}
 
-           {guidedTargetPreview && !isSending && onGuidedReview && requestGuidedReview && (
+           {guidedTargetPreview && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
                {guidedTargetLevel !== undefined && (
                  <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
@@ -914,7 +922,7 @@ function ChatScreen({
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && (
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
             <button
               type="button"
               onClick={() => void handleGuidedReview()}
