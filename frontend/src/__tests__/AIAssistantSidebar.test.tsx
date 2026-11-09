@@ -1123,9 +1123,89 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "factory",
-    });
+    }, "explore");
     await user.click(screen.getByRole("button", { name: "Seguir charlando" }));
     expect(resolveGuidedConsent).toHaveBeenCalledWith(false);
+  });
+
+  it("lets the author choose the field-by-field path on the consent card", async () => {
+    const resolveGuidedConsent = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        createdAt: 1,
+        consentToken: "ct-1",
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(
+      screen.getByRole("radio", { name: "Completar la ficha paso a paso" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(
+      true,
+      { skill_id: "factory" },
+      "fields",
+    );
+  });
+
+  it("shows the questionnaire progress and skips the current field", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({
+      sendMessage,
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 3,
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: { identidad: { value: { nombre: "Ganic" } } },
+            proposals: {},
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          path: "fields",
+          field_progress: {
+            nivel: "1º",
+            index: 2,
+            total: 30,
+            key: "apodo",
+            label: "Apodo",
+            hint: "Un sobrenombre que diga algo de cómo lo ve el mundo.",
+            examples: [],
+            optional: false,
+            covered: ["nombre"],
+            skipped: [],
+            complete: false,
+          },
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.getByText("Campo 2 de 30")).toBeInTheDocument();
+    expect(screen.getByText("Apodo")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Saltar campo" }));
+    expect(sendMessage).toHaveBeenCalledWith("Saltar este campo");
   });
 
   it("preselects the published foundational character method and hides the factory option (S6)", async () => {
@@ -1167,7 +1247,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "narrative-character-creation",
       version: "1.3",
-    });
+    }, "explore");
   });
 
   it("renders flow-specific copy and methods for a declared flow (S3)", async () => {
@@ -1222,7 +1302,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "narrative-system-creation",
       version: "1.1",
-    });
+    }, "explore");
   });
 
   it("renders chronology copy and methods for the chronology flow (S3)", async () => {
@@ -1276,7 +1356,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "narrative-chronology-creation",
       version: "1.1",
-    });
+    }, "explore");
   });
 
   it("renders entity copy and methods for the entity flow (S3)", async () => {
@@ -1330,7 +1410,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "narrative-entity-creation",
       version: "1.0",
-    });
+    }, "explore");
   });
 
   it("sends the method chosen on the consent card (S6)", async () => {
@@ -1368,7 +1448,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(resolveGuidedConsent).toHaveBeenCalledWith(true, {
       skill_id: "narrative-character-creation",
       version: "1.2",
-    });
+    }, "explore");
   });
 
   it("shows the pinned method while a guided session runs (S1)", () => {

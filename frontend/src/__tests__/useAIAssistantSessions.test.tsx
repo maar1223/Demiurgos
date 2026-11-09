@@ -365,7 +365,7 @@ describe("useAIAssistantSessions guided consent wiring", () => {
       await result.current.resolveGuidedConsent(true);
     });
 
-    expect(acceptMock).toHaveBeenCalledWith("Vibrantes", "ct-1");
+    expect(acceptMock).toHaveBeenCalledWith("Vibrantes", "ct-1", undefined, undefined, undefined);
     expect(result.current.activeSession?.guided).toEqual(guidedSession);
     expect(result.current.activeSession?.consentToken).toBeUndefined();
   });

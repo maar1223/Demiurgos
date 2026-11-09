@@ -129,6 +129,7 @@ export interface AIAssistantSessionsResult {
   resolveGuidedConsent: (
     accept: boolean,
     method?: GuidedMethodChoice,
+    path?: "explore" | "fields",
   ) => Promise<void>;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   cancelSend: () => void;
@@ -822,6 +823,7 @@ export function useAIAssistantSessions(
   const resolveGuidedConsent = useCallback(async (
     accept: boolean,
     method?: GuidedMethodChoice,
+    path?: "explore" | "fields",
   ) => {
     const token = activeSession?.consentToken;
     if (!token || !activeSessionId) return;
@@ -836,10 +838,10 @@ export function useAIAssistantSessions(
         // malformed is dropped instead of being stored as `guided`.
         const flowId = activeSession?.consentFlow?.flow_id;
         const envelope = flowId
-          ? await acceptGuidedConsent(contextMundo, token, method, flowId)
+          ? await acceptGuidedConsent(contextMundo, token, method, flowId, path)
           : method
-            ? await acceptGuidedConsent(contextMundo, token, method)
-            : await acceptGuidedConsent(contextMundo, token);
+            ? await acceptGuidedConsent(contextMundo, token, method, undefined, path)
+            : await acceptGuidedConsent(contextMundo, token, undefined, undefined, path);
         // Validate the unwrapped value too: a present-but-malformed
         // `guided_state` must not be stored either, so this boundary stays
         // symmetric with loadSessions instead of trusting the server's type.
