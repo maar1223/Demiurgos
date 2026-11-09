@@ -236,6 +236,58 @@ def field_for(nivel: str, key: str) -> Field | None:
     return plan_for(nivel).field(key)
 
 
+def field_value(field: Field, known: Mapping[str, Any]) -> str:
+    """The candidate value already collected for ``field`` (empty when missing)."""
+    return _value_for(known, field.probes)
+
+
+def current_field(
+    candidate: Any, skipped: tuple[str, ...] | list[str] = (),
+) -> tuple[Field | None, dict[str, Any]]:
+    """Resolve the questionnaire cursor: the first field neither covered nor skipped.
+
+    Returns ``(field, progress)``. ``progress`` is the public shape used by the
+    API/UI: 1-based plan position, total, the current field brief, and whether
+    every field was visited (covered or skipped).
+    """
+    # Imported lazily: same cycle-avoidance as the renderer.
+    from guided_character_domain import _candidate_known_fields, resolve_candidate_nivel
+
+    nivel = resolve_candidate_nivel(candidate)
+    plan = plan_for(nivel)
+    known = _candidate_known_fields(candidate)
+    skipped_set = {str(key) for key in skipped}
+    fields = plan.fields()
+    covered: list[str] = []
+    for index, field in enumerate(fields, start=1):
+        if field_value(field, known):
+            covered.append(field.key)
+            continue
+        if field.key in skipped_set:
+            continue
+        return field, _progress(nivel, index, len(fields), field, covered, skipped_set, complete=False)
+    return None, _progress(nivel, 0, len(fields), None, covered, skipped_set, complete=True)
+
+
+def _progress(
+    nivel: str, index: int, total: int, field: Field | None,
+    covered: list[str], skipped: set[str], *, complete: bool,
+) -> dict[str, Any]:
+    return {
+        "nivel": nivel,
+        "index": index,
+        "total": total,
+        "key": field.key if field is not None else None,
+        "label": field.label if field is not None else None,
+        "hint": field.hint if field is not None else None,
+        "examples": list(field.examples) if field is not None else [],
+        "optional": bool(field.optional) if field is not None else False,
+        "covered": covered,
+        "skipped": sorted(skipped),
+        "complete": complete,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Candidate value helpers
 # ---------------------------------------------------------------------------

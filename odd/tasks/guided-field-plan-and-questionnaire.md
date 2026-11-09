@@ -17,8 +17,8 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 
 - [ ] T1 branch + feature document + Engram mirror (S1–S7). Route: inline.
 - [x] T2 `FieldPlan` per level in `guided_character_body.py`: structured specs (key, label, probes, prose, optional, hint, examples); renderer refactor (S4, S5); expanded mapping; compact `Pendientes`; tests. Route: inline. Evidence: real Ganic candidate now renders 9 narrative labels (Conflicto, Carácter, Vínculos, Condición, Detonante, etc.) with 0 `_(pendiente)_` and a compact `## Pendientes`; body suite 18 passed, domain 60 passed.
-- [ ] T3 backend fields path: pinned path, current field injection, coverage/progress, skip, prompt, completion (S1–S3, S6). Route: inline.
-- [ ] T4 frontend: path choice at start, field progress, skip/advance control, es/en copy (S1–S3). Route: inline.
+- [x] T3 backend fields path: pinned path, current field injection, coverage/progress, skip, prompt, completion (S1–S3, S6). Route: inline. Evidence: `SessionState.path`/`skipped_fields` + additive SQLite migration (tested against a pre-path DB); `current_field` cursor; `GuidedRequest.guided_path`/`field_context`; provider field instruction; `_guided_public_state.path` + `field_progress`; `path` accepted on start/consent (invalid → 422); skip detected and recorded before the provider asks the next field. BE 5130 passed/26 skipped.
+- [x] T4 frontend: path choice at start, field progress, skip/advance control, es/en copy (S1–S3). Route: inline. Evidence: consent card radio (explore/fields); progress card “Campo N de M · label · hint” + “Saltar campo” (sends “Saltar este campo”); types + es/en copy; sidebar 71 tests; full FE 1772 passed; typecheck clean.
 - [ ] T5 docs + full verification (S7). Route: delegated verifier if a high-risk item is named.
 
 ## Log

@@ -229,6 +229,50 @@ def test_public_state_exposes_the_recorded_level() -> None:
     assert api_server._guided_public_state(state)["target_level"] == "2º"
 
 
+def test_public_state_exposes_the_fields_path_and_progress() -> None:
+    state = _state_with(CandidateState(
+        accepted_canon={
+            "identidad": {"value": {"nombre": "Ganic"}},
+            "deseo": {"value": "no ser una carga"},
+        },
+    ))
+    state.path = "fields"
+    profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)
+    state.methodology_snapshot = MethodologySnapshot(
+        flow_type="guided-character", profile=profile.as_dict() if profile else None,
+    )
+    payload = api_server._guided_public_state(state)
+    assert payload["path"] == "fields"
+    progress = payload["field_progress"]
+    assert progress["index"] == 2  # nombre is covered; apodo is the cursor
+    assert progress["key"] == "apodo"
+    assert progress["label"] == "Apodo"
+    assert progress["complete"] is False
+    assert progress["total"] > 1
+
+
+def test_field_skip_input_is_narrow_and_explicit() -> None:
+    assert api_server._is_field_skip_input("saltar")
+    assert api_server._is_field_skip_input("Saltar este campo.")
+    assert api_server._is_field_skip_input("siguiente")
+    assert api_server._is_field_skip_input("no sé")
+    # A real answer that merely mentions moving on is not a skip.
+    assert not api_server._is_field_skip_input("su aspecto es alto y delgado")
+    assert not api_server._is_field_skip_input("")
+
+
+def test_field_brief_names_the_current_field_and_expectation() -> None:
+    brief = api_server._field_brief({
+        "index": 2, "total": 30, "label": "Aspecto Físico",
+        "hint": "Un rasgo memorable y un defecto.", "examples": ["Alto y encorvado"],
+        "complete": False,
+    })
+    assert "Aspecto Físico (2 of 30)" in brief
+    assert "Un rasgo memorable y un defecto." in brief
+    assert "Alto y encorvado" in brief
+    assert "complete" in api_server._field_brief({"complete": True})
+
+
 def test_public_state_has_no_target_preview_while_the_candidate_is_incomplete() -> None:
     state = _state_with(CandidateState())
     profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)

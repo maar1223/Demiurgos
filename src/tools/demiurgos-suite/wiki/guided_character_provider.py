@@ -178,6 +178,21 @@ class HermesGuidedProvider:
             "it silently. "
             if request.flow_entity_type == "personaje" else ""
         )
+        # Field-by-field path: the server names the current field of the level's
+        # plan; the provider asks it with context and moves on when it has enough
+        # (or the author says "saltar"/"siguiente"). Same conversational contract.
+        field_instruction = (
+            "Field-by-field mode: the author chose to complete the sheet field by "
+            f"field. {request.field_context} Ask exactly ONE question about the "
+            "current field, with context and, when useful, one or two concrete "
+            "examples. If the author's answer already settles it, include the "
+            "field in 'delta' under the field key and stop asking about it. If the "
+            "answer is partial or unclear, ask ONE follow-up and stay on this "
+            "field; the author may talk for several turns about it. If the author "
+            "says 'saltar' or 'siguiente', accept it and move on without insisting. "
+            "Keep the synthesis-first contract. "
+            if request.guided_path == "fields" and request.field_context else ""
+        )
         if compiled_contract_markdown:
             methodology_context = (
                 "[Active methodology contract (server-pinned, read-only):\n"
@@ -239,6 +254,7 @@ class HermesGuidedProvider:
             f"Guided mode: {request.guided_mode}; question depth: {request.question_depth}. "
             f"{fast_guidance}"
             f"{level_instruction}"
+            f"{field_instruction}"
             f"{methodology_context}"
             f"Known so far (never ask these again):\n{known_state}\n"
             f"World lore (verified, read-only):\n{world_lore}\n"

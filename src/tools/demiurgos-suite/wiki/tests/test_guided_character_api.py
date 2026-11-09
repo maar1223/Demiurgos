@@ -871,7 +871,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level", "path"}
     assert session["flow"] == {
         "flow_id": "guided-character",
         "entity_type": "personaje",
@@ -1008,6 +1008,42 @@ def _guided_semantic_allow(monkeypatch, count=1):
     ])
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(runs))
     return runs
+
+
+def test_start_accepts_the_field_by_field_path(monkeypatch, tmp_path) -> None:
+    """S1: the author can pin the questionnaire path at session start."""
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Cómo se llama?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    _guided_semantic_allow(monkeypatch, count=2)
+
+    started = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "Create a character", "path": "fields",
+    })
+    assert started.status_code == 200
+    session = started.json()
+    assert session["path"] == "fields"
+    progress = session["field_progress"]
+    assert progress["index"] == 1
+    assert progress["key"] == "nombre"
+    assert progress["complete"] is False
+
+    rejected = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "Create a character", "path": "bogus",
+    })
+    assert rejected.status_code == 422
 
 
 def test_guided_flow_gates_semantic_then_guarded(monkeypatch, tmp_path) -> None:

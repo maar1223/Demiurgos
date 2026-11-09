@@ -14,6 +14,7 @@ if str(_WIKI) not in sys.path:
 
 from guided_character_body import (  # noqa: E402
     ADDITIVE_LABELS,
+    current_field,
     labels_for,
     plan_for,
     render_character_body,
@@ -222,6 +223,36 @@ def test_every_rendered_label_still_exists_in_the_pinned_carrier(nivel: str) -> 
         if label in ADDITIVE_LABELS:  # documented platform additions
             continue
         assert label in carrier, f"{nivel}: label {label!r} is missing from the pinned specimen"
+
+
+def test_current_field_walks_the_plan_and_respects_skips() -> None:
+    """S2/S4: the questionnaire cursor is the first field neither covered nor
+    skipped, in the specimen's order."""
+    candidate = CandidateState(proposals={"nombre": {"value": "Ganic"}})
+    field, progress = current_field(candidate)
+    assert field is not None and field.key == "apodo"
+    assert progress["index"] == 2
+    assert progress["total"] == len(plan_for("1º").fields())
+    assert progress["complete"] is False
+
+    field, progress = current_field(candidate, skipped=["apodo"])
+    assert field is not None and field.key == "edad"
+    assert progress["index"] == 3
+
+    # A covered field never comes back, even after a skip list is set.
+    field, _ = current_field(_candidate(nombre="Nara", apodo="Dos Llaves"))
+    assert field is not None and field.key == "edad"
+
+
+def test_current_field_reports_completion_when_everything_is_visited() -> None:
+    plan = plan_for("3º")
+    candidate = CandidateState(proposals={
+        "nivel": {"value": "3"},
+        **{field.key: {"value": f"valor-{field.key}"} for field in plan.fields()},
+    })
+    field, progress = current_field(candidate)
+    assert field is None
+    assert progress["complete"] is True
 
 
 def test_field_plan_exposes_the_questionnaire_order() -> None:

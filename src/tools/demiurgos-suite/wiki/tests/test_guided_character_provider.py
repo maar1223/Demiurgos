@@ -150,6 +150,49 @@ def test_character_flow_prompt_makes_the_narrative_level_explicit() -> None:
     asyncio.run(scenario())
 
 
+def test_field_path_prompt_carries_the_current_field_brief() -> None:
+    """S3: the questionnaire path asks the server-owned current field with its
+    hint/examples, and only in that path."""
+
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return f"run-{len(prompts)}"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "¿Cómo se ve?",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        base = guided_request().__dict__
+        brief = "Current field: Aspecto Físico (2 of 30).\nWhat it expects: un defecto."
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "personaje", "guided_path": "fields", "field_context": brief}),
+            capabilities,
+        )
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "personaje", "guided_path": "explore"}),
+            capabilities,
+        )
+
+        assert "Field-by-field mode" in prompts[0]
+        assert "Aspecto Físico" in prompts[0]
+        assert "Field-by-field mode" not in prompts[1]
+
+    asyncio.run(scenario())
+
+
 def test_provider_prompt_follows_configured_language_without_relaxing_constraints(monkeypatch) -> None:
     async def scenario() -> None:
         prompts: list[str] = []

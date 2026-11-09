@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS guided_sessions (
     confirmation_input TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL,
     depth TEXT NOT NULL,
+    path TEXT NOT NULL DEFAULT 'explore',
+    skipped_fields_json TEXT NOT NULL DEFAULT '[]',
     methodology_snapshot_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -122,6 +124,7 @@ class GuidedSessionStore:
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_SCHEMA)
+        self._migrate()
         self._conn.commit()
         # Session ids created or mutated by THIS process. A session absent from
         # this set at recovery time came from durable storage (a restart).
@@ -140,6 +143,7 @@ class GuidedSessionStore:
         relation_goal: str = "",
         mode: str = "full",
         depth: str = "standard",
+        path: str = "explore",
         methodology_snapshot: MethodologySnapshot | None = None,
     ) -> SessionState:
         authorization_binding = self._normalize_binding(authorization_binding)
@@ -147,6 +151,8 @@ class GuidedSessionStore:
             raise ValueError("reference context exceeds the bounded budget")
         if mode not in {"full", "fast"} or depth not in {"standard", "fundamental"}:
             raise ValueError("invalid guided mode")
+        if path not in {"explore", "fields"}:
+            raise ValueError("invalid guided path")
         with self._lock:
             if self._read_row(session_id, authorization_binding) is not None:
                 raise ValueError("session already exists")
@@ -161,6 +167,7 @@ class GuidedSessionStore:
                 relation_goal=relation_goal,
                 mode=mode,
                 depth=depth,
+                path=path,
                 methodology_snapshot=methodology_snapshot,
             )
             self._write_state(state, revalidation_required=0)
@@ -470,9 +477,9 @@ class GuidedSessionStore:
                 session_id, world, phase, revision, owner_binding,
                 messages_json, pending_question, candidate_json,
                 reference_context, reference_name, relation_goal,
-                confirmation_input, mode, depth, methodology_snapshot_json,
-                created_at, updated_at, revalidation_required
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confirmation_input, mode, depth, path, skipped_fields_json,
+                methodology_snapshot_json, created_at, updated_at, revalidation_required
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 world = excluded.world,
                 phase = excluded.phase,
@@ -487,6 +494,8 @@ class GuidedSessionStore:
                 confirmation_input = excluded.confirmation_input,
                 mode = excluded.mode,
                 depth = excluded.depth,
+                path = excluded.path,
+                skipped_fields_json = excluded.skipped_fields_json,
                 methodology_snapshot_json = excluded.methodology_snapshot_json,
                 updated_at = excluded.updated_at,
                 revalidation_required = excluded.revalidation_required
@@ -496,10 +505,47 @@ class GuidedSessionStore:
                 state.authorization_binding, messages_json, state.pending_question,
                 candidate_json, state.reference_context, state.reference_name,
                 state.relation_goal, state.confirmation_input, state.mode,
-                state.depth, snapshot_json, now, now, flag,
+                state.depth, state.path, json.dumps(state.skipped_fields),
+                snapshot_json, now, now, flag,
             ),
         )
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Additive migration for databases created before the path columns (S1)."""
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(guided_sessions)")
+        }
+        if "path" not in columns:
+            self._conn.execute(
+                "ALTER TABLE guided_sessions ADD COLUMN path TEXT NOT NULL DEFAULT 'explore'",
+            )
+        if "skipped_fields_json" not in columns:
+            self._conn.execute(
+                "ALTER TABLE guided_sessions ADD COLUMN skipped_fields_json TEXT NOT NULL DEFAULT '[]'",
+            )
+
+    def skip_field(
+        self, session_id: str, authorization_binding: str, field_key: str,
+    ) -> SessionState | None:
+        """Record one explicitly skipped questionnaire field (idempotent)."""
+        authorization_binding = self._normalize_binding(authorization_binding)
+        if not field_key:
+            return None
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            if state.path != "fields":
+                return None
+            next_state = deepcopy(state)
+            if field_key not in next_state.skipped_fields:
+                next_state.skipped_fields.append(field_key)
+                self._write_state(next_state)
+            self._in_process.add(session_id)
+            return next_state
 
     def _deserialize_snapshot(self, raw: str | None) -> MethodologySnapshot | None:
         if not raw:
@@ -550,5 +596,7 @@ class GuidedSessionStore:
             confirmation_input=row["confirmation_input"],
             mode=row["mode"],
             depth=row["depth"],
+            path=row["path"],
+            skipped_fields=json.loads(row["skipped_fields_json"] or "[]"),
             methodology_snapshot=self._deserialize_snapshot(row["methodology_snapshot_json"]),
         )
