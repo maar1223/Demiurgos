@@ -731,6 +731,22 @@ export interface GuidedCharacterSession {
   target_preview?: string | null;
   /** Explicit narrative level of the pending sheet (1º/2º/3º, decision B). */
   target_level?: string | null;
+  /** Chosen creation path: exploratory 40/60 or field-by-field questionnaire. */
+  path?: "explore" | "fields";
+  /** Questionnaire cursor (server-owned) when path is "fields". */
+  field_progress?: {
+    nivel: string;
+    index: number;
+    total: number;
+    key: string | null;
+    label: string | null;
+    hint: string | null;
+    examples: string[];
+    optional: boolean;
+    covered: string[];
+    skipped: string[];
+    complete: boolean;
+  };
   detail_progress?: {
     index: number;
     total: number;

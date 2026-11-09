@@ -871,7 +871,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level", "path"}
     assert session["flow"] == {
         "flow_id": "guided-character",
         "entity_type": "personaje",
@@ -1008,6 +1008,42 @@ def _guided_semantic_allow(monkeypatch, count=1):
     ])
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(runs))
     return runs
+
+
+def test_start_accepts_the_field_by_field_path(monkeypatch, tmp_path) -> None:
+    """S1: the author can pin the questionnaire path at session start."""
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Cómo se llama?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    _guided_semantic_allow(monkeypatch, count=2)
+
+    started = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "Create a character", "path": "fields",
+    })
+    assert started.status_code == 200
+    session = started.json()
+    assert session["path"] == "fields"
+    progress = session["field_progress"]
+    assert progress["index"] == 1
+    assert progress["key"] == "nombre"
+    assert progress["complete"] is False
+
+    rejected = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "Create a character", "path": "bogus",
+    })
+    assert rejected.status_code == 422
 
 
 def test_guided_flow_gates_semantic_then_guarded(monkeypatch, tmp_path) -> None:
@@ -1991,4 +2027,70 @@ def test_consent_accept_rejects_ineligible_method(monkeypatch, tmp_path) -> None
     })
     assert rejected.status_code == 422
     assert "does not create characters" in rejected.json()["message"]
+    assert api_server._GUIDED_SESSIONS._sessions == {}
+
+
+def test_english_skip_control_advances_the_field_cursor(monkeypatch, tmp_path) -> None:
+    """S2/S3: the English 'Skip this field' control records the skip and moves on."""
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    _guided_semantic_allow(monkeypatch, count=2)
+
+    started = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "Create a character", "path": "fields",
+    })
+    assert started.status_code == 200, started.text
+    session = started.json()
+    assert session["field_progress"]["key"] == "nombre"
+
+    skipped = client.post("/api/vibrantes/guided-character/turn", json={
+        "session_id": session["session_id"],
+        "base_revision": session["revision"],
+        "author_input": "Skip this field",
+    })
+    assert skipped.status_code == 200, skipped.text
+    progress = skipped.json()["field_progress"]
+    assert progress["key"] == "apodo"
+    assert progress["skipped"] == ["nombre"]
+    assert progress["covered"] == []
+    recovered = api_server._GUIDED_SESSIONS.recover(session["session_id"], "author-1")
+    assert recovered is not None and recovered.skipped_fields == ["nombre"]
+
+
+def test_consent_accept_pins_the_fields_path(monkeypatch, tmp_path) -> None:
+    """S1: the consent card's path choice is accepted and pinned by the backend."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload("require_confirmation"))
+    token = _issue_consent_suggestion(client)
+    accepted = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token, "path": "fields",
+    })
+    assert accepted.status_code == 200, accepted.text
+    body = accepted.json()
+    assert body["guided_state"]["path"] == "fields"
+    assert body["guided_state"]["field_progress"]["key"] == "nombre"
+    recovered = api_server._GUIDED_SESSIONS.recover(body["guided_session_id"], "author-1")
+    assert recovered is not None and recovered.path == "fields"
+
+
+def test_consent_accept_rejects_invalid_path_without_a_session(monkeypatch, tmp_path) -> None:
+    """S1: an unsupported consent path opens nothing."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    rejected = client.post("/api/vibrantes/guided-character/consent/accept", json={
+        "token": token, "path": "bogus",
+    })
+    assert rejected.json()["state"] == "blocked"
     assert api_server._GUIDED_SESSIONS._sessions == {}

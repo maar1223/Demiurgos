@@ -2686,6 +2686,8 @@ class GuidedStartRequest(BaseModel):
     # Guided flow to open (S1). Absent/omitted -> guided-character, preserving
     # every pre-existing client. The client never supplies the profile itself.
     flow_id: str | None = None
+    # Creation path: exploratory 40/60 (default) or field-by-field questionnaire.
+    path: str | None = None
 
 
 class GuidedTurnRequest(BaseModel):
@@ -2721,6 +2723,8 @@ class GuidedConsentRequest(BaseModel):
     method_version: str | None = None
     # Optional echo of the server-resolved flow; a mismatch is rejected.
     flow_id: str | None = None
+    # Creation path chosen on the consent card: explore (default) or fields.
+    path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -3438,6 +3442,11 @@ def _guided_public_state(state: SessionState) -> dict:
     flow = _public_flow(state)
     if flow is not None:
         payload["flow"] = flow
+        payload["path"] = state.path
+        if state.path == "fields" and flow.get("entity_type") == "personaje":
+            from guided_character_body import current_field
+            _, field_progress = current_field(state.candidate, state.skipped_fields)
+            payload["field_progress"] = field_progress
     if progress is not None:
         payload["detail_progress"] = progress
     if target_preview is not None:
@@ -3570,6 +3579,47 @@ def _guided_revalidation_block(session_id: str, principal_id: str) -> JSONRespon
     return None
 
 
+_FIELD_SKIP_TOKENS = frozenset({
+    "saltar", "saltalo", "siguiente", "skip", "next", "pasar", "pasá",
+    "no sé", "no se", "no lo sé", "ns",
+    "skip this field", "skip field", "next field",
+})
+_FIELD_SKIP_PHRASES = (
+    "saltar este campo", "saltemos este campo", "saltar el campo",
+    "pasemos al siguiente", "pasar al siguiente", "siguiente campo",
+    "skip this field", "skip field", "next field", "move on",
+)
+
+
+def _is_field_skip_input(text: str) -> bool:
+    """True when the author's turn is a request to skip the current field."""
+    normalized = " ".join(str(text).strip().casefold().rstrip(".!¡¿? ").split())
+    if not normalized:
+        return False
+    return normalized in _FIELD_SKIP_TOKENS or any(
+        phrase in normalized for phrase in _FIELD_SKIP_PHRASES
+    )
+
+
+def _field_brief(progress: dict) -> str:
+    """The bounded server-owned brief for the current questionnaire field."""
+    if progress.get("complete"):
+        return (
+            "The field plan is complete (every field is covered or was skipped). "
+            "Do not ask for more fields; offer the final review."
+        )
+    label = progress.get("label") or ""
+    hint = progress.get("hint") or f"What the author wants to define for “{label}”."
+    lines = [
+        f"Current field: {label} ({progress.get('index')} of {progress.get('total')}).",
+        f"What it expects: {hint}",
+    ]
+    examples = progress.get("examples") or []
+    if examples:
+        lines.append("Examples: " + " | ".join(examples))
+    return "\n".join(lines)
+
+
 async def _guided_continue(
     mundo: str, session_id: str, revision: int, author_input: str,
     principal: EditPrincipal, reference_context: str = "", reference_name: str | None = None,
@@ -3620,6 +3670,23 @@ async def _guided_continue(
         _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
     )
     flow_profile = session_flow_profile(state) if state is not None else None
+    guided_path = state.path if state is not None else "explore"
+    field_context = ""
+    if (
+        state is not None and guided_path == "fields"
+        and flow_profile is not None and flow_profile.entity_type == "personaje"
+    ):
+        from guided_character_body import current_field
+        # A "saltar"/"siguiente" turn records the skip and lets the provider ask
+        # the next field in the same turn instead of insisting on this one.
+        if _is_field_skip_input(author_input):
+            current, _ = current_field(state.candidate, state.skipped_fields)
+            if current is not None:
+                skipped = _GUIDED_SESSIONS.skip_field(session_id, principal.id, current.key)
+                if skipped is not None:
+                    state = skipped
+        _, progress = current_field(state.candidate, state.skipped_fields)
+        field_context = _field_brief(progress)
     request = _compose_guided_request(
         request_id=f"guided-{uuid.uuid4().hex}",
         session_id=session_id,
@@ -3636,6 +3703,8 @@ async def _guided_continue(
         world_context=world_context,
         known_state=known_state,
         flow_entity_type=flow_profile.entity_type if flow_profile is not None else "",
+        guided_path=guided_path,
+        field_context=field_context,
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
@@ -3815,11 +3884,16 @@ async def start_guided_session(mundo: str, body: GuidedStartRequest, request: Re
         ))
     session_id = f"guided-{uuid.uuid4().hex}"
     relation_goal = extract_related_goal(body.author_input, reference_name=reference_name).summary
+    path = body.path or "explore"
+    if path not in {"explore", "fields"}:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "Unsupported guided path.", False,
+        ))
     _GUIDED_SESSIONS.create(
         session_id, mundo, principal.id,
         reference_context=reference_context, reference_name=reference_name,
         relation_goal=relation_goal, mode=intent.mode, depth=intent.depth,
-        methodology_snapshot=methodology_snapshot,
+        path=path, methodology_snapshot=methodology_snapshot,
     )
     if intent.requires_confirmation:
         confirmed = _GUIDED_SESSIONS.begin_confirmation(
@@ -3920,7 +3994,7 @@ async def accept_guided_consent(
         reference_context=str(record.get("reference_context") or ""),
         reference_name=record.get("reference_name") or None,
         method_skill_id=body.method_skill_id, method_version=body.method_version,
-        flow_id=recorded_flow,
+        flow_id=recorded_flow, path=body.path or "explore",
     )
 
 
@@ -9617,7 +9691,7 @@ async def _open_guided_continuation(
     *, decision: SemanticDecision, reference_context: str = "",
     reference_name: str | None = None,
     method_skill_id: str | None = None, method_version: str | None = None,
-    flow_id: str | None = None,
+    flow_id: str | None = None, path: str = "explore",
 ) -> dict:
     """Create the guarded session and expose the run's continuation.
 
@@ -9628,6 +9702,8 @@ async def _open_guided_continuation(
     returns a fail-closed blocked envelope.
     """
     session_id = f"guided-{uuid.uuid4().hex}"
+    if path not in {"explore", "fields"}:
+        return _semantic_blocked_result(result)
     relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
     if flow_id is None:
         resolved = _resolve_input_flow(body.prompt)
@@ -9646,7 +9722,7 @@ async def _open_guided_continuation(
         _GUIDED_SESSIONS.create(
             session_id, mundo, principal.id,
             reference_context=reference_context, reference_name=reference_name,
-            relation_goal=relation_goal,
+            relation_goal=relation_goal, path=path,
             methodology_snapshot=methodology_snapshot,
         )
         if decision.state == "require_confirmation":
@@ -10507,6 +10583,8 @@ def _compose_guided_request(
     world_context: str = "",
     known_state: str = "",
     flow_entity_type: str = "",
+    guided_path: str = "explore",
+    field_context: str = "",
 ) -> GuidedRequest:
     """The ONE place that assembles a guided request.
 
@@ -10537,6 +10615,8 @@ def _compose_guided_request(
         world_context=_clamp_context_block(world_context),
         known_state=_clamp_context_block(known_state),
         flow_entity_type=flow_entity_type,
+        guided_path=guided_path,
+        field_context=_clamp_context_block(field_context),
     )
 
 

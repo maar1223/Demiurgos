@@ -106,6 +106,12 @@ class GuidedRequest:
     # Kernel entity shape of the pinned flow (e.g. ``personaje``). Additive:
     # legacy pins send the empty string and get the identical prompt.
     flow_entity_type: str = ""
+    # The author's chosen creation path (``explore`` 40/60 or ``fields``
+    # questionnaire). Additive: legacy callers get the exploratory prompt.
+    guided_path: str = "explore"
+    # The current field brief in the questionnaire path (label, what it
+    # expects, examples). Empty outside that path.
+    field_context: str = ""
 
     def _oversized_fields(self) -> list[str]:
         """Names of the bounded fields that exceed ``context_budget``."""
@@ -319,6 +325,10 @@ class SessionState:
     confirmation_input: str = ""
     mode: str = "full"
     depth: str = "standard"
+    # The chosen creation path: exploratory 40/60 or field-by-field questionnaire.
+    path: str = "explore"
+    # Fields the author explicitly skipped in the questionnaire (revisitable).
+    skipped_fields: list[str] = field(default_factory=list)
     methodology_snapshot: MethodologySnapshot | None = None
 
 
@@ -374,6 +384,7 @@ class GuidedSessionStore:
                reference_context: str = "", reference_name: str | None = None,
                relation_goal: str = "",
                mode: str = "full", depth: str = "standard",
+               path: str = "explore",
                methodology_snapshot: "MethodologySnapshot | None" = None) -> SessionState:
         if session_id in self._sessions:
             raise ValueError("session already exists")
@@ -381,6 +392,8 @@ class GuidedSessionStore:
             raise ValueError("reference context exceeds the bounded budget")
         if mode not in {"full", "fast"} or depth not in {"standard", "fundamental"}:
             raise ValueError("invalid guided mode")
+        if path not in {"explore", "fields"}:
+            raise ValueError("invalid guided path")
         state = SessionState(
             session_id, world, "conversation", 0, authorization_binding,
             reference_context=reference_context,
@@ -388,10 +401,25 @@ class GuidedSessionStore:
             relation_goal=relation_goal,
             mode=mode,
             depth=depth,
+            path=path,
             methodology_snapshot=methodology_snapshot,
         )
         self._sessions[session_id] = state
         return deepcopy(state)
+
+    def skip_field(self, session_id: str, authorization_binding: str,
+                   field_key: str) -> SessionState | None:
+        """Record one explicitly skipped questionnaire field (idempotent)."""
+        state = self._sessions.get(session_id)
+        if not state or state.authorization_binding != authorization_binding:
+            return None
+        if not field_key or state.path != "fields":
+            return None
+        next_state = deepcopy(state)
+        if field_key not in next_state.skipped_fields:
+            next_state.skipped_fields.append(field_key)
+        self._sessions[session_id] = next_state
+        return deepcopy(next_state)
 
     def recover(self, session_id: str, authorization_binding: str) -> SessionState | None:
         state = self._sessions.get(session_id)

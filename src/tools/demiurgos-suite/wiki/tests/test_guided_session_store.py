@@ -379,3 +379,109 @@ def test_flow_profile_pin_round_trips(tmp_path: Path) -> None:
     assert pinned is not None
     assert pinned.profile == profile.as_dict()
     assert pinned.as_dict()["profile"] == profile.as_dict()
+
+
+def test_path_and_skipped_fields_round_trip(tmp_path: Path) -> None:
+    """S1/S2: the chosen path and the skipped fields survive a durable restart."""
+    store = GuidedSessionStore(db_path=tmp_path / "guided.sqlite3")
+    store.create("s-path", "vibrantes", "author", path="fields")
+    skipped = store.skip_field("s-path", "author", "apodo")
+    assert skipped is not None and skipped.skipped_fields == ["apodo"]
+    # Idempotent.
+    assert store.skip_field("s-path", "author", "apodo").skipped_fields == ["apodo"]
+
+    recovered = store.recover("s-path", "author")
+    assert recovered is not None
+    assert recovered.path == "fields"
+    assert recovered.skipped_fields == ["apodo"]
+
+
+def test_explore_sessions_ignore_skip_and_default_to_explore(tmp_path: Path) -> None:
+    store = GuidedSessionStore(db_path=tmp_path / "guided.sqlite3")
+    store.create("s-explore", "vibrantes", "author")
+    assert store.recover("s-explore", "author").path == "explore"
+    assert store.skip_field("s-explore", "author", "apodo") is None
+
+
+def test_invalid_path_is_rejected(tmp_path: Path) -> None:
+    store = GuidedSessionStore(db_path=tmp_path / "guided.sqlite3")
+    with pytest.raises(ValueError):
+        store.create("s-bogus", "vibrantes", "author", path="bogus")
+
+
+def test_legacy_database_is_migrated_without_losing_sessions(tmp_path: Path) -> None:
+    """S1: a pre-path database gains the columns with safe defaults."""
+    db = tmp_path / "legacy.sqlite3"
+    now = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(db)
+    con.execute(
+        """
+        CREATE TABLE guided_sessions (
+            session_id TEXT PRIMARY KEY, world TEXT NOT NULL, phase TEXT NOT NULL,
+            revision INTEGER NOT NULL, owner_binding TEXT NOT NULL,
+            messages_json TEXT NOT NULL, pending_question TEXT,
+            candidate_json TEXT NOT NULL, reference_context TEXT NOT NULL DEFAULT '',
+            reference_name TEXT, relation_goal TEXT NOT NULL DEFAULT '',
+            confirmation_input TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL,
+            depth TEXT NOT NULL, methodology_snapshot_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            revalidation_required INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO guided_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "legacy", "vibrantes", "conversation", 0, "author", "[]", None,
+            "{}", "", None, "", "", "full", "standard", None, now, now, 0,
+        ),
+    )
+    con.commit()
+    con.close()
+
+    store = GuidedSessionStore(db_path=db)
+    recovered = store.recover("legacy", "author")
+    assert recovered is not None
+    assert recovered.path == "explore"
+    assert recovered.skipped_fields == []
+
+
+def test_legacy_migration_preserves_existing_session_data(tmp_path: Path) -> None:
+    """S1/T3: the additive migration keeps the pre-path row's data intact."""
+    db = tmp_path / "legacy-data.sqlite3"
+    now = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(db)
+    con.execute(
+        """
+        CREATE TABLE guided_sessions (
+            session_id TEXT PRIMARY KEY, world TEXT NOT NULL, phase TEXT NOT NULL,
+            revision INTEGER NOT NULL, owner_binding TEXT NOT NULL,
+            messages_json TEXT NOT NULL, pending_question TEXT,
+            candidate_json TEXT NOT NULL, reference_context TEXT NOT NULL DEFAULT '',
+            reference_name TEXT, relation_goal TEXT NOT NULL DEFAULT '',
+            confirmation_input TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL,
+            depth TEXT NOT NULL, methodology_snapshot_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            revalidation_required INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO guided_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "legacy", "vibrantes", "conversation", 3, "author",
+            '[{"message_type":"author_input","content":{"text":"hola"},"revision":1}]',
+            None, '{"accepted_canon":{"nombre":{"value":"Ganic"}}}',
+            "ctx", "Rhyz", "goal", "", "fast", "fundamental", None, now, now, 0,
+        ),
+    )
+    con.commit()
+    con.close()
+
+    recovered = GuidedSessionStore(db_path=db).recover("legacy", "author")
+    assert recovered is not None
+    assert recovered.path == "explore" and recovered.skipped_fields == []
+    assert recovered.candidate.accepted_canon["nombre"]["value"] == "Ganic"
+    assert recovered.mode == "fast" and recovered.depth == "fundamental"
+    assert recovered.reference_name == "Rhyz" and recovered.revision == 3
+    assert recovered.messages[0].content["text"] == "hola"

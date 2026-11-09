@@ -142,6 +142,7 @@ interface ChatScreenProps {
   resolveGuidedConsent: (
     accept: boolean,
     method?: GuidedMethodChoice,
+    path?: "explore" | "fields",
   ) => Promise<void>;
   /** Eligible character-creation methods for THIS session (S4/S6). */
   guidedMethods: GuidedMethodOption[];
@@ -280,6 +281,7 @@ function ChatScreen({
   const [input, setInput] = useState("");
   const [consentMethodId, setConsentMethodId] = useState("factory");
   const [consentMethodTouched, setConsentMethodTouched] = useState(false);
+  const [consentPath, setConsentPath] = useState<"explore" | "fields">("explore");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -554,6 +556,12 @@ function ChatScreen({
       filePath &&
       guidedTargetPreview.toLowerCase() === `${section}/${filePath}`.toLowerCase(),
   );
+  const guidedFieldProgress = activeSession?.guided?.field_progress ?? null;
+  const guidedFieldActive = Boolean(
+    activeSession?.guided?.path === "fields" &&
+      guidedFieldProgress &&
+      !guidedFieldProgress.complete,
+  );
   const visibleGuidedProposal =
     activeSession?.guided?.proposal &&
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
@@ -789,6 +797,31 @@ function ChatScreen({
              </p>
            )}
 
+           {guidedFieldActive && guidedFieldProgress && (
+             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
+               <p className="text-xs text-muted">
+                 {t("guided.field.progress", {
+                   index: guidedFieldProgress.index,
+                   total: guidedFieldProgress.total,
+                 })}
+               </p>
+               <p className="mt-1 font-medium">{guidedFieldProgress.label}</p>
+               {guidedFieldProgress.hint && (
+                 <p className="mt-1 text-xs leading-snug text-muted">
+                   {guidedFieldProgress.hint}
+                 </p>
+               )}
+               <button
+                 type="button"
+                 onClick={() => void sendMessage(t("guided.field.skipPrompt"))}
+                 disabled={isSending}
+                 className="mt-2 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+               >
+                 {t("guided.field.skipAction")}
+               </button>
+             </div>
+           )}
+
            {guidedTargetPreview && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
                {guidedTargetLevel !== undefined && (
@@ -883,10 +916,37 @@ function ChatScreen({
                     ))}
                   </select>
                 </label>
+                {consentFlowKey === "character" && (
+                  <fieldset className="mt-2 flex flex-col gap-1 text-xs text-muted">
+                    <legend className="mb-1">{t("guided.path.title")}</legend>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="guided-path"
+                        value="explore"
+                        checked={consentPath === "explore"}
+                        onChange={() => setConsentPath("explore")}
+                        disabled={isSending}
+                      />
+                      {t("guided.path.explore")}
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="guided-path"
+                        value="fields"
+                        checked={consentPath === "fields"}
+                        onChange={() => setConsentPath("fields")}
+                        disabled={isSending}
+                      />
+                      {t("guided.path.fields")}
+                    </label>
+                  </fieldset>
+                )}
                <div className="mt-3 flex flex-wrap gap-2">
                  <button
                    type="button"
-                   onClick={() => void resolveGuidedConsent(true, consentChoice())}
+                   onClick={() => void resolveGuidedConsent(true, consentChoice(), consentPath)}
                    disabled={isSending}
                     className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >

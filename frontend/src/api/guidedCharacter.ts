@@ -138,12 +138,14 @@ export function acceptGuidedConsent(
   token: string,
   method?: GuidedMethodChoice,
   flowId?: string,
+  path?: "explore" | "fields",
 ): Promise<SemanticDecisionEnvelope> {
   return apiFetch<SemanticDecisionEnvelope>(url(world, "/consent/accept"), {
     method: "POST",
     body: JSON.stringify({
       token,
       ...(flowId ? { flow_id: flowId } : {}),
+      ...(path ? { path } : {}),
       ...methodPayload(method),
     }),
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,
