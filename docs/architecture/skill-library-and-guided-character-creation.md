@@ -429,6 +429,17 @@ El cuerpo de la ficha de personaje ya no es un volcado YAML. Se renderiza desde 
 - **Nivel explícito (decisión B)**: si el nivel no está en la conversación, el provider lo pregunta antes de profundizar; el estado público expone `target_level` y la tarjeta de destino muestra "Ficha de {nivel} nivel". Un nivel informado como registro (`{"value": …}`) también resuelve.
 - **Alcance**: solo personaje. Los flujos `sistema`, `cronologia` y `entidad` conservan su cuerpo YAML byte a byte.
 
+### 10.9 Dos caminos: exploración 40/60 y cuestionario guiado `[ACTUAL]`
+
+El autor elige al inicio cómo crear la ficha; la elección queda fijada en la sesión (`path`), igual que el método.
+
+- **`explore` (40/60):** la conversación descubre y llena la estructura de forma oportunista. Es el camino histórico; su gate mínimo y su narrativa no cambian.
+- **`fields` (cuestionario):** el assistant recorre **exactamente las etiquetas del espécimen del nivel**, en orden, una por turno. Cada campo lleva qué espera y ejemplos; el autor puede explayarse varios turnos en el mismo campo, y el assistant avanza cuando tiene lo suficiente o cuando el autor dice “saltar/siguiente”. Cualquier campo se puede saltar y queda pendiente revisitable (`skipped_fields` en la sesión).
+- **Un solo plan:** el `FieldPlan` por nivel (`guided_character_body.py`) es la fuente única del renderer, del cuestionario y del progreso (`field_progress`: campo actual, índice, total, hint/ejemplos). No hay una segunda lista de campos.
+- **Progreso visible:** la tarjeta muestra “Campo N de M · Etiqueta · qué espera” y un control “Saltar campo”; el servidor registra el salto antes de pedir el campo siguiente.
+- **Persistencia:** `path` y `skipped_fields` viven en `guided_sessions`; la migración es aditiva (columnas con default) y no pierde sesiones previas.
+- **Ficha resultante:** solo se renderizan las etiquetas con valor; los huecos son un `## Pendientes` compacto. Las observaciones internas del proveedor nunca se vuelcan.
+
 ---
 
 ## 11. Principio 40/60
