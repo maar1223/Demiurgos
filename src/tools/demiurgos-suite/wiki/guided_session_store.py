@@ -151,7 +151,7 @@ class GuidedSessionStore:
             raise ValueError("reference context exceeds the bounded budget")
         if mode not in {"full", "fast"} or depth not in {"standard", "fundamental"}:
             raise ValueError("invalid guided mode")
-        if path not in {"explore", "fields"}:
+        if path not in {"", "explore", "fields"}:
             raise ValueError("invalid guided path")
         with self._lock:
             if self._read_row(session_id, authorization_binding) is not None:
@@ -525,6 +525,24 @@ class GuidedSessionStore:
             self._conn.execute(
                 "ALTER TABLE guided_sessions ADD COLUMN skipped_fields_json TEXT NOT NULL DEFAULT '[]'",
             )
+
+    def set_path(
+        self, session_id: str, authorization_binding: str, path: str,
+    ) -> SessionState | None:
+        """Pin the chosen creation path once the author answers the first turn."""
+        authorization_binding = self._normalize_binding(authorization_binding)
+        if path not in {"explore", "fields"}:
+            return None
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            next_state = deepcopy(state)
+            next_state.path = path
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return next_state
 
     def skip_field(
         self, session_id: str, authorization_binding: str, field_key: str,

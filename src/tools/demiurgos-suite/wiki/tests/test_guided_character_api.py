@@ -2094,3 +2094,50 @@ def test_consent_accept_rejects_invalid_path_without_a_session(monkeypatch, tmp_
     })
     assert rejected.json()["state"] == "blocked"
     assert api_server._GUIDED_SESSIONS._sessions == {}
+
+
+def test_plain_creation_intent_opens_the_guided_path_question(monkeypatch, tmp_path) -> None:
+    """S1: a clear 'create a new character' in plain chat opens the guided flow
+    and its first turn is the creation-path question (2026-11-09 Hesia)."""
+    calls = []
+
+    async def provider(request, _token):
+        calls.append(request)
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Quién es?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    semantic_runs = _SemanticRuns(
+        {"state": "allow", "response": "ok", "request_id": "r-1", "session_id": "s-1", "guided": True},
+        {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": True},
+    )
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
+
+    first = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje nuevo", "session_id": "chat-1",
+    })
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["guided"] is True
+    assert body["guided_state"]["path"] == ""
+    assert "Antes de empezar" in body["response"]
+    assert calls == []  # the path question is server-owned
+
+    chosen = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
+        "guided_session_id": body["guided_session_id"],
+        "guided_revision": body["guided_revision"],
+    })
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["path"] == "explore"
+    assert len(calls) == 1

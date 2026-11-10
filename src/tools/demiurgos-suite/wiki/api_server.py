@@ -2687,7 +2687,9 @@ class GuidedStartRequest(BaseModel):
     # every pre-existing client. The client never supplies the profile itself.
     flow_id: str | None = None
     # Creation path: exploratory 40/60 (default) or field-by-field questionnaire.
-    path: str | None = None
+    # Omitted on the explicit start route preserves the pre-path behavior; the
+    # semantic auto-open passes "" so the first turn can ask the author.
+    path: str | None = "explore"
 
 
 class GuidedTurnRequest(BaseModel):
@@ -2724,7 +2726,7 @@ class GuidedConsentRequest(BaseModel):
     # Optional echo of the server-resolved flow; a mismatch is rejected.
     flow_id: str | None = None
     # Creation path chosen on the consent card: explore (default) or fields.
-    path: str | None = None
+    path: str | None = "explore"
 
 
 # ---------------------------------------------------------------------------
@@ -3601,6 +3603,53 @@ def _is_field_skip_input(text: str) -> bool:
     )
 
 
+_PATH_QUESTION_COPY = {
+    "es": (
+        "Antes de empezar: ¿cómo prefieres crear esta ficha? "
+        "1) Descubrirla conmigo, conversando (40/60). "
+        "2) Completarla paso a paso, campo por campo. Responde 1 o 2."
+    ),
+    "en": (
+        "Before we start: how do you want to create this sheet? "
+        "1) Discover it with me, through conversation (40/60). "
+        "2) Complete it step by step, field by field. Answer 1 or 2."
+    ),
+}
+
+
+def _path_question_copy() -> str:
+    return _PATH_QUESTION_COPY["es" if resolve_domain_language("conversation") == "es" else "en"]
+
+
+def _path_choice(text: str) -> str | None:
+    """Read the author's answer to the first-turn creation-path question."""
+    normalized = " ".join(str(text).strip().casefold().rstrip(".!¡¿? ").split())
+    if normalized in {"1", "uno", "la 1", "opcion 1", "opción 1", "primera", "la primera"}:
+        return "explore"
+    if normalized in {"2", "dos", "la 2", "opcion 2", "opción 2", "segunda", "la segunda"}:
+        return "fields"
+    if any(marker in normalized for marker in (
+        "paso a paso", "completar", "cuestionario", "campo por campo",
+        "rellenar", "step by step", "questionnaire", "field by field",
+    )):
+        return "fields"
+    if any(marker in normalized for marker in (
+        "descubrir", "conmigo", "40/60", "explorar", "conversando",
+        "libre", "discover", "conversation",
+    )):
+        return "explore"
+    return None
+
+
+def _first_author_input(state: SessionState) -> str:
+    for message in state.messages:
+        if message.message_type.value == "author_input":
+            text = message.content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return "Empecemos"
+
+
 def _field_brief(progress: dict) -> str:
     """The bounded server-owned brief for the current questionnaire field."""
     if progress.get("complete"):
@@ -3652,6 +3701,7 @@ async def _guided_continue(
             return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
         if decision is False:
             return _guided_public_state(next_state)
+        state = next_state
         revision = next_state.revision
         author_input = next_state.confirmation_input
     mode = state.mode if state is not None else "full"
@@ -3670,6 +3720,46 @@ async def _guided_continue(
         _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
     )
     flow_profile = session_flow_profile(state) if state is not None else None
+    # First turn of a character flow: the creation path is a server-owned
+    # question, asked BEFORE any creative question. The consent card may have
+    # pinned it already; an imperative/auto-open session starts unset.
+    if (
+        state is not None and state.path == ""
+        and flow_profile is not None and flow_profile.entity_type == "personaje"
+    ):
+        choice = _path_choice(author_input)
+        if choice is None:
+            path_request = _compose_guided_request(
+                request_id=f"guided-{uuid.uuid4().hex}",
+                session_id=session_id,
+                mundo=mundo,
+                revision=state.revision,
+                principal_id=principal.id,
+                author_input=author_input,
+                reference_context=reference_context,
+                reference_name=reference_name,
+                relation_goal=state.relation_goal,
+                guided_mode=mode,
+                question_depth=depth,
+                methodology=methodology,
+                flow_entity_type=flow_profile.entity_type,
+            )
+            path_response = GuidedResponse(
+                PROTOCOL_VERSION, path_request.request_id, session_id, state.revision,
+                Outcome.QUESTION, provenance=("guided:path-question",),
+                question=_path_question_copy(),
+            )
+            next_state = _GUIDED_SESSIONS.commit(path_request, path_response)
+            if next_state is None:
+                return _guided_error_response(StructuredError(
+                    ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+                ))
+            return _guided_result(path_response, next_state)
+        updated = _GUIDED_SESSIONS.set_path(session_id, principal.id, choice)
+        if updated is not None:
+            state = updated
+            # The seed must still reach the provider after the path detour.
+            author_input = _first_author_input(state)
     guided_path = state.path if state is not None else "explore"
     field_context = ""
     if (
@@ -3884,8 +3974,8 @@ async def start_guided_session(mundo: str, body: GuidedStartRequest, request: Re
         ))
     session_id = f"guided-{uuid.uuid4().hex}"
     relation_goal = extract_related_goal(body.author_input, reference_name=reference_name).summary
-    path = body.path or "explore"
-    if path not in {"explore", "fields"}:
+    path = body.path if body.path is not None else "explore"
+    if path not in {"", "explore", "fields"}:
         return _guided_error_response(StructuredError(
             ErrorCode.INVALID_INPUT, "Unsupported guided path.", False,
         ))
@@ -3994,7 +4084,8 @@ async def accept_guided_consent(
         reference_context=str(record.get("reference_context") or ""),
         reference_name=record.get("reference_name") or None,
         method_skill_id=body.method_skill_id, method_version=body.method_version,
-        flow_id=recorded_flow, path=body.path or "explore",
+        flow_id=recorded_flow,
+        path=body.path if body.path is not None else "explore",
     )
 
 
@@ -9189,6 +9280,25 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     # Consent memory (REQ-GFC-06): a suggestion left unaccepted becomes a
     # session decline once the next same-session turn arrives ("keeps chatting").
     _mark_kept_chatting_decline(body.session_id, mundo)
+    # A clear "create a new entity" intent opens the GUIDED flow even when the
+    # semantic gate answered ``allow``/``clarify``. The plain assistant has
+    # graph/filesystem tools and would otherwise just chat about the world (the
+    # 2026-11-09 Hesia conversation), never asking the creation path. The
+    # lexical route is server policy applied AFTER a validated decision; it is
+    # not a shortcut around the gate.
+    if not body.guided_session_id and result.decision.state in {"allow", "clarify"}:
+        intent_profile = _resolve_input_flow(body.prompt)
+        if intent_profile is not None and route_guided_intent(
+            body.prompt, intent_profile, allow_descriptive_seed=False,
+        ).is_new_entity:
+            opened = await _open_guided_from_intent(
+                mundo, body, result, _resolve_principal(request),
+                intent_profile, reference_context, reference_name,
+            )
+            if opened is not None:
+                return opened
+            # The guided flow is unavailable here (no methodology/world). Fall
+            # through to the plain answer instead of failing the chat.
     # Demiurgos policy against the validated decision:
     # 1. Guided continuations never reach this point: they return above, before
     #    the gate, because the gate's decision is not used on that path.
@@ -9609,7 +9719,57 @@ async def _semantic_guided_continuation(
     return await _open_guided_continuation(
         mundo, body, result, principal, decision=decision,
         reference_context=reference_context, reference_name=reference_name,
+        path="explore",
     )
+
+
+async def _open_guided_from_intent(
+    mundo: str, body: AskRequest, result: SemanticResult, principal,
+    profile: GuidedFlowProfile, reference_context: str = "",
+    reference_name: str | None = None,
+) -> dict:
+    """Open the guided flow for a clear new-entity intent.
+
+    The semantic gate answered ``allow``/``clarify``, but the author's message is
+    a new-entity creation command. The plain assistant would only chat; this
+    branch creates the guided session with the path unset so the first turn is
+    the server-owned creation-path question. The returned envelope matches the
+    consent-accept shape the sidebar already understands.
+    """
+    if principal is None or _resolve_mundo_dir(mundo) is None:
+        return None
+    session_id = f"guided-{uuid.uuid4().hex}"
+    relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
+    try:
+        snapshot = _active_methodology_snapshot(mundo, profile.flow_id, None, None)
+    except GuidedMethodError:
+        return None
+    _GUIDED_SESSIONS.create(
+        session_id, mundo, principal.id,
+        reference_context=reference_context, reference_name=reference_name,
+        relation_goal=relation_goal, path="", methodology_snapshot=snapshot,
+    )
+    guided_state = await _guided_continue(
+        mundo, session_id, 0, body.prompt, principal,
+        reference_context, reference_name,
+    )
+    if isinstance(guided_state, JSONResponse):
+        return guided_state
+    question = _guided_response_text(guided_state)
+    return {
+        "state": "require_confirmation",
+        "action": "request_confirmation",
+        "response": question,
+        "request_id": result.request_id,
+        "attempts": result.attempts,
+        "fallback": False,
+        "guided": True,
+        "guided_explicitness": "imperative",
+        "session_id": body.session_id,
+        "guided_session_id": guided_state["session_id"],
+        "guided_revision": guided_state["revision"],
+        "guided_state": guided_state,
+    }
 
 
 def _flow_profile(state: SessionState) -> GuidedFlowProfile | None:
@@ -9702,7 +9862,7 @@ async def _open_guided_continuation(
     returns a fail-closed blocked envelope.
     """
     session_id = f"guided-{uuid.uuid4().hex}"
-    if path not in {"explore", "fields"}:
+    if path not in {"", "explore", "fields"}:
         return _semantic_blocked_result(result)
     relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
     if flow_id is None:

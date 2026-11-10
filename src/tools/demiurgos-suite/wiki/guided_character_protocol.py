@@ -392,7 +392,7 @@ class GuidedSessionStore:
             raise ValueError("reference context exceeds the bounded budget")
         if mode not in {"full", "fast"} or depth not in {"standard", "fundamental"}:
             raise ValueError("invalid guided mode")
-        if path not in {"explore", "fields"}:
+        if path not in {"", "explore", "fields"}:
             raise ValueError("invalid guided path")
         state = SessionState(
             session_id, world, "conversation", 0, authorization_binding,
@@ -406,6 +406,19 @@ class GuidedSessionStore:
         )
         self._sessions[session_id] = state
         return deepcopy(state)
+
+    def set_path(self, session_id: str, authorization_binding: str,
+                 path: str) -> SessionState | None:
+        """Pin the chosen creation path once the author answers the first turn."""
+        state = self._sessions.get(session_id)
+        if not state or state.authorization_binding != authorization_binding:
+            return None
+        if path not in {"explore", "fields"}:
+            return None
+        next_state = deepcopy(state)
+        next_state.path = path
+        self._sessions[session_id] = next_state
+        return deepcopy(next_state)
 
     def skip_field(self, session_id: str, authorization_binding: str,
                    field_key: str) -> SessionState | None:
