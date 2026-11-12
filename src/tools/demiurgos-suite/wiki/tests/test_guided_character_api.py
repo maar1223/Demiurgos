@@ -176,9 +176,12 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
     first_state = first.json()["guided_state"]
     assert first_state["reference"]["name"] == "Rhyz El Resonante"
     assert first_state["reference"]["verified"] is True
+    # The creation-path question opens the flow; the reference is already bound
+    # to the session and survives the choice.
+    assert first_state["path"] == ""
 
     accepted = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "sí", "session_id": "chat-1",
+        "prompt": "1", "session_id": "chat-1",
         "guided_session_id": first_state["session_id"],
         "guided_revision": first_state["revision"],
     })
@@ -659,8 +662,8 @@ def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatc
     response = client.post("/api/vibrantes/ai/ask", json={"prompt": "I want to create Rhyz's wife"})
 
     assert response.status_code == 200
-    assert response.json()["response"] == "¿Creo este personaje?"
-    assert response.json()["guided_state"]["phase"] == "confirmation"
+    assert "Antes de empezar" in response.json()["response"]
+    assert response.json()["guided_state"]["path"] == ""
     prose.assert_not_awaited()
 
 
@@ -713,7 +716,7 @@ def test_confirmation_text_follows_configured_language_in_both_entry_paths(monke
     setup()
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "en")
     english_with_spanish_prompt = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "quiero crear al hermano de Rhyz",
+        "prompt": "crea esa cosa",
     }).json()
     assert english_with_spanish_prompt["response"] == "¿Creo este personaje?"
     assert english_with_spanish_prompt["guided_state"]["phase"] == "confirmation"
@@ -1915,7 +1918,8 @@ def test_consent_stays_server_side_with_flag_on(monkeypatch, tmp_path) -> None:
     }).json()
     assert imperative["guided_explicitness"] == "imperative"
     assert imperative["guided_session_id"].startswith("guided-")
-    assert imperative["guided_state"]["phase"] == "confirmation"
+    assert imperative["guided_state"]["path"] == ""
+    assert imperative["guided_state"]["phase"] == "conversation"
     assert "consent" not in imperative
     assert any(
         state.world == "vibrantes"
@@ -2140,4 +2144,132 @@ def test_plain_creation_intent_opens_the_guided_path_question(monkeypatch, tmp_p
     })
     assert chosen.status_code == 200, chosen.text
     assert chosen.json()["path"] == "explore"
+    assert len(calls) == 1
+
+
+def _policy_decision(*, guided: bool, explicitness: str) -> "api_server.SemanticDecision":
+    return api_server.SemanticDecision(
+        state="clarify",
+        response="ok",
+        request_id="r-1",
+        session_id="s-1",
+        guided=guided,
+        guided_explicitness=explicitness,
+    )
+
+
+def test_guided_open_profile_honours_the_agent_and_keeps_the_net() -> None:
+    """S2: the validated agent decision leads; the deterministic matcher is the
+    net. An imperative guided command opens the flow even without a creation
+    verb, a musing one does not, and an imperative flag never invents a flow."""
+    imperative = _policy_decision(guided=True, explicitness="imperative")
+    musing = _policy_decision(guided=True, explicitness="musing")
+
+    # Agent authority: entity term, no deterministic creation verb.
+    assert api_server._guided_open_profile("un personaje para mi historia", imperative) is not None
+    assert api_server._guided_open_profile("un personaje para mi historia", musing) is None
+    # Deterministic net: an explicit term plus verb still opens when the agent
+    # under-signals.
+    assert api_server._guided_open_profile("quiero crear un personaje nuevo", musing) is not None
+    # No flow is ever guessed from the flag alone.
+    assert api_server._guided_open_profile("hacelo ya", imperative) is None
+
+
+def test_agent_imperative_opens_the_path_question_on_ai_ask(monkeypatch, tmp_path) -> None:
+    """S2/S4: the shared policy reaches /ai/ask too — an imperative decision with
+    an unambiguous entity term asks the creation path even without a creation
+    verb."""
+    calls = []
+
+    async def provider(request, _token):
+        calls.append(request)
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Quién es?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    semantic_runs = _SemanticRuns({
+        "state": "clarify", "response": "ok", "request_id": "r-1",
+        "session_id": "s-1", "guided": True, "guided_explicitness": "imperative",
+    })
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
+
+    first = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "un personaje para mi historia", "session_id": "chat-1",
+    })
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["guided"] is True
+    assert body["guided_state"]["path"] == ""
+    assert "Antes de empezar" in body["response"]
+    assert calls == []
+
+
+def test_clear_creation_command_asks_the_path_before_the_confirmation(
+    monkeypatch, tmp_path,
+) -> None:
+    """S5: the creation-path question is the first turn of every entry into the
+    guided flow. A clear imperative command backed by a require_confirmation
+    continuation used to ask "¿Creo este personaje?" and pin ``explore``, so the
+    author was never asked how to create it (2026-11-11)."""
+    calls = []
+
+    async def provider(request, _token):
+        calls.append(request)
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Quién es?",
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    semantic_runs = _SemanticRuns(
+        {
+            "state": "require_confirmation",
+            "response": "¿Creo este personaje?",
+            "request_id": "r-1",
+            "session_id": "s-1",
+            "guided": True,
+            "guided_explicitness": "imperative",
+            "continuation": {"outcome": "question", "question": "¿Creo este personaje?"},
+        },
+        {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": True},
+    )
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
+
+    first = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje nuevo", "session_id": "chat-1",
+    })
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["guided"] is True
+    assert body["guided_state"]["path"] == ""
+    assert body["guided_state"]["phase"] == "conversation"
+    assert "Antes de empezar" in body["response"]
+    assert "¿Creo este personaje?" not in body["response"]
+    assert calls == []  # the path question is server-owned
+
+    chosen = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "2", "session_id": "chat-1",
+        "guided_session_id": body["guided_session_id"],
+        "guided_revision": body["guided_revision"],
+    })
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["path"] == "fields"
     assert len(calls) == 1

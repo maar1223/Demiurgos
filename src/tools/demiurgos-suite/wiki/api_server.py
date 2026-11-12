@@ -3715,10 +3715,6 @@ async def _guided_continue(
     # S1/S2: server-owned context for this turn. The provider cannot fetch
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
-    world_context = _guided_world_context(mundo, state, author_input)
-    known_state = (
-        _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
-    )
     flow_profile = session_flow_profile(state) if state is not None else None
     # First turn of a character flow: the creation path is a server-owned
     # question, asked BEFORE any creative question. The consent card may have
@@ -3760,6 +3756,14 @@ async def _guided_continue(
             state = updated
             # The seed must still reach the provider after the path detour.
             author_input = _first_author_input(state)
+    # The server-owned path question never reaches the provider, so the bounded
+    # world context is resolved AFTER it: the opening turn takes exactly one
+    # graph resolution (the gate's), never a second one for a prompt it does not
+    # send. On the choice turn the seed (not "1") is the lore subject.
+    world_context = _guided_world_context(mundo, state, author_input)
+    known_state = (
+        _guided_turn_known_state(state, GUIDED_CONTEXT_BUDGET) if state is not None else ""
+    )
     guided_path = state.path if state is not None else "explore"
     field_context = ""
     if (
@@ -9280,6 +9284,11 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     # Consent memory (REQ-GFC-06): a suggestion left unaccepted becomes a
     # session decline once the next same-session turn arrives ("keeps chatting").
     _mark_kept_chatting_decline(body.session_id, mundo)
+    logger.info(
+        "ai_ask: semantic state=%s guided=%s explicitness=%s",
+        result.decision.state, result.decision.guided,
+        result.decision.guided_explicitness,
+    )
     # A clear "create a new entity" intent opens the GUIDED flow even when the
     # semantic gate answered ``allow``/``clarify``. The plain assistant has
     # graph/filesystem tools and would otherwise just chat about the world (the
@@ -9287,10 +9296,8 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     # lexical route is server policy applied AFTER a validated decision; it is
     # not a shortcut around the gate.
     if not body.guided_session_id and result.decision.state in {"allow", "clarify"}:
-        intent_profile = _resolve_input_flow(body.prompt)
-        if intent_profile is not None and route_guided_intent(
-            body.prompt, intent_profile, allow_descriptive_seed=False,
-        ).is_new_entity:
+        intent_profile = _guided_open_profile(body.prompt, result.decision)
+        if intent_profile is not None:
             opened = await _open_guided_from_intent(
                 mundo, body, result, _resolve_principal(request),
                 intent_profile, reference_context, reference_name,
@@ -9706,6 +9713,21 @@ async def _semantic_guided_continuation(
     if graph_unavailable:
         logger.info("ai_ask: semantic guided continuation graph unavailable; fail closed to blocked")
         return _semantic_blocked_result(result)
+    # The creation-path question is the FIRST turn of every entry into the
+    # guided flow (v0.8.0 product rule). When the author already commanded
+    # creation (imperative) and the flow is unambiguous, the confirmation
+    # question is redundant: it is a yes/no gate the command already answered.
+    # This branch opens the session with the path unset so the server asks HOW
+    # to create it, exactly like the allow/clarify surface (2026-11-11).
+    if decision.guided_explicitness == "imperative":
+        open_profile = _guided_open_profile(body.prompt, decision)
+        if open_profile is not None:
+            opened = await _open_guided_from_intent(
+                mundo, body, result, principal, open_profile,
+                reference_context, reference_name,
+            )
+            if opened is not None:
+                return opened
     # Consent policy: only an explicit imperative auto-opens the guided
     # surface. Musing/absent explicitness yields a token-bound suggestion and
     # creates nothing (REQ-GFC-02/03).
@@ -9844,6 +9866,45 @@ def _resolve_input_flow(
     if matches:
         return None
     return builtin_profile(GUIDED_CHARACTER_FLOW) if default_character else None
+
+
+def _guided_open_profile(
+    author_input: str, decision: SemanticDecision | None = None,
+) -> GuidedFlowProfile | None:
+    """The flow a chat turn must openly drive, or None when it must not.
+
+    ONE deterministic policy shared by every assistant surface. The validated
+    agent decision leads: the semantic contract defines ``guided`` and
+    ``guided_explicitness`` exactly for "the author directly commands creating
+    a guided entity", so an ``imperative`` decision opens the flow even when the
+    message carries no deterministic creation verb ("un personaje para mi
+    historia"). The lexical matcher stays as a net for a turn where the agent
+    under-signals but the command is explicit in the text.
+
+    The flow itself is never guessed: resolution is strict
+    (``default_character=False``), so a generic imperative like "hacelo ya"
+    cannot silently open a character sheet in a world whose entity is something
+    else. A passing mention also cannot hijack the chat — the lexical net
+    requires an explicit term AND verb (``allow_descriptive_seed=False``).
+
+    The 2026-11-11 live report (a clear command answered with a plain chat
+    reply) came from this policy living only in ``/ai/ask`` and ignoring the
+    agent's own ``guided``/``imperative`` signal: the sidebar's streaming
+    boundary never consulted either.
+    """
+    profile = _resolve_input_flow(author_input, default_character=False)
+    if profile is None:
+        return None
+    if (
+        decision is not None and decision.guided
+        and decision.guided_explicitness == "imperative"
+    ):
+        return profile
+    if route_guided_intent(
+        author_input, profile, allow_descriptive_seed=False,
+    ).is_new_entity:
+        return profile
+    return None
 
 
 async def _open_guided_continuation(
@@ -11087,6 +11148,23 @@ async def _cancel_activity(adapter: object, run_id: str) -> None:
         logger.warning("assistant activity cleanup failed (%s)", type(adapter).__name__)
 
 
+def _guided_handoff_response() -> JSONResponse:
+    """The 503 the streaming boundary returns so the client uses /ai/ask.
+
+    Guided work never streams: it either continues a guarded session or opens
+    one. The sidebar already falls back to the legacy endpoint on this exact
+    signal, which is where the server-owned guided policy runs.
+    """
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Assistant activity is unavailable",
+            "code": "guided_handoff",
+            "reason_code": "guided_handoff",
+        },
+    )
+
+
 @app.post("/api/{mundo}/ai/ask/activity")
 async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Request):
     """Semantic-first SSE activity boundary.
@@ -11098,20 +11176,14 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     the additive event. Unavailable/invalid/unwired/exhausted Hermes fails
     closed over HTTP 200 with the ordered blocked stream and zero classifier,
     action, session, proposal, or write. Guided semantic decisions hand off to
-    the guided path (503) without any lexical classifier.
+    the guided path (503) without any lexical classifier: the state comes from
+    the gate, and a clear creation command is server policy applied after it.
     """
     # Pre-flight non-classifier guards: active guided sessions stream through
     # the normal assistant path so activity never double-runs Hermes.
     if body.guided_session_id or body.guided_revision is not None:
-        logger.info("ai_ask_activity: 503 guided_handoff")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": "Assistant activity is unavailable",
-                "code": "guided_handoff",
-                "reason_code": "guided_handoff",
-            },
-        )
+        logger.info("ai_ask_activity: 503 guided_handoff (active guided session)")
+        return _guided_handoff_response()
     context_kind, world_root = _resolve_assistant_context(mundo)
     if context_kind == "unknown":
         logger.info("ai_ask_activity: 503 context unknown")
@@ -11142,17 +11214,32 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     if decision is not None and decision.state in CONTINUATION_STATES:
         # Hermes decided guided work: hand off to the guided path. The handoff
         # follows the validated semantic state, never a lexical classifier.
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": "Assistant activity is unavailable",
-                "code": "guided_handoff",
-                "reason_code": "guided_handoff",
-            },
+        logger.info(
+            "ai_ask_activity: 503 guided_handoff (state=%s)", decision.state,
         )
+        return _guided_handoff_response()
     if decision is None:
         # No validated decision -> fail closed to the ordered blocked stream.
         return _fail_closed_activity_response(result, request_id)
+    logger.info(
+        "ai_ask_activity: semantic state=%s guided=%s explicitness=%s",
+        decision.state, decision.guided, decision.guided_explicitness,
+    )
+    # A clear creation command must reach the guided surface, and guided work
+    # never streams. The sidebar always calls this boundary first, so without
+    # this handoff a validated ``allow``/``clarify`` for "quiero crear un
+    # personaje nuevo" streamed a plain chat answer and the creation-path
+    # question was never asked (2026-11-11 live report). The lexical route runs
+    # only AFTER the validated decision — it is policy, not a gate bypass.
+    if (
+        decision.state in {"allow", "clarify"}
+        and _guided_open_profile(body.prompt, decision) is not None
+    ):
+        logger.info(
+            "ai_ask_activity: 503 guided_handoff (clear creation intent, state=%s)",
+            decision.state,
+        )
+        return _guided_handoff_response()
 
     # Admitted adapter + stream guards (not classifiers) after the decision.
     adapter = ACTIVITY_ADAPTER
