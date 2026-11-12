@@ -1600,7 +1600,8 @@ class TestGraphRelationEndpoint:
 class TestAiAsk:
     def test_natural_character_message_handoffs_to_guided_session(self, client: TestClient, monkeypatch):
         """Hermes-first: a natural character message becomes a guarded guided
-        session only through a validated require_confirmation decision."""
+        session only through a validated require_confirmation decision, and its
+        first turn is the server-owned creation-path question."""
         _principal(monkeypatch)
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
@@ -1617,7 +1618,8 @@ class TestAiAsk:
         assert payload["state"] == "require_confirmation"
         assert payload["guided_session_id"].startswith("guided-")
         assert payload["guided_revision"] == 1
-        assert payload["guided_state"]["phase"] == "confirmation"
+        assert payload["guided_state"]["path"] == ""
+        assert payload["guided_state"]["phase"] == "conversation"
         assert payload["guided_state"]["session_id"] == payload["guided_session_id"]
         assert runs.starts == 1
 
@@ -1712,7 +1714,7 @@ class TestAiAsk:
         )
         _wire_semantic_provider(monkeypatch, runs)
         response = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "quiero crear un hermano de Rhyz",
+            "prompt": "quiero crear algo de Rhyz",
             "section": "personajes",
         })
 
@@ -1721,13 +1723,14 @@ class TestAiAsk:
         # Hermes decides require_confirmation; the canonical graph evidence is
         # gathered ONCE server-side and bound to the guarded session.
         assert payload["state"] == "require_confirmation"
-        assert payload["guided_state"]["phase"] == "confirmation"
+        assert payload["guided_state"]["path"] == ""
         assert payload["guided_revision"] == 1
         assert payload["guided_state"]["candidate"]["proposals"] == {}
         assert payload["guided_state"]["candidate"]["accepted_canon"] == {}
         assert seen == []
-        # The canonical graph evidence is gathered at routing time and bound to
-        # the session, but only reaches the provider after explicit confirmation.
+        # The canonical graph evidence is gathered at open time and bound to the
+        # session, but only reaches the provider after the author chooses the
+        # creation path.
         assert graph.calls == [("search", "Rhyz"), ("read", "personajes/rhyz.md"), ("links", "forward"), ("links", "backlinks")]
         state = api_server._GUIDED_SESSIONS.recover(payload["guided_session_id"], "tester")
         assert state is not None
@@ -1735,7 +1738,7 @@ class TestAiAsk:
         assert "Patient tactician." in state.reference_context
 
         confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "sí",
+            "prompt": "1",
             "session_id": "chat-1",
             "guided_session_id": payload["guided_session_id"],
             "guided_revision": payload["guided_revision"],
@@ -1744,7 +1747,7 @@ class TestAiAsk:
         assert confirmed.status_code == 200
         confirmed_payload = confirmed.json()
         assert confirmed_payload["guided_state"]["phase"] == "conversation"
-        assert confirmed_payload["guided_revision"] == payload["guided_revision"] + 2
+        assert confirmed_payload["guided_revision"] == payload["guided_revision"] + 1
         assert len(seen) == 1
         assert "Patient tactician." in seen[0]
         assert "personajes/rhyz.md" not in seen[0]
@@ -1790,18 +1793,18 @@ class TestAiAsk:
         _wire_semantic_provider(monkeypatch, runs)
 
         first = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "quiero crear al hermano de Rhyz",
+            "prompt": "quiero crear algo de Rhyz",
             "section": "personajes",
             "session_id": "chat-1",
         }).json()
-        assert first["guided_state"]["phase"] == "confirmation"
+        assert first["guided_state"]["path"] == ""
         assert first["guided_revision"] == 1
         assert guided_calls == []
 
-        # The factual shortcut is gone: a non-confirmation message during the
-        # confirmation phase is parsed by the guarded confirmation (no semantic
-        # gate, no guided provider, no plain-chat call), so the guided state
-        # stays safe.
+        # The factual shortcut is gone: while the creation path is unpinned, a
+        # non-choice message re-asks the server-owned question (no semantic
+        # gate, no guided provider, no plain-chat call), so the state stays
+        # safe.
         factual = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "me puedes indicar cual es el papel que cumple Rhyz?",
             "section": "personajes",
@@ -1813,12 +1816,12 @@ class TestAiAsk:
         assert factual.status_code == 200
         factual_payload = factual.json()
         assert factual_payload["guided_session_id"] == first["guided_session_id"]
-        assert factual_payload["guided_state"]["phase"] == "confirmation"
+        assert factual_payload["guided_state"]["path"] == ""
         assert guided_calls == []
         assert runs.starts == 1
 
         confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "sí",
+            "prompt": "1",
             "section": "personajes",
             "session_id": "chat-1",
             "guided_session_id": first["guided_session_id"],
@@ -1831,7 +1834,7 @@ class TestAiAsk:
         # the canonical reference revision-bound into the conversation.
         assert confirmed_payload["guided_state"]["phase"] == "conversation"
         assert len(guided_calls) == 1
-        assert guided_calls[0].base_revision == factual_payload["guided_revision"] + 1
+        assert guided_calls[0].base_revision == factual_payload["guided_revision"]
         assert guided_calls[0].reference_name == "Rhyz"
         assert "Patient tactician." in guided_calls[0].reference_context
 
@@ -1893,7 +1896,7 @@ class TestAiAsk:
             monkeypatch.setattr(api_server, "_get_graph", lambda _world, matches=matches: Graph(matches))
             before = len(seen)
             response = client.post("/api/test_mundo/ai/ask", json={
-                "prompt": "quiero crear un hermano de Rhyz",
+                "prompt": "quiero crear algo de Rhyz",
                 "section": "personajes",
             })
             assert response.status_code == 200
@@ -1902,7 +1905,7 @@ class TestAiAsk:
             # confirmation and the provider does not run before explicit
             # confirmation, so no facts are invented prematurely.
             assert payload["state"] == "require_confirmation"
-            assert payload["guided_state"]["phase"] == "confirmation"
+            assert payload["guided_state"]["path"] == ""
             assert payload["guided_revision"] == 1
             assert len(seen) == before
             # The uncertainty is retained in the session (never read/linked) and
@@ -1913,7 +1916,7 @@ class TestAiAsk:
             assert "personajes/" not in state.reference_context
 
             confirmed = client.post("/api/test_mundo/ai/ask", json={
-                "prompt": "sí",
+                "prompt": "1",
                 "guided_session_id": payload["guided_session_id"],
                 "guided_revision": payload["guided_revision"],
             })
@@ -2159,7 +2162,7 @@ class TestGuidedSessionDurability:
         _wire_semantic_provider(monkeypatch, runs)
         context = {"section": "personajes", "file_path": "rhyz.md", "session_id": "chat-1"}
         first = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "Quiero crear un personaje", **context,
+            "prompt": "Quiero trabajar en la propuesta", **context,
         }).json()
         with patch("api_server._run_hermes", new=AsyncMock()) as normal:
             factual = client.post("/api/test_mundo/ai/ask", json={
@@ -2182,7 +2185,7 @@ class TestGuidedSessionDurability:
         assert confirmed.status_code == 200
         assert confirmed.json()["guided_state"]["phase"] == "conversation"
         assert confirmed.json()["guided_revision"] == factual.json()["guided_revision"] + 2
-        assert calls == ["Quiero crear un personaje"]
+        assert calls == ["Quiero trabajar en la propuesta"]
 
         resumed = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "Su deseo es proteger a su hermana", **context,
@@ -2192,7 +2195,7 @@ class TestGuidedSessionDurability:
         assert resumed.status_code == 200
         assert resumed.json()["guided_session_id"] == first["guided_session_id"]
         assert resumed.json()["guided_revision"] == confirmed.json()["guided_revision"] + 1
-        assert calls == ["Quiero crear un personaje", "Su deseo es proteger a su hermana"]
+        assert calls == ["Quiero trabajar en la propuesta", "Su deseo es proteger a su hermana"]
 
     def test_factual_question_with_missing_ficha_context_stays_safe_without_mutation(
         self, client: TestClient, monkeypatch,
@@ -4448,6 +4451,101 @@ class TestSemanticActivitySSE:
         assert response.json()["code"] == "guided_handoff"
         assert order == ["semantic.decide"]
         assert runs.starts == 1
+
+    def test_activity_clear_creation_intent_hands_off_to_the_guided_path(
+        self, client, monkeypatch
+    ):
+        """S1: a clear new-entity command must reach the guided path on the
+        streaming boundary too.
+
+        The sidebar always calls /ai/ask/activity first. A validated
+        ``clarify`` decision for "quiero crear un personaje nuevo" (guided,
+        imperative) used to stream a plain chat answer, so the creation-path
+        question was never asked and the client never fell back to /ai/ask
+        (2026-11-11 live report).
+        """
+        runs = _SemanticRuns(_semantic_payload(
+            "clarify", guided=True, guided_explicitness="imperative",
+        ))
+        _wire_semantic_provider(monkeypatch, runs)
+
+        response = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={
+                "prompt": "quiero crear un personaje nuevo",
+                "session_id": "chat-1",
+            },
+        )
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "guided_handoff"
+        assert runs.starts == 1
+
+    def test_activity_plain_clarify_still_streams_the_answer(
+        self, client, monkeypatch
+    ):
+        """S1 guard: an ordinary clarify turn without a creation command keeps
+        streaming the plain answer instead of hijacking the chat."""
+        runs = _SemanticRuns(_semantic_payload("clarify"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", None)
+
+        response = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "¿qué es un Eneatipo?", "session_id": "chat-1"},
+        )
+
+        # It reaches the adapter guard (None here), never the guided handoff.
+        assert response.status_code == 200
+        kinds = [event["kind"] for event in _parse_sse(response.text)]
+        assert kinds[0] == "semantic_decision"
+
+    def test_activity_agent_imperative_opens_guided_without_a_creation_verb(
+        self, client, monkeypatch
+    ):
+        """S2: the validated agent decision is authoritative for intent.
+
+        The gate's contract defines ``guided``/``guided_explicitness`` exactly
+        for this: an imperative command to create a guided entity. A prompt that
+        names the entity but carries no deterministic creation verb ("un
+        personaje para mi historia") must still open the guided surface.
+        """
+        runs = _SemanticRuns(_semantic_payload(
+            "clarify", guided=True, guided_explicitness="imperative",
+        ))
+        _wire_semantic_provider(monkeypatch, runs)
+
+        response = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={
+                "prompt": "un personaje para mi historia",
+                "session_id": "chat-1",
+            },
+        )
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "guided_handoff"
+
+    def test_activity_agent_imperative_never_invents_a_flow(
+        self, client, monkeypatch
+    ):
+        """S3: the imperative flag never guesses a flow. With no declaration
+        matching the entity, the silent character default is gone and the turn
+        stays plain chat."""
+        runs = _SemanticRuns(_semantic_payload(
+            "clarify", guided=True, guided_explicitness="imperative",
+        ))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", None)
+
+        response = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "hacelo ya", "session_id": "chat-1"},
+        )
+
+        assert response.status_code == 200
+        kinds = [event["kind"] for event in _parse_sse(response.text)]
+        assert kinds[0] == "semantic_decision"
 
 
 class TestSemanticSingleRunContinuation:
