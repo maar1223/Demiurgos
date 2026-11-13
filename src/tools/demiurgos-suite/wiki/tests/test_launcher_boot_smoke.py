@@ -150,6 +150,7 @@ def _hermes_free_env(tmp_path: Path, api_port: int, gateway_port: int) -> dict[s
         "DEMIURGOS_API_PORT": str(api_port),
         "DEMIURGOS_GATEWAY_PORT": str(gateway_port),
         "DEMIURGOS_NO_BROWSER": "1",
+        "DEMIURGOS_NO_NOTIFY": "1",
     }
     env.pop("HERMES_BIN", None)
     return env

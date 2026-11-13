@@ -24,6 +24,11 @@
 # automatic browser launch on `start`. Harnesses, system_control restarts and
 # CI run headless and MUST set it; without it, `start` opens the default
 # browser at the API URL.
+#
+# Headless notifications: set DEMIURGOS_NO_NOTIFY=1 (or true/yes) to skip the
+# desktop failure toast. Test harnesses that deliberately exercise the boot
+# failure path MUST set it; without it, a simulated failure posts a real
+# notification that looks like a product failure.
 set -euo pipefail
 
 # --- OS branch (S2-1/S2-5) -------------------------------------------------
@@ -826,6 +831,11 @@ start_services() {
 # boot failure must not be silent. Best-effort: a missing notification daemon
 # never changes the exit code.
 notify_failure() {
+    # Headless suppression switch: a harness that exercises the failure path
+    # must not post a real desktop notification for a simulated failure.
+    case "${DEMIURGOS_NO_NOTIFY:-}" in
+        1|true|yes|TRUE|YES|True) return 0 ;;
+    esac
     command -v notify-send >/dev/null 2>&1 || return 0
     notify-send "Demiurgos" "$1" >/dev/null 2>&1 || true
 }

@@ -262,6 +262,7 @@ def _rollback_env(tmp_path: Path, install_root: Path, api_port: int) -> dict[str
         "DEMIURGOS_API_PORT": str(api_port),
         "DEMIURGOS_GATEWAY_PORT": str(_free_port()),
         "DEMIURGOS_NO_BROWSER": "1",
+        "DEMIURGOS_NO_NOTIFY": "1",
         # Readiness headroom (issue #3): the "good" stub is a plain `python3
         # -c http.server` whose interpreter startup can exceed a sub-second
         # budget on a loaded/slow CI runner (the aarch64/macOS flake), making the
