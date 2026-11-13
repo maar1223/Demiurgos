@@ -369,9 +369,9 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(screen.getByRole("button", { name: no })).toBeEnabled();
     expect(screen.getByRole("textbox")).toBeDisabled();
     await user.click(screen.getByRole("button", { name: yes }));
-    expect(sendMessage).toHaveBeenCalledWith(value);
+    expect(sendMessage).toHaveBeenCalledWith(value, { displayText: yes });
     await user.click(screen.getByRole("button", { name: no }));
-    expect(sendMessage).toHaveBeenCalledWith("no");
+    expect(sendMessage).toHaveBeenCalledWith("no", { displayText: no });
   });
 
   it("does not render confirmation controls outside the confirmation phase", () => {
@@ -894,8 +894,12 @@ describe("AIAssistantSidebar single conversation", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Sí, comenzar" }));
     await user.click(screen.getByRole("button", { name: "No, cancelar" }));
-    expect(sendMessage).toHaveBeenNthCalledWith(1, "sí");
-    expect(sendMessage).toHaveBeenNthCalledWith(2, "no");
+    expect(sendMessage).toHaveBeenNthCalledWith(1, "sí", {
+      displayText: "Sí, comenzar",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, "no", {
+      displayText: "No, cancelar",
+    });
   });
 
   it("uses Spanish confirmation labels from the configured language, not the prompt", () => {
@@ -1277,7 +1281,9 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(screen.getByText("Campo 2 de 30")).toBeInTheDocument();
     expect(screen.getByText("Apodo")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Saltar campo" }));
-    expect(sendMessage).toHaveBeenCalledWith("Saltar este campo");
+    expect(sendMessage).toHaveBeenCalledWith("Saltar este campo", {
+      displayText: "Saltar campo",
+    });
   });
 
   it("preselects the published foundational character method and hides the factory option (S6)", async () => {

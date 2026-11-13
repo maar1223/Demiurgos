@@ -6,6 +6,7 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import { Icon } from "@/components/atoms/Icon";
+import { GuidedChoiceCard } from "@/components/molecules/GuidedChoiceCard";
 import { Spinner } from "@/components/atoms/Spinner";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
 import {
@@ -819,7 +820,11 @@ function ChatScreen({
                )}
                <button
                  type="button"
-                 onClick={() => void sendMessage(t("guided.field.skipPrompt"))}
+                 onClick={() =>
+                   void sendMessage(t("guided.field.skipPrompt"), {
+                     displayText: t("guided.field.skipAction"),
+                   })
+                 }
                  disabled={isSending}
                  className="mt-2 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
                >
@@ -853,35 +858,29 @@ function ChatScreen({
            )}
 
            {confirmationPending && (
-             <section
-               aria-labelledby="guided-confirmation-title"
-               className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
-             >
-               <h3 id="guided-confirmation-title" className="font-medium">
-                 {t("assistant.confirm.title")}
-               </h3>
-               <p className="mt-1 text-xs leading-relaxed text-muted">
-                 {t("assistant.confirm.body")}
-               </p>
-               <div className="mt-3 flex flex-wrap gap-2">
-                 <button
-                   type="button"
-                   onClick={() => void sendMessage(isSpanish ? "sí" : "yes")}
-                   disabled={isSending}
-                   className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-                 >
-                   {t("assistant.confirm.yes")}
-                 </button>
-                 <button
-                   type="button"
-                   onClick={() => void sendMessage("no")}
-                   disabled={isSending}
-                   className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                 >
-                   {t("assistant.confirm.no")}
-                 </button>
-               </div>
-             </section>
+             <GuidedChoiceCard
+               title={t("assistant.confirm.title")}
+               body={t("assistant.confirm.body")}
+               options={[
+                 {
+                   label: t("assistant.confirm.yes"),
+                   primary: true,
+                   disabled: isSending,
+                   onClick: () =>
+                     void sendMessage(isSpanish ? "sí" : "yes", {
+                       displayText: t("assistant.confirm.yes"),
+                     }),
+                 },
+                 {
+                   label: t("assistant.confirm.no"),
+                   disabled: isSending,
+                   onClick: () =>
+                     void sendMessage("no", {
+                       displayText: t("assistant.confirm.no"),
+                     }),
+                 },
+               ]}
+             />
            )}
 
            {consentToken && (
@@ -971,34 +970,29 @@ function ChatScreen({
            )}
 
            {guidedPathPending && (
-            <section
-              className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary"
-              aria-label={t("guided.path.title")}
-            >
-              <p className="text-xs text-muted">{t("guided.path.title")}</p>
-              <div className="mt-2 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    sendMessage("1", { displayText: t("guided.path.explore") })
-                  }
-                  disabled={isSending}
-                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {t("guided.path.explore")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    sendMessage("2", { displayText: t("guided.path.fields") })
-                  }
-                  disabled={isSending}
-                  className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {t("guided.path.fields")}
-                </button>
-              </div>
-            </section>
+             <GuidedChoiceCard
+               title={t("guided.path.title")}
+               stacked
+               options={[
+                 {
+                   label: t("guided.path.explore"),
+                   primary: true,
+                   disabled: isSending,
+                   onClick: () =>
+                     void sendMessage("1", {
+                       displayText: t("guided.path.explore"),
+                     }),
+                 },
+                 {
+                   label: t("guided.path.fields"),
+                   disabled: isSending,
+                   onClick: () =>
+                     void sendMessage("2", {
+                       displayText: t("guided.path.fields"),
+                     }),
+                 },
+               ]}
+             />
            )}
 
            {visibleGuidedProposal && (
