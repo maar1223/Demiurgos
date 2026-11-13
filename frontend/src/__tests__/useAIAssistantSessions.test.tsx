@@ -351,6 +351,25 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(result.current.activeSession?.guided).toBeUndefined();
   });
 
+  it("replays the guided handoff ticket on the legacy fallback", async () => {
+    streamMock.mockRejectedValue(
+      new AssistantActivityUnavailable(503, "guided_handoff", "ght-abc123"),
+    );
+    askMock.mockResolvedValue(consentAcceptEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("quiero crear un personaje nuevo");
+    });
+
+    const [, request] = askMock.mock.calls[0];
+    expect(request).toMatchObject({
+      prompt: "quiero crear un personaje nuevo",
+      guided_handoff_token: "ght-abc123",
+    });
+  });
+
   it("opens the guided flow on accept and clears the suggestion", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);

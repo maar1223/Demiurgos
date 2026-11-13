@@ -273,6 +273,43 @@ class TestNoBrowserSuppression:
         assert "notify-send" in text
         assert "command -v notify-send" in text
         assert "notify_failure" in text
+        # A harness that simulates the failure must be able to stay silent.
+        assert "DEMIURGOS_NO_NOTIFY" in text
+        assert "DEMIURGOS_NO_NOTIFY" in text[:text.index("notify_failure()")]
+
+    def test_notify_failure_honors_demiurgos_no_notify(self, tmp_path: Path):
+        """A harness that exercises the boot-failure path must not post a real
+        desktop notification: the simulated failure is invisible to the Owner,
+        while the default desktop launch keeps notifying."""
+        stub_dir = tmp_path / "bin"
+        stub_dir.mkdir()
+        log = tmp_path / "notify.log"
+        notifier = stub_dir / "notify-send"
+        notifier.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\n', encoding="utf-8")
+        notifier.chmod(0o755)
+        (tmp_path / "home").mkdir()
+        scrubbed = ":".join(
+            part for part in os.environ.get("PATH", "").split(":")
+            if part and not part.startswith("/home/")
+        ) or "/usr/bin:/bin"
+        env = {
+            **os.environ,
+            "PATH": f"{stub_dir}:{scrubbed}",
+            "HOME": str(tmp_path / "home"),
+            "XDG_RUNTIME_DIR": str(tmp_path / "run"),
+            "DEMIURGOS_HOME": str(tmp_path / "install"),
+        }
+        script = f'set -e\nsource "{PORTABLE_LAUNCHER}"\nnotify_failure "boom"\n'
+
+        run = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert "boom" in log.read_text(encoding="utf-8")
+
+        log.write_text("", encoding="utf-8")
+        env["DEMIURGOS_NO_NOTIFY"] = "1"
+        run = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert log.read_text(encoding="utf-8") == ""
 
     def test_start_action_still_calls_open_browser(self):
         """The suppression switch is INSIDE open_browser: `start` keeps its

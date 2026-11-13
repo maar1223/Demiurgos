@@ -8626,6 +8626,10 @@ class AskRequest(BaseModel):
     guided_session_id: str = ""
     guided_revision: int | None = None
     attachment_ids: list[str] = []
+    # One-shot replay of a decision the streaming boundary already validated.
+    # Absent on every legacy client; a stale/foreign token falls through to the
+    # mandatory gate, so this can never bypass interpretation.
+    guided_handoff_token: str | None = None
 
 @app.post("/api/chat")
 async def chat_endpoint(body: ChatRequest):
@@ -9237,6 +9241,51 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         # The guards above already fail closed; the guided provider keeps its own
         # validation and every write stays governed.
         return await _internal_guided_turn(mundo, body, request)
+    # One-shot handoff replay: the streaming boundary already interpreted THIS
+    # exact turn and handed off before streaming, so the mechanical fallback
+    # must not pay a second Hermes run. Any binding mismatch (expired, replayed,
+    # foreign principal/world/session, different prompt) falls through to the
+    # mandatory gate below — this is never a gate bypass.
+    if body.guided_handoff_token:
+        replay_principal = _resolve_principal(request)
+        ticket = _consume_guided_handoff_ticket(
+            body.guided_handoff_token,
+            principal_id=replay_principal.id if replay_principal is not None else "",
+            mundo=mundo,
+            session_id=body.session_id or "",
+            prompt=body.prompt,
+        )
+        replayed_decision = ticket.get("decision") if ticket is not None else None
+        replayed_profile = ticket.get("profile") if ticket is not None else None
+        if isinstance(replayed_decision, SemanticDecision):
+            replay = SemanticResult(
+                decision=replayed_decision,
+                attempts=int(ticket.get("attempts") or 0),
+                request_id=replayed_decision.request_id,
+                session_id=replayed_decision.session_id,
+            )
+            _mark_kept_chatting_decline(body.session_id, mundo)
+            logger.info(
+                "ai_ask: replayed the streaming handoff decision (state=%s); one semantic run this turn",
+                replayed_decision.state,
+            )
+            if replayed_decision.state in CONTINUATION_STATES:
+                # The boundary's decision carries the typed continuation; the
+                # same guarded machinery runs with no second Hermes run.
+                return await _semantic_guided_continuation(
+                    mundo, body, request, replay,
+                    reference_context=str(ticket.get("reference_context") or ""),
+                    reference_name=ticket.get("reference_name") or None,
+                    graph_unavailable=bool(ticket.get("graph_unavailable")),
+                )
+            if isinstance(replayed_profile, GuidedFlowProfile):
+                opened = await _open_guided_from_intent(
+                    mundo, body, replay, replay_principal, replayed_profile,
+                    str(ticket.get("reference_context") or ""),
+                    ticket.get("reference_name") or None,
+                )
+                if opened is not None:
+                    return opened
     # Mandatory Hermes semantic gate (decides with bounded authorized context).
     # The named-reference resolution is performed ONCE per request and reused by
     # the guarded continuation, so the graph is never queried twice. The
@@ -9576,6 +9625,95 @@ def _consume_guided_consent_token(
         _GUIDED_CONSENT_TOKENS.pop(token, None)
         return None
     _GUIDED_CONSENT_TOKENS.pop(token, None)
+    return record
+
+
+# One-shot handoff ticket: the streaming boundary already validated this exact
+# turn and handed off before streaming. The client's immediate /ai/ask fallback
+# replays that decision instead of paying a second Hermes run for a mechanical
+# continuation. The TTL is short because the fallback is immediate; a stale
+# ticket is never a useful replay.
+GUIDED_HANDOFF_TTL = timedelta(seconds=90)
+_GUIDED_HANDOFF_TICKETS: dict[str, dict[str, object]] = {}
+GUIDED_HANDOFF_TICKETS_MAX = 256
+
+
+def _sweep_guided_handoff_tickets(now: datetime) -> None:
+    """Drop expired handoff tickets (lazy sweep on issue and consume)."""
+    cutoff = now - GUIDED_HANDOFF_TTL
+    for token, record in list(_GUIDED_HANDOFF_TICKETS.items()):
+        created_at = record.get("created_at")
+        if not isinstance(created_at, datetime) or created_at < cutoff:
+            _GUIDED_HANDOFF_TICKETS.pop(token, None)
+
+
+def _issue_guided_handoff_ticket(
+    *, principal_id: str, session_id: str, mundo: str, prompt: str,
+    decision: SemanticDecision, attempts: int, reference_context: str,
+    reference_name: str | None, profile: GuidedFlowProfile | None,
+    graph_unavailable: bool = False,
+) -> str:
+    """Issue a one-shot ticket bound to principal + session + world + prompt.
+
+    The validated decision and the resolved flow travel with it, so the
+    immediate /ai/ask fallback reopens the SAME guided turn with no second
+    Hermes run and no re-decision.
+    """
+    now = datetime.now(timezone.utc)
+    _sweep_guided_handoff_tickets(now)
+    while len(_GUIDED_HANDOFF_TICKETS) >= GUIDED_HANDOFF_TICKETS_MAX:
+        oldest = min(
+            _GUIDED_HANDOFF_TICKETS,
+            key=lambda key: _GUIDED_HANDOFF_TICKETS[key].get("created_at")
+            or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        _GUIDED_HANDOFF_TICKETS.pop(oldest, None)
+    token = f"ght-{uuid.uuid4().hex}"
+    _GUIDED_HANDOFF_TICKETS[token] = {
+        "principal_id": principal_id,
+        "session_id": session_id,
+        "mundo": mundo,
+        "prompt": prompt,
+        "decision": decision,
+        "attempts": attempts,
+        "reference_context": reference_context,
+        "reference_name": reference_name,
+        "profile": profile,
+        "graph_unavailable": graph_unavailable,
+        "created_at": now,
+    }
+    return token
+
+
+def _consume_guided_handoff_ticket(
+    token: object, *, principal_id: str, mundo: str, session_id: str, prompt: str,
+) -> dict[str, object] | None:
+    """One-shot pop of a handoff ticket; fails closed on any mismatch.
+
+    A missing, malformed, expired, replayed, foreign-principal, foreign-world,
+    foreign-session, or different-prompt ticket returns ``None`` so the caller
+    falls through to the mandatory gate. Nothing here can open a guided turn
+    that the streaming boundary did not already validate.
+    """
+    now = datetime.now(timezone.utc)
+    _sweep_guided_handoff_tickets(now)
+    if not isinstance(token, str) or not token.startswith("ght-"):
+        return None
+    record = _GUIDED_HANDOFF_TICKETS.get(token)
+    if record is None:
+        return None
+    if (
+        record.get("principal_id") != principal_id
+        or record.get("mundo") != mundo
+        or record.get("session_id") != session_id
+        or record.get("prompt") != prompt
+    ):
+        return None
+    created_at = record.get("created_at")
+    if not isinstance(created_at, datetime) or created_at < now - GUIDED_HANDOFF_TTL:
+        _GUIDED_HANDOFF_TICKETS.pop(token, None)
+        return None
+    _GUIDED_HANDOFF_TICKETS.pop(token, None)
     return record
 
 
@@ -11148,21 +11286,25 @@ async def _cancel_activity(adapter: object, run_id: str) -> None:
         logger.warning("assistant activity cleanup failed (%s)", type(adapter).__name__)
 
 
-def _guided_handoff_response() -> JSONResponse:
+def _guided_handoff_response(ticket: str | None = None) -> JSONResponse:
     """The 503 the streaming boundary returns so the client uses /ai/ask.
 
     Guided work never streams: it either continues a guarded session or opens
     one. The sidebar already falls back to the legacy endpoint on this exact
-    signal, which is where the server-owned guided policy runs.
+    signal, which is where the server-owned guided policy runs. When the turn
+    was already validated here, ``ticket`` lets that fallback replay the
+    decision with exactly one semantic run per turn.
     """
-    return JSONResponse(
-        status_code=503,
-        content={
-            "detail": "Assistant activity is unavailable",
-            "code": "guided_handoff",
-            "reason_code": "guided_handoff",
-        },
-    )
+    content: dict[str, object] = {
+        "detail": "Assistant activity is unavailable",
+        "code": "guided_handoff",
+        "reason_code": "guided_handoff",
+    }
+    if ticket:
+        # The immediate /ai/ask fallback replays this decision instead of
+        # paying a second semantic run for the SAME turn.
+        content["handoff_token"] = ticket
+    return JSONResponse(status_code=503, content=content)
 
 
 @app.post("/api/{mundo}/ai/ask/activity")
@@ -11195,10 +11337,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # validated decision. The global context is world-agnostic: no mundo,
     # ficha, reference, or graph grounding reaches the gate.
     request_id = f"activity-{uuid.uuid4().hex}"
+    reference_context, reference_name, graph_unavailable = "", None, False
     if context_kind == "global":
         context = SemanticContext()
     else:
-        context, _, _, _ = _semantic_context(mundo, body.prompt)
+        context, reference_context, reference_name, graph_unavailable = _semantic_context(
+            mundo, body.prompt,
+        )
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
         mundo, body.prompt + attachment_metadata_note(attachments),
@@ -11214,10 +11359,26 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     if decision is not None and decision.state in CONTINUATION_STATES:
         # Hermes decided guided work: hand off to the guided path. The handoff
         # follows the validated semantic state, never a lexical classifier.
+        principal = _resolve_principal(request)
+        ticket = None
+        if principal is not None and context_kind != "global":
+            ticket = _issue_guided_handoff_ticket(
+                principal_id=principal.id,
+                session_id=body.session_id or "",
+                mundo=mundo,
+                prompt=body.prompt,
+                decision=decision,
+                attempts=result.attempts,
+                reference_context=reference_context,
+                reference_name=reference_name,
+                profile=None,
+                graph_unavailable=graph_unavailable,
+            )
         logger.info(
-            "ai_ask_activity: 503 guided_handoff (state=%s)", decision.state,
+            "ai_ask_activity: 503 guided_handoff (state=%s, ticket=%s)",
+            decision.state, bool(ticket),
         )
-        return _guided_handoff_response()
+        return _guided_handoff_response(ticket)
     if decision is None:
         # No validated decision -> fail closed to the ordered blocked stream.
         return _fail_closed_activity_response(result, request_id)
@@ -11231,15 +11392,30 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # personaje nuevo" streamed a plain chat answer and the creation-path
     # question was never asked (2026-11-11 live report). The lexical route runs
     # only AFTER the validated decision — it is policy, not a gate bypass.
-    if (
-        decision.state in {"allow", "clarify"}
-        and _guided_open_profile(body.prompt, decision) is not None
-    ):
+    open_profile = (
+        _guided_open_profile(body.prompt, decision)
+        if decision.state in {"allow", "clarify"} else None
+    )
+    if open_profile is not None:
+        principal = _resolve_principal(request)
+        ticket = None
+        if principal is not None and context_kind != "global":
+            ticket = _issue_guided_handoff_ticket(
+                principal_id=principal.id,
+                session_id=body.session_id or "",
+                mundo=mundo,
+                prompt=body.prompt,
+                decision=decision,
+                attempts=result.attempts,
+                reference_context=reference_context,
+                reference_name=reference_name,
+                profile=open_profile,
+            )
         logger.info(
-            "ai_ask_activity: 503 guided_handoff (clear creation intent, state=%s)",
-            decision.state,
+            "ai_ask_activity: 503 guided_handoff (clear creation intent, state=%s, ticket=%s)",
+            decision.state, bool(ticket),
         )
-        return _guided_handoff_response()
+        return _guided_handoff_response(ticket)
 
     # Admitted adapter + stream guards (not classifiers) after the decision.
     adapter = ACTIVITY_ADAPTER
