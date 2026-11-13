@@ -4468,6 +4468,7 @@ class TestSemanticActivitySSE:
             "clarify", guided=True, guided_explicitness="imperative",
         ))
         _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
 
         response = client.post(
             "/api/test_mundo/ai/ask/activity",
@@ -4479,6 +4480,8 @@ class TestSemanticActivitySSE:
 
         assert response.status_code == 503
         assert response.json()["code"] == "guided_handoff"
+        # The boundary also hands the client a one-shot replay ticket.
+        assert response.json()["handoff_token"].startswith("ght-")
         assert runs.starts == 1
 
     def test_activity_plain_clarify_still_streams_the_answer(
@@ -4547,6 +4550,130 @@ class TestSemanticActivitySSE:
         kinds = [event["kind"] for event in _parse_sse(response.text)]
         assert kinds[0] == "semantic_decision"
 
+
+    def test_guided_handoff_ticket_replays_with_one_semantic_run(
+        self, client, monkeypatch
+    ):
+        """The immediate /ai/ask fallback replays the boundary's validated
+        decision: opening the guided flow costs exactly ONE semantic run."""
+        runs = _SemanticRuns(_semantic_payload(
+            "clarify", guided=True, guided_explicitness="imperative",
+        ))
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+
+        handoff = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "quiero crear un personaje nuevo", "session_id": "chat-1"},
+        )
+        assert handoff.status_code == 503
+        token = handoff.json()["handoff_token"]
+
+        opened = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un personaje nuevo",
+            "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+
+        assert opened.status_code == 200, opened.text
+        body = opened.json()
+        assert body["guided"] is True
+        assert body["guided_state"]["path"] == ""
+        assert "Antes de empezar" in body["response"]
+        assert runs.starts == 1  # the boundary's run is the only one
+
+    def test_guided_handoff_ticket_replays_a_continuation_with_one_run(
+        self, client, monkeypatch
+    ):
+        """A guided continuation handed off by the boundary replays with no
+        second Hermes run either: the typed continuation travels in the ticket."""
+        runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(
+            api_server, "_named_reference_context", lambda _m, _p: ("", False, None),
+        )
+
+        handoff = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "quiero crear un personaje", "session_id": "chat-1",
+        })
+        assert handoff.status_code == 503
+        token = handoff.json()["handoff_token"]
+
+        opened = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un personaje", "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+
+        assert opened.status_code == 200, opened.text
+        body = opened.json()
+        assert body["guided"] is True
+        assert body["guided_state"]["path"] == ""
+        assert "Antes de empezar" in body["response"]
+        assert runs.starts == 1
+
+    def test_guided_handoff_ticket_is_single_use(self, client, monkeypatch):
+        """A replayed ticket is burned: the second call pays its own gate run."""
+        runs = _SemanticRuns(
+            _semantic_payload("clarify", guided=True, guided_explicitness="imperative"),
+            _semantic_payload("allow", guided=False),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+
+        handoff = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "quiero crear un personaje nuevo", "session_id": "chat-1"},
+        )
+        token = handoff.json()["handoff_token"]
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un personaje nuevo",
+            "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+        assert first.status_code == 200
+        assert runs.starts == 1
+
+        second = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un personaje nuevo",
+            "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+        assert second.status_code == 200
+        assert runs.starts == 2  # the ticket was burned; the gate interpreted again
+        assert second.json()["guided_session_id"] != first.json()["guided_session_id"]
+
+    def test_guided_handoff_ticket_rejects_a_different_turn(
+        self, client, monkeypatch
+    ):
+        """The ticket is bound to the exact turn: a different prompt falls
+        through to the gate instead of replaying someone else's decision."""
+        runs = _SemanticRuns(
+            _semantic_payload("clarify", guided=True, guided_explicitness="imperative"),
+            _semantic_payload("allow", guided=False),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+
+        handoff = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "quiero crear un personaje nuevo", "session_id": "chat-1"},
+        )
+        token = handoff.json()["handoff_token"]
+
+        other = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "hola",
+            "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+
+        assert other.status_code == 200
+        assert runs.starts == 2  # binding mismatch -> the mandatory gate ran
+        assert "guided_state" not in other.json()
 
 class TestSemanticSingleRunContinuation:
     """PR 2 continuation (task 2.3): one Hermes run backs guided/proposal states.

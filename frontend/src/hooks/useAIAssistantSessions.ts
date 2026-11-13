@@ -584,8 +584,16 @@ export function useAIAssistantSessions(
           : {}),
       };
 
-      const legacyRequest = async () => {
-        return askAssistant(contextMundo, requestBody, controller.signal);
+      const legacyRequest = async (handoffToken?: string) => {
+        // A guided handoff the streaming boundary already validated carries a
+        // one-shot ticket: replaying it keeps ONE semantic run per turn.
+        return askAssistant(
+          contextMundo,
+          handoffToken
+            ? { ...requestBody, guided_handoff_token: handoffToken }
+            : requestBody,
+          controller.signal,
+        );
       };
 
       const applySemanticOutcome = (outcome: ReturnType<typeof mapSemanticDecision>) => {
@@ -754,7 +762,7 @@ export function useAIAssistantSessions(
             availabilityReason: err.reasonCode,
           });
           try {
-            const result = await legacyRequest();
+            const result = await legacyRequest(err.handoffToken);
             applySemanticOutcome(mapSemanticDecision(result, language));
           } catch (legacyError) {
             // The legacy fallback can also reject the turn for a stale id;

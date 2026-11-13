@@ -77,10 +77,22 @@ export class AssistantActivityUnavailable extends Error {
     public readonly status: number,
     public readonly reasonCode: AssistantActivityUnavailableReason =
       "provider_activity_unavailable",
+    /**
+     * Server-issued one-shot ticket for a guided handoff whose turn the
+     * boundary already validated. The legacy fallback replays it so the turn
+     * costs ONE semantic run, never two. Opaque and single-use server-side.
+     */
+    public readonly handoffToken?: string,
   ) {
     super("Assistant activity is unavailable");
     this.name = "AssistantActivityUnavailable";
   }
+}
+
+function safeHandoffToken(value: unknown): string | undefined {
+  return typeof value === "string" && value.startsWith("ght-") && value.length <= 80
+    ? value
+    : undefined;
 }
 
 export interface AssistantActivityStreamResult {
@@ -265,7 +277,8 @@ export async function streamAssistantActivity(
         SAFE_UNAVAILABLE_REASONS.has(body.reason_code)
           ? (body.reason_code as AssistantActivityUnavailableReason)
           : "provider_activity_unavailable";
-      throw new AssistantActivityUnavailable(response.status, reasonCode);
+      const handoffToken = isRecord(body) ? safeHandoffToken(body.handoff_token) : undefined;
+      throw new AssistantActivityUnavailable(response.status, reasonCode, handoffToken);
     }
     // A conversation-scoped rejection (an expired attachment, for example) is
     // actionable by the caller: surface the structured code, never a raw body.

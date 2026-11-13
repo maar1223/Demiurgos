@@ -333,6 +333,7 @@ export async function askAssistant(
     guided_session_id?: string;
     guided_revision?: number;
     attachment_ids?: string[];
+    guided_handoff_token?: string;
   },
   signal?: AbortSignal,
 ): Promise<AiAskResponse> {
