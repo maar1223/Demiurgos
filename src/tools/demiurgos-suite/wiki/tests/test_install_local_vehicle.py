@@ -18,7 +18,9 @@ _WIKI = _HERE.parent
 REPO_ROOT = _WIKI.parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "install-local.sh"
 
-VERSION_RE = re.compile(r"(\d+\.\d+\.\d+\+local\.[0-9a-f]+(?:\.dirty)?)")
+VERSION_RE = re.compile(
+    r"(\d+\.\d+\.\d+\+local\.\d{8}\.\d{6}\.[0-9a-f]+(?:\.dirty)?)"
+)
 
 
 def _fake_install_root(tmp_path: Path) -> Path:
@@ -94,4 +96,29 @@ def test_version_override_must_stay_semver_build_metadata(tmp_path: Path) -> Non
     result = _run(install_root, tmp_path, "--dry-run", "--version", "9.9.9")
 
     assert result.returncode == 1
-    assert "not <X.Y.Z>+local.<sha>" in result.stderr
+    assert "not <X.Y.Z>+local.<YYYYMMDD>.<HHMMSS>.<sha>" in result.stderr
+
+
+def test_dry_run_reports_the_prune_plan_and_removes_nothing(tmp_path: Path) -> None:
+    install_root = _fake_install_root(tmp_path)
+    app = install_root / "app"
+    names = [
+        "0.9.0+local.20260101.010101.aaaaaaa",
+        "0.9.0+local.20260102.010101.bbbbbbb",
+        "0.9.0+local.20260103.010101.ccccccc",
+        "0.9.0+local.20260104.010101.ddddddd",
+    ]
+    for index, name in enumerate(names):
+        directory = app / name
+        directory.mkdir()
+        os.utime(directory, (1000 + index, 1000 + index))  # oldest first
+
+    result = _run(install_root, tmp_path, "--dry-run", "--keep", "2")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("would remove") == 2
+    assert "20260101.010101.aaaaaaa" in result.stdout
+    assert "20260102.010101.bbbbbbb" in result.stdout
+    # A dry run removes nothing.
+    for name in names:
+        assert (app / name).is_dir()
