@@ -20,7 +20,7 @@
 #     always fall back to them.
 #
 # Usage: scripts/install-local.sh [--build|--no-build] [--no-restart]
-#                                [--dry-run] [--version LABEL]
+#                                [--dry-run] [--version LABEL] [--keep N]
 set -euo pipefail
 
 fail() {
@@ -41,10 +41,13 @@ Options:
   --no-restart   install and flip `current` without restarting the app
   --dry-run      print the plan and exit without writing anything
   --version V    override the local version label
+  --keep N       keep the newest N local builds (default 5); older ones are
+                 pruned after a successful install, never the running one
   -h, --help     show this help
 
-The default label is <base>+local.<sha>[.dirty]: SemVer build metadata, so the
-updater compares it equal to the same released version and never nags.
+The default label is <base>+local.<YYYYMMDD>.<HHMMSS>.<sha>[.dirty]: SemVer
+build metadata, so the updater compares it equal to the same released version
+and never nags, while the timestamp tells one local build from another.
 EOF
 }
 
@@ -52,6 +55,7 @@ BUILD_MODE=auto
 RESTART=1
 DRY_RUN=0
 VERSION_OVERRIDE=""
+KEEP=5
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -65,6 +69,12 @@ while [ "$#" -gt 0 ]; do
             shift
             ;;
         --version=*) VERSION_OVERRIDE="${1#--version=}" ;;
+        --keep)
+            [ "$#" -ge 2 ] || fail "--keep needs a number"
+            KEEP="$2"
+            shift
+            ;;
+        --keep=*) KEEP="${1#--keep=}" ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'install-local: unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -94,17 +104,47 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]; then
     dirty=".dirty"
 fi
 
+case "$KEEP" in
+    ''|*[!0-9]*) fail "--keep needs a positive integer" ;;
+esac
+[ "$KEEP" -ge 1 ] || fail "--keep needs a positive integer"
+
 if [ -n "$VERSION_OVERRIDE" ]; then
     VERSION="$VERSION_OVERRIDE"
 else
-    VERSION="${base}+local.${sha}${dirty}"
+    # Local date/time: the Owner distinguishes one local build from another at
+    # a glance, and the newest-first prune stays unambiguous.
+    VERSION="${base}+local.$(date +%Y%m%d).$(date +%H%M%S).${sha}${dirty}"
 fi
 
-if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\+local\.[0-9a-f]+(\.dirty)?$'; then
-    fail "the local version '$VERSION' is not <X.Y.Z>+local.<sha>[.dirty]; the updater would misread it"
+if ! printf '%s' "$VERSION" \
+    | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\+local\.[0-9]{8}\.[0-9]{6}\.[0-9a-f]+(\.dirty)?$'; then
+    fail "the local version '$VERSION' is not <X.Y.Z>+local.<YYYYMMDD>.<HHMMSS>.<sha>[.dirty]; the updater would misread it"
 fi
 
 APP_DIR="$INSTALL_ROOT/app/$VERSION"
+
+# Keep the newest local builds; never the running one, never a channel version.
+# POSIX `ls -t` gives newest-first without find -printf (absent on macOS).
+prune_local_versions() {
+    local dry_run="$1" installed=0 current_dir="" dir
+    if [ -L "$INSTALL_ROOT/current" ]; then
+        current_dir="$INSTALL_ROOT/$(readlink "$INSTALL_ROOT/current")"
+    fi
+    while IFS= read -r dir; do
+        [ -n "$dir" ] || continue
+        installed=$((installed + 1))
+        if [ "$installed" -le "$KEEP" ] || [ "$dir" = "$current_dir" ]; then
+            continue
+        fi
+        if [ "$dry_run" = 1 ]; then
+            printf 'install-local: prune        would remove %s\n' "${dir#"$INSTALL_ROOT"/}"
+        else
+            rm -rf "$dir"
+            printf 'install-local: prune        removed %s\n' "${dir#"$INSTALL_ROOT"/}" >&2
+        fi
+    done < <(ls -1dt "$INSTALL_ROOT"/app/*+local.* 2>/dev/null || true)
+}
 
 # --- frontend build decision ----------------------------------------------
 dist_index="$REPO_ROOT/frontend/dist/index.html"
@@ -161,7 +201,10 @@ printf 'install-local: payload      %s manifest entries + extras + frontend/dist
 printf 'install-local: frontend     %s\n' "$build_reason"
 printf 'install-local: restart      %s\n' "$([ "$RESTART" = 1 ] && echo yes || echo no)"
 
+printf 'install-local: keep         newest %s local build(s)\n' "$KEEP"
+
 if [ "$DRY_RUN" = 1 ]; then
+    prune_local_versions 1
     printf 'install-local: dry run — nothing was written\n'
     exit 0
 fi
@@ -243,6 +286,7 @@ ln -sfn "app/$VERSION" "$INSTALL_ROOT/current" \
     || fail "cannot flip current -> app/$VERSION; the previous version is untouched"
 
 printf 'install-local: installed %s at %s/current\n' "$VERSION" "$INSTALL_ROOT" >&2
+prune_local_versions 0
 
 # --- restart ---------------------------------------------------------------
 if [ "$RESTART" = 1 ]; then
