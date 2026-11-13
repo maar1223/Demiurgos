@@ -124,7 +124,7 @@ interface ChatScreenProps {
   error: string | null;
   activity: ReturnType<typeof useAIAssistantSessions>["activity"];
   evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
-  sendMessage: (prompt: string) => void;
+  sendMessage: (prompt: string, options?: { displayText?: string }) => void;
   retryLastTurn?: () => Promise<void>;
   attachDocument: (file: File) => Promise<void>;
   removeAttachment: (attachmentId: string) => void;
@@ -567,6 +567,12 @@ function ChatScreen({
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
       ? activeSession.guided.proposal
       : null;
+  // The server-owned creation-path question is the first turn of the guided
+  // flow: ``path`` stays "" until the author answers, so the choice is a real
+  // UI control instead of typed "1"/"2".
+  const guidedPathPending =
+    activeSession?.guided?.path === "" &&
+    activeSession.guided.phase === "conversation";
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
       meaningfulGuidedProposalKeys.length > 0 ||
@@ -962,6 +968,37 @@ function ChatScreen({
                   </button>
                </div>
              </section>
+           )}
+
+           {guidedPathPending && (
+            <section
+              className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary"
+              aria-label={t("guided.path.title")}
+            >
+              <p className="text-xs text-muted">{t("guided.path.title")}</p>
+              <div className="mt-2 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    sendMessage("1", { displayText: t("guided.path.explore") })
+                  }
+                  disabled={isSending}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("guided.path.explore")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    sendMessage("2", { displayText: t("guided.path.fields") })
+                  }
+                  disabled={isSending}
+                  className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("guided.path.fields")}
+                </button>
+              </div>
+            </section>
            )}
 
            {visibleGuidedProposal && (

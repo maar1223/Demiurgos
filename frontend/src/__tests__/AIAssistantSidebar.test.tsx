@@ -415,6 +415,78 @@ describe("AIAssistantSidebar single conversation", () => {
     ).toBeInTheDocument();
   });
 
+  it("asks the creation path with real buttons", async () => {
+    const sendMessage = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({
+      sendMessage,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "quiero crear un personaje nuevo" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          path: "",
+          pending_question: "Antes de empezar: ¿cómo prefieres crear esta ficha?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(screen.getByRole("button", { name: tEs("guided.path.explore") }));
+    expect(sendMessage).toHaveBeenCalledWith("1", {
+      displayText: tEs("guided.path.explore"),
+    });
+    await user.click(screen.getByRole("button", { name: tEs("guided.path.fields") }));
+    expect(sendMessage).toHaveBeenCalledWith("2", {
+      displayText: tEs("guided.path.fields"),
+    });
+  });
+
+  it("hides the creation-path buttons once the author chose", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "quiero crear un personaje nuevo" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 2,
+          path: "explore",
+          pending_question: "¿Cuál es el deseo que define a este personaje?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.explore") }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.fields") }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides character review until the guided candidate is meaningful", () => {
     const onGuidedReview = vi.fn();
     useSessionsMock.mockReturnValue(createSessionsState({

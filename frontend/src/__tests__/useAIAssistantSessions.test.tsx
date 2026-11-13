@@ -370,6 +370,28 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     });
   });
 
+  it("shows the clicked path label while sending the canonical answer", async () => {
+    streamMock.mockRejectedValue(
+      new AssistantActivityUnavailable(503, "guided_handoff", "ght-1"),
+    );
+    askMock.mockResolvedValue(consentAcceptEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("1", {
+        displayText: "Descubrirlo conmigo (40/60)",
+      });
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    expect(messages[messages.length - 2]).toMatchObject({
+      role: "user",
+      content: "Descubrirlo conmigo (40/60)",
+    });
+    expect(askMock.mock.calls[0][1]).toMatchObject({ prompt: "1" });
+  });
+
   it("opens the guided flow on accept and clears the suggestion", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);

@@ -118,7 +118,10 @@ export interface AIAssistantSessionsResult {
   createSession: () => void;
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
-  sendMessage: (prompt: string) => Promise<void>;
+  sendMessage: (
+    prompt: string,
+    options?: { appendUser?: boolean; displayText?: string },
+  ) => Promise<void>;
   /** Re-send the prompt of the last failed turn without appending it again. */
   retryLastTurn?: () => Promise<void>;
   attachDocument: (file: File) => Promise<void>;
@@ -488,10 +491,16 @@ export function useAIAssistantSessions(
   );
 
   const sendMessage = useCallback(
-    async (prompt: string, options?: { appendUser?: boolean }) => {
+    async (
+      prompt: string,
+      options?: { appendUser?: boolean; displayText?: string },
+    ) => {
       const trimmed = prompt.trim();
       if (!trimmed || isSending) return;
       const appendUser = options?.appendUser !== false;
+      // A UI choice travels as the canonical token ("1"/"2"), but the chat
+      // should read like the label the author actually clicked.
+      const shown = options?.displayText?.trim() || trimmed;
       retryPromptRef.current = null;
 
       // Auto-create a session if none is active
@@ -500,7 +509,7 @@ export function useAIAssistantSessions(
         const id = generateId();
         const newSession: Session = {
           id,
-          title: truncateTitle(trimmed, defaultTitle),
+          title: truncateTitle(shown, defaultTitle),
           messages: [],
           createdAt: Date.now(),
         };
@@ -512,7 +521,7 @@ export function useAIAssistantSessions(
       const attachments = activeSession?.attachments ?? [];
       const userMessage: Message = {
         role: "user",
-        content: trimmed,
+        content: shown,
         ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
       };
 
@@ -533,7 +542,7 @@ export function useAIAssistantSessions(
                   // Structural default-title check: fires for every language
                   // and for legacy mojibake drafts (AD-12, SES-REQ-2).
                   title: isDefaultTitle(s.title, s.titleIsDefault)
-                    ? truncateTitle(trimmed, defaultTitle)
+                    ? truncateTitle(shown, defaultTitle)
                     : s.title,
                   titleIsDefault: false,
                   // Sending another message counts as "keep chatting": the
