@@ -688,7 +688,7 @@ export const messages = {
     "guided.create.level": "Ficha de {level} nivel",
     "guided.create.levelPending": "Nivel a definir",
     "guided.path.title": "¿Cómo prefieres crear la ficha?",
-    "guided.path.explore": "Descubrirlo conmigo (40/60)",
+    "guided.path.explore": "Descubrirla conmigo (40/60)",
     "guided.path.fields": "Completar la ficha paso a paso",
     "guided.field.progress": "Campo {index} de {total}",
     "guided.field.skipAction": "Saltar campo",

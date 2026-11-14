@@ -67,6 +67,12 @@ const SAFE_ACTIVITY_WARNINGS = new Set([
 // until the provider exposes reliable structured consulted-file evidence.
 const ACTIVITY_EVIDENCE_UI_ENABLED = false;
 
+// The launcher restarts the Hermes gateway in the background, so a gateway
+// reported down can come back while this panel stays open. Re-check on a slow
+// interval (and when the window regains focus) so the "not running" banner
+// never outlives the outage it describes.
+const HEALTH_RECHECK_MS = 10_000;
+
 function isSafeEvidencePath(value: string): boolean {
   if (!value || value.includes("\\") || value.startsWith("/")) return false;
   const parts = value.split("/");
@@ -308,6 +314,22 @@ function ChatScreen({
     void checkHealth();
   }, [checkHealth]);
 
+  // A down gateway is the one degraded state that heals by itself: the
+  // launcher restarts Hermes without touching this page. Poll only while it
+  // is down (a healthy panel stays idle) and stop as soon as it recovers.
+  const gatewayDown = health?.gateway_running === false;
+
+  useEffect(() => {
+    if (!gatewayDown) return;
+    const onFocus = () => void checkHealth();
+    const interval = window.setInterval(() => void checkHealth(), HEALTH_RECHECK_MS);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [gatewayDown, checkHealth]);
+
 
   // Type-to-focus: when the Author starts typing while reading (focus on the
   // page, a button, or the panel), the first printable key goes to the
@@ -369,7 +391,24 @@ function ChatScreen({
             : null;
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
-  const messages = activeSession?.messages ?? [];
+  // The server-owned creation-path question is the first turn of the guided
+  // flow: ``path`` stays "" until the author answers, and the card below is
+  // the real control. Its stored/pending prose copy must stay hidden: it
+  // repeats the card and tells the author to type "1"/"2".
+  const guidedPathPending =
+    activeSession?.guided?.path === "" &&
+    activeSession.guided.phase === "conversation";
+  const guidedPathQuestion = (activeSession?.guided?.pending_question ?? "").trim();
+  const storedMessages = activeSession?.messages ?? [];
+  const messages =
+    guidedPathPending && guidedPathQuestion
+      ? storedMessages.filter(
+          (message, index) =>
+            index !== storedMessages.length - 1 ||
+            message.role !== "assistant" ||
+            message.content.trim() !== guidedPathQuestion,
+        )
+      : storedMessages;
   // Consent-accepted sessions carry their first question in
   // `guided.pending_question`; older stored sessions may not have it in the
   // top-level list. Render it as the assistant bubble unless it is already
@@ -386,6 +425,7 @@ function ChatScreen({
   // still the PREVIOUS question. Rendering it again below the author's message
   // looks like the assistant repeated itself; the spinner is the progress cue.
   const showGuidedPending =
+    !guidedPathPending &&
     Boolean(guidedPendingText) &&
     !isSending &&
     !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
@@ -568,12 +608,6 @@ function ChatScreen({
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
       ? activeSession.guided.proposal
       : null;
-  // The server-owned creation-path question is the first turn of the guided
-  // flow: ``path`` stays "" until the author answers, so the choice is a real
-  // UI control instead of typed "1"/"2".
-  const guidedPathPending =
-    activeSession?.guided?.path === "" &&
-    activeSession.guided.phase === "conversation";
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
       meaningfulGuidedProposalKeys.length > 0 ||
@@ -972,11 +1006,11 @@ function ChatScreen({
            {guidedPathPending && (
              <GuidedChoiceCard
                title={t("guided.path.title")}
+               variant="neutral"
                stacked
                options={[
                  {
                    label: t("guided.path.explore"),
-                   primary: true,
                    disabled: isSending,
                    onClick: () =>
                      void sendMessage("1", {

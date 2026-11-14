@@ -380,14 +380,14 @@ describe("useAIAssistantSessions guided consent wiring", () => {
 
     await act(async () => {
       await result.current.sendMessage("1", {
-        displayText: "Descubrirlo conmigo (40/60)",
+        displayText: "Descubrirla conmigo (40/60)",
       });
     });
 
     const messages = result.current.activeSession?.messages ?? [];
     expect(messages[messages.length - 2]).toMatchObject({
       role: "user",
-      content: "Descubrirlo conmigo (40/60)",
+      content: "Descubrirla conmigo (40/60)",
     });
     expect(askMock.mock.calls[0][1]).toMatchObject({ prompt: "1" });
   });

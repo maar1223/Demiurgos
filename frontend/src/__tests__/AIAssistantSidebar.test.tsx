@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
@@ -444,6 +444,9 @@ describe("AIAssistantSidebar single conversation", () => {
     const user = userEvent.setup();
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
+    // The card IS the question: the stored/pending prose copy would duplicate
+    // it and tell the author to type "1"/"2" instead of clicking.
+    expect(screen.queryByText(/Antes de empezar/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: tEs("guided.path.explore") }));
     expect(sendMessage).toHaveBeenCalledWith("1", {
       displayText: tEs("guided.path.explore"),
@@ -452,6 +455,45 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(sendMessage).toHaveBeenCalledWith("2", {
       displayText: tEs("guided.path.fields"),
     });
+  });
+
+  it("hides the stored creation-path question and gives both paths equal weight", () => {
+    const pathQuestion =
+      "Antes de empezar: ¿cómo prefieres crear esta ficha? 1) Descubrirla conmigo, conversando (40/60). 2) Completarla paso a paso, campo por campo. Responde 1 o 2.";
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [
+          { role: "user", content: "quiero crear un personaje nuevo" },
+          { role: "assistant", content: pathQuestion },
+        ],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          path: "",
+          pending_question: pathQuestion,
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.queryByText(/Antes de empezar/)).not.toBeInTheDocument();
+    const explore = screen.getByRole("button", { name: tEs("guided.path.explore") });
+    const fields = screen.getByRole("button", { name: tEs("guided.path.fields") });
+    // Both options are equally valid paths: same button affordance, no default.
+    expect(explore.className).toBe(fields.className);
+    expect(explore).toHaveTextContent("Descubrirla conmigo (40/60)");
   });
 
   it("hides the creation-path buttons once the author chose", () => {
@@ -2137,6 +2179,75 @@ describe("AIAssistantSidebar assistant health", () => {
     expect(banner).toHaveTextContent(
       "El servicio del asistente no está en marcha",
     );
+  });
+
+  it("clears the banner on its own when the gateway comes back", async () => {
+    getAssistantSettingsMock.mockClear();
+    getAssistantSettingsMock
+      .mockResolvedValueOnce({ ...healthy, gateway_running: false })
+      .mockResolvedValue(healthy);
+
+    vi.useFakeTimers();
+    try {
+      render(<AIAssistantSidebar mundo="Vibrantes" />);
+      await act(async () => {});
+
+      expect(
+        screen.getByTestId("assistant-health-banner"),
+      ).toHaveTextContent("El servicio del asistente no está en marcha");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+
+      expect(
+        screen.queryByTestId("assistant-health-banner"),
+      ).not.toBeInTheDocument();
+      expect(getAssistantSettingsMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not poll while the assistant is healthy", async () => {
+    getAssistantSettingsMock.mockClear();
+    vi.useFakeTimers();
+    try {
+      render(<AIAssistantSidebar mundo="Vibrantes" />);
+      await act(async () => {});
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+
+      expect(getAssistantSettingsMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-checks when the window regains focus", async () => {
+    getAssistantSettingsMock.mockClear();
+    getAssistantSettingsMock
+      .mockResolvedValueOnce({ ...healthy, gateway_running: false })
+      .mockResolvedValue(healthy);
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByTestId("assistant-health-banner"),
+    ).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("assistant-health-banner"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(getAssistantSettingsMock).toHaveBeenCalledTimes(2);
   });
 
   it("warns when the saved configuration still needs a restart", async () => {
