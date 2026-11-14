@@ -82,6 +82,31 @@ describe("GuidedCharacterPanel", () => {
     expect(screen.queryByText(/workflow|provenance/i)).not.toBeInTheDocument();
   });
 
+  it("asks the narrative level with a card and sends the canonical token", async () => {
+    const send = vi.fn();
+    const levelQuestion =
+      "¿Qué nivel narrativo ocupa este personaje: 1º principal, 2º secundario o 3º relleno?";
+    useGuidedCharacterMock.mockReturnValue({
+      ...baseState(),
+      send,
+      session: {
+        ...baseState().session,
+        phase: "conversation",
+        path: "fields",
+        pending_kind: "level",
+        level: "",
+        pending_question: levelQuestion,
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<GuidedCharacterPanel world="Vibrantes" />);
+
+    expect(screen.queryByText(levelQuestion)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "2º secundario" }));
+    expect(send).toHaveBeenCalledWith("2");
+  });
+
   it("hides the previous pending question while the next turn is loading", () => {
     useGuidedCharacterMock.mockReturnValue({
       ...baseState(),

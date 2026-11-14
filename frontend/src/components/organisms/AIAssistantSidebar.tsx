@@ -393,20 +393,25 @@ function ChatScreen({
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   // The server-owned creation-path question is the first turn of the guided
   // flow: ``path`` stays "" until the author answers, and the card below is
-  // the real control. Its stored/pending prose copy must stay hidden: it
-  // repeats the card and tells the author to type "1"/"2".
+  // the real control. The narrative level is the next server-owned turn.
+  // Their stored/pending prose copies must stay hidden: they repeat the card
+  // and tell the author to type "1"/"2".
   const guidedPathPending =
     activeSession?.guided?.path === "" &&
     activeSession.guided.phase === "conversation";
-  const guidedPathQuestion = (activeSession?.guided?.pending_question ?? "").trim();
+  const guidedLevelPending =
+    activeSession?.guided?.pending_kind === "level" &&
+    activeSession.guided.phase === "conversation";
+  const guidedPendingQuestion = (activeSession?.guided?.pending_question ?? "").trim();
+  const guidedCardPending = guidedPathPending || guidedLevelPending;
   const storedMessages = activeSession?.messages ?? [];
   const messages =
-    guidedPathPending && guidedPathQuestion
+    guidedCardPending && guidedPendingQuestion
       ? storedMessages.filter(
           (message, index) =>
             index !== storedMessages.length - 1 ||
             message.role !== "assistant" ||
-            message.content.trim() !== guidedPathQuestion,
+            message.content.trim() !== guidedPendingQuestion,
         )
       : storedMessages;
   // Consent-accepted sessions carry their first question in
@@ -425,7 +430,7 @@ function ChatScreen({
   // still the PREVIOUS question. Rendering it again below the author's message
   // looks like the assistant repeated itself; the spinner is the progress cue.
   const showGuidedPending =
-    !guidedPathPending &&
+    !guidedCardPending &&
     Boolean(guidedPendingText) &&
     !isSending &&
     !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
@@ -600,6 +605,7 @@ function ChatScreen({
   const guidedFieldProgress = activeSession?.guided?.field_progress ?? null;
   const guidedFieldActive = Boolean(
     activeSession?.guided?.path === "fields" &&
+      activeSession.guided.pending_kind !== "level" &&
       guidedFieldProgress &&
       !guidedFieldProgress.complete,
   );
@@ -1003,31 +1009,60 @@ function ChatScreen({
              </section>
            )}
 
-           {guidedPathPending && (
-             <GuidedChoiceCard
-               title={t("guided.path.title")}
-               variant="neutral"
-               stacked
-               options={[
-                 {
-                   label: t("guided.path.explore"),
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage("1", {
-                       displayText: t("guided.path.explore"),
-                     }),
-                 },
-                 {
-                   label: t("guided.path.fields"),
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage("2", {
-                       displayText: t("guided.path.fields"),
-                     }),
-                 },
-               ]}
-             />
-           )}
+            {guidedPathPending && !isSending && (
+              <GuidedChoiceCard
+                title={t("guided.path.title")}
+                variant="neutral"
+                stacked
+                options={[
+                  {
+                    label: t("guided.path.explore"),
+                    onClick: () =>
+                      void sendMessage("1", {
+                        displayText: t("guided.path.explore"),
+                      }),
+                  },
+                  {
+                    label: t("guided.path.fields"),
+                    onClick: () =>
+                      void sendMessage("2", {
+                        displayText: t("guided.path.fields"),
+                      }),
+                  },
+                ]}
+              />
+            )}
+
+            {guidedLevelPending && !isSending && (
+              <GuidedChoiceCard
+                title={t("guided.level.title")}
+                variant="neutral"
+                stacked
+                options={[
+                  {
+                    label: t("guided.level.principal"),
+                    onClick: () =>
+                      void sendMessage("1", {
+                        displayText: t("guided.level.principal"),
+                      }),
+                  },
+                  {
+                    label: t("guided.level.secondary"),
+                    onClick: () =>
+                      void sendMessage("2", {
+                        displayText: t("guided.level.secondary"),
+                      }),
+                  },
+                  {
+                    label: t("guided.level.background"),
+                    onClick: () =>
+                      void sendMessage("3", {
+                        displayText: t("guided.level.background"),
+                      }),
+                  },
+                ]}
+              />
+            )}
 
            {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">

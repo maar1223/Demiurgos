@@ -351,6 +351,33 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(result.current.activeSession?.guided).toBeUndefined();
   });
 
+  it("does not persist a server-owned intake question as a chat message", async () => {
+    const levelQuestion =
+      "¿Qué nivel narrativo ocupa este personaje: 1º principal, 2º secundario o 3º relleno?";
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue({
+      response: levelQuestion,
+      guided_state: {
+        ...guidedSession,
+        phase: "conversation",
+        path: "fields",
+        pending_kind: "level",
+        level: "",
+        pending_question: levelQuestion,
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("quiero crear un personaje nuevo");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    expect(messages.some((message) => message.content === levelQuestion)).toBe(false);
+    expect(result.current.activeSession?.guided?.pending_kind).toBe("level");
+  });
+
   it("replays the guided handoff ticket on the legacy fallback", async () => {
     streamMock.mockRejectedValue(
       new AssistantActivityUnavailable(503, "guided_handoff", "ght-abc123"),

@@ -496,6 +496,99 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(explore).toHaveTextContent("Descubrirla conmigo (40/60)");
   });
 
+  it("asks the narrative level with a card and hides the field cursor", async () => {
+    const sendMessage = vi.fn();
+    const levelQuestion =
+      "¿Qué nivel narrativo ocupa este personaje: 1º principal, 2º secundario o 3º relleno?";
+    useSessionsMock.mockReturnValue(createSessionsState({
+      sendMessage,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "Completar la ficha paso a paso" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 2,
+          path: "fields",
+          pending_kind: "level",
+          level: "",
+          pending_question: levelQuestion,
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+          field_progress: {
+            nivel: "1º",
+            index: 1,
+            total: 36,
+            key: "nombre",
+            label: "Nombre",
+            hint: "El nombre con el que se lo conoce en el mundo.",
+            examples: [],
+            optional: false,
+            covered: [],
+            skipped: [],
+            complete: false,
+          },
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    // The card asks the level; the prose copy and the field cursor wait.
+    expect(screen.queryByText(levelQuestion)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Campo 1 de/)).not.toBeInTheDocument();
+    const principal = screen.getByRole("button", { name: tEs("guided.level.principal") });
+    const secondary = screen.getByRole("button", { name: tEs("guided.level.secondary") });
+    expect(principal.className).toBe(secondary.className);
+    await user.click(principal);
+    expect(sendMessage).toHaveBeenCalledWith("1", {
+      displayText: tEs("guided.level.principal"),
+    });
+  });
+
+  it("dismisses the creation-path card while the answer is in flight", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      isSending: true,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "quiero crear un personaje nuevo" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          path: "",
+          pending_kind: "path",
+          pending_question: "Antes de empezar: ¿cómo prefieres crear esta ficha?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.explore") }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.fields") }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides the creation-path buttons once the author chose", () => {
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {

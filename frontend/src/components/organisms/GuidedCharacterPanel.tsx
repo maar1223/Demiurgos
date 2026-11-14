@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useGuidedCharacter } from "@/hooks/useGuidedCharacter";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { Spinner } from "@/components/atoms/Spinner";
+import { GuidedChoiceCard } from "@/components/molecules/GuidedChoiceCard";
 import { getGuidedMethods } from "@/api/methodologies";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import type { GuidedMethodOption } from "@/api/types";
@@ -139,7 +140,28 @@ export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
             {message.content}
           </div>
         ))}
-        {session?.pending_question && !guided.isLoading && (
+        {session?.pending_kind === "level" && !guided.isLoading && (
+          <GuidedChoiceCard
+            title={t("guided.level.title")}
+            variant="neutral"
+            stacked
+            options={[
+              {
+                label: t("guided.level.principal"),
+                onClick: () => void guided.send("1"),
+              },
+              {
+                label: t("guided.level.secondary"),
+                onClick: () => void guided.send("2"),
+              },
+              {
+                label: t("guided.level.background"),
+                onClick: () => void guided.send("3"),
+              },
+            ]}
+          />
+        )}
+        {session?.pending_question && session.pending_kind !== "level" && !guided.isLoading && (
           <p className="mb-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-sm text-primary">
             {session.pending_question}
           </p>

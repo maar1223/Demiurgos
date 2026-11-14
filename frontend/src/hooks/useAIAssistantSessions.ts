@@ -564,12 +564,23 @@ export function useAIAssistantSessions(
       let streamedAnswer: string | null = null;
       let semanticDecision: SemanticDecisionEvent | null = null;
 
+      /** Server-owned intake questions render as a choice card, so persisting
+       *  their prose would duplicate them once a user message follows (S6). */
+      const isServerOwnedQuestion = (guided?: GuidedCharacterSession): boolean =>
+        guided?.pending_kind === "path" || guided?.pending_kind === "level";
+
       const appendAssistantMessage = (content: string, guided?: GuidedCharacterSession) => {
-        const assistantMessage: Message = { role: "assistant", content };
+        const assistantMessage: Message | null = isServerOwnedQuestion(guided)
+          ? null
+          : { role: "assistant", content };
         setSessions((prev) =>
           prev.map((s) =>
             s.id === sessionId
-              ? { ...s, messages: [...s.messages, assistantMessage], ...(guided ? { guided } : {}) }
+              ? {
+                  ...s,
+                  ...(assistantMessage ? { messages: [...s.messages, assistantMessage] } : {}),
+                  ...(guided ? { guided } : {}),
+                }
               : s,
           ),
         );
@@ -869,6 +880,7 @@ export function useAIAssistantSessions(
         // Append it once so the live chat does not sit empty after accepting.
         const firstGuidedQuestion =
           guided && guided.phase === "conversation"
+          && guided.pending_kind !== "path" && guided.pending_kind !== "level"
             ? guided.pending_question?.trim()
             : undefined;
         setSessions((prev) =>
