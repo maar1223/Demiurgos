@@ -420,6 +420,19 @@ class GuidedSessionStore:
         self._sessions[session_id] = next_state
         return deepcopy(next_state)
 
+    def set_level(self, session_id: str, authorization_binding: str,
+                  level: str) -> SessionState | None:
+        """Pin the author's narrative-level choice (drives the field plan)."""
+        state = self._sessions.get(session_id)
+        if not state or state.authorization_binding != authorization_binding:
+            return None
+        if level not in {"1º", "2º", "3º"}:
+            return None
+        next_state = deepcopy(state)
+        next_state.candidate.accepted_canon["nivel"] = level
+        self._sessions[session_id] = next_state
+        return deepcopy(next_state)
+
     def skip_field(self, session_id: str, authorization_binding: str,
                    field_key: str) -> SessionState | None:
         """Record one explicitly skipped questionnaire field (idempotent)."""

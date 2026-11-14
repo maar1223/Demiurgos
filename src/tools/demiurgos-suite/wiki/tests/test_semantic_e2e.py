@@ -304,7 +304,7 @@ class TestFirstProviderTouchE2E:
         monkeypatch.setattr(api_server, "route_guided_intent", recorded_route)
         response = client.post(
             "/api/test_mundo/guided-character/session",
-            json={"author_input": "Create a character"},
+            json={"author_input": "Create a character", "level": "1º"},
         )
         assert response.status_code == 200
         assert order[0] == "semantic.decide"

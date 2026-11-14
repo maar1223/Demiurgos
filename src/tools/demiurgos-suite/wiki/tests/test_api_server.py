@@ -1711,6 +1711,7 @@ class TestAiAsk:
         runs = _SemanticRuns(
             _continuation_semantic_payload("require_confirmation"),
             _semantic_payload("allow"),
+            _semantic_payload("allow"),
         )
         _wire_semantic_provider(monkeypatch, runs)
         response = client.post("/api/test_mundo/ai/ask", json={
@@ -1746,8 +1747,20 @@ class TestAiAsk:
 
         assert confirmed.status_code == 200
         confirmed_payload = confirmed.json()
-        assert confirmed_payload["guided_state"]["phase"] == "conversation"
-        assert confirmed_payload["guided_revision"] == payload["guided_revision"] + 1
+        assert confirmed_payload["guided_state"]["pending_kind"] == "level"
+        assert len(seen) == 0
+
+        levelled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1",
+            "session_id": "chat-1",
+            "guided_session_id": payload["guided_session_id"],
+            "guided_revision": confirmed_payload["guided_revision"],
+        })
+        assert levelled.status_code == 200
+        levelled_payload = levelled.json()
+        assert levelled_payload["guided_state"]["phase"] == "conversation"
+        assert levelled_payload["guided_state"]["level"] == "1º"
+        assert levelled_payload["guided_revision"] == confirmed_payload["guided_revision"] + 1
         assert len(seen) == 1
         assert "Patient tactician." in seen[0]
         assert "personajes/rhyz.md" not in seen[0]
@@ -1830,11 +1843,26 @@ class TestAiAsk:
 
         assert confirmed.status_code == 200
         confirmed_payload = confirmed.json()
-        # Only after explicit confirmation does the guided provider run, carrying
-        # the canonical reference revision-bound into the conversation.
-        assert confirmed_payload["guided_state"]["phase"] == "conversation"
+        # The path is chosen; the narrative level is the server-owned turn before
+        # the guided provider runs.
+        assert confirmed_payload["guided_state"]["pending_kind"] == "level"
+        assert guided_calls == []
+
+        levelled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1",
+            "section": "personajes",
+            "session_id": "chat-1",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": confirmed_payload["guided_revision"],
+        })
+        assert levelled.status_code == 200
+        levelled_payload = levelled.json()
+        # Only after path + level does the guided provider run, carrying the
+        # canonical reference revision-bound into the conversation.
+        assert levelled_payload["guided_state"]["phase"] == "conversation"
+        assert levelled_payload["guided_state"]["level"] == "1º"
         assert len(guided_calls) == 1
-        assert guided_calls[0].base_revision == factual_payload["guided_revision"]
+        assert guided_calls[0].base_revision == confirmed_payload["guided_revision"]
         assert guided_calls[0].reference_name == "Rhyz"
         assert "Patient tactician." in guided_calls[0].reference_context
 
@@ -1843,14 +1871,14 @@ class TestAiAsk:
             "section": "personajes",
             "session_id": "chat-1",
             "guided_session_id": first["guided_session_id"],
-            "guided_revision": confirmed_payload["guided_revision"],
+            "guided_revision": levelled_payload["guided_revision"],
         })
 
         assert resumed.status_code == 200
         assert resumed.json()["guided_session_id"] == first["guided_session_id"]
-        assert resumed.json()["guided_revision"] == confirmed_payload["guided_revision"] + 1
+        assert resumed.json()["guided_revision"] == levelled_payload["guided_revision"] + 1
         assert len(guided_calls) == 2
-        assert guided_calls[1].base_revision == confirmed_payload["guided_revision"]
+        assert guided_calls[1].base_revision == levelled_payload["guided_revision"]
 
     def test_missing_or_ambiguous_folder_reference_stays_uncertain(self, client: TestClient, monkeypatch):
         class Graph:
@@ -1921,6 +1949,17 @@ class TestAiAsk:
                 "guided_revision": payload["guided_revision"],
             })
             assert confirmed.status_code == 200
+            # The path is chosen; the level turn still precedes the provider.
+            assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+            assert len(seen) == before
+
+            levelled = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "1",
+                "guided_session_id": payload["guided_session_id"],
+                "guided_revision": confirmed.json()["guided_revision"],
+            })
+            assert levelled.status_code == 200
+            assert levelled.json()["guided_state"]["level"] == "1º"
             assert len(seen) == before + 1
             assert expected in seen[-1]
             assert "personajes/" not in seen[-1]
@@ -1990,6 +2029,7 @@ class TestGuidedSessionDurability:
         _principal(monkeypatch, "author-1")
 
         started = client.post("/api/test_mundo/guided-character/session", json={
+            "level": "1º",
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
         assert started.status_code == 200
@@ -2014,6 +2054,7 @@ class TestGuidedSessionDurability:
         _principal(monkeypatch, "author-1")
 
         started = client.post("/api/test_mundo/guided-character/session", json={
+            "level": "1º",
             "author_input": "Crear un personaje nuevo llamado Pert",
         }).json()
         sid, revision = started["session_id"], started["revision"]
@@ -2116,6 +2157,7 @@ class TestGuidedSessionDurability:
         _principal(monkeypatch, "author-1")
 
         started = client.post("/api/test_mundo/guided-character/session", json={
+            "level": "1º",
             "author_input": "Crear un personaje nuevo llamado Pert",
         })
         assert started.status_code == 200
@@ -2184,17 +2226,27 @@ class TestGuidedSessionDurability:
         })
         assert confirmed.status_code == 200
         assert confirmed.json()["guided_state"]["phase"] == "conversation"
-        assert confirmed.json()["guided_revision"] == factual.json()["guided_revision"] + 2
+        # The confirmation resolves; the level turn still precedes the provider.
+        assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+        assert calls == []
+
+        levelled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1", **context,
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": confirmed.json()["guided_revision"],
+        })
+        assert levelled.status_code == 200
+        assert levelled.json()["guided_state"]["level"] == "1º"
         assert calls == ["Quiero trabajar en la propuesta"]
 
         resumed = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "Su deseo es proteger a su hermana", **context,
             "guided_session_id": first["guided_session_id"],
-            "guided_revision": confirmed.json()["guided_revision"],
+            "guided_revision": levelled.json()["guided_revision"],
         })
         assert resumed.status_code == 200
         assert resumed.json()["guided_session_id"] == first["guided_session_id"]
-        assert resumed.json()["guided_revision"] == confirmed.json()["guided_revision"] + 1
+        assert resumed.json()["guided_revision"] == levelled.json()["guided_revision"] + 1
         assert calls == ["Quiero trabajar en la propuesta", "Su deseo es proteger a su hermana"]
 
     def test_factual_question_with_missing_ficha_context_stays_safe_without_mutation(
@@ -4774,6 +4826,16 @@ class TestSemanticSingleRunContinuation:
             })
         assert confirmed.status_code == 200
         assert confirmed.json()["guided_state"]["phase"] == "conversation"
+        assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+        assert len(guided_calls) == 0
+
+        levelled = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1", "session_id": "chat-1",
+            "guided_session_id": sid,
+            "guided_revision": confirmed.json()["guided_revision"],
+        })
+        assert levelled.status_code == 200
+        assert levelled.json()["guided_state"]["level"] == "1º"
         assert len(guided_calls) == 1
         assert runs.starts == 1  # the gate ran only on the opening turn
         legacy.assert_not_awaited()

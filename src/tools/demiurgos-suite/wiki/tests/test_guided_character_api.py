@@ -128,9 +128,11 @@ def test_public_state_envelope_excludes_backend_provenance() -> None:
     payload = api_server._guided_public_state(state)
     assert set(payload) == {
         "protocol_version", "session_id", "world", "phase", "revision",
-        "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth",
-        "methodology",
+        "pending_question", "pending_kind", "level", "messages", "candidate",
+        "proposal", "reference", "mode", "depth", "methodology",
     }
+    assert payload["pending_kind"] == ""
+    assert payload["level"] == ""
     assert "provenance" not in payload["candidate"]
     assert payload["messages"] == [{"role": "assistant", "content": "What drives them?"}]
 
@@ -168,6 +170,7 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
         },
         {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": False},
         {"state": "allow", "response": "ok", "request_id": "r-3", "session_id": "s-1", "guided": False},
+        {"state": "allow", "response": "ok", "request_id": "r-4", "session_id": "s-1", "guided": False},
     )
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
 
@@ -186,7 +189,18 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
         "guided_revision": first_state["revision"],
     })
     assert accepted.status_code == 200
-    accepted_state = accepted.json()["guided_state"]
+    path_state = accepted.json()["guided_state"]
+    assert path_state["path"] == "explore"
+    assert path_state["pending_kind"] == "level"
+
+    levelled = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
+        "guided_session_id": path_state["session_id"],
+        "guided_revision": path_state["revision"],
+    })
+    assert levelled.status_code == 200
+    accepted_state = levelled.json()["guided_state"]
+    assert accepted_state["level"] == "1º"
 
     with monkeypatch.context() as context:
         normal = AsyncMock(return_value="Rhyz fulfills a resonant role.")
@@ -227,7 +241,7 @@ def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatc
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=1)
 
-    response = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
+    response = client.post("/api/vibrantes/guided-character/session", json={"level": "1º", "author_input": "Create a character"})
     assert response.status_code == 200
     session = response.json()
     assert session["revision"] == 1
@@ -255,7 +269,7 @@ def test_fast_guided_start_exposes_server_owned_mode_and_keeps_proposal_diskless
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=1)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "Create a character quickly with only fundamentals",
     })
     assert started.status_code == 200
@@ -334,7 +348,7 @@ def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch, tm
     )
     _guided_semantic_allow(monkeypatch, count=2)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "quiero crear al hermano de Rhyz",
     })
     assert started.status_code == 200
@@ -351,7 +365,7 @@ def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch, tm
     assert session["phase"] == "conversation"
     assert session["proposal"] is None
     assert session["candidate"]["proposals"] == {}
-    assert session["candidate"]["accepted_canon"] == {}
+    assert session["candidate"]["accepted_canon"] == {"nivel": "1º"}
     assert session["pending_question"] and session["pending_question"].count("?") == 1
     assert len(calls) == 1
 
@@ -379,7 +393,7 @@ def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkey
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "Create a character",
     })
     assert started.status_code == 200
@@ -423,7 +437,7 @@ def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch, tmp
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "Create a character",
     })
     assert started.status_code == 200
@@ -460,7 +474,7 @@ def test_relationship_start_requires_confirmation_and_acceptance_enters_provider
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=3)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Quiero crear la esposa de Rhyz"})
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º", "author_input": "Quiero crear la esposa de Rhyz"})
     assert started.status_code == 200
     session = started.json()
     assert session["phase"] == "confirmation"
@@ -541,7 +555,7 @@ def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch, tmp
     )
     _guided_semantic_allow(monkeypatch, count=3)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "quiero crear al hermano de Rhyz",
     })
     assert started.status_code == 200
@@ -592,7 +606,7 @@ def test_english_relation_goal_follows_configured_language(monkeypatch, tmp_path
     )
     _guided_semantic_allow(monkeypatch, count=2)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "quiero crear al hermano de Rhyz",
     })
     assert started.status_code == 200
@@ -626,7 +640,7 @@ def test_plain_character_start_never_invents_a_relation(monkeypatch, tmp_path) -
     monkeypatch.setattr(api_server, "_named_reference_context", lambda *_args: ("", False, None))
     _guided_semantic_allow(monkeypatch, count=1)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "Create a character",
     })
     assert started.status_code == 200
@@ -766,7 +780,7 @@ def test_guided_start_normalizes_structured_question_for_public_state(monkeypatc
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=1)
 
-    response = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
+    response = client.post("/api/vibrantes/guided-character/session", json={"level": "1º", "author_input": "Create a character"})
 
     assert response.status_code == 200
     assert response.json()["pending_question"] == (
@@ -871,10 +885,10 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     _guided_semantic_allow(monkeypatch, count=2)
 
-    started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º", "author_input": "Create a character"})
     assert started.status_code == 200
     session = started.json()
-    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level", "path"}
+    assert set(session) == {"protocol_version", "session_id", "world", "phase", "revision", "pending_question", "pending_kind", "level", "messages", "candidate", "proposal", "reference", "mode", "depth", "methodology", "flow", "detail_progress", "target_preview", "target_level", "path"}
     assert session["flow"] == {
         "flow_id": "guided-character",
         "entity_type": "personaje",
@@ -887,7 +901,7 @@ def test_all_frontend_calls_preserve_public_state_and_do_not_write_files(tmp_pat
     assert recovered.status_code == 200
     assert recovered.json() == session
 
-    turned = client.post("/api/vibrantes/guided-character/turn", json={
+    turned = client.post("/api/vibrantes/guided-character/turn", json={"level": "1º",
         "session_id": session["session_id"], "base_revision": 1, "author_input": "They seek freedom",
     })
     assert turned.status_code == 200
@@ -1076,7 +1090,7 @@ def test_guided_flow_gates_semantic_then_guarded(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
 
-    started = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
+    started = client.post("/api/vibrantes/guided-character/session", json={"level": "1º", "author_input": "Create a character"})
     assert started.status_code == 200
     assert started.json()["revision"] == 1
     assert len(guided_calls) == 1
@@ -1462,7 +1476,7 @@ def test_guided_start_semantic_decides_before_lexical_policy(monkeypatch, tmp_pa
 
     monkeypatch.setattr(api_server, "route_guided_intent", recorded_route)
 
-    response = client.post("/api/vibrantes/guided-character/session", json={
+    response = client.post("/api/vibrantes/guided-character/session", json={"level": "1º",
         "author_input": "Create a character",
     })
 
@@ -2054,7 +2068,7 @@ def test_english_skip_control_advances_the_field_cursor(monkeypatch, tmp_path) -
     _guided_semantic_allow(monkeypatch, count=2)
 
     started = client.post("/api/vibrantes/guided-character/session", json={
-        "author_input": "Create a character", "path": "fields",
+        "author_input": "Create a character", "path": "fields", "level": "1º",
     })
     assert started.status_code == 200, started.text
     session = started.json()
@@ -2124,6 +2138,7 @@ def test_plain_creation_intent_opens_the_guided_path_question(monkeypatch, tmp_p
     semantic_runs = _SemanticRuns(
         {"state": "allow", "response": "ok", "request_id": "r-1", "session_id": "s-1", "guided": True},
         {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": True},
+        {"state": "allow", "response": "ok", "request_id": "r-3", "session_id": "s-1", "guided": True},
     )
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
 
@@ -2143,7 +2158,18 @@ def test_plain_creation_intent_opens_the_guided_path_question(monkeypatch, tmp_p
         "guided_revision": body["guided_revision"],
     })
     assert chosen.status_code == 200, chosen.text
-    assert chosen.json()["path"] == "explore"
+    chosen_state = chosen.json()
+    assert chosen_state["path"] == "explore"
+    assert chosen_state["pending_kind"] == "level"
+    assert calls == []  # the level question is server-owned too
+
+    levelled = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
+        "guided_session_id": chosen_state["session_id"],
+        "guided_revision": chosen_state["revision"],
+    })
+    assert levelled.status_code == 200, levelled.text
+    assert levelled.json()["guided_state"]["level"] == "1º"
     assert len(calls) == 1
 
 
@@ -2271,5 +2297,128 @@ def test_clear_creation_command_asks_the_path_before_the_confirmation(
         "guided_revision": body["guided_revision"],
     })
     assert chosen.status_code == 200, chosen.text
-    assert chosen.json()["path"] == "fields"
+    chosen_state = chosen.json()
+    assert chosen_state["path"] == "fields"
+    assert chosen_state["pending_kind"] == "level"
+    assert calls == []
+
+    levelled = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
+        "guided_session_id": chosen_state["session_id"],
+        "guided_revision": chosen_state["revision"],
+    })
+    assert levelled.status_code == 200, levelled.text
+    assert levelled.json()["guided_state"]["level"] == "1º"
+    assert len(calls) == 1
+
+
+def test_level_choice_reads_numbers_and_labels() -> None:
+    """The level turn accepts both the cardinal and the descriptive answer."""
+    assert api_server._level_choice("1") == "1º"
+    assert api_server._level_choice("2º secundario") == "2º"
+    assert api_server._level_choice("relleno") == "3º"
+    assert api_server._level_choice("create a character") is None
+
+
+def test_level_question_follows_the_path_and_precedes_the_provider(
+    monkeypatch, tmp_path,
+) -> None:
+    """S2/S3: path -> level -> provider, for a server-owned intake."""
+    calls = []
+
+    async def provider(request, _token):
+        calls.append(request)
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Aria"},
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    monkeypatch.setattr(api_server, "_named_reference_context", lambda *_a: ("", False, None))
+    _guided_semantic_allow(monkeypatch, count=3)
+
+    started = client.post("/api/vibrantes/guided-character/session", json={
+        "author_input": "quiero crear un personaje nuevo", "path": "",
+    })
+    assert started.status_code == 200, started.text
+    session = started.json()
+    assert session["pending_kind"] == "path"
+    assert calls == []
+
+    path_answer = client.post("/api/vibrantes/guided-character/turn", json={
+        "session_id": session["session_id"],
+        "base_revision": session["revision"],
+        "author_input": "2",
+    })
+    assert path_answer.status_code == 200, path_answer.text
+    level_turn = path_answer.json()
+    assert level_turn["path"] == "fields"
+    assert level_turn["pending_kind"] == "level"
+    assert level_turn["level"] == ""
+    assert "nivel narrativo" in level_turn["pending_question"].casefold()
+    assert calls == []  # the level question is server-owned
+
+    level_answer = client.post("/api/vibrantes/guided-character/turn", json={
+        "session_id": level_turn["session_id"],
+        "base_revision": level_turn["revision"],
+        "author_input": "3",
+    })
+    assert level_answer.status_code == 200, level_answer.text
+    final = level_answer.json()
+    assert final["level"] == "3º"
+    assert final["pending_kind"] == ""
+    assert final["field_progress"]["nivel"] == "3º"
+    assert len(calls) == 1
+    assert calls[0].author_input == "quiero crear un personaje nuevo"
+
+
+def test_finished_exchange_is_never_interrupted_by_the_level_question(
+    monkeypatch, tmp_path,
+) -> None:
+    """S5: a legacy session already in flight keeps its provider conversation."""
+    calls = []
+
+    async def provider(request, _token):
+        calls.append(request)
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Aria"},
+        }
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _r: api_server.EditPrincipal("author-1"))
+    store = GuidedSessionStore()
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 90_000))
+    _guided_semantic_allow(monkeypatch, count=1)
+    store.create("legacy-1", "vibrantes", "author-1", path="explore")
+    request = api_server._compose_guided_request(
+        request_id="r-1", session_id="legacy-1", mundo="vibrantes",
+        revision=0, principal_id="author-1", author_input="Create a character",
+    )
+    store.commit(request, api_server.GuidedResponse(
+        api_server.PROTOCOL_VERSION, "r-1", "legacy-1", 0,
+        api_server.Outcome.QUESTION, question="What drives them?",
+    ))
+
+    turned = client.post("/api/vibrantes/guided-character/turn", json={
+        "session_id": "legacy-1", "base_revision": 1, "author_input": "Freedom",
+    })
+
+    assert turned.status_code == 200, turned.text
+    assert turned.json()["pending_kind"] == ""
     assert len(calls) == 1
