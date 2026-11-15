@@ -346,6 +346,12 @@ class GuidedSessionStore:
                 content["question"] = response.question
             if response.synthesis:
                 content["synthesis"] = response.synthesis
+            if response.answer:
+                # S2: the exploration answer is its own block, rendered before
+                # the synthesis by the public message view.
+                content["answer"] = response.answer
+            if response.intent:
+                content["intent"] = response.intent
             if response.outcome is Outcome.DELTA and response.delta:
                 content.update(dict(response.delta))
             next_state.messages.append(TypedMessage(

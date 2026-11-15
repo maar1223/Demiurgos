@@ -240,6 +240,24 @@ def field_for(nivel: str, key: str) -> Field | None:
     return plan_for(nivel).field(key)
 
 
+def field_for_probe(nivel: str, key: str) -> Field | None:
+    """The questionnaire field a candidate key maps to, by key or probe (S3).
+
+    Keys the asked plan does not claim (world lore, session metadata) map to
+    ``None``: they are context, never questionnaire coverage. The exploration
+    turn uses this to keep provider extractions from moving the cursor.
+    """
+    normalized = str(key).strip().casefold()
+    if not normalized:
+        return None
+    for field in questionnaire_fields(nivel):
+        if field.key == normalized or any(
+            probe.casefold() == normalized for probe in field.probes
+        ):
+            return field
+    return None
+
+
 def field_value(field: Field, known: Mapping[str, Any]) -> str:
     """The candidate value already collected for ``field`` (empty when missing)."""
     return _value_for(known, field.probes)

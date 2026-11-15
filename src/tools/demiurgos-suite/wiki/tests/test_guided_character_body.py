@@ -15,6 +15,7 @@ if str(_WIKI) not in sys.path:
 from guided_character_body import (  # noqa: E402
     ADDITIVE_LABELS,
     current_field,
+    field_for_probe,
     labels_for,
     plan_for,
     questionnaire_fields,
@@ -297,6 +298,17 @@ def test_current_field_reports_completion_when_everything_is_visited() -> None:
     field, progress = current_field(candidate)
     assert field is None
     assert progress["complete"] is True
+
+
+def test_field_for_probe_maps_aliases_to_the_questionnaire_field() -> None:
+    """S3: an extracted key is a questionnaire fact only when a field claims it."""
+    assert field_for_probe("2º", "oficio").key == "trabajo"
+    assert field_for_probe("1º", "Desire").key == "deseo"
+    assert field_for_probe("2º", "deseo").key == "deseo"
+    # Off-plan facts (world lore, meta) are not questionnaire coverage.
+    assert field_for_probe("2º", "mundo") is None
+    assert field_for_probe("2º", "nivel") is None
+    assert field_for_probe("2º", "") is None
 
 
 def test_field_plan_exposes_the_questionnaire_order() -> None:

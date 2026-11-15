@@ -65,6 +65,55 @@ class TestEnvelope:
             "observations": ["not", "a", "mapping"],
         }, request) is None
 
+    def test_accepts_a_bounded_answer_and_the_explore_intent(self) -> None:
+        """S2: the exploration answer travels in its own bounded field."""
+        request = _request()
+        response = GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué deseo le pondrías?",
+            "synthesis": "Ekkor queda como reino septentrional.",
+            "answer": "Ekkor es un reino septentrional que comercia con Dvins.",
+            "intent": "explore",
+        }, request)
+        assert response is not None
+        assert response.answer == "Ekkor es un reino septentrional que comercia con Dvins."
+        assert response.intent == "explore"
+
+    def test_unknown_intent_and_non_string_answer_fall_back_to_legacy(self) -> None:
+        """S5: fail-safe — an unusable intent/answer never invalidates the turn."""
+        request = _request()
+        response = GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca ahora?",
+            "answer": {"bad": "shape"},
+            "intent": "invented",
+        }, request)
+        assert response is not None
+        assert response.answer is None
+        assert response.intent is None
+
+    def test_answer_is_capped_on_a_word_boundary(self) -> None:
+        request = _request()
+        response = GuidedResponse.from_provider({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "¿Qué busca ahora?",
+            "answer": "palabra " * 400,
+            "intent": "explore",
+        }, request)
+        assert response is not None and response.answer
+        assert len(response.answer) <= GuidedResponse.ANSWER_MAX_CHARS
+        assert response.answer.endswith("…")
+        assert response.answer.rstrip("…").endswith("palabra")
+
 
 class TestCommit:
     def test_commit_persists_synthesis_and_accumulates_observations(self, tmp_path: Path) -> None:
@@ -118,6 +167,122 @@ class TestPublicRendering:
 
     def test_legacy_question_only_renders_unchanged(self) -> None:
         assert api_server._guided_message_text({"question": "¿Qué busca?"}) == "¿Qué busca?"
+
+    def test_exploration_answer_renders_before_synthesis_and_question(self) -> None:
+        """S2: the answer is its own block, never squeezed into the synthesis."""
+        text = api_server._guided_message_text({
+            "answer": "Ekkor comercia con Dvins desde la fractura.",
+            "synthesis": "Ekkor queda como reino septentrional.",
+            "question": "¿Qué deseo le pondrías?",
+        })
+        assert text == (
+            "Ekkor comercia con Dvins desde la fractura.\n\n"
+            "Ekkor queda como reino septentrional.\n\n"
+            "¿Qué deseo le pondrías?"
+        )
+
+
+class TestExploreTurn:
+    def test_plan_claimed_keys_are_dropped_and_world_facts_kept(self) -> None:
+        """S3: exploring settles nothing, so plan facts never reach the cursor."""
+        from guided_character_domain import plan_scoped_observations
+
+        kept = plan_scoped_observations(
+            {"deseo": "entiende el mundo a través de Ganic", "mundo": "Vibrantes",
+             "oficio": "repara Dvexs"},
+            entity_type="personaje",
+            nivel="2º",
+        )
+        assert kept == {"mundo": "Vibrantes"}
+        # A flow without a questionnaire plan drops nothing.
+        assert plan_scoped_observations(
+            {"origen": "un dios"}, entity_type="sistema", nivel="1º",
+        ) == {"origen": "un dios"}
+        assert plan_scoped_observations({}, entity_type="personaje", nivel="2º") == {}
+
+    def test_explore_turn_answers_without_reaching_canon(self, tmp_path: Path) -> None:
+        """S1/S3: the author explores, the cursor keeps its place."""
+        import asyncio
+
+        from guided_character_body import current_field
+        from guided_character_protocol import MethodologySnapshot, continue_session
+        from api_server import GUIDED_CHARACTER_FLOW, builtin_profile
+
+        profile = builtin_profile(GUIDED_CHARACTER_FLOW)
+        assert profile is not None
+        store = GuidedSessionStore(tmp_path / "guided.sqlite3")
+        store.create(
+            "s1", "Vibrantes", "auth", path="fields",
+            methodology_snapshot=MethodologySnapshot(
+                flow_type="guided-character", profile=profile.as_dict(),
+            ),
+        )
+        assert store.set_level("s1", "auth", "2º") is not None
+        before = store.recover("s1", "auth")
+        assert before is not None
+        cursor_before = current_field(before.candidate)[1]
+
+        async def explore(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "question",
+                "question": "¿Qué deseo le pondrías?",
+                "synthesis": "Ekkor queda como reino septentrional.",
+                "answer": "Ekkor comercia con Dvins desde la fractura.",
+                "intent": "explore",
+                "observations": {"deseo": "entiende el mundo a través de Ganic",
+                                 "mundo": "Vibrantes"},
+                "delta": {"nombre": "Hesia"},
+            }
+
+        from guided_character_protocol import Capabilities
+        request = GuidedRequest(
+            PROTOCOL_VERSION, "req-1", "s1", "Vibrantes", 0, "auth", "contame del lore de Ekkor",
+        )
+        response, state = asyncio.run(
+            continue_session(store, explore, request, _capabilities())
+        )
+        assert state is not None
+        assert response.answer == "Ekkor comercia con Dvins desde la fractura."
+        assert state.pending_question == "¿Qué deseo le pondrías?"
+        # Nothing was committed: no proposal, no canon beyond the level.
+        assert state.candidate.proposals == {}
+        assert state.candidate.accepted_canon.keys() == {"nivel"}
+        assert state.candidate.observations == {"mundo": "Vibrantes"}
+        assert current_field(state.candidate)[1] == cursor_before
+
+    def test_explore_intent_on_a_delta_is_ignored(self, tmp_path: Path) -> None:
+        """S5: only a QUESTION can explore; a delta keeps today's behavior."""
+        import asyncio
+
+        from guided_character_protocol import continue_session
+
+        store = GuidedSessionStore(tmp_path / "guided.sqlite3")
+        store.create("s1", "Vibrantes", "auth")
+        base = store.recover("s1", "auth")
+        assert base is not None and base.candidate.proposals == {}
+
+        async def delta_provider(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "delta",
+                "intent": "explore",
+                "delta": {"nombre": "Hesia"},
+            }
+
+        request = GuidedRequest(
+            PROTOCOL_VERSION, "req-1", "s1", "Vibrantes", 0, "auth", "se llama Hesia",
+        )
+        _response, state = asyncio.run(
+            continue_session(store, delta_provider, request, _capabilities())
+        )
+        assert state is not None
+        # The gate demotes the incomplete delta into observations, as before.
+        assert state.candidate.accepted_canon == {}
 
 
 class TestKnownState:
@@ -354,6 +519,12 @@ def _request(revision: int = 0) -> GuidedRequest:
         PROTOCOL_VERSION, "req-1", "s1", "Vibrantes", revision, "auth",
         "háblame de Ekkor",
     )
+
+
+def _capabilities():
+    from guided_character_protocol import Capabilities, MAX_DEADLINE_MS
+
+    return Capabilities(PROTOCOL_VERSION, True, True, True, MAX_DEADLINE_MS)
 
 
 class _FakeGraph:

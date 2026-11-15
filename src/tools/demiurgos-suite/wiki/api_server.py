@@ -3358,13 +3358,15 @@ def _guided_message_text(content: Mapping[str, Any]) -> str:
 
     S1: an assistant turn carries an optional synthesis followed by the one
     pending question. Legacy messages (question/text/delta only) render exactly
-    as before.
+    as before. S2 (guided-world-exploration): an exploration ``answer`` is its
+    own block above the synthesis, so a world question gets a real answer
+    instead of being squeezed into the 3-sentence synthesis.
     """
+    answer = str(content.get("answer") or "").strip()
     synthesis = str(content.get("synthesis") or "").strip()
     question = str(content.get("question", content.get("text", "")) or "").strip()
-    if synthesis and question:
-        return f"{synthesis}\n\n{question}"
-    return synthesis or question
+    blocks = [block for block in (answer, synthesis, question) if block]
+    return "\n\n".join(blocks)
 
 
 def _guided_proposal_view(key: str, value) -> dict:
@@ -3977,7 +3979,7 @@ async def _guided_continue(
         _invalidate_guided_proposal(session_id)
         if response.outcome not in {Outcome.ERROR, Outcome.UNAVAILABLE}:
             assistant_text = "\n".join(
-                part for part in (response.question, response.synthesis) if part
+                part for part in (response.answer, response.synthesis, response.question) if part
             )
             if assistant_text:
                 _schedule_turn_memory(

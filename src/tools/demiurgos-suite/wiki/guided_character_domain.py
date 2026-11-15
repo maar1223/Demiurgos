@@ -225,6 +225,32 @@ def _carries_answer(value: Any) -> bool:
     return not text_is_non_answer(text)
 
 
+def plan_scoped_observations(
+    observations: Mapping[str, Any],
+    *,
+    entity_type: str | None,
+    nivel: str,
+) -> dict[str, Any]:
+    """Keep only the observations no questionnaire field claims (S3).
+
+    An exploration turn settles nothing: a character fact extracted while the
+    author asks about the world must not cover its field later. Keys outside the
+    asked field plan — world lore, session metadata — are context and are kept.
+    Flows without a questionnaire plan keep everything.
+    """
+    if not observations:
+        return {}
+    from guided_character_body import field_for_probe
+
+    if entity_type != "personaje":
+        return dict(observations)
+    return {
+        key: value
+        for key, value in observations.items()
+        if field_for_probe(nivel, key) is None
+    }
+
+
 #: A value that says "not decided yet" is never a level, even if it lists the
 #: option menu (the real Ganic session stored exactly that, 2026-11-08).
 _LEVEL_UNKNOWN_MARKERS = (

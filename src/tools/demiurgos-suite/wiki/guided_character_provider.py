@@ -193,6 +193,21 @@ class HermesGuidedProvider:
             "Keep the synthesis-first contract. "
             if request.guided_path == "fields" and request.field_context else ""
         )
+        # World exploration inside the questionnaire (S1/S3): the author may ask
+        # about the world from any field. The turn answers in its own block,
+        # settles nothing and repeats the same field so the flow keeps its place.
+        explore_instruction = (
+            "World exploration inside the questionnaire: when the author asks "
+            "about the world, its lore or its setting instead of answering the "
+            "current field, set 'intent' to \"explore\", put the answer in "
+            "'answer' (a real answer, up to 1,500 characters, built only from the "
+            "supplied world lore and reference), keep 'synthesis' to at most one "
+            "short sentence and repeat the SAME current field question so the "
+            "author can keep going. On an explore turn put no character fields in "
+            "'observations' and send no 'delta': nothing is settled while "
+            "exploring. "
+            if request.guided_path == "fields" else ""
+        )
         if compiled_contract_markdown:
             methodology_context = (
                 "[Active methodology contract (server-pinned, read-only):\n"
@@ -217,6 +232,8 @@ class HermesGuidedProvider:
             "The outcome must be question or delta; never claim author acceptance. "
             "For a question, return the fields question, synthesis, observations, options "
             "and allow_custom. "
+            "A question envelope may also carry 'answer' and 'intent' = \"explore\" "
+            "when the author asked about the world instead of the current field. "
             "A delta envelope carries EXACTLY request_id, session_id, outcome, synthesis, "
             "observations and delta; it never carries question, options or allow_custom. "
             "'delta' is a flat object of candidate fields (for example nombre, deseo, "
@@ -255,6 +272,7 @@ class HermesGuidedProvider:
             f"{fast_guidance}"
             f"{level_instruction}"
             f"{field_instruction}"
+            f"{explore_instruction}"
             f"{methodology_context}"
             f"Known so far (never ask these again):\n{known_state}\n"
             f"World lore (verified, read-only):\n{world_lore}\n"
