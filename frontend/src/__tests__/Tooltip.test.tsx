@@ -37,6 +37,22 @@ describe("Tooltip atom (axis-binding-ui R5)", () => {
       .toBeInTheDocument();
   });
 
+  it("anchors the bubble to the right edge when the trigger sits near it", () => {
+    render(
+      <Tooltip id="right-tip" content="copy" align="end">
+        <span data-testid="right-trigger">+</span>
+      </Tooltip>,
+    );
+
+    const bubble = screen.getByText("copy", { selector: "[aria-hidden=true]" });
+    expect(bubble).toHaveClass("right-0");
+    expect(bubble).not.toHaveClass("-translate-x-1/2");
+    expect(bubble).toHaveClass("whitespace-normal");
+    expect(bubble).toHaveClass(
+      "max-w-[min(20rem,calc(100vw-1.5rem))]",
+    );
+  });
+
   it("reveals the bubble on hover and focus-visible via CSS classes (no JS)", () => {
     renderTooltip();
 

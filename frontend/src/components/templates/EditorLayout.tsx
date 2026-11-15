@@ -3,7 +3,6 @@ import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import {
-  RIGHT_PANEL_GRACE_MS,
   activeRightPanelWidth,
   collapsedRightPanelWidth,
   restingRightPanelWidth,
@@ -106,21 +105,17 @@ export function EditorLayout({
   /** Expanded state of the assistant panel, driven by real interaction. */
   const [engaged, setEngaged] = useState(false);
   const rightPanelRef = useRef<HTMLElement | null>(null);
-  const lastEngagedAt = useRef(0);
-  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** A click outside arrived while the assistant was answering: honor it as
-   *  soon as the answer finishes instead of dropping it. */
+  /** An outside interaction arrived while the assistant was answering: honor it
+   *  as soon as the answer finishes instead of dropping it. */
   const pendingCollapse = useRef(false);
-
-  const clearCollapseTimer = useCallback(() => {
-    if (collapseTimer.current !== null) {
-      clearTimeout(collapseTimer.current);
-      collapseTimer.current = null;
-    }
-  }, []);
 
   // ── Assistant engagement (document-level, capture phase) ────────────────
   // Capture phase so a child stopping propagation cannot hide the gesture.
+  // Expansion and contraction use the same rule: the panel widens while the
+  // author interacts with the assistant and returns as soon as the next
+  // interaction lands outside it. A delay made the same gesture collapse
+  // immediately or ten seconds later depending on recent typing, which read as
+  // inconsistent.
   useEffect(() => {
     const autoApplies =
       autoWiden &&
@@ -129,42 +124,36 @@ export function EditorLayout({
       assistantPanel &&
       supportsAutoWiden(viewportWidth);
     if (!autoApplies) {
-      clearCollapseTimer();
+      pendingCollapse.current = false;
       setEngaged(false);
       return;
     }
 
+    const isIgnored = (node: Node | null): boolean =>
+      node instanceof Element && Boolean(node.closest("[data-auto-widen-ignore]"));
+
     const engage = () => {
-      lastEngagedAt.current = Date.now();
       pendingCollapse.current = false;
-      clearCollapseTimer();
       setEngaged(true);
     };
 
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      const element = target instanceof Element ? target : null;
-      if (element?.closest("[data-auto-widen-ignore]")) return;
-      if (target instanceof Node && rightPanelRef.current?.contains(target)) {
-        engage();
-        return;
-      }
+    const release = () => {
       if (assistantBusy) {
         pendingCollapse.current = true;
         return;
       }
-      const elapsed = Date.now() - lastEngagedAt.current;
-      const wait = Math.max(0, RIGHT_PANEL_GRACE_MS - elapsed);
       pendingCollapse.current = false;
-      clearCollapseTimer();
-      if (wait === 0) {
-        setEngaged(false);
+      setEngaged(false);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (isIgnored(target instanceof Node ? target : null)) return;
+      if (target instanceof Node && rightPanelRef.current?.contains(target)) {
+        engage();
         return;
       }
-      collapseTimer.current = setTimeout(() => {
-        collapseTimer.current = null;
-        setEngaged(false);
-      }, wait);
+      release();
     };
 
     const onFocusIn = (event: FocusEvent) => {
@@ -174,18 +163,28 @@ export function EditorLayout({
       }
     };
 
+    const onFocusOut = (event: FocusEvent) => {
+      const next = event.relatedTarget;
+      // Pointer navigation is owned by `pointerdown`; only a real focus move
+      // (keyboard Tab) contracts here.
+      if (!(next instanceof Node)) return;
+      if (isIgnored(next)) return;
+      if (rightPanelRef.current?.contains(next)) return;
+      release();
+    };
+
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("focusin", onFocusIn, true);
+    document.addEventListener("focusout", onFocusOut, true);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("focusin", onFocusIn, true);
-      clearCollapseTimer();
+      document.removeEventListener("focusout", onFocusOut, true);
     };
   }, [
     assistantBusy,
     assistantPanel,
     autoWiden,
-    clearCollapseTimer,
     focusMode,
     rightPanel,
     viewportWidth,

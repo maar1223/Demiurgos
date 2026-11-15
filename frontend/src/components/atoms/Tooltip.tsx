@@ -17,6 +17,9 @@ interface TooltipProps {
    *  stops being a second tab stop and the reveal still follows
    *  `focus-within`. */
   triggerTabIndex?: 0 | -1;
+  /** Horizontal anchoring. `end` keeps the bubble inside the viewport when the
+   *  trigger sits near the right edge (e.g. the tab-bar toggle). */
+  align?: "center" | "start" | "end";
 }
 
 /**
@@ -33,7 +36,14 @@ export function Tooltip({
   children,
   className,
   triggerTabIndex = 0,
+  align = "center",
 }: TooltipProps) {
+  const alignment =
+    align === "end"
+      ? "right-0"
+      : align === "start"
+        ? "left-0"
+        : "left-1/2 -translate-x-1/2";
   return (
     <span className={cn("group relative inline-flex", className)}>
       <span
@@ -45,7 +55,13 @@ export function Tooltip({
       </span>
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 w-max max-w-xs -translate-x-1/2 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-primary opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100 group-focus-within:opacity-100"
+        className={cn(
+          "pointer-events-none absolute top-full z-20 mt-1.5 w-max whitespace-normal text-left",
+          "max-w-[min(20rem,calc(100vw-1.5rem))] rounded-md border border-edge bg-surface-raised",
+          "px-2 py-1 text-xs text-primary opacity-0 shadow-lg transition-opacity duration-75",
+          "group-hover:opacity-100 group-focus-within:opacity-100",
+          alignment,
+        )}
       >
         {content}
       </span>

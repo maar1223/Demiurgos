@@ -46,10 +46,6 @@ const DIVIDER_PX = 20;
  *  third), so the automatic behavior is off and the toggle is hidden. */
 export const AUTO_WIDEN_MIN_VIEWPORT = 1280;
 
-/** How long the expanded state survives a click outside the assistant. The
- *  author may be reading the answer they just received. */
-export const RIGHT_PANEL_GRACE_MS = 10_000;
-
 const listeners = new Set<() => void>();
 
 /** Reads the persisted preference. Unset or unreadable means enabled: the

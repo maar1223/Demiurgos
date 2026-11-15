@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar } from "@/components/molecules/TabBar";
@@ -6,7 +6,6 @@ import {
   AUTO_WIDEN_MIN_VIEWPORT,
   MAIN_CONTENT_MIN_PX,
   PANEL_AUTO_WIDEN_STORAGE_KEY,
-  RIGHT_PANEL_GRACE_MS,
   activeRightPanelWidth,
   collapsedRightPanelWidth,
   readAutoWidenPreference,
@@ -110,12 +109,7 @@ describe("right panel geometry", () => {
 
 describe("EditorLayout auto-widen", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     setViewport(1366);
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it("starts collapsed and widens on interaction with the assistant", () => {
@@ -132,19 +126,22 @@ describe("EditorLayout auto-widen", () => {
     expect(panelAside().style.width).toBe("455px");
   });
 
-  it("collapses after the grace window when another section is touched", () => {
+  it("collapses on the next interaction outside the assistant", () => {
     renderLayout();
     fireEvent.pointerDown(screen.getByText("panel content"));
-    fireEvent.pointerDown(screen.getByText("article"));
-
-    act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_GRACE_MS - 1);
-    });
     expect(panelAside().style.width).toBe("455px");
 
-    act(() => {
-      vi.advanceTimersByTime(1);
-    });
+    fireEvent.pointerDown(screen.getByText("article"));
+    expect(panelAside().style.width).toBe("342px");
+  });
+
+  it("collapses when keyboard focus leaves the assistant", () => {
+    renderLayout();
+    const panel = screen.getByText("panel content");
+    fireEvent.focusIn(panel);
+    expect(panelAside().style.width).toBe("455px");
+
+    fireEvent.focusOut(panel, { relatedTarget: screen.getByText("article") });
     expect(panelAside().style.width).toBe("342px");
   });
 
@@ -152,10 +149,6 @@ describe("EditorLayout auto-widen", () => {
     const view = renderLayout({ assistantBusy: true });
     fireEvent.pointerDown(screen.getByText("panel content"));
     fireEvent.pointerDown(screen.getByText("article"));
-
-    act(() => {
-      vi.advanceTimersByTime(RIGHT_PANEL_GRACE_MS * 3);
-    });
     expect(panelAside().style.width).toBe("455px");
 
     view.rerender(

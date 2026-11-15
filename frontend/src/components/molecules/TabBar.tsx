@@ -95,6 +95,7 @@ export function TabBar({
           id="assistant-auto-widen-tip"
           content={t(autoWiden ? "tab.autoWiden.on" : "tab.autoWiden.off")}
           triggerTabIndex={-1}
+          align="end"
         >
           <button
             type="button"
