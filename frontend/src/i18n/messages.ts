@@ -1988,6 +1988,10 @@ export const messages = {
     "tab.asistente": "Asistente",
     "tab.contexto": "Contexto",
     "tab.aria": "Panel lateral",
+    "tab.autoWiden.aria": "Ensanchado automático del asistente",
+    "tab.autoWiden.on":
+      "El asistente se ensancha al usarlo y vuelve a su ancho normal al tocar otra sección",
+    "tab.autoWiden.off": "Ancho fijo del asistente: no cambia al interactuar",
     "secret.show": "Mostrar",
     "secret.hide": "Ocultar",
     "secret.copy": "Copiar",
@@ -4337,6 +4341,11 @@ export const messages = {
     "tab.asistente": "Assistant",
     "tab.contexto": "Context",
     "tab.aria": "Side panel",
+    "tab.autoWiden.aria": "Assistant auto-widen",
+    "tab.autoWiden.on":
+      "The assistant widens while you use it and returns to its normal width when you touch another section",
+    "tab.autoWiden.off":
+      "Fixed assistant width: it does not change on interaction",
     "secret.show": "Show",
     "secret.hide": "Hide",
     "secret.copy": "Copy",

@@ -12,6 +12,11 @@ interface TooltipProps {
   /** The trigger surface (icon, button, text). */
   children: ReactNode;
   className?: string;
+  /** Tab stop of the wrapper. Defaults to 0 (the wrapper is the trigger).
+   *  Pass -1 when the child is itself a focusable control: the wrapper then
+   *  stops being a second tab stop and the reveal still follows
+   *  `focus-within`. */
+  triggerTabIndex?: 0 | -1;
 }
 
 /**
@@ -22,12 +27,18 @@ interface TooltipProps {
  *  CSS reveal state; the visible bubble is an aria-hidden visual duplicate —
  *  the same pattern as the SectionCards status-dot tooltip.
  */
-export function Tooltip({ id, content, children, className }: TooltipProps) {
+export function Tooltip({
+  id,
+  content,
+  children,
+  className,
+  triggerTabIndex = 0,
+}: TooltipProps) {
   return (
     <span className={cn("group relative inline-flex", className)}>
       <span
         aria-describedby={id}
-        tabIndex={0}
+        tabIndex={triggerTabIndex}
         className="inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
       >
         {children}

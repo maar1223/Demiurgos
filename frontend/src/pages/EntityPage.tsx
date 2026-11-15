@@ -46,6 +46,9 @@ export default function EntityPage() {
     return "asistente";
   });
 
+  /** Assistant response in flight — the shell holds the panel expanded. */
+  const [assistantBusy, setAssistantBusy] = useState(false);
+
   // World list for validation
   const { worlds, isLoading: worldsLoading } = useWorlds();
 
@@ -91,7 +94,10 @@ export default function EntityPage() {
     <div className="flex h-full flex-col">
       <TabBar onTabChange={setSidebarTab} />
       {sidebarTab === "asistente" ? (
-        <AIAssistantSidebar mundo={mundo!} />
+        <AIAssistantSidebar
+          mundo={mundo!}
+          onBusyChange={setAssistantBusy}
+        />
       ) : (
         <ConnectionsPanel
           mundo={mundo!}
@@ -142,6 +148,8 @@ export default function EntityPage() {
     <EditorLayout
       sidebar={null}
       rightPanel={rightPanelContent}
+      assistantPanel={sidebarTab === "asistente"}
+      assistantBusy={assistantBusy}
     >
       {!entityName ? (
         <EmptyState
