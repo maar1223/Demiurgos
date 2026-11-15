@@ -20,6 +20,7 @@ import {
   acceptGuidedCharacterProposal,
   acceptGuidedConsent,
   declineGuidedConsent,
+  recoverGuidedCharacter,
   rejectGuidedCharacterProposal,
   serializeGuidedCharacter,
 } from "@/api/guidedCharacter";
@@ -375,6 +376,44 @@ export function useAIAssistantSessions(
 
   useEffect(() => () => activityAbortRef.current?.abort(), []);
 
+  /**
+   * The sidebar keeps guided handles in `localStorage`, so a server-side change
+   * never reached an open panel: the cached field progress survived a reload
+   * and contradicted the server (2026-11-15). Revalidate each handle once per
+   * revision; a failure keeps the cached copy and the next turn surfaces a lost
+   * session. Revisions this client just received from a turn are already fresh
+   * (`receivedGuidedRef`), so a normal turn never pays for an extra request.
+   */
+  const revalidatedGuidedRef = useRef<Set<string>>(new Set());
+  const receivedGuidedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!mundo) return;
+    for (const session of sessions) {
+      const guided = session.guided;
+      if (!guided?.session_id) continue;
+      const key = `${guided.session_id}:${guided.revision}`;
+      if (
+        revalidatedGuidedRef.current.has(key) ||
+        receivedGuidedRef.current.has(key)
+      ) {
+        continue;
+      }
+      revalidatedGuidedRef.current.add(key);
+      const sessionId = session.id;
+      void recoverGuidedCharacter(mundo, guided.session_id)
+        .then((fresh) => {
+          setSessions((prev) =>
+            prev.map((item) =>
+              item.id === sessionId ? { ...item, guided: fresh } : item,
+            ),
+          );
+        })
+        .catch(() => {
+          /* Keep the cached handle; a lost session surfaces on the next turn. */
+        });
+    }
+  }, [mundo, sessions]);
+
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
 
   const createSession = useCallback(() => {
@@ -570,6 +609,12 @@ export function useAIAssistantSessions(
         guided?.pending_kind === "path" || guided?.pending_kind === "level";
 
       const appendAssistantMessage = (content: string, guided?: GuidedCharacterSession) => {
+        if (guided) {
+          // Fresh from the server: the revalidation pass must not re-fetch it.
+          receivedGuidedRef.current.add(
+            `${guided.session_id}:${guided.revision}`,
+          );
+        }
         const assistantMessage: Message | null = isServerOwnedQuestion(guided)
           ? null
           : { role: "assistant", content };

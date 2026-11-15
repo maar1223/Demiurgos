@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   useAIAssistantSessions,
   GLOBAL_ASSISTANT_CONTEXT,
   type Session,
 } from "@/hooks/useAIAssistantSessions";
 import { AssistantActivityUnavailable, streamAssistantActivity } from "@/api/assistantActivity";
-import { acceptGuidedConsent, declineGuidedConsent } from "@/api/guidedCharacter";
+import {
+  acceptGuidedConsent,
+  declineGuidedConsent,
+  recoverGuidedCharacter,
+} from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
 import { uploadChatAttachment } from "@/api/chatAttachments";
 import { CATALOGUE } from "@/i18n/messages";
@@ -40,7 +44,16 @@ vi.mock("@/api/wiki", async (importOriginal) => {
 
 vi.mock("@/api/guidedCharacter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/guidedCharacter")>();
-  return { ...actual, acceptGuidedConsent: vi.fn(), declineGuidedConsent: vi.fn() };
+  return {
+    ...actual,
+    acceptGuidedConsent: vi.fn(),
+    declineGuidedConsent: vi.fn(),
+    // Default: a rejected revalidation, so tests that do not care keep the
+    // cached handle (the hook swallows the failure by contract).
+    recoverGuidedCharacter: vi.fn(() =>
+      Promise.reject(new Error("unmocked revalidation")),
+    ),
+  };
 });
 
 vi.mock("@/api/chatAttachments", async (importOriginal) => {
@@ -1241,5 +1254,75 @@ describe("useAIAssistantSessions failure visibility", () => {
     const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
     expect(texts[texts.length - 1]).toBe(CATALOGUE.es["assistant.blocked"]);
     expect(result.current.activity.retryPrompt).toBeUndefined();
+  });
+});
+
+describe("useAIAssistantSessions guided revalidation on mount", () => {
+  const recoverMock = vi.mocked(recoverGuidedCharacter);
+
+  const cached: GuidedCharacterSession = {
+    protocol_version: "guided-character-v1",
+    session_id: "guided-hs",
+    world: "Vibrantes",
+    phase: "conversation",
+    mode: "full",
+    depth: "standard",
+    revision: 4,
+    pending_question: "¿El deseo de Hesia es entender qué le ocurre a Ganic?",
+    messages: [],
+    candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+    proposal: null,
+    path: "fields",
+    field_progress: {
+      nivel: "2º",
+      index: 4,
+      total: 21,
+      key: "edad",
+      label: "Edad",
+      hint: "",
+      examples: [],
+      optional: false,
+      covered: [],
+      skipped: [],
+      complete: false,
+    },
+  };
+
+  beforeEach(() => {
+    recoverMock.mockReset();
+    recoverMock.mockImplementation(() =>
+      Promise.reject(new Error("unmocked revalidation")),
+    );
+  });
+
+  it("replaces the cached guided handle with the server's fresh state", async () => {
+    seedSessions([{ ...makeSession("s-guid"), guided: cached }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-guid"));
+    recoverMock.mockResolvedValue({
+      ...cached,
+      field_progress: { ...cached.field_progress!, index: 2, key: "rol_narrativo", label: "Rol narrativo" },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await waitFor(() => {
+      expect(recoverMock).toHaveBeenCalledWith("Vibrantes", "guided-hs");
+    });
+    await waitFor(() => {
+      expect(result.current.activeSession?.guided?.field_progress?.index).toBe(2);
+    });
+  });
+
+  it("keeps the cached handle when revalidation fails", async () => {
+    seedSessions([{ ...makeSession("s-guid"), guided: cached }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-guid"));
+    recoverMock.mockRejectedValue(new ApiError(401, "auth", "unauthorized"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await waitFor(() => {
+      expect(recoverMock).toHaveBeenCalled();
+    });
+    expect(result.current.activeSession?.guided?.field_progress?.index).toBe(4);
   });
 });
