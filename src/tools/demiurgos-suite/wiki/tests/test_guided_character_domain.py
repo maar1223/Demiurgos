@@ -198,6 +198,34 @@ def test_candidate_minimum_complete_counts_observed_facts() -> None:
     assert "deseo" in question.casefold()
 
 
+def test_placeholder_observations_do_not_satisfy_the_gate() -> None:
+    """A note that says "not defined yet" is not an answer.
+
+    Live session guided-1a9fb96533c2438e85ad3050aa46ffe6 (2026-11-15) stored
+    ``observations.deseo = "sin definir; el autor pide una recomendación"``.
+    Counting that string as a fact satisfied the gate and skipped the field
+    with nothing behind it.
+    """
+    candidate = CandidateState(observations={
+        "nombre": "aún sin definir",
+        "deseo": "sin definir; el autor pide una recomendación",
+    })
+    assert not candidate_minimum_complete(candidate)
+    question = next_required_question(candidate, language="es")
+    assert "llama" in question.casefold()
+
+    # The renderer placeholder and a bare status word are non-answers too.
+    for placeholder in ("_(pendiente)_", "pendiente", "sin definir por el autor", ""):
+        assert not candidate_minimum_complete(CandidateState(observations={
+            "nombre": "Hesia", "deseo": placeholder,
+        })), placeholder
+
+    # S1 of v0.4.5 stays fixed: a real observed fact still satisfies the gate.
+    assert candidate_minimum_complete(CandidateState(observations={
+        "nombre": "Hesia", "deseo": "entender qué le pasa a Ganic",
+    }))
+
+
 def test_candidate_minimum_complete_considers_incoming_delta() -> None:
     assert candidate_minimum_complete(CandidateState(), delta={"name": "Pert", "desire": "freedom"})
     assert not candidate_minimum_complete(CandidateState(), delta={"age": "~30"})
