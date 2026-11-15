@@ -726,6 +726,116 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(requestGuidedReview).toHaveBeenCalled();
   });
 
+  it("withholds the create offer until the guided questionnaire is complete", () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    const guidedBase = {
+      protocol_version: "guided-character-v1",
+      session_id: "guided-42",
+      world: "Vibrantes",
+      phase: "conversation" as const,
+      mode: "full" as const,
+      depth: "standard" as const,
+      revision: 7,
+      path: "fields" as const,
+      pending_question: null,
+      messages: [],
+      candidate: {
+        accepted_canon: { identidad: { value: { nombre: "Hesia" } } },
+        proposals: { oficio: "repara Dvins" },
+        unresolved_references: [],
+        conflicts: [],
+      },
+      proposal: null,
+      target_preview: "personajes/hesia.md",
+      target_level: "2º",
+      field_progress: {
+        nivel: "2º",
+        index: 4,
+        total: 21,
+        key: "edad",
+        label: "Edad",
+        hint: "Los años que lleva viva.",
+        examples: [],
+        optional: false,
+        covered: ["nombre", "deseo"],
+        skipped: [],
+        complete: false,
+      },
+    };
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: guidedBase,
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.queryByRole("button", { name: "Crear la ficha" })).not.toBeInTheDocument();
+    expect(screen.queryByText("personajes/hesia.md")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the create card once the questionnaire is complete", () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 7,
+          path: "fields",
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: { identidad: { value: { nombre: "Hesia" } } },
+            proposals: { oficio: "repara Dvins" },
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          target_preview: "personajes/hesia.md",
+          target_level: "2º",
+          field_progress: {
+            nivel: "2º",
+            index: 21,
+            total: 21,
+            key: null,
+            label: null,
+            hint: null,
+            examples: [],
+            optional: false,
+            covered: ["nombre", "deseo"],
+            skipped: [],
+            complete: true,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.getByRole("button", { name: "Crear la ficha" })).toBeInTheDocument();
+    expect(screen.getByText("personajes/hesia.md")).toBeInTheDocument();
+  });
+
   it("shows a pending level instead of inventing one", () => {
     const onGuidedReview = vi.fn();
     const requestGuidedReview = vi.fn().mockResolvedValue({} as never);

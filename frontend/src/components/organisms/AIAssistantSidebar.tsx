@@ -48,6 +48,9 @@ interface AIAssistantSidebarProps {
   filePath?: string;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
   onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
+  /** Reports whether a response is in flight, so the editor shell can hold the
+   *  panel open while the answer streams. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 type Screen = "chat" | "history";
@@ -594,6 +597,14 @@ function ChatScreen({
   const guidedTargetPreview = activeSession?.guided?.target_preview ?? null;
   // `undefined` = legacy session without the field; `null` = level not decided yet.
   const guidedTargetLevel = activeSession?.guided?.target_level;
+  // The questionnaire owns its own completion: while the plan has fields left,
+  // the platform minimum (name + desire) is not the finish line, so offering to
+  // create the sheet at "Campo 4 de 21" would invite a half-empty ficha.
+  const guidedQuestionnaireOpen = Boolean(
+    activeSession?.guided?.path === "fields" &&
+      activeSession.guided.field_progress &&
+      !activeSession.guided.field_progress.complete,
+  );
   // Once the author is already on the created sheet, offering to create it (or
   // to re-open its diff) is noise: the target file IS the current file.
   const guidedTargetIsCurrentFile = Boolean(
@@ -873,7 +884,7 @@ function ChatScreen({
              </div>
            )}
 
-           {guidedTargetPreview && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
+           {guidedTargetPreview && !guidedQuestionnaireOpen && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
                {guidedTargetLevel !== undefined && (
                  <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
@@ -1082,7 +1093,7 @@ function ChatScreen({
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && !guidedQuestionnaireOpen && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
             <button
               type="button"
               onClick={() => void handleGuidedReview()}
@@ -1458,9 +1469,16 @@ export function AIAssistantSidebar({
   filePath,
   onProposeEdit,
   onGuidedReview,
+  onBusyChange,
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
   const sessions = useAIAssistantSessions(mundo, section, filePath);
+  const isSending = sessions.isSending;
+  // Report the in-flight state to the shell (EditorLayout holds the expanded
+  // panel while the answer is written). The parent passes a stable setter.
+  useEffect(() => {
+    onBusyChange?.(isSending);
+  }, [isSending, onBusyChange]);
   const [guidedMethods, setGuidedMethods] = useState<GuidedMethodOption[]>([]);
   const [guidedMethodDefault, setGuidedMethodDefault] = useState<
     { skill_id: string; version: string } | null
