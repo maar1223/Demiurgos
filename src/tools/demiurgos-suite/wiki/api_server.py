@@ -2690,6 +2690,9 @@ class GuidedStartRequest(BaseModel):
     # Omitted on the explicit start route preserves the pre-path behavior; the
     # semantic auto-open passes "" so the first turn can ask the author.
     path: str | None = "explore"
+    # Narrative level already known by the caller (1º/2º/3º). Omitted -> the
+    # server asks it as the turn before the flow starts.
+    level: str | None = None
 
 
 class GuidedTurnRequest(BaseModel):
@@ -3355,13 +3358,15 @@ def _guided_message_text(content: Mapping[str, Any]) -> str:
 
     S1: an assistant turn carries an optional synthesis followed by the one
     pending question. Legacy messages (question/text/delta only) render exactly
-    as before.
+    as before. S2 (guided-world-exploration): an exploration ``answer`` is its
+    own block above the synthesis, so a world question gets a real answer
+    instead of being squeezed into the 3-sentence synthesis.
     """
+    answer = str(content.get("answer") or "").strip()
     synthesis = str(content.get("synthesis") or "").strip()
     question = str(content.get("question", content.get("text", "")) or "").strip()
-    if synthesis and question:
-        return f"{synthesis}\n\n{question}"
-    return synthesis or question
+    blocks = [block for block in (answer, synthesis, question) if block]
+    return "\n\n".join(blocks)
 
 
 def _guided_proposal_view(key: str, value) -> dict:
@@ -3402,6 +3407,15 @@ def _guided_public_state(state: SessionState) -> dict:
             if flow_profile.entity_type == "personaje":
                 target_level = resolve_candidate_level(state.candidate)
                 level_is_flow_owned = True
+    # Server-owned questions are rendered as a choice card, never as prose
+    # (S6). Both copies are compared so a language change never hides the kind.
+    pending_question = state.pending_question or ""
+    if pending_question in _PATH_QUESTION_COPY.values():
+        pending_kind = "path"
+    elif pending_question in _LEVEL_QUESTION_COPY.values():
+        pending_kind = "level"
+    else:
+        pending_kind = ""
     payload = {
         "protocol_version": PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -3411,6 +3425,9 @@ def _guided_public_state(state: SessionState) -> dict:
         "depth": state.depth,
         "revision": state.revision,
         "pending_question": state.pending_question,
+        "pending_kind": pending_kind,
+        # Author-declared narrative level ("" until the level turn is answered).
+        "level": resolve_candidate_level(state.candidate) or "",
         "messages": [
             {
                 "role": "author" if message.message_type.value == "author_input" else "assistant",
@@ -3617,8 +3634,28 @@ _PATH_QUESTION_COPY = {
 }
 
 
+_LEVEL_QUESTION_COPY = {
+    "es": (
+        "¿Qué nivel narrativo ocupa este personaje: "
+        "1º principal, 2º secundario o 3º relleno?"
+    ),
+    "en": (
+        "What narrative level does this character occupy: "
+        "1st principal, 2nd secondary, or 3rd background?"
+    ),
+}
+
+
 def _path_question_copy() -> str:
     return _PATH_QUESTION_COPY["es" if resolve_domain_language("conversation") == "es" else "en"]
+
+
+def _level_question_copy() -> str:
+    return _LEVEL_QUESTION_COPY["es" if resolve_domain_language("conversation") == "es" else "en"]
+
+
+#: Canonical stored labels for the author's narrative-level choice.
+_LEVEL_LABELS = {"1º", "2º", "3º"}
 
 
 def _path_choice(text: str) -> str | None:
@@ -3639,6 +3676,55 @@ def _path_choice(text: str) -> str | None:
     )):
         return "explore"
     return None
+
+
+def _level_choice(text: str) -> str | None:
+    """Read the author's answer to the narrative-level question.
+
+    Accepted before the flow starts: the level decides the field plan, so it
+    must be pinned once and never re-asked inside the questionnaire.
+    """
+    normalized = " ".join(str(text).strip().casefold().rstrip(".!¡¿? ").split())
+    if normalized in {
+        "1", "uno", "la 1", "opcion 1", "opción 1", "primera", "la primera",
+        "1º", "1°", "1o",
+    }:
+        return "1º"
+    if normalized in {
+        "2", "dos", "la 2", "opcion 2", "opción 2", "segunda", "la segunda",
+        "2º", "2°", "2o",
+    }:
+        return "2º"
+    if normalized in {
+        "3", "tres", "la 3", "opcion 3", "opción 3", "tercera", "la tercera",
+        "3º", "3°", "3o",
+    }:
+        return "3º"
+    if any(marker in normalized for marker in ("principal", "protagonista", "primari")):
+        return "1º"
+    if any(marker in normalized for marker in ("secundari", "segund")):
+        return "2º"
+    if any(marker in normalized for marker in ("rellen", "de fondo", "extra", "tercer")):
+        return "3º"
+    return None
+
+
+def _has_provider_exchange(state: SessionState) -> bool:
+    """True once a PROVIDER turn finished, excluding server-owned intake questions.
+
+    ``has_finished_exchange`` cannot tell the path/level questions apart (they are
+    committed like a provider QUESTION), so a session sitting on the level turn
+    looked like it was already in flight and the level card was skipped.
+    """
+    intake = set(_PATH_QUESTION_COPY.values()) | set(_LEVEL_QUESTION_COPY.values())
+    for message in state.messages:
+        kind = message.message_type.value
+        if kind == "proposal":
+            return True
+        if kind == "assistant_response" and "question" in message.content:
+            if message.content.get("question") not in intake:
+                return True
+    return False
 
 
 def _first_author_input(state: SessionState) -> str:
@@ -3716,6 +3802,10 @@ async def _guided_continue(
     # either one; the known state stops re-asking and the lore grounds the
     # conversation in the active world.
     flow_profile = session_flow_profile(state) if state is not None else None
+    # The raw turn is the author's real input ("1"/"2"/"3" or the seed). The
+    # path detour below replaces ``author_input`` with the session seed for the
+    # provider; the server-owned question commits must keep the real turn.
+    raw_input = author_input
     # First turn of a character flow: the creation path is a server-owned
     # question, asked BEFORE any creative question. The consent card may have
     # pinned it already; an imperative/auto-open session starts unset.
@@ -3755,6 +3845,53 @@ async def _guided_continue(
         if updated is not None:
             state = updated
             # The seed must still reach the provider after the path detour.
+            author_input = _first_author_input(state)
+    # The narrative level decides the field plan, so it is a server-owned
+    # question asked AFTER the path and BEFORE any creative/field question, for
+    # both paths (S2/S3). A session with a finished provider exchange is
+    # already in flight: never interrupt it with the level card (S5).
+    if (
+        state is not None and flow_profile is not None
+        and flow_profile.entity_type == "personaje"
+        and state.path != ""
+        and resolve_candidate_level(state.candidate) is None
+        and not _has_provider_exchange(state)
+    ):
+        # Only the turn AFTER the level question was asked can answer it: the
+        # path answer ("2") is also a valid level token, so never parse it as one.
+        level_pending = state.pending_question in _LEVEL_QUESTION_COPY.values()
+        level = _level_choice(raw_input) if level_pending else None
+        if level is None:
+            level_request = _compose_guided_request(
+                request_id=f"guided-{uuid.uuid4().hex}",
+                session_id=session_id,
+                mundo=mundo,
+                revision=state.revision,
+                principal_id=principal.id,
+                author_input=raw_input,
+                reference_context=reference_context,
+                reference_name=reference_name,
+                relation_goal=state.relation_goal,
+                guided_mode=mode,
+                question_depth=depth,
+                methodology=methodology,
+                flow_entity_type=flow_profile.entity_type,
+            )
+            level_response = GuidedResponse(
+                PROTOCOL_VERSION, level_request.request_id, session_id, state.revision,
+                Outcome.QUESTION, provenance=("guided:level-question",),
+                question=_level_question_copy(),
+            )
+            next_state = _GUIDED_SESSIONS.commit(level_request, level_response)
+            if next_state is None:
+                return _guided_error_response(StructuredError(
+                    ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+                ))
+            return _guided_result(level_response, next_state)
+        updated = _GUIDED_SESSIONS.set_level(session_id, principal.id, level)
+        if updated is not None:
+            state = updated
+            # The seed still reaches the provider after the level detour.
             author_input = _first_author_input(state)
     # The server-owned path question never reaches the provider, so the bounded
     # world context is resolved AFTER it: the opening turn takes exactly one
@@ -3842,7 +3979,7 @@ async def _guided_continue(
         _invalidate_guided_proposal(session_id)
         if response.outcome not in {Outcome.ERROR, Outcome.UNAVAILABLE}:
             assistant_text = "\n".join(
-                part for part in (response.question, response.synthesis) if part
+                part for part in (response.answer, response.synthesis, response.question) if part
             )
             if assistant_text:
                 _schedule_turn_memory(
@@ -3983,12 +4120,19 @@ async def start_guided_session(mundo: str, body: GuidedStartRequest, request: Re
         return _guided_error_response(StructuredError(
             ErrorCode.INVALID_INPUT, "Unsupported guided path.", False,
         ))
+    level = body.level
+    if level is not None and level not in _LEVEL_LABELS:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "Unsupported narrative level.", False,
+        ))
     _GUIDED_SESSIONS.create(
         session_id, mundo, principal.id,
         reference_context=reference_context, reference_name=reference_name,
         relation_goal=relation_goal, mode=intent.mode, depth=intent.depth,
         path=path, methodology_snapshot=methodology_snapshot,
     )
+    if level is not None:
+        _GUIDED_SESSIONS.set_level(session_id, principal.id, level)
     if intent.requires_confirmation:
         confirmed = _GUIDED_SESSIONS.begin_confirmation(
             session_id, principal.id, body.author_input,

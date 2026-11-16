@@ -193,6 +193,51 @@ def test_field_path_prompt_carries_the_current_field_brief() -> None:
     asyncio.run(scenario())
 
 
+def test_field_path_prompt_lets_the_author_explore_the_world() -> None:
+    """S1/S3: exploration is a turn type inside the questionnaire, not a mode."""
+
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return f"run-{len(prompts)}"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "¿Cómo se ve?",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        base = guided_request().__dict__
+        brief = "Current field: Deseo (3 of 21).\nWhat it expects: lo que lo mueve."
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "personaje", "guided_path": "fields", "field_context": brief}),
+            capabilities,
+        )
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{**base, "flow_entity_type": "personaje", "guided_path": "explore"}),
+            capabilities,
+        )
+
+        assert "World exploration inside the questionnaire" in prompts[0]
+        assert "'intent' to \"explore\"" in prompts[0]
+        assert "'answer'" in prompts[0]
+        assert "nothing is settled while exploring" in prompts[0]
+        # The conversational path has no field to come back to.
+        assert "World exploration inside the questionnaire" not in prompts[1]
+
+    asyncio.run(scenario())
+
+
 def test_provider_prompt_follows_configured_language_without_relaxing_constraints(monkeypatch) -> None:
     async def scenario() -> None:
         prompts: list[str] = []

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
@@ -444,6 +444,9 @@ describe("AIAssistantSidebar single conversation", () => {
     const user = userEvent.setup();
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
+    // The card IS the question: the stored/pending prose copy would duplicate
+    // it and tell the author to type "1"/"2" instead of clicking.
+    expect(screen.queryByText(/Antes de empezar/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: tEs("guided.path.explore") }));
     expect(sendMessage).toHaveBeenCalledWith("1", {
       displayText: tEs("guided.path.explore"),
@@ -452,6 +455,138 @@ describe("AIAssistantSidebar single conversation", () => {
     expect(sendMessage).toHaveBeenCalledWith("2", {
       displayText: tEs("guided.path.fields"),
     });
+  });
+
+  it("hides the stored creation-path question and gives both paths equal weight", () => {
+    const pathQuestion =
+      "Antes de empezar: ¿cómo prefieres crear esta ficha? 1) Descubrirla conmigo, conversando (40/60). 2) Completarla paso a paso, campo por campo. Responde 1 o 2.";
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [
+          { role: "user", content: "quiero crear un personaje nuevo" },
+          { role: "assistant", content: pathQuestion },
+        ],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          path: "",
+          pending_question: pathQuestion,
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.queryByText(/Antes de empezar/)).not.toBeInTheDocument();
+    const explore = screen.getByRole("button", { name: tEs("guided.path.explore") });
+    const fields = screen.getByRole("button", { name: tEs("guided.path.fields") });
+    // Both options are equally valid paths: same button affordance, no default.
+    expect(explore.className).toBe(fields.className);
+    expect(explore).toHaveTextContent("Descubrirla conmigo (40/60)");
+  });
+
+  it("asks the narrative level with a card and hides the field cursor", async () => {
+    const sendMessage = vi.fn();
+    const levelQuestion =
+      "¿Qué nivel narrativo ocupa este personaje: 1º principal, 2º secundario o 3º relleno?";
+    useSessionsMock.mockReturnValue(createSessionsState({
+      sendMessage,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "Completar la ficha paso a paso" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 2,
+          path: "fields",
+          pending_kind: "level",
+          level: "",
+          pending_question: levelQuestion,
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+          field_progress: {
+            nivel: "1º",
+            index: 1,
+            total: 36,
+            key: "nombre",
+            label: "Nombre",
+            hint: "El nombre con el que se lo conoce en el mundo.",
+            examples: [],
+            optional: false,
+            covered: [],
+            skipped: [],
+            complete: false,
+          },
+        },
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    // The card asks the level; the prose copy and the field cursor wait.
+    expect(screen.queryByText(levelQuestion)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Campo 1 de/)).not.toBeInTheDocument();
+    const principal = screen.getByRole("button", { name: tEs("guided.level.principal") });
+    const secondary = screen.getByRole("button", { name: tEs("guided.level.secondary") });
+    expect(principal.className).toBe(secondary.className);
+    await user.click(principal);
+    expect(sendMessage).toHaveBeenCalledWith("1", {
+      displayText: tEs("guided.level.principal"),
+    });
+  });
+
+  it("dismisses the creation-path card while the answer is in flight", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      isSending: true,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [{ role: "user", content: "quiero crear un personaje nuevo" }],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          path: "",
+          pending_kind: "path",
+          pending_question: "Antes de empezar: ¿cómo prefieres crear esta ficha?",
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: null,
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.explore") }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: tEs("guided.path.fields") }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides the creation-path buttons once the author chose", () => {
@@ -589,6 +724,116 @@ describe("AIAssistantSidebar single conversation", () => {
     const create = screen.getByRole("button", { name: "Crear la ficha" });
     await userEvent.setup().click(create);
     expect(requestGuidedReview).toHaveBeenCalled();
+  });
+
+  it("withholds the create offer until the guided questionnaire is complete", () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    const guidedBase = {
+      protocol_version: "guided-character-v1",
+      session_id: "guided-42",
+      world: "Vibrantes",
+      phase: "conversation" as const,
+      mode: "full" as const,
+      depth: "standard" as const,
+      revision: 7,
+      path: "fields" as const,
+      pending_question: null,
+      messages: [],
+      candidate: {
+        accepted_canon: { identidad: { value: { nombre: "Hesia" } } },
+        proposals: { oficio: "repara Dvins" },
+        unresolved_references: [],
+        conflicts: [],
+      },
+      proposal: null,
+      target_preview: "personajes/hesia.md",
+      target_level: "2º",
+      field_progress: {
+        nivel: "2º",
+        index: 4,
+        total: 21,
+        key: "edad",
+        label: "Edad",
+        hint: "Los años que lleva viva.",
+        examples: [],
+        optional: false,
+        covered: ["nombre", "deseo"],
+        skipped: [],
+        complete: false,
+      },
+    };
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: guidedBase,
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.queryByRole("button", { name: "Crear la ficha" })).not.toBeInTheDocument();
+    expect(screen.queryByText("personajes/hesia.md")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the create card once the questionnaire is complete", () => {
+    const onGuidedReview = vi.fn();
+    const requestGuidedReview = vi.fn().mockResolvedValue({} as never);
+    useSessionsMock.mockReturnValue(createSessionsState({
+      requestGuidedReview,
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [],
+        createdAt: 1,
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "conversation",
+          mode: "full",
+          depth: "standard",
+          revision: 7,
+          path: "fields",
+          pending_question: null,
+          messages: [],
+          candidate: {
+            accepted_canon: { identidad: { value: { nombre: "Hesia" } } },
+            proposals: { oficio: "repara Dvins" },
+            unresolved_references: [],
+            conflicts: [],
+          },
+          proposal: null,
+          target_preview: "personajes/hesia.md",
+          target_level: "2º",
+          field_progress: {
+            nivel: "2º",
+            index: 21,
+            total: 21,
+            key: null,
+            label: null,
+            hint: null,
+            examples: [],
+            optional: false,
+            covered: ["nombre", "deseo"],
+            skipped: [],
+            complete: true,
+          },
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={onGuidedReview} />);
+
+    expect(screen.getByRole("button", { name: "Crear la ficha" })).toBeInTheDocument();
+    expect(screen.getByText("personajes/hesia.md")).toBeInTheDocument();
   });
 
   it("shows a pending level instead of inventing one", () => {
@@ -2137,6 +2382,75 @@ describe("AIAssistantSidebar assistant health", () => {
     expect(banner).toHaveTextContent(
       "El servicio del asistente no está en marcha",
     );
+  });
+
+  it("clears the banner on its own when the gateway comes back", async () => {
+    getAssistantSettingsMock.mockClear();
+    getAssistantSettingsMock
+      .mockResolvedValueOnce({ ...healthy, gateway_running: false })
+      .mockResolvedValue(healthy);
+
+    vi.useFakeTimers();
+    try {
+      render(<AIAssistantSidebar mundo="Vibrantes" />);
+      await act(async () => {});
+
+      expect(
+        screen.getByTestId("assistant-health-banner"),
+      ).toHaveTextContent("El servicio del asistente no está en marcha");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+
+      expect(
+        screen.queryByTestId("assistant-health-banner"),
+      ).not.toBeInTheDocument();
+      expect(getAssistantSettingsMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not poll while the assistant is healthy", async () => {
+    getAssistantSettingsMock.mockClear();
+    vi.useFakeTimers();
+    try {
+      render(<AIAssistantSidebar mundo="Vibrantes" />);
+      await act(async () => {});
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+
+      expect(getAssistantSettingsMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-checks when the window regains focus", async () => {
+    getAssistantSettingsMock.mockClear();
+    getAssistantSettingsMock
+      .mockResolvedValueOnce({ ...healthy, gateway_running: false })
+      .mockResolvedValue(healthy);
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      await screen.findByTestId("assistant-health-banner"),
+    ).toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("assistant-health-banner"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(getAssistantSettingsMock).toHaveBeenCalledTimes(2);
   });
 
   it("warns when the saved configuration still needs a restart", async () => {

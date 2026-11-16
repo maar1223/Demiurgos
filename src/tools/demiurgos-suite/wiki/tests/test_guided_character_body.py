@@ -15,6 +15,7 @@ if str(_WIKI) not in sys.path:
 from guided_character_body import (  # noqa: E402
     ADDITIVE_LABELS,
     current_field,
+    field_for_probe,
     labels_for,
     plan_for,
     questionnaire_fields,
@@ -245,6 +246,49 @@ def test_current_field_walks_the_plan_and_respects_skips() -> None:
     assert field is not None and field.key == "edad"
 
 
+def test_questionnaire_cursor_ignores_placeholder_observations() -> None:
+    """A provider note that says "undefined" must not cover the field.
+
+    Live session guided-1a9fb96533c2438e85ad3050aa46ffe6 (2026-11-15) jumped
+    from "Campo 2 de 21" to "Campo 4 de 21" because two placeholder notes
+    (`rol_narrativo: "aún sin definir"`, `deseo: "sin definir; …"`) counted as
+    answers.
+    """
+    candidate = CandidateState(
+        accepted_canon={"nivel": {"value": "2º"}},
+        observations={
+            "nombre": "Hesia",
+            "rol_narrativo": "aún sin definir",
+            "deseo": "sin definir; el autor pide una recomendación",
+        },
+    )
+    field, progress = current_field(candidate)
+    assert field is not None and field.key == "rol_narrativo"
+    assert progress["index"] == 2
+    assert progress["total"] == len(questionnaire_fields("2º"))
+
+    # A real observation still advances the cursor: the field is answered.
+    field, progress = current_field(CandidateState(
+        accepted_canon={"nivel": {"value": "2º"}},
+        observations={
+            "nombre": "Hesia",
+            "rol_narrativo": "secundaria con peso propio en el arco de Ganic",
+            "deseo": "entender qué le pasa a Ganic",
+        },
+    ))
+    assert field is not None and field.key == "edad"
+    assert progress["index"] == 4
+
+
+def test_sheet_body_never_renders_placeholder_observations() -> None:
+    body = render_character_body(CandidateState(observations={
+        "deseo": "sin definir; el autor pide una recomendación",
+    }))
+    assert "sin definir" not in body
+    # The label is reported as pending instead of rendered as content.
+    assert "## Pendientes" in body and "Deseo" in body
+
+
 def test_current_field_reports_completion_when_everything_is_visited() -> None:
     plan = questionnaire_fields("3º")
     candidate = CandidateState(proposals={
@@ -254,6 +298,17 @@ def test_current_field_reports_completion_when_everything_is_visited() -> None:
     field, progress = current_field(candidate)
     assert field is None
     assert progress["complete"] is True
+
+
+def test_field_for_probe_maps_aliases_to_the_questionnaire_field() -> None:
+    """S3: an extracted key is a questionnaire fact only when a field claims it."""
+    assert field_for_probe("2º", "oficio").key == "trabajo"
+    assert field_for_probe("1º", "Desire").key == "deseo"
+    assert field_for_probe("2º", "deseo").key == "deseo"
+    # Off-plan facts (world lore, meta) are not questionnaire coverage.
+    assert field_for_probe("2º", "mundo") is None
+    assert field_for_probe("2º", "nivel") is None
+    assert field_for_probe("2º", "") is None
 
 
 def test_field_plan_exposes_the_questionnaire_order() -> None:

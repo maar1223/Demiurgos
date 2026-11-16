@@ -48,6 +48,9 @@ interface AIAssistantSidebarProps {
   filePath?: string;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
   onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
+  /** Reports whether a response is in flight, so the editor shell can hold the
+   *  panel open while the answer streams. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 type Screen = "chat" | "history";
@@ -66,6 +69,12 @@ const SAFE_ACTIVITY_WARNINGS = new Set([
 // Keep the activity/evidence integration intact, but hide its presentation
 // until the provider exposes reliable structured consulted-file evidence.
 const ACTIVITY_EVIDENCE_UI_ENABLED = false;
+
+// The launcher restarts the Hermes gateway in the background, so a gateway
+// reported down can come back while this panel stays open. Re-check on a slow
+// interval (and when the window regains focus) so the "not running" banner
+// never outlives the outage it describes.
+const HEALTH_RECHECK_MS = 10_000;
 
 function isSafeEvidencePath(value: string): boolean {
   if (!value || value.includes("\\") || value.startsWith("/")) return false;
@@ -308,6 +317,22 @@ function ChatScreen({
     void checkHealth();
   }, [checkHealth]);
 
+  // A down gateway is the one degraded state that heals by itself: the
+  // launcher restarts Hermes without touching this page. Poll only while it
+  // is down (a healthy panel stays idle) and stop as soon as it recovers.
+  const gatewayDown = health?.gateway_running === false;
+
+  useEffect(() => {
+    if (!gatewayDown) return;
+    const onFocus = () => void checkHealth();
+    const interval = window.setInterval(() => void checkHealth(), HEALTH_RECHECK_MS);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [gatewayDown, checkHealth]);
+
 
   // Type-to-focus: when the Author starts typing while reading (focus on the
   // page, a button, or the panel), the first printable key goes to the
@@ -369,7 +394,29 @@ function ChatScreen({
             : null;
   const attachments = activeSession?.attachments ?? [];
   const attachmentMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
-  const messages = activeSession?.messages ?? [];
+  // The server-owned creation-path question is the first turn of the guided
+  // flow: ``path`` stays "" until the author answers, and the card below is
+  // the real control. The narrative level is the next server-owned turn.
+  // Their stored/pending prose copies must stay hidden: they repeat the card
+  // and tell the author to type "1"/"2".
+  const guidedPathPending =
+    activeSession?.guided?.path === "" &&
+    activeSession.guided.phase === "conversation";
+  const guidedLevelPending =
+    activeSession?.guided?.pending_kind === "level" &&
+    activeSession.guided.phase === "conversation";
+  const guidedPendingQuestion = (activeSession?.guided?.pending_question ?? "").trim();
+  const guidedCardPending = guidedPathPending || guidedLevelPending;
+  const storedMessages = activeSession?.messages ?? [];
+  const messages =
+    guidedCardPending && guidedPendingQuestion
+      ? storedMessages.filter(
+          (message, index) =>
+            index !== storedMessages.length - 1 ||
+            message.role !== "assistant" ||
+            message.content.trim() !== guidedPendingQuestion,
+        )
+      : storedMessages;
   // Consent-accepted sessions carry their first question in
   // `guided.pending_question`; older stored sessions may not have it in the
   // top-level list. Render it as the assistant bubble unless it is already
@@ -386,6 +433,7 @@ function ChatScreen({
   // still the PREVIOUS question. Rendering it again below the author's message
   // looks like the assistant repeated itself; the spinner is the progress cue.
   const showGuidedPending =
+    !guidedCardPending &&
     Boolean(guidedPendingText) &&
     !isSending &&
     !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
@@ -549,6 +597,14 @@ function ChatScreen({
   const guidedTargetPreview = activeSession?.guided?.target_preview ?? null;
   // `undefined` = legacy session without the field; `null` = level not decided yet.
   const guidedTargetLevel = activeSession?.guided?.target_level;
+  // The questionnaire owns its own completion: while the plan has fields left,
+  // the platform minimum (name + desire) is not the finish line, so offering to
+  // create the sheet at "Campo 4 de 21" would invite a half-empty ficha.
+  const guidedQuestionnaireOpen = Boolean(
+    activeSession?.guided?.path === "fields" &&
+      activeSession.guided.field_progress &&
+      !activeSession.guided.field_progress.complete,
+  );
   // Once the author is already on the created sheet, offering to create it (or
   // to re-open its diff) is noise: the target file IS the current file.
   const guidedTargetIsCurrentFile = Boolean(
@@ -560,6 +616,7 @@ function ChatScreen({
   const guidedFieldProgress = activeSession?.guided?.field_progress ?? null;
   const guidedFieldActive = Boolean(
     activeSession?.guided?.path === "fields" &&
+      activeSession.guided.pending_kind !== "level" &&
       guidedFieldProgress &&
       !guidedFieldProgress.complete,
   );
@@ -568,12 +625,6 @@ function ChatScreen({
     !guidedMetaProposalKeys.has(activeSession.guided.proposal.key.toLowerCase())
       ? activeSession.guided.proposal
       : null;
-  // The server-owned creation-path question is the first turn of the guided
-  // flow: ``path`` stays "" until the author answers, so the choice is a real
-  // UI control instead of typed "1"/"2".
-  const guidedPathPending =
-    activeSession?.guided?.path === "" &&
-    activeSession.guided.phase === "conversation";
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
       meaningfulGuidedProposalKeys.length > 0 ||
@@ -833,7 +884,7 @@ function ChatScreen({
              </div>
            )}
 
-           {guidedTargetPreview && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
+           {guidedTargetPreview && !guidedQuestionnaireOpen && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
                {guidedTargetLevel !== undefined && (
                  <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
@@ -969,31 +1020,60 @@ function ChatScreen({
              </section>
            )}
 
-           {guidedPathPending && (
-             <GuidedChoiceCard
-               title={t("guided.path.title")}
-               stacked
-               options={[
-                 {
-                   label: t("guided.path.explore"),
-                   primary: true,
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage("1", {
-                       displayText: t("guided.path.explore"),
-                     }),
-                 },
-                 {
-                   label: t("guided.path.fields"),
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage("2", {
-                       displayText: t("guided.path.fields"),
-                     }),
-                 },
-               ]}
-             />
-           )}
+            {guidedPathPending && !isSending && (
+              <GuidedChoiceCard
+                title={t("guided.path.title")}
+                variant="neutral"
+                stacked
+                options={[
+                  {
+                    label: t("guided.path.explore"),
+                    onClick: () =>
+                      void sendMessage("1", {
+                        displayText: t("guided.path.explore"),
+                      }),
+                  },
+                  {
+                    label: t("guided.path.fields"),
+                    onClick: () =>
+                      void sendMessage("2", {
+                        displayText: t("guided.path.fields"),
+                      }),
+                  },
+                ]}
+              />
+            )}
+
+            {guidedLevelPending && !isSending && (
+              <GuidedChoiceCard
+                title={t("guided.level.title")}
+                variant="neutral"
+                stacked
+                options={[
+                  {
+                    label: t("guided.level.principal"),
+                    onClick: () =>
+                      void sendMessage("1", {
+                        displayText: t("guided.level.principal"),
+                      }),
+                  },
+                  {
+                    label: t("guided.level.secondary"),
+                    onClick: () =>
+                      void sendMessage("2", {
+                        displayText: t("guided.level.secondary"),
+                      }),
+                  },
+                  {
+                    label: t("guided.level.background"),
+                    onClick: () =>
+                      void sendMessage("3", {
+                        displayText: t("guided.level.background"),
+                      }),
+                  },
+                ]}
+              />
+            )}
 
            {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
@@ -1013,7 +1093,7 @@ function ChatScreen({
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && !guidedQuestionnaireOpen && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
             <button
               type="button"
               onClick={() => void handleGuidedReview()}
@@ -1389,9 +1469,16 @@ export function AIAssistantSidebar({
   filePath,
   onProposeEdit,
   onGuidedReview,
+  onBusyChange,
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
   const sessions = useAIAssistantSessions(mundo, section, filePath);
+  const isSending = sessions.isSending;
+  // Report the in-flight state to the shell (EditorLayout holds the expanded
+  // panel while the answer is written). The parent passes a stable setter.
+  useEffect(() => {
+    onBusyChange?.(isSending);
+  }, [isSending, onBusyChange]);
   const [guidedMethods, setGuidedMethods] = useState<GuidedMethodOption[]>([]);
   const [guidedMethodDefault, setGuidedMethodDefault] = useState<
     { skill_id: string; version: string } | null

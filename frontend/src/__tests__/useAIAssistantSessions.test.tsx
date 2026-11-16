@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   useAIAssistantSessions,
   GLOBAL_ASSISTANT_CONTEXT,
   type Session,
 } from "@/hooks/useAIAssistantSessions";
 import { AssistantActivityUnavailable, streamAssistantActivity } from "@/api/assistantActivity";
-import { acceptGuidedConsent, declineGuidedConsent } from "@/api/guidedCharacter";
+import {
+  acceptGuidedConsent,
+  declineGuidedConsent,
+  recoverGuidedCharacter,
+} from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
 import { uploadChatAttachment } from "@/api/chatAttachments";
 import { CATALOGUE } from "@/i18n/messages";
@@ -40,7 +44,16 @@ vi.mock("@/api/wiki", async (importOriginal) => {
 
 vi.mock("@/api/guidedCharacter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/guidedCharacter")>();
-  return { ...actual, acceptGuidedConsent: vi.fn(), declineGuidedConsent: vi.fn() };
+  return {
+    ...actual,
+    acceptGuidedConsent: vi.fn(),
+    declineGuidedConsent: vi.fn(),
+    // Default: a rejected revalidation, so tests that do not care keep the
+    // cached handle (the hook swallows the failure by contract).
+    recoverGuidedCharacter: vi.fn(() =>
+      Promise.reject(new Error("unmocked revalidation")),
+    ),
+  };
 });
 
 vi.mock("@/api/chatAttachments", async (importOriginal) => {
@@ -351,6 +364,33 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(result.current.activeSession?.guided).toBeUndefined();
   });
 
+  it("does not persist a server-owned intake question as a chat message", async () => {
+    const levelQuestion =
+      "¿Qué nivel narrativo ocupa este personaje: 1º principal, 2º secundario o 3º relleno?";
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue({
+      response: levelQuestion,
+      guided_state: {
+        ...guidedSession,
+        phase: "conversation",
+        path: "fields",
+        pending_kind: "level",
+        level: "",
+        pending_question: levelQuestion,
+      },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("quiero crear un personaje nuevo");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    expect(messages.some((message) => message.content === levelQuestion)).toBe(false);
+    expect(result.current.activeSession?.guided?.pending_kind).toBe("level");
+  });
+
   it("replays the guided handoff ticket on the legacy fallback", async () => {
     streamMock.mockRejectedValue(
       new AssistantActivityUnavailable(503, "guided_handoff", "ght-abc123"),
@@ -380,14 +420,14 @@ describe("useAIAssistantSessions guided consent wiring", () => {
 
     await act(async () => {
       await result.current.sendMessage("1", {
-        displayText: "Descubrirlo conmigo (40/60)",
+        displayText: "Descubrirla conmigo (40/60)",
       });
     });
 
     const messages = result.current.activeSession?.messages ?? [];
     expect(messages[messages.length - 2]).toMatchObject({
       role: "user",
-      content: "Descubrirlo conmigo (40/60)",
+      content: "Descubrirla conmigo (40/60)",
     });
     expect(askMock.mock.calls[0][1]).toMatchObject({ prompt: "1" });
   });
@@ -1214,5 +1254,75 @@ describe("useAIAssistantSessions failure visibility", () => {
     const texts = (result.current.activeSession?.messages ?? []).map((m) => m.content);
     expect(texts[texts.length - 1]).toBe(CATALOGUE.es["assistant.blocked"]);
     expect(result.current.activity.retryPrompt).toBeUndefined();
+  });
+});
+
+describe("useAIAssistantSessions guided revalidation on mount", () => {
+  const recoverMock = vi.mocked(recoverGuidedCharacter);
+
+  const cached: GuidedCharacterSession = {
+    protocol_version: "guided-character-v1",
+    session_id: "guided-hs",
+    world: "Vibrantes",
+    phase: "conversation",
+    mode: "full",
+    depth: "standard",
+    revision: 4,
+    pending_question: "¿El deseo de Hesia es entender qué le ocurre a Ganic?",
+    messages: [],
+    candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+    proposal: null,
+    path: "fields",
+    field_progress: {
+      nivel: "2º",
+      index: 4,
+      total: 21,
+      key: "edad",
+      label: "Edad",
+      hint: "",
+      examples: [],
+      optional: false,
+      covered: [],
+      skipped: [],
+      complete: false,
+    },
+  };
+
+  beforeEach(() => {
+    recoverMock.mockReset();
+    recoverMock.mockImplementation(() =>
+      Promise.reject(new Error("unmocked revalidation")),
+    );
+  });
+
+  it("replaces the cached guided handle with the server's fresh state", async () => {
+    seedSessions([{ ...makeSession("s-guid"), guided: cached }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-guid"));
+    recoverMock.mockResolvedValue({
+      ...cached,
+      field_progress: { ...cached.field_progress!, index: 2, key: "rol_narrativo", label: "Rol narrativo" },
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await waitFor(() => {
+      expect(recoverMock).toHaveBeenCalledWith("Vibrantes", "guided-hs");
+    });
+    await waitFor(() => {
+      expect(result.current.activeSession?.guided?.field_progress?.index).toBe(2);
+    });
+  });
+
+  it("keeps the cached handle when revalidation fails", async () => {
+    seedSessions([{ ...makeSession("s-guid"), guided: cached }]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s-guid"));
+    recoverMock.mockRejectedValue(new ApiError(401, "auth", "unauthorized"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await waitFor(() => {
+      expect(recoverMock).toHaveBeenCalled();
+    });
+    expect(result.current.activeSession?.guided?.field_progress?.index).toBe(4);
   });
 });

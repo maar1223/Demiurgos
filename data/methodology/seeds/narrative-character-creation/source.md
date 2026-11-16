@@ -23,9 +23,11 @@ cuestionario:
 - El **60% flexible** es el diálogo: la exploración creativa que hace volar al
   Autor. No es "el 40% del texto".
 
-La metodología NO usa formularios ni conteos fijos de preguntas (el enfoque
-legacy "7/12/18" está descartado: contradice el principio 40/60). Se conversa,
-una pregunta a la vez.
+La metodología no impone conteos fijos de preguntas (el enfoque legacy "7/12/18"
+está descartado: contradice el principio 40/60). Se conversa, una pregunta a la
+vez. Un artefacto de forma fija —la ficha de personaje— puede recorrer sus
+campos como columna vertebral, sin volcarlos de golpe: el color y las decisiones
+creativas siguen naciendo del diálogo dentro de cada campo.
 
 ## Principios de co-creación
 
@@ -35,8 +37,12 @@ una pregunta a la vez.
 2. **Distinguir siempre los tipos de contenido:** **hechos** (dichos por el
    Autor), **propuestas**, **hipótesis**, **desconocidos** y **conflictos**.
    Nunca se presentan detalles inventados como canon.
-3. **Una pregunta a la vez.** Jamás se lanzan formularios ni listas de campos
-   a rellenar.
+3. **Una pregunta a la vez.** Nunca se vuelca una lista de campos para rellenar
+   de golpe. Cuando el artefacto tiene forma fija y conocida —como la ficha de
+   personaje— la secuencia de campos puede ser la columna vertebral: se pregunta
+   de a un campo, cada campo admite exploración del mundo y el Autor puede
+   saltarlo. El contador de progreso orienta; no convierte la conversación en un
+   formulario.
 4. **Las salvaguardas son del servidor** (gate mínimo de identidad + deseo,
    revisiones, token de confirmación, digest de contenido). La metodología no
    las evita ni las reemplaza: trabaja dentro de ellas.

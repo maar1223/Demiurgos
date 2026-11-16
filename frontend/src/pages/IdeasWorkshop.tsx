@@ -1093,6 +1093,8 @@ export default function IdeasWorkshop() {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("asistente");
+  /** Assistant response in flight — the shell holds the panel expanded. */
+  const [assistantBusy, setAssistantBusy] = useState(false);
   const [materializeFor, setMaterializeFor] = useState<string | null>(null);
 
   // DM-2 — detail surface: the metadata collapsible (default collapsed) and
@@ -2595,7 +2597,7 @@ export default function IdeasWorkshop() {
     <div className="flex h-full flex-col">
       <TabBar onTabChange={setSidebarTab} />
       {sidebarTab === "asistente" ? (
-        <AIAssistantSidebar />
+        <AIAssistantSidebar onBusyChange={setAssistantBusy} />
       ) : (
         contextPanel
       )}
@@ -2606,6 +2608,8 @@ export default function IdeasWorkshop() {
     <EditorLayout
       sidebar={sidebar}
       rightPanel={rightPanel}
+      assistantPanel={sidebarTab === "asistente"}
+      assistantBusy={assistantBusy}
     >
       {(actionError || toast) && (
         <div className="mb-4">

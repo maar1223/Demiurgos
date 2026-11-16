@@ -223,6 +223,9 @@ export default function WikiEditor() {
     return "asistente";
   });
 
+  /** Assistant response in flight — the shell holds the panel expanded. */
+  const [assistantBusy, setAssistantBusy] = useState(false);
+
   // Decode the path from URL encoding
   const filePath = splatPath ? decodePathSegment(splatPath) : undefined;
   const reviewPath = pendingNewFile?.path ?? filePath;
@@ -1158,6 +1161,7 @@ export default function WikiEditor() {
           filePath={filePath}
           onProposeEdit={handleAssistantEditProposal}
           onGuidedReview={handleGuidedReview}
+          onBusyChange={setAssistantBusy}
         />
       ) : (
         <EntitySearchPanel mundo={mundo!} onInsert={handleInsertWikilink} />
@@ -1286,6 +1290,8 @@ export default function WikiEditor() {
         </div>
       }
       rightPanel={rightPanelContent}
+      assistantPanel={sidebarTab === "asistente"}
+      assistantBusy={assistantBusy}
       focusMode={focusMode}
     >
       {/* Unified file bar — always visible so navigation never disappears:

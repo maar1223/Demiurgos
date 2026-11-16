@@ -8,6 +8,7 @@ Markdown proposal without persisting it.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -106,7 +107,10 @@ def _candidate_known_fields(candidate: CandidateState, delta: Mapping[str, Any] 
     if isinstance(observations, Mapping):
         for key, value in observations.items():
             known.setdefault(key, value)
-    return known
+    # A key whose value only says "not defined yet" is not a fact: keeping it
+    # satisfied the completeness gate and skipped the questionnaire field with
+    # nothing behind it (live session 2026-11-15).
+    return {key: value for key, value in known.items() if _carries_answer(value)}
 
 
 def candidate_minimum_complete(
@@ -165,6 +169,86 @@ def _probe_text(value: Any) -> str | None:
     if isinstance(value, Mapping) and "value" in value:
         return _probe_text(value["value"])
     return value if isinstance(value, str) else None
+
+
+#: A value that only states "not known / not decided yet" answers nothing. The
+#: provider records such a note for an open plan field whenever the author asks
+#: for a recommendation instead of answering; counting the note as a value
+#: skipped the field (``"sin definir; el autor pide una recomendación"``, live
+#: session 2026-11-15) and satisfied the completeness gate with no fact behind it.
+_NON_ANSWER_PREFIXES = (
+    "sin definir", "aun sin definir", "sin decidir", "sin datos",
+    "sin especificar", "sin determinar",
+    "por definir", "por decidir", "a definir", "para definir",
+    "pendiente de definir", "pendiente por definir", "pendiente de decidir",
+    "no definid", "no decidid", "no especificad", "no determinad",
+    "desconocid", "undefined", "undetermined", "tbd", "unknown",
+    "to be defined", "not defined",
+)
+_NON_ANSWER_EXACT = frozenset({
+    "pendiente", "pendientes", "pending", "tbd", "unknown", "undefined",
+    "desconocido", "desconocida", "n/a",
+})
+_NON_ANSWER_MAX_CHARS = 120
+
+
+def _folded_value_text(text: str) -> str:
+    """Casefold, drop accents and strip wrapping markdown from a stored value."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return plain.casefold().strip(" \t\n_*()[]{}<>«»\"'`.,;:-–—")
+
+
+def text_is_non_answer(text: str) -> bool:
+    """True when ``text`` only reports that the field is not defined yet.
+
+    Deliberately conservative: only a whole-value status word or a leading
+    "undefined" phrase counts. A real answer that merely mentions one of these
+    words somewhere ("un caso pendiente") stays an answer.
+    """
+    folded = _folded_value_text(text)
+    if not folded:
+        return True
+    if folded in _NON_ANSWER_EXACT:
+        return True
+    return (
+        len(folded) <= _NON_ANSWER_MAX_CHARS
+        and folded.startswith(_NON_ANSWER_PREFIXES)
+    )
+
+
+def _carries_answer(value: Any) -> bool:
+    """True when a stored value answers the field it is filed under."""
+    text = _probe_text(value)
+    if text is None:
+        return True  # structured records and numbers are never placeholder strings
+    return not text_is_non_answer(text)
+
+
+def plan_scoped_observations(
+    observations: Mapping[str, Any],
+    *,
+    entity_type: str | None,
+    nivel: str,
+) -> dict[str, Any]:
+    """Keep only the observations no questionnaire field claims (S3).
+
+    An exploration turn settles nothing: a character fact extracted while the
+    author asks about the world must not cover its field later. Keys outside the
+    asked field plan — world lore, session metadata — are context and are kept.
+    Flows without a questionnaire plan keep everything.
+    """
+    if not observations:
+        return {}
+    from guided_character_body import field_for_probe
+
+    if entity_type != "personaje":
+        return dict(observations)
+    return {
+        key: value
+        for key, value in observations.items()
+        if field_for_probe(nivel, key) is None
+    }
 
 
 #: A value that says "not decided yet" is never a level, even if it lists the

@@ -733,6 +733,10 @@ export interface GuidedCharacterSession {
   target_level?: string | null;
   /** Chosen creation path: exploratory 40/60 or field-by-field questionnaire. */
   path?: "explore" | "fields" | "";
+  /** Server-owned question awaiting the author; the client renders a choice card. */
+  pending_kind?: "path" | "level" | "";
+  /** Author-declared narrative level ("" until the level turn is answered). */
+  level?: "1º" | "2º" | "3º" | "";
   /** Questionnaire cursor (server-owned) when path is "fields". */
   field_progress?: {
     nivel: string;

@@ -346,6 +346,12 @@ class GuidedSessionStore:
                 content["question"] = response.question
             if response.synthesis:
                 content["synthesis"] = response.synthesis
+            if response.answer:
+                # S2: the exploration answer is its own block, rendered before
+                # the synthesis by the public message view.
+                content["answer"] = response.answer
+            if response.intent:
+                content["intent"] = response.intent
             if response.outcome is Outcome.DELTA and response.delta:
                 content.update(dict(response.delta))
             next_state.messages.append(TypedMessage(
@@ -540,6 +546,29 @@ class GuidedSessionStore:
             state = self._deserialize_row(row)
             next_state = deepcopy(state)
             next_state.path = path
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return next_state
+
+    def set_level(
+        self, session_id: str, authorization_binding: str, level: str,
+    ) -> SessionState | None:
+        """Pin the author's narrative-level choice (it drives the field plan).
+
+        The level lives in ``accepted_canon["nivel"]`` so the existing
+        ``resolve_candidate_nivel`` / plan machinery reads it with no schema
+        change; ``nivel`` is already excluded from the rendered extras.
+        """
+        authorization_binding = self._normalize_binding(authorization_binding)
+        if level not in {"1º", "2º", "3º"}:
+            return None
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            next_state = deepcopy(state)
+            next_state.candidate.accepted_canon["nivel"] = level
             self._write_state(next_state)
             self._in_process.add(session_id)
             return next_state

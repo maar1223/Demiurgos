@@ -57,3 +57,35 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `cd
 - **Pending:** the Owner updates the installed app from Perfil → Actualizaciones
   (the apply endpoint is principal-gated by design, so the click is the
   authorization).
+
+### Follow-up (2026-11-15): S1 counts facts, not "not defined yet" notes
+
+- **L5 (Owner report, verbatim):** "no entiendo esto, es edad o deseo lo que el
+  asistente me est…" / "porque ocurrió ese error en primer lugar? me pareció
+  extraño cuando pasó de 2 a 4".
+- **L6 (Owner instruction, verbatim):** "si, adelante".
+- **Refinement of S1:** counting `observations` stays; what stops counting is a
+  value that only declares absence. Live session
+  `guided-1a9fb96533c2438e85ad3050aa46ffe6` (Vibrantes, nivel 2º) had
+  `accepted_canon={"nivel": "2º"}` and
+  `observations={"rol_narrativo": "aún sin definir", "deseo": "sin definir; el
+  autor pide una recomendación", …}`; both notes satisfied the gate and covered
+  their questionnaire fields, so the cursor jumped 2 → 4 while the visible
+  question was still about Deseo.
+- **Change:** `text_is_non_answer()` / `_carries_answer()` in
+  `guided_character_domain.py`, applied at the end of `_candidate_known_fields()`
+  so the gate, `next_required_question()`, `resolve_candidate_level()` and the
+  questionnaire cursor (`current_field`) all agree. Conservative by design: only
+  a whole-value status word or a leading "undefined" phrase is dropped, so a real
+  answer that happens to contain one of those words stays an answer.
+- **Evidence:** RED first (`test_placeholder_observations_do_not_satisfy_the_gate`,
+  `test_questionnaire_cursor_ignores_placeholder_observations`,
+  `test_sheet_body_never_renders_placeholder_observations`), GREEN after.
+  Differential base-vs-change over a 12-value corpus: only the non-answer and
+  empty values changed; every real answer kept its gate, question and level
+  byte-identical. Suite: wiki 5160 passed / 26 skipped, root `tests/` 34 passed.
+  Replaying the live session now yields `Campo 2 de 21 → Rol narrativo`.
+- **Risk:** none in the code change (no migration, no contract removal, both
+  directions pinned by tests). Delivery to the installed app is still pending
+  and remains the Owner's decision.
+

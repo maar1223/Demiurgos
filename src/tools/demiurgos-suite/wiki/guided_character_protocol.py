@@ -23,6 +23,11 @@ PROTOCOL_VERSION = "guided-character-v1"
 DEFAULT_DEADLINE_MS = 90_000
 MAX_DEADLINE_MS = 90_000
 
+#: Provider-declared turn intents (S5). ``answer`` is the implicit default;
+#: ``explore`` marks a world-exploration turn, which commits nothing.
+EXPLORE_INTENTS = frozenset({"answer", "explore"})
+EXPLORE_INTENT = "explore"
+
 
 class ErrorCode(StrEnum):
     INVALID_INPUT = "invalid_input"
@@ -202,10 +207,18 @@ class GuidedResponse:
     # candidate proposals (never to canon) so the session accumulates what was
     # collected instead of starting each question from nothing.
     observations: Mapping[str, Any] | None = None
+    # S2 (guided-world-exploration): the author asked about the world instead of
+    # answering the current field. ``answer`` carries the exploration reply as
+    # its own block (never squeezed into the 3-sentence synthesis) and
+    # ``intent`` marks the turn as non-committing so the cursor keeps its place.
+    answer: str | None = None
+    intent: str | None = None
 
     # Three short sentences, not six paragraphs: the public state renders this
     # block before the question, so a 2,000-char cap produced walls of text.
     SYNTHESIS_MAX_CHARS = 700
+    # An exploration answer is allowed to be a real answer, not a summary.
+    ANSWER_MAX_CHARS = 2_000
 
     @classmethod
     def from_provider(cls, value: object, request: GuidedRequest) -> "GuidedResponse | None":
@@ -231,6 +244,16 @@ class GuidedResponse:
             if not isinstance(synthesis, str):
                 return None
             synthesis = _bounded_text(synthesis, cls.SYNTHESIS_MAX_CHARS) or None
+        answer = value.get("answer")
+        if answer is not None:
+            if not isinstance(answer, str):
+                # Fail-safe (S5): an unusable answer degrades to a legacy turn.
+                answer = None
+            else:
+                answer = _bounded_text(answer, cls.ANSWER_MAX_CHARS) or None
+        intent = value.get("intent")
+        if intent not in EXPLORE_INTENTS:
+            intent = None
         observations = value.get("observations")
         if observations is not None and not isinstance(observations, Mapping):
             return None
@@ -240,7 +263,9 @@ class GuidedResponse:
                    value.get("provider_run_id") if isinstance(value.get("provider_run_id"), str) else None,
                    value.get("retryable") is True,
                    synthesis=synthesis,
-                   observations=dict(observations) if isinstance(observations, Mapping) else None)
+                   observations=dict(observations) if isinstance(observations, Mapping) else None,
+                   answer=answer,
+                   intent=intent)
 
 
 class MessageType(StrEnum):
@@ -417,6 +442,19 @@ class GuidedSessionStore:
             return None
         next_state = deepcopy(state)
         next_state.path = path
+        self._sessions[session_id] = next_state
+        return deepcopy(next_state)
+
+    def set_level(self, session_id: str, authorization_binding: str,
+                  level: str) -> SessionState | None:
+        """Pin the author's narrative-level choice (drives the field plan)."""
+        state = self._sessions.get(session_id)
+        if not state or state.authorization_binding != authorization_binding:
+            return None
+        if level not in {"1º", "2º", "3º"}:
+            return None
+        next_state = deepcopy(state)
+        next_state.candidate.accepted_canon["nivel"] = level
         self._sessions[session_id] = next_state
         return deepcopy(next_state)
 
@@ -662,6 +700,31 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                                     convergence_specimen_markdown=convergence_specimen_markdown)
     if response.outcome in {Outcome.ERROR, Outcome.UNAVAILABLE}:
         return response, None
+    if response.intent == EXPLORE_INTENT and response.outcome is Outcome.QUESTION:
+        # World exploration inside the questionnaire (S1/S3): the author asked
+        # about the world instead of answering the current field. The turn
+        # answers and keeps asking the same field, so nothing may settle: the
+        # delta is dropped and any observation a questionnaire field claims is
+        # discarded. World facts outside the plan stay as context.
+        from guided_character_domain import plan_scoped_observations, resolve_candidate_nivel
+
+        profile = session_flow_profile(state)
+        response = GuidedResponse(
+            PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
+            response.outcome,
+            provenance=(*response.provenance, "guided:explore"),
+            question=response.question,
+            delta=None,
+            provider_run_id=response.provider_run_id,
+            synthesis=response.synthesis,
+            answer=response.answer,
+            intent=response.intent,
+            observations=plan_scoped_observations(
+                response.observations or {},
+                entity_type=profile.entity_type if profile is not None else None,
+                nivel=resolve_candidate_nivel(state.candidate),
+            ) or None,
+        )
     if response.outcome is Outcome.DELTA:
         # Server-authoritative completeness gate: a provider delta is never a
         # trusted completeness claim. In full guided mode, an incomplete candidate
