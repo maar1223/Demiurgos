@@ -861,3 +861,67 @@ class TestFoundationalTriggers:
         description = entry.manifest["description"]
         assert "(1)" in description and "(9)" in description
         assert "material/construido" in description
+
+
+class TestSeedRootReconcile:
+    """A methodology release must reach an install that already bootstrapped its
+    data root (2026-11-15: 1.4 shipped, the data root stayed on 1.3 and the
+    library could never publish it)."""
+
+    def _target_with(self, tmp_path: Path, version: str) -> Path:
+        target = tmp_path / "data-root" / "data" / "methodology" / "seeds"
+        skill = target / "narrative-character-creation"
+        skill.mkdir(parents=True)
+        (skill / "manifest.yaml").write_text(
+            f"skill_id: narrative-character-creation\nversion: \"{version}\"\n",
+            encoding="utf-8",
+        )
+        (skill / "source.md").write_text("## viejo\n", encoding="utf-8")
+        return target
+
+    def test_newer_payload_seed_upgrades_the_existing_copy(self, tmp_path: Path) -> None:
+        from methodology_seed import reconcile_seed_root
+
+        target = self._target_with(tmp_path, "1.3")
+        report = reconcile_seed_root(SEED_ROOT, target)
+        assert report.upgraded == ("narrative-character-creation",)
+        payload = (SEED_ROOT / "narrative-character-creation" / "source.md").read_bytes()
+        assert (target / "narrative-character-creation" / "source.md").read_bytes() == payload
+        assert "formularios" in (target / "narrative-character-creation" / "source.md").read_text(
+            encoding="utf-8"
+        ) or "forma fija" in (target / "narrative-character-creation" / "source.md").read_text(
+            encoding="utf-8"
+        )
+
+    def test_equal_or_older_target_is_left_untouched(self, tmp_path: Path) -> None:
+        from methodology_seed import reconcile_seed_root
+
+        equal = self._target_with(tmp_path / "equal", "1.4")
+        report = reconcile_seed_root(SEED_ROOT, equal)
+        assert report.upgraded == ()
+        assert (equal / "narrative-character-creation" / "source.md").read_text(encoding="utf-8") == "## viejo\n"
+
+        newer = self._target_with(tmp_path / "newer", "9.9")
+        report = reconcile_seed_root(SEED_ROOT, newer)
+        assert report.upgraded == ()
+        assert "9.9" in (newer / "narrative-character-creation" / "manifest.yaml").read_text(encoding="utf-8")
+
+    def test_skills_the_target_does_not_have_are_never_added(self, tmp_path: Path) -> None:
+        from methodology_seed import reconcile_seed_root
+
+        target = tmp_path / "data-root" / "data" / "methodology" / "seeds"
+        (target / "narrative-system-creation").mkdir(parents=True)
+        (target / "narrative-system-creation" / "manifest.yaml").write_text(
+            'skill_id: narrative-system-creation\nversion: "1.0"\n', encoding="utf-8",
+        )
+        report = reconcile_seed_root(SEED_ROOT, target)
+        # The skill the data root already has is upgraded (1.0 -> 1.2)…
+        assert report.upgraded == ("narrative-system-creation",)
+        # …but nothing the data root never had is invented.
+        assert not (target / "narrative-character-creation").exists()
+
+    def test_missing_target_root_is_a_no_op(self, tmp_path: Path) -> None:
+        from methodology_seed import reconcile_seed_root
+
+        report = reconcile_seed_root(SEED_ROOT, tmp_path / "nope")
+        assert report.upgraded == ()

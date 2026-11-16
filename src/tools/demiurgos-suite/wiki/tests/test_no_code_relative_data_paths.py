@@ -59,6 +59,10 @@ MAX_PARENTS_DEPTH = 6
 CODE_PATH_ALLOWLIST: dict[tuple[str, str], str] = {
     ("api_server.py", "_HERE"): "sys.path bootstrap — locates sibling code modules",
     ("api_server.py", "_CODE_ROOT"): "locates the launcher script, a checkout artifact",
+    ("api_server.py", "payload_root"): (
+        "the release payload ships the methodology seeds; the data root keeps the "
+        "runtime copy, and this read only upgrades it forward (never author data)"
+    ),
     ("assistant_settings.py", "_TOOLS_ROOT"): "sys.path bootstrap for the capability_probes package",
     ("graph_mcp_server.py", "_SCRIPT_DIR"): "sys.path bootstrap for the wiki code package",
     ("mcp_launcher.py", "_SCRIPT_DIR"): "locates the sibling graph_mcp_server.py code file",

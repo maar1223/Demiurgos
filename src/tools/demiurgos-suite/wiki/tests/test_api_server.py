@@ -3794,6 +3794,43 @@ class TestSeedFirstBoot:
         assert published[0]["clasificacion"] == "Oficiales"
         assert published[0]["trust_attributes"] == ["fundacional"]
 
+    def test_boot_upgrades_an_older_seed_copy_and_publishes_it(
+        self, client: TestClient, monkeypatch, tmp_path: Path,
+    ) -> None:
+        """S7: a data root bootstrapped by an older release still receives the
+        shipped methodology. 2026-11-15: 1.4 shipped, the data root stayed on
+        1.3, and the library could never publish it."""
+        seed_root = tmp_path / "data" / "methodology" / "seeds"
+        shutil.copytree(SEED_ROOT, seed_root)
+        old = seed_root / "narrative-character-creation"
+        manifest = yaml.safe_load((old / "manifest.yaml").read_text(encoding="utf-8"))
+        manifest["version"] = "1.3"
+        (old / "manifest.yaml").write_text(
+            yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8",
+        )
+        (old / "source.md").write_text("## release viejo\n", encoding="utf-8")
+        # The data-root copy validates against its own checksums: rewrite them.
+        import hashlib as _hashlib
+        (old / "checksums.json").write_text(json.dumps({
+            name: _hashlib.sha256((old / name).read_bytes()).hexdigest()
+            for name in (
+                "manifest.yaml", "source.md", "adjunto-nivel-1-principal.md",
+                "adjunto-nivel-2-secundario.md", "adjunto-nivel-3-relleno.md",
+            )
+        }), encoding="utf-8")
+
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        character = next(
+            item for item in response.json()["items"]
+            if item["skill_id"] == "narrative-character-creation"
+        )
+        assert character["version"] == "1.4"
+        # The shipped bytes replaced the stale source.
+        assert (old / "source.md").read_bytes() == (
+            SEED_ROOT / "narrative-character-creation" / "source.md"
+        ).read_bytes()
+
     def test_compiler_invalid_seed_fails_closed_and_routes_serve(
         self, client: TestClient, monkeypatch, tmp_path: Path,
     ) -> None:

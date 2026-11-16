@@ -246,7 +246,7 @@ from methodology_library import (
     normalize_trigger,
 )
 from methodology_compiler import AttachmentEntry
-from methodology_seed import install_seeds
+from methodology_seed import install_seeds, reconcile_seed_root
 from methodology_trust import FOUNDATIONAL, QuarantineRecord, QuarantineStore, build_package
 from semantic_intent import (
     CONTINUATION_STATES,
@@ -2905,6 +2905,33 @@ def _seed_foundational_skills(library: MethodologyLibrary, seed_root: Path) -> N
         logger.warning("Foundational seed install failed: %s", exc)
 
 
+def _reconcile_shipped_seeds(seed_root: Path) -> None:
+    """Bring an already-bootstrapped data-root seed copy up to the payload (S7).
+
+    The release ships the authoritative seeds while the data root keeps a
+    bootstrap-once copy: without this pass a methodology release never reached
+    an existing install (2026-11-15: 1.4 shipped, the data root stayed on 1.3
+    and the library could never publish it). The data root stays the runtime
+    source of truth; the payload copy only upgrades what is already there,
+    forward-only. Best-effort, like the install itself: boot must serve without
+    the seed rather than 500 every route.
+    """
+    payload_root = _CODE_ROOT / "data" / "methodology" / "seeds"
+    try:
+        if payload_root.resolve() == seed_root.resolve():
+            return
+        report = reconcile_seed_root(payload_root, seed_root)
+        if report.upgraded:
+            logger.info("Shipped seed upgrade: %s", ", ".join(report.upgraded))
+        if report.unreadable:
+            logger.warning(
+                "Seed upgrade skipped for an unreadable version: %s",
+                ", ".join(report.unreadable),
+            )
+    except Exception as exc:  # noqa: BLE001 — never break the request path
+        logger.warning("Shipped seed reconciliation failed: %s", exc)
+
+
 def _methodology_library() -> MethodologyLibrary:
     global _METHODOLOGY_LIBRARY
     if _METHODOLOGY_LIBRARY is None:
@@ -2913,10 +2940,9 @@ def _methodology_library() -> MethodologyLibrary:
                 library = MethodologyLibrary(
                     _project_root() / "data" / "methodology" / "library.json"
                 )
-                _seed_foundational_skills(
-                    library,
-                    _project_root() / "data" / "methodology" / "seeds",
-                )
+                seed_root = _project_root() / "data" / "methodology" / "seeds"
+                _reconcile_shipped_seeds(seed_root)
+                _seed_foundational_skills(library, seed_root)
                 _METHODOLOGY_LIBRARY = library
     return _METHODOLOGY_LIBRARY
 

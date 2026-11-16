@@ -24,8 +24,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
+
+import semver
 
 from methodology_compiler import CompiledMethodology, compile_methodology, parse_manifest
 from methodology_trust import foundational_trust
@@ -197,6 +202,89 @@ def load_seed_catalog(root: Path) -> list[SeedEntry]:
     for entry_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         entries.append(_verify_entry(entry_dir))
     return entries
+
+
+@dataclass(frozen=True)
+class SeedReconcileReport:
+    """Outcome of one forward-only seed reconciliation pass."""
+
+    upgraded: tuple[str, ...] = ()
+    kept: tuple[str, ...] = ()
+    unreadable: tuple[str, ...] = ()
+
+
+def _comparable_version(version: str) -> str:
+    """Pad a two-part seed version (``1.4``) to the three-part SemVer core.
+
+    Seed manifests version their content as ``MAJOR.MINOR``; :mod:`semver`
+    requires a full core, so ``1.4`` would otherwise be unparseable and the
+    comparison would silently never upgrade.
+    """
+    core, separator, rest = str(version).strip().partition("-")
+    parts = core.split(".")
+    while len(parts) < 3:
+        parts.append("0")
+    return ".".join(parts) + (separator + rest if separator else "")
+
+
+def _seed_version(skill_dir: Path) -> str | None:
+    """The ``version`` a seed directory declares, or ``None`` when unreadable."""
+    try:
+        manifest = yaml.safe_load((skill_dir / _MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    version = manifest.get("version")
+    return str(version) if version is not None else None
+
+
+def reconcile_seed_root(payload_root: Path, target_root: Path) -> SeedReconcileReport:
+    """Bring an already-bootstrapped data root up to the shipped seeds (S7).
+
+    The payload ships the authoritative seeds while the data root keeps a
+    bootstrap-once copy, so without this pass a methodology release never
+    reached an existing install (2026-11-15: 1.4 shipped, the data root stayed
+    on 1.3 and the library could never publish it).
+
+    Forward-only and bounded: a skill the data root already has is replaced
+    only when the payload version is strictly newer (nor newer than 1.3, so a
+    local edit is never downgraded), and skills the payload does not ship are
+    never created. A missing target root is left alone — bootstrapping it stays
+    the installer's job. The payload catalog is checksum-verified first, so a
+    tampered payload can never overwrite a good copy.
+    """
+    target_root = Path(target_root)
+    if not target_root.is_dir():
+        return SeedReconcileReport()
+    payload_root = Path(payload_root)
+    if not payload_root.is_dir():
+        return SeedReconcileReport()
+
+    upgraded: list[str] = []
+    kept: list[str] = []
+    unreadable: list[str] = []
+    for entry in load_seed_catalog(payload_root):
+        target = target_root / entry.skill_id
+        if not target.is_dir():
+            continue
+        current = _seed_version(target)
+        if current is None:
+            unreadable.append(entry.skill_id)
+            continue
+        try:
+            newer = semver.compare(
+                _comparable_version(entry.version), _comparable_version(current),
+            ) > 0
+        except semver.SemVerError:
+            unreadable.append(entry.skill_id)
+            continue
+        if not newer:
+            kept.append(entry.skill_id)
+            continue
+        shutil.copytree(payload_root / entry.skill_id, target, dirs_exist_ok=True)
+        upgraded.append(entry.skill_id)
+    return SeedReconcileReport(tuple(upgraded), tuple(kept), tuple(unreadable))
 
 
 def install_seeds(library, root: Path) -> SeedInstallReport:
