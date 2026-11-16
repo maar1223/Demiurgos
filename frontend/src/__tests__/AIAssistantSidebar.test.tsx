@@ -1809,9 +1809,41 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     }));
 
     render(<AIAssistantSidebar mundo="Vibrantes" />);
+    // S6: the pinned version is visible, so activating a newer methodology is
+    // distinguishable from "nothing happened".
     expect(
-      screen.getByText("Método: narrative-character-creation"),
+      screen.getByText("Método: narrative-character-creation v1.2"),
     ).toBeInTheDocument();
+  });
+
+  it("does not render the six-slot progress on the fields path (S5)", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        createdAt: 1,
+        messages: [],
+        guided: {
+          protocol_version: "guided-character-v1",
+          session_id: "guided-42",
+          world: "Vibrantes",
+          phase: "review",
+          mode: "full",
+          depth: "standard",
+          revision: 1,
+          pending_question: null,
+          messages: [],
+          candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+          proposal: { key: "desire", label: "Desire", value: "freedom" },
+          detail_progress: { index: 2, total: 6, slot: "desire", complete: false },
+          path: "fields",
+        },
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(screen.queryByText(/Detalle sugerido · 2 de 6/)).not.toBeInTheDocument();
+    expect(screen.getByText("Detalle sugerido")).toBeInTheDocument();
   });
 
   it("shows the factory method while a factory guided session runs (S1)", () => {

@@ -46,6 +46,7 @@ from guided_character_protocol import (
     MethodologySnapshot,
     Outcome,
     SessionState,
+    TurnDecision,
     TypedMessage,
     should_record_author_input,
 )
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS guided_sessions (
     relation_goal TEXT NOT NULL DEFAULT '',
     confirmation_input TEXT NOT NULL DEFAULT '',
     mode TEXT NOT NULL,
+    turn_decision_json TEXT NOT NULL DEFAULT '',
     depth TEXT NOT NULL,
     path TEXT NOT NULL DEFAULT 'explore',
     skipped_fields_json TEXT NOT NULL DEFAULT '[]',
@@ -322,7 +324,12 @@ class GuidedSessionStore:
             self._in_process.add(session_id)
             return deepcopy(next_state)
 
-    def commit(self, request: GuidedRequest, response: GuidedResponse) -> SessionState | None:
+    def commit(
+        self,
+        request: GuidedRequest,
+        response: GuidedResponse,
+        decision: "TurnDecision | None" = None,
+    ) -> SessionState | None:
         with self._lock:
             row = self._read_row(request.session_id, request.authorization_binding)
             if row is None:
@@ -360,6 +367,9 @@ class GuidedSessionStore:
                 next_state.revision,
             ))
             next_state.pending_question = response.question
+            if decision is not None:
+                # S2: the decision the turn made, recorded with the turn itself.
+                next_state.turn_decision = decision
             if response.observations:
                 # Internal notes, never user-facing proposals.
                 next_state.candidate.observations.update(dict(response.observations))
@@ -469,6 +479,10 @@ class GuidedSessionStore:
             json.dumps(state.methodology_snapshot.as_dict(), separators=(",", ":"))
             if state.methodology_snapshot is not None else None
         )
+        decision_json = (
+            json.dumps(state.turn_decision.as_dict(), ensure_ascii=False, separators=(",", ":"))
+            if state.turn_decision is not None else ""
+        )
         if revalidation_required is None:
             current = self._conn.execute(
                 "SELECT revalidation_required FROM guided_sessions WHERE session_id = ?",
@@ -484,8 +498,9 @@ class GuidedSessionStore:
                 messages_json, pending_question, candidate_json,
                 reference_context, reference_name, relation_goal,
                 confirmation_input, mode, depth, path, skipped_fields_json,
-                methodology_snapshot_json, created_at, updated_at, revalidation_required
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                methodology_snapshot_json, turn_decision_json,
+                created_at, updated_at, revalidation_required
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 world = excluded.world,
                 phase = excluded.phase,
@@ -503,6 +518,7 @@ class GuidedSessionStore:
                 path = excluded.path,
                 skipped_fields_json = excluded.skipped_fields_json,
                 methodology_snapshot_json = excluded.methodology_snapshot_json,
+                turn_decision_json = excluded.turn_decision_json,
                 updated_at = excluded.updated_at,
                 revalidation_required = excluded.revalidation_required
             """,
@@ -512,7 +528,7 @@ class GuidedSessionStore:
                 candidate_json, state.reference_context, state.reference_name,
                 state.relation_goal, state.confirmation_input, state.mode,
                 state.depth, state.path, json.dumps(state.skipped_fields),
-                snapshot_json, now, now, flag,
+                snapshot_json, decision_json, now, now, flag,
             ),
         )
         self._conn.commit()
@@ -530,6 +546,10 @@ class GuidedSessionStore:
         if "skipped_fields_json" not in columns:
             self._conn.execute(
                 "ALTER TABLE guided_sessions ADD COLUMN skipped_fields_json TEXT NOT NULL DEFAULT '[]'",
+            )
+        if "turn_decision_json" not in columns:
+            self._conn.execute(
+                "ALTER TABLE guided_sessions ADD COLUMN turn_decision_json TEXT NOT NULL DEFAULT ''",
             )
 
     def set_path(
@@ -646,4 +666,7 @@ class GuidedSessionStore:
             path=row["path"],
             skipped_fields=json.loads(row["skipped_fields_json"] or "[]"),
             methodology_snapshot=self._deserialize_snapshot(row["methodology_snapshot_json"]),
+            turn_decision=TurnDecision.from_mapping(
+                json.loads(row["turn_decision_json"] or "{}")
+            ),
         )

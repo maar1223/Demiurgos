@@ -552,3 +552,165 @@ class _FakeGraph:
                 "content": "El vibrastal define su economía.",
             }
         return None
+
+
+class TestTurnDirective:
+    """S2/S3/S4: one decision per turn, recorded and rendered — never recomputed."""
+
+    @staticmethod
+    def _snapshot():
+        from api_server import GUIDED_CHARACTER_FLOW, builtin_profile
+        from guided_character_protocol import MethodologySnapshot
+
+        profile = builtin_profile(GUIDED_CHARACTER_FLOW)
+        assert profile is not None
+        return MethodologySnapshot(flow_type="guided-character", profile=profile.as_dict())
+
+    def _progress(self, key: str, label: str, index: int = 1, total: int = 21) -> dict:
+        return {
+            "nivel": "2º", "index": index, "total": total, "key": key, "label": label,
+            "hint": "Un sobrenombre que diga algo.", "examples": ["Dos Llaves"],
+            "optional": False, "covered": [], "skipped": [], "complete": False,
+        }
+
+    def _fields_request(self, revision: int, field_key: str, progress: dict, text="Hesia"):
+        return GuidedRequest(
+            PROTOCOL_VERSION, "req-1", "s-fields", "Vibrantes", revision, "auth", text,
+            guided_path="fields", field_key=field_key, field_progress=progress,
+        )
+
+    def _explore_request(self, revision: int, text="sigo"):
+        return GuidedRequest(
+            PROTOCOL_VERSION, "req-1", "s-explore", "Vibrantes", revision, "auth", text,
+        )
+
+    def test_a_field_question_turn_records_the_served_decision(self, tmp_path: Path) -> None:
+        import asyncio
+
+        from guided_character_protocol import continue_session
+
+        store = GuidedSessionStore(tmp_path / "g.sqlite3")
+        store.create(
+            "s-fields", "Vibrantes", "auth", path="fields",
+            methodology_snapshot=self._snapshot(),
+        )
+        progress = self._progress("apodo", "Apodo", index=2)
+
+        async def provider(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                "session_id": req.session_id, "outcome": "question",
+                "question": "¿Cómo le dicen en el mundo?",
+                "field_key": "apodo",
+                "observations": {"apodo": "Dos Llaves"},
+            }
+
+        response, state = asyncio.run(
+            continue_session(store, provider, self._fields_request(0, "apodo", progress), _capabilities())
+        )
+        assert state is not None and state.turn_decision is not None
+        decision = state.turn_decision
+        assert decision.kind == "field"
+        assert decision.field_key == "apodo"
+        assert decision.question == "¿Cómo le dicen en el mundo?"
+        assert decision.source == "provider"
+        assert decision.field_progress == progress
+        payload = api_server._guided_public_state(state)
+        assert payload["pending_question"] == decision.question
+        assert payload["field_progress"] == decision.field_progress
+
+    def test_provider_drift_keeps_the_extraction_and_serves_the_field_question(
+        self, tmp_path: Path,
+    ) -> None:
+        """S4: told Apodo, answered about Deseo => fallback question, same facts."""
+        import asyncio
+
+        from guided_character_protocol import continue_session
+
+        store = GuidedSessionStore(tmp_path / "g.sqlite3")
+        store.create(
+            "s-fields", "Vibrantes", "auth", path="fields",
+            methodology_snapshot=self._snapshot(),
+        )
+        progress = self._progress("apodo", "Apodo", index=2)
+
+        async def provider(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                "session_id": req.session_id, "outcome": "question",
+                "question": "¿Cuál es el deseo que define a este personaje?",
+                "field_key": "deseo",
+                "observations": {"apodo": "Dos Llaves"},
+            }
+
+        _response, state = asyncio.run(
+            continue_session(store, provider, self._fields_request(0, "apodo", progress), _capabilities())
+        )
+        assert state is not None and state.turn_decision is not None
+        assert state.turn_decision.source == "server"
+        assert "Apodo" in state.turn_decision.question
+        assert "Deseo" not in state.turn_decision.question
+        # The extraction survives: drifting never costs the author a fact.
+        assert state.candidate.observations["apodo"] == "Dos Llaves"
+
+    def test_missing_echo_counts_as_drift(self, tmp_path: Path) -> None:
+        import asyncio
+
+        from guided_character_protocol import continue_session
+
+        store = GuidedSessionStore(tmp_path / "g.sqlite3")
+        store.create(
+            "s-fields", "Vibrantes", "auth", path="fields",
+            methodology_snapshot=self._snapshot(),
+        )
+        progress = self._progress("edad", "Edad", index=3)
+
+        async def provider(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                "session_id": req.session_id, "outcome": "question",
+                "question": "¿Cuántos años tiene?",
+            }
+
+        _response, state = asyncio.run(
+            continue_session(store, provider, self._fields_request(0, "edad", progress), _capabilities())
+        )
+        assert state is not None and state.turn_decision is not None
+        assert state.turn_decision.source == "server"
+        assert "Edad" in state.turn_decision.question
+
+    def test_free_turn_records_no_field_and_no_field_progress(self, tmp_path: Path) -> None:
+        import asyncio
+
+        from guided_character_protocol import continue_session
+
+        store = GuidedSessionStore(tmp_path / "g.sqlite3")
+        store.create("s-explore", "Vibrantes", "auth")
+
+        async def provider(req, _token):
+            return {
+                "protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                "session_id": req.session_id, "outcome": "question",
+                "question": "¿Qué lo mueve?",
+            }
+
+        _response, state = asyncio.run(
+            continue_session(store, provider, self._explore_request(0), _capabilities())
+        )
+        assert state is not None and state.turn_decision is not None
+        assert state.turn_decision.kind == "free"
+        payload = api_server._guided_public_state(state)
+        assert "field_progress" not in payload
+        assert payload["pending_question"] == "¿Qué lo mueve?"
+
+    def test_legacy_session_without_a_decision_keeps_todays_derivation(self) -> None:
+        """M7: an existing row has no record; the payload still shows a cursor."""
+        candidate = CandidateState(observations={"nombre": "Hesia"})
+        state = SessionState(
+            "legacy", "Vibrantes", "conversation", 4, "auth",
+            candidate=candidate, path="fields", pending_question="¿Apodo?",
+            methodology_snapshot=self._snapshot(),
+        )
+        payload = api_server._guided_public_state(state)
+        assert payload["field_progress"]["key"] == "apodo"
+        assert payload["pending_question"] == "¿Apodo?"

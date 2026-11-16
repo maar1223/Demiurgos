@@ -8,6 +8,7 @@ authoritative seam that can later be replaced by the existing session persistenc
 from __future__ import annotations
 
 import asyncio
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -15,6 +16,8 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from guided_flow import GuidedFlowProfile
 
+
+logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "guided-character-v1"
 # Guided turns are full model runs; observed latencies (31s, p95 ~63s) exceed
@@ -117,6 +120,11 @@ class GuidedRequest:
     # The current field brief in the questionnaire path (label, what it
     # expects, examples). Empty outside that path.
     field_context: str = ""
+    # S2 (guided-turn-directive): the plan field this turn asks about, and the
+    # progress snapshot taken when the server decided it. The provider must echo
+    # the key; a different or missing echo becomes the server's fallback text.
+    field_key: str = ""
+    field_progress: Mapping[str, Any] | None = None
 
     def _oversized_fields(self) -> list[str]:
         """Names of the bounded fields that exceed ``context_budget``."""
@@ -213,6 +221,9 @@ class GuidedResponse:
     # ``intent`` marks the turn as non-committing so the cursor keeps its place.
     answer: str | None = None
     intent: str | None = None
+    # S4: the plan field the provider says it asked about. Compared with the
+    # request's key; a mismatch keeps the extraction and replaces the text.
+    field_key: str | None = None
 
     # Three short sentences, not six paragraphs: the public state renders this
     # block before the question, so a 2,000-char cap produced walls of text.
@@ -254,6 +265,9 @@ class GuidedResponse:
         intent = value.get("intent")
         if intent not in EXPLORE_INTENTS:
             intent = None
+        echoed_field = value.get("field_key")
+        if not isinstance(echoed_field, str):
+            echoed_field = None
         observations = value.get("observations")
         if observations is not None and not isinstance(observations, Mapping):
             return None
@@ -265,7 +279,8 @@ class GuidedResponse:
                    synthesis=synthesis,
                    observations=dict(observations) if isinstance(observations, Mapping) else None,
                    answer=answer,
-                   intent=intent)
+                   intent=intent,
+                   field_key=echoed_field)
 
 
 class MessageType(StrEnum):
@@ -334,6 +349,61 @@ class CandidateState:
     provenance: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class TurnDecision:
+    """The one decision a committed question turn made (S2).
+
+    Everything the author sees about "where we are" renders from this record:
+    the pending question, the field card and its progress. Every consumer reads
+    it; nobody recomputes the view a previous turn already decided.
+    """
+
+    kind: str
+    question: str
+    field_key: str | None = None
+    field_label: str | None = None
+    field_progress: Mapping[str, Any] | None = None
+    source: str = "server"
+    revision: int = 0
+    directive_version: int = 1
+
+    #: Kinds that carry a questionnaire cursor.
+    FIELD_KINDS = frozenset({"field", "complete"})
+    KINDS = frozenset({"path", "level", "field", "complete", "free"})
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "question": self.question,
+            "field_key": self.field_key,
+            "field_label": self.field_label,
+            "field_progress": dict(self.field_progress) if self.field_progress else None,
+            "source": self.source,
+            "revision": self.revision,
+            "directive_version": self.directive_version,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: Any) -> "TurnDecision | None":
+        if not isinstance(value, Mapping):
+            return None
+        kind = value.get("kind")
+        question = value.get("question")
+        if kind not in cls.KINDS or not isinstance(question, str) or not question.strip():
+            return None
+        progress = value.get("field_progress")
+        return cls(
+            kind=str(kind),
+            question=question,
+            field_key=str(value["field_key"]) if isinstance(value.get("field_key"), str) else None,
+            field_label=str(value["field_label"]) if isinstance(value.get("field_label"), str) else None,
+            field_progress=dict(progress) if isinstance(progress, Mapping) else None,
+            source=str(value.get("source") or "server"),
+            revision=int(value.get("revision") or 0),
+            directive_version=int(value.get("directive_version") or 1),
+        )
+
+
 @dataclass
 class SessionState:
     session_id: str
@@ -355,6 +425,9 @@ class SessionState:
     # Fields the author explicitly skipped in the questionnaire (revisitable).
     skipped_fields: list[str] = field(default_factory=list)
     methodology_snapshot: MethodologySnapshot | None = None
+    # S2: the decision the last committed question turn made. ``None`` for
+    # legacy rows; the public state then falls back to deriving the cursor.
+    turn_decision: TurnDecision | None = None
 
 
 def session_flow_profile(state: SessionState) -> GuidedFlowProfile | None:
@@ -539,7 +612,12 @@ class GuidedSessionStore:
         self._sessions[session_id] = next_state
         return deepcopy(next_state)
 
-    def commit(self, request: GuidedRequest, response: GuidedResponse) -> SessionState | None:
+    def commit(
+        self,
+        request: GuidedRequest,
+        response: GuidedResponse,
+        decision: "TurnDecision | None" = None,
+    ) -> SessionState | None:
         state = self._sessions.get(request.session_id)
         if not state or state.authorization_binding != request.authorization_binding or state.revision != request.base_revision:
             return None
@@ -562,6 +640,8 @@ class GuidedSessionStore:
             content, next_state.revision,
         ))
         next_state.pending_question = response.question
+        if decision is not None:
+            next_state.turn_decision = decision
         if response.observations:
             # Internal notes: never a public proposal, always available to the
             # gate and to the next provider run.
@@ -680,6 +760,51 @@ async def invoke_bounded(provider: Provider | Callable[..., Awaitable[object]], 
     return parsed
 
 
+def field_question_text(progress: Mapping[str, Any] | None) -> str:
+    """The deterministic question for a plan field (S4 fallback).
+
+    Used when the provider drifts from the field it was told to ask, and when a
+    delta is demoted on the fields path: the plan owns the question there.
+    """
+    progress = progress or {}
+    label = str(progress.get("label") or "").strip()
+    hint = str(progress.get("hint") or "").strip()
+    examples = [str(item).strip() for item in (progress.get("examples") or ()) if str(item).strip()]
+    parts: list[str] = []
+    if label:
+        parts.append(f"{label}.")
+    if hint:
+        parts.append(hint if hint.endswith(".") else f"{hint}.")
+    if examples:
+        parts.append("Ejemplos: " + " / ".join(examples) + ".")
+    return " ".join(parts).strip() or "Completemos este campo."
+
+
+def turn_decision_for(
+    request: GuidedRequest, response: GuidedResponse,
+) -> "TurnDecision | None":
+    """The decision a committed question turn records (S2)."""
+    if response.outcome is not Outcome.QUESTION or not response.question:
+        return None
+    revision = request.base_revision + 1
+    if request.guided_path == "fields" and request.field_key:
+        progress = dict(request.field_progress or {})
+        return TurnDecision(
+            kind="complete" if progress.get("complete") else "field",
+            question=response.question,
+            field_key=request.field_key,
+            field_label=str(progress.get("label") or "") or None,
+            field_progress=progress or None,
+            source=(
+                "server" if "guided:field-fallback" in response.provenance else "provider"
+            ),
+            revision=revision,
+        )
+    return TurnDecision(
+        kind="free", question=response.question, source="provider", revision=revision,
+    )
+
+
 async def continue_session(store: GuidedSessionStore, provider: Provider | Callable[..., Awaitable[object]],
                            request: GuidedRequest, capabilities: Capabilities | None,
                            cancellation: CancellationToken | None = None,
@@ -700,6 +825,31 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                                     convergence_specimen_markdown=convergence_specimen_markdown)
     if response.outcome in {Outcome.ERROR, Outcome.UNAVAILABLE}:
         return response, None
+    if (
+        request.guided_path == "fields" and request.field_key
+        and response.outcome is Outcome.QUESTION
+        and response.field_key != request.field_key
+    ):
+        # S4: the provider may not change the subject on the questionnaire. Its
+        # extraction still counts; only the question text is the server's.
+        logger.warning(
+            "guided provider drifted from the field it was told to ask "
+            "(asked=%s, request=%s, revision=%s)",
+            response.field_key, request.field_key, request.base_revision,
+        )
+        response = GuidedResponse(
+            PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
+            response.outcome,
+            provenance=(*response.provenance, "guided:field-fallback"),
+            question=field_question_text(request.field_progress),
+            provider_run_id=response.provider_run_id,
+            synthesis=response.synthesis,
+            answer=response.answer,
+            intent=response.intent,
+            field_key=request.field_key,
+            # The extraction is the author's data: drifting never costs a fact.
+            observations=response.observations,
+        )
     if response.intent == EXPLORE_INTENT and response.outcome is Outcome.QUESTION:
         # World exploration inside the questionnaire (S1/S3): the author asked
         # about the world instead of answering the current field. The turn
@@ -737,12 +887,17 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
             state.candidate, delta=response.delta, mode=request.guided_mode,
             groups=profile.minimum_groups if profile is not None else None,
         ):
-            question = next_required_question(
-                state.candidate, delta=response.delta,
-                groups=profile.minimum_groups if profile is not None else None,
-                question_keys=profile.question_keys if profile is not None else None,
-                ui_copy_key=profile.ui_copy_key if profile is not None else None,
-            )
+            if request.guided_path == "fields" and request.field_progress:
+                # S3: on the questionnaire the plan owns the next question; the
+                # anchor gate keeps only "can this become a proposal?".
+                question = field_question_text(request.field_progress)
+            else:
+                question = next_required_question(
+                    state.candidate, delta=response.delta,
+                    groups=profile.minimum_groups if profile is not None else None,
+                    question_keys=profile.question_keys if profile is not None else None,
+                    ui_copy_key=profile.ui_copy_key if profile is not None else None,
+                )
             # Demoting a delta must not throw the author's data away. The fields
             # move to the internal observations partition (read back into
             # known_state and into the gate, never a public proposal) and the
@@ -753,9 +908,15 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                 preserved.update(response.delta)
             response = GuidedResponse(
                 PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
-                Outcome.QUESTION, provenance=response.provenance, question=question,
+                Outcome.QUESTION,
+                provenance=(
+                    (*response.provenance, "guided:field-fallback")
+                    if request.guided_path == "fields" and request.field_progress
+                    else response.provenance
+                ),
+                question=question,
                 provider_run_id=response.provider_run_id,
                 synthesis=response.synthesis,
                 observations=preserved or None,
             )
-    return response, store.commit(request, response)
+    return response, store.commit(request, response, turn_decision_for(request, response))

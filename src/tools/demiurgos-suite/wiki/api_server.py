@@ -110,6 +110,7 @@ from guided_character_protocol import (
     PROTOCOL_VERSION,
     SessionState,
     StructuredError,
+    TurnDecision,
     continue_session,
     session_flow_profile,
 )
@@ -3489,16 +3490,52 @@ def _guided_public_state(state: SessionState) -> dict:
         payload["flow"] = flow
         payload["path"] = state.path
         if state.path == "fields" and flow.get("entity_type") == "personaje":
-            from guided_character_body import current_field
-            _, field_progress = current_field(state.candidate, state.skipped_fields)
-            payload["field_progress"] = field_progress
+            # S2: render the field the turn decided, never a fresh derivation —
+            # the cursor moves as the turn extracts facts, so recomputing here
+            # showed the NEXT field while the question was still the previous one.
+            decision = state.turn_decision
+            if decision is not None:
+                if (
+                    decision.kind in TurnDecision.FIELD_KINDS
+                    and decision.field_progress is not None
+                ):
+                    payload["field_progress"] = dict(decision.field_progress)
+            else:
+                # Legacy row written before the record existed (M7).
+                from guided_character_body import current_field
+                _, field_progress = current_field(state.candidate, state.skipped_fields)
+                payload["field_progress"] = field_progress
     if progress is not None:
         payload["detail_progress"] = progress
+    _check_turn_decision(state, payload)
     if target_preview is not None:
         payload["target_preview"] = target_preview
     if level_is_flow_owned:
         payload["target_level"] = target_level
     return payload
+
+
+def _check_turn_decision(state: SessionState, payload: Mapping[str, Any]) -> None:
+    """S8: a divergence is loud, never silently served.
+
+    Bounded and redacted: the kind and the revision only — never a prompt, never
+    a path. A mismatch means some consumer started recomputing a view the turn
+    already decided.
+    """
+    decision = state.turn_decision
+    if decision is None:
+        return
+    if payload.get("pending_question") != decision.question:
+        logger.warning(
+            "guided_turn_directive_mismatch pending_question kind=%s revision=%s",
+            decision.kind, decision.revision,
+        )
+    if decision.kind in TurnDecision.FIELD_KINDS and decision.field_progress is not None:
+        if payload.get("field_progress") != dict(decision.field_progress):
+            logger.warning(
+                "guided_turn_directive_mismatch field_progress kind=%s revision=%s",
+                decision.kind, decision.revision,
+            )
 
 
 def _public_flow(state: SessionState) -> dict | None:
@@ -3861,7 +3898,14 @@ async def _guided_continue(
                 Outcome.QUESTION, provenance=("guided:path-question",),
                 question=_path_question_copy(),
             )
-            next_state = _GUIDED_SESSIONS.commit(path_request, path_response)
+            next_state = _GUIDED_SESSIONS.commit(
+                path_request, path_response,
+                TurnDecision(
+                    kind="path",
+                    question=path_response.question or "",
+                    revision=path_response.base_revision + 1,
+                ),
+            )
             if next_state is None:
                 return _guided_error_response(StructuredError(
                     ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
@@ -3908,7 +3952,14 @@ async def _guided_continue(
                 Outcome.QUESTION, provenance=("guided:level-question",),
                 question=_level_question_copy(),
             )
-            next_state = _GUIDED_SESSIONS.commit(level_request, level_response)
+            next_state = _GUIDED_SESSIONS.commit(
+                level_request, level_response,
+                TurnDecision(
+                    kind="level",
+                    question=level_response.question or "",
+                    revision=level_response.base_revision + 1,
+                ),
+            )
             if next_state is None:
                 return _guided_error_response(StructuredError(
                     ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
@@ -3929,6 +3980,8 @@ async def _guided_continue(
     )
     guided_path = state.path if state is not None else "explore"
     field_context = ""
+    field_key = ""
+    field_progress: Mapping[str, Any] | None = None
     if (
         state is not None and guided_path == "fields"
         and flow_profile is not None and flow_profile.entity_type == "personaje"
@@ -3944,6 +3997,9 @@ async def _guided_continue(
                     state = skipped
         _, progress = current_field(state.candidate, state.skipped_fields)
         field_context = _field_brief(progress)
+        # S2/S4: the directive this turn records and asks the provider to serve.
+        field_key = str(progress.get("key") or "")
+        field_progress = progress
     request = _compose_guided_request(
         request_id=f"guided-{uuid.uuid4().hex}",
         session_id=session_id,
@@ -3962,6 +4018,8 @@ async def _guided_continue(
         flow_entity_type=flow_profile.entity_type if flow_profile is not None else "",
         guided_path=guided_path,
         field_context=field_context,
+        field_key=field_key,
+        field_progress=field_progress,
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
@@ -11114,6 +11172,8 @@ def _compose_guided_request(
     flow_entity_type: str = "",
     guided_path: str = "explore",
     field_context: str = "",
+    field_key: str = "",
+    field_progress: Mapping[str, Any] | None = None,
 ) -> GuidedRequest:
     """The ONE place that assembles a guided request.
 
@@ -11146,6 +11206,8 @@ def _compose_guided_request(
         flow_entity_type=flow_entity_type,
         guided_path=guided_path,
         field_context=_clamp_context_block(field_context),
+        field_key=field_key,
+        field_progress=field_progress,
     )
 
 

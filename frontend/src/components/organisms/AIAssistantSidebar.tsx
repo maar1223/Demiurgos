@@ -504,9 +504,16 @@ function ChatScreen({
   const guidedMethodName = guidedMethodology
     ? guidedMethodology.factory
       ? t("guided.methodFactory")
-      : guidedMethods.find(
-          (method) => method.skill_id === guidedMethodology.skill_id,
-        )?.name ?? guidedMethodology.skill_id ?? ""
+      : (() => {
+          const name =
+            guidedMethods.find(
+              (method) => method.skill_id === guidedMethodology.skill_id,
+            )?.name ?? guidedMethodology.skill_id ?? "";
+          // S6: the pin must be visible — activating a newer methodology
+          // otherwise looks like nothing happened.
+          const version = guidedMethodology.skill_version;
+          return version ? `${name} v${version}` : name;
+        })()
     : null;
 
   const consentFlowKey =
@@ -1078,12 +1085,14 @@ function ChatScreen({
            {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
               <p className="text-xs text-muted">
-                {activeSession?.guided?.detail_progress
-                  ? t("guided.suggestedDetailProgress", {
-                      index: activeSession.guided.detail_progress.index,
-                      total: activeSession.guided.detail_progress.total,
-                    })
-                  : t("assistant.proposal.title")}
+                {activeSession?.guided?.path === "fields"
+                  ? t("assistant.proposal.title")
+                  : activeSession?.guided?.detail_progress
+                    ? t("guided.suggestedDetailProgress", {
+                        index: activeSession.guided.detail_progress.index,
+                        total: activeSession.guided.detail_progress.total,
+                      })
+                    : t("assistant.proposal.title")}
               </p>
               <p className="mt-1">{visibleGuidedProposal.label}: {visibleGuidedProposal.value}</p>
               <div className="mt-3 flex gap-2">

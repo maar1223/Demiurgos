@@ -255,28 +255,26 @@ def test_questionnaire_cursor_ignores_placeholder_observations() -> None:
     answers.
     """
     candidate = CandidateState(
-        accepted_canon={"nivel": {"value": "2º"}},
         observations={
-            "nombre": "Hesia",
-            "rol_narrativo": "aún sin definir",
-            "deseo": "sin definir; el autor pide una recomendación",
+            "nombre": "Nara",
+            "apodo": "aún sin definir",
+            "edad": "sin definir; el autor pide una recomendación",
         },
     )
     field, progress = current_field(candidate)
-    assert field is not None and field.key == "rol_narrativo"
+    assert field is not None and field.key == "apodo"
     assert progress["index"] == 2
-    assert progress["total"] == len(questionnaire_fields("2º"))
+    assert progress["total"] == len(questionnaire_fields("1º"))
 
     # A real observation still advances the cursor: the field is answered.
     field, progress = current_field(CandidateState(
-        accepted_canon={"nivel": {"value": "2º"}},
         observations={
-            "nombre": "Hesia",
-            "rol_narrativo": "secundaria con peso propio en el arco de Ganic",
-            "deseo": "entender qué le pasa a Ganic",
+            "nombre": "Nara",
+            "apodo": "Dos Llaves",
+            "edad": "treinta y cuatro",
         },
     ))
-    assert field is not None and field.key == "edad"
+    assert field is not None and field.key == "raza"
     assert progress["index"] == 4
 
 
@@ -357,3 +355,14 @@ def test_generic_flows_keep_their_escaped_frontmatter_bytes() -> None:
     frontmatter = proposal.content.split("---\n", 2)[1]
     assert 'title: "T\\xEDtulo \\xD1"' in frontmatter
     assert "title: Título Ñ" not in frontmatter
+
+
+def test_settled_level_is_not_asked_again_as_rol_narrativo() -> None:
+    """S7: level 2º settles "Rol narrativo"; the plan moves to Deseo."""
+    candidate = CandidateState(
+        accepted_canon={"nivel": {"value": "2º"}},
+        observations={"nombre": "Hesia"},
+    )
+    field, progress = current_field(candidate)
+    assert field is not None and field.key == "deseo"
+    assert progress["index"] == 3

@@ -288,9 +288,12 @@ def current_field(
     known = _candidate_known_fields(candidate)
     skipped_set = {str(key) for key in skipped}
     fields = questionnaire_fields(nivel)
+    # S7: once the author settled the narrative level, the field that only
+    # restates it is not a question — asking it again re-asks a known fact.
+    nivel_settled = bool(str(known.get("nivel") or "").strip())
     covered: list[str] = []
     for index, field in enumerate(fields, start=1):
-        if field_value(field, known):
+        if field_value(field, known) or (nivel_settled and field.key == "rol_narrativo"):
             covered.append(field.key)
             continue
         if field.key in skipped_set:

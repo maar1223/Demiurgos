@@ -183,7 +183,10 @@ class HermesGuidedProvider:
         # (or the author says "saltar"/"siguiente"). Same conversational contract.
         field_instruction = (
             "Field-by-field mode: the author chose to complete the sheet field by "
-            f"field. {request.field_context} Ask exactly ONE question about the "
+            f"field. {request.field_context} The current field key is "
+            f"'{request.field_key}': echo it as \"field_key\" in the JSON. You may "
+            "not change the subject: the field order belongs to the server. "
+            "Ask exactly ONE question about the "
             "current field, with context and, when useful, one or two concrete "
             "examples. If the author's answer already settles it, include the "
             "field in 'delta' under the field key and stop asking about it. If the "
@@ -233,7 +236,8 @@ class HermesGuidedProvider:
             "For a question, return the fields question, synthesis, observations, options "
             "and allow_custom. "
             "A question envelope may also carry 'answer' and 'intent' = \"explore\" "
-            "when the author asked about the world instead of the current field. "
+            "when the author asked about the world instead of the current field, "
+            "and 'field_key' echoing the field you were told to ask. "
             "A delta envelope carries EXACTLY request_id, session_id, outcome, synthesis, "
             "observations and delta; it never carries question, options or allow_custom. "
             "'delta' is a flat object of candidate fields (for example nombre, deseo, "

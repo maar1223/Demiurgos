@@ -1052,10 +1052,11 @@ def test_start_accepts_the_field_by_field_path(monkeypatch, tmp_path) -> None:
     assert started.status_code == 200
     session = started.json()
     assert session["path"] == "fields"
-    progress = session["field_progress"]
-    assert progress["index"] == 1
-    assert progress["key"] == "nombre"
-    assert progress["complete"] is False
+    # S2/S3: the level card is the pending question here, so no field card is
+    # served yet — the two must never stack. The field card appears once a
+    # field question is the recorded decision.
+    assert session["pending_kind"] == "level"
+    assert "field_progress" not in session
 
     rejected = client.post("/api/vibrantes/guided-character/session", json={
         "author_input": "Create a character", "path": "bogus",

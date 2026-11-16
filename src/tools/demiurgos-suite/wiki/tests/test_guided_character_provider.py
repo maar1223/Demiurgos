@@ -238,6 +238,45 @@ def test_field_path_prompt_lets_the_author_explore_the_world() -> None:
     asyncio.run(scenario())
 
 
+def test_field_path_prompt_asks_the_provider_to_echo_the_field_key() -> None:
+    """S4: the provider may not change the subject; it echoes the field it served."""
+
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return f"run-{len(prompts)}"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "¿Cómo se ve?",
+                        "field_key": "apodo",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        base = guided_request().__dict__
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{
+                **base, "flow_entity_type": "personaje", "guided_path": "fields",
+                "field_context": "Current field: Apodo (2 of 36).", "field_key": "apodo",
+            }),
+            capabilities,
+        )
+        assert "field_key" in prompts[0]
+        assert "'apodo'" in prompts[0]
+        assert "may not change the subject" in prompts[0]
+
+    asyncio.run(scenario())
+
+
 def test_provider_prompt_follows_configured_language_without_relaxing_constraints(monkeypatch) -> None:
     async def scenario() -> None:
         prompts: list[str] = []
