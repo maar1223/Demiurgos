@@ -1510,11 +1510,11 @@ class TestFoundationalSeedV12Channels:
         report = install_seeds(library, seed_root)
         assert report.installed == 4 and report.conflict == 0
         assert [v["version"] for v in
-                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.3"]
-        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.3")
-        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.3")
-        assert library.active_for("Vibrantes").version == "1.3"
-        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.3"]
+                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.4"]
+        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.4")
+        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.4")
+        assert library.active_for("Vibrantes").version == "1.4"
+        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.4"]
 
 
 class TestNativeChannelFlag:

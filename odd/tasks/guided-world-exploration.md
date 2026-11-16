@@ -55,3 +55,29 @@ Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `.v
   commits the answer and `mundo` only: no proposal, no canon beyond `nivel`, no
   questionnaire movement.
 
+
+## Decision (methodology, 2026-11-15)
+
+- **L5 (Owner, verbatim):** "dice que jamas formularios porque pensé que era lo
+  correcto para todos los casos, pero puede que para personajes no lo sea asi."
+- **L6 (Owner, verbatim):** "si, adelante, me parecen bien tus recomendaciones".
+- **What changed:** `data/methodology/seeds/narrative-character-creation`
+  principle 3 is now scoped instead of absolute: one question at a time and
+  never a dump of fields; when the artifact has a known fixed shape (the
+  character sheet) its field sequence may be the spine, with exploration inside
+  each field and an explicit skip. The 40/60 section says the same. The manifest
+  description drops "(diálogo, no cuestionario)".
+- **Why a version bump:** the seed bytes are pinned by `checksums.json` and by
+  the canonical compiled digest in tests; 1.3 is already published in the
+  library, so editing it in place would create same-version-different-bytes. The
+  seed is now **1.4**, canonical digest `dff3b2ef…` (was `b484b581…`).
+- **Pins updated (deliberate, one per value):** `checksums.json`,
+  `test_methodology_seed.py` (version + digest locks),
+  `test_methodology_compiler.py` (digest), `test_methodology_library.py`
+  (published/active 1.4), `test_guided_character_api.py` and `test_api_server.py`
+  (activation fixtures).
+- **Not done here:** publishing/activating 1.4 is the Owner's decision. The
+  installed library still has 1.3 published and 1.2 active, so the running model
+  reads the old rule until 1.4 is published and activated.
+- **Evidence:** full wiki suite `5169 passed / 26 skipped`, root `tests/` 34
+  passed.

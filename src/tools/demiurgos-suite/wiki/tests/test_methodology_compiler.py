@@ -464,7 +464,7 @@ class TestAdjuntosDigestExclusion:
         assert base.compiled.digest == with_adjuntos.compiled.digest
 
     def test_seed_canonical_digest_is_unchanged_with_adjuntos(self) -> None:
-        """Regression pin: ``narrative-character-creation@1.3`` stays ``b484b581…``."""
+        """Regression pin: ``narrative-character-creation@1.4`` stays ``dff3b2ef…``."""
         seed_dir = (
             REPO_ROOT / "data" / "methodology" / "seeds"
             / "narrative-character-creation"
@@ -477,7 +477,7 @@ class TestAdjuntosDigestExclusion:
             dict(manifest, adjuntos=[_valid_adjunto()]), source,
         )
         assert plain.compiled is not None and with_adjuntos.compiled is not None
-        assert plain.compiled.digest == "b484b5810722bac198aff0a9174020a2fce32c79b7faddf7b086aea6b4faac82"
+        assert plain.compiled.digest == "dff3b2ef254fc51cd9e30977332358ddbfc5ebce9011c7149da107f2c021a0ee"
         assert with_adjuntos.compiled.digest == plain.compiled.digest
 
 
