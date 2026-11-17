@@ -7,7 +7,9 @@ classes:
   answer:
     opens_state_machine: false
     legal_next: reply
-    notes: An offer may be appended AFTER the reply; it never replaces it.
+    notes: >-
+      An offer may be appended AFTER the reply; it never replaces it. Statements
+      about the author's own world are answers, not unknown.
   start_flow:
     opens_state_machine: true
     legal_next: open_imperative | consent_suggestion
@@ -39,9 +41,11 @@ decision_rules:
     class: answer
     rationale: Uncertainty wins over volition; the author is thinking aloud.
   - id: 2
-    match: question_or_request_for_input
+    match: question_request_or_author_statement
     class: answer
-    rationale: A question wins over a command.
+    rationale: >-
+      Questions, requests for input, and statements about the author's own
+      material are conversation; none of them commands anything.
   - id: 3
     match: change_verb_on_existing_target
     class: edit
@@ -53,8 +57,11 @@ decision_rules:
     class: start_flow
     rationale: No uncertainty and no request for input.
   - id: 6
-    match: otherwise
+    match: unresolvable_action_request
     class: unknown
+    rationale: >-
+      An imperative or volition whose class or target cannot be determined asks
+      exactly one question; it never opens a flow.
 
 tie_breakers:
   - question_beats_command

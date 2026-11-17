@@ -22,7 +22,8 @@ decidirse. El turno 4 es la aceptación.
 - **Class:** `answer`
 - **Offer expected:** no
 - **Must not:** open a guided session
-- **Why:** rule 2 is absent and rule 5 does not apply — no request, no volition
+- **Why:** rule 2 — a statement about the author's own material; no request and
+  no volition
 
 ## Turn 2 — author
 > El problema es que todos mis nobles suenan iguales cuando hablan.

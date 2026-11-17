@@ -23,11 +23,11 @@ Corpus location: `src/tools/demiurgos-suite/wiki/tests/fixtures/intent-corpus/`.
   Flow-step turns (`path`, `level`, `confirm`, `reject`) are **not** in this taxonomy: they belong to the flow contract and are labeled `flow_step`.
 - **S5 Labels come from the contract, never from a model.** The expected class is derived by this ordered procedure, and a label change must cite the rule it amends in the Log:
   1. Explicit uncertainty ("no sé si", "quizás", "todavía no", "estoy pensando") → `answer`, even when volition plus a creation verb are present.
-  2. Question or request for opinion, ideas or explanation → `answer`.
+  2. Question, request for opinion, ideas or explanation, **or a statement about the author's own material** → `answer`. Sharing the world is conversation, not an ambiguous command.
   3. Explicit change verb on an existing target → `edit`.
   4. Explicit skill or method activation → `activate_skill`.
   5. Explicit command or first-person volition, with no uncertainty and no request for input → `start_flow`.
-  6. Otherwise → `unknown`.
+  6. An imperative or volition whose class or target cannot be determined → `unknown`, reply plus exactly one question. A bare "hacelo" never opens a flow.
 
   Tie-breakers: a question wins over a command; uncertainty wins over volition; mentioning a capability is never activation.
 - **S6 Coverage matrix.** The corpus is crossed, not just enumerated: 5 profiles × 5 classes × 3 registers (terse / verbose / ambiguous), expanded to 180–240 author turns by adding four dimensions — language (neutral Spanish, Rioplatense, English, non-native Spanish), turn depth (first message vs turn 4 of an ongoing conversation), medium (with attachment vs without), and named reference (with vs without). Negatives dominate: the expensive error is a false open.
@@ -39,9 +39,9 @@ Corpus location: `src/tools/demiurgos-suite/wiki/tests/fixtures/intent-corpus/`.
 
 ## Tasks
 
-- [ ] T1 branch, feature document, Engram mirror, `labels.yaml`, corpus README and profile 01 as the format exemplar (S1, S3, S4, S5). Route: inline.
-- [ ] T2 deterministic parse/schema test: frontmatter, closed classes, opening turns name a target, no `flow_step` in opening positions (S4, S9).
-- [ ] T3 profiles 02–05 with their conversations (S1, S5, S6, S7). Route: parallel writers, one per profile directory (disjoint surfaces).
+- [x] T1 branch, feature document, Engram mirror, `labels.yaml`, corpus README and profile 01 as the format exemplar (S1, S3, S4, S5). Route: inline. Commit: `8bd7039`. Evidence: five-class taxonomy + decision rules in `labels.yaml`; profile 01 with three conversations covering consult, command and multi-turn drift; `offer` demoted from class to presentation expectation (L5).
+- [x] T2 deterministic parse/schema test: frontmatter, closed classes, opening turns name a target, no `flow_step` in opening positions (S4, S9). Route: inline. Evidence: `tests/test_intent_corpus.py` — 6 tests over the closed taxonomy, card shape, conversation dimensions, per-turn contract, flow-step ordering and the coverage matrix; multi-line bullet values are read in full so wrapping cannot truncate an assertion.
+- [x] T3 profiles 02–05 with their conversations (S1, S5, S6, S7). Route: parallel writers, one per profile directory (disjoint surfaces). Evidence: 4 writer deliverables accepted after a surface check (only their own directory changed); corpus is 5 profiles / 40 author turns / 31 non-opening; classes `answer` 27, `start_flow` 6, `flow_step` 3, `edit` 2, `activate_skill` 1, `unknown` 1; 5 genre families. Corpus test 6 passed; wiki collection 5213 tests, 0 errors.
 - [ ] T4 dimension expansion to 180–240 turns (S6). Route: inline over the existing profiles.
 - [ ] T5 live runner + report generator writing `odd/evidence/intent-corpus/` (S9).
 - [ ] T6 first baseline report, second-wave selection and entry-rule evidence (S2, S6).
@@ -54,3 +54,4 @@ Corpus location: `src/tools/demiurgos-suite/wiki/tests/fixtures/intent-corpus/`.
 - **L3 (Owner authorization + requirement, verbatim):** "si vamos asi. esas simulaciones donde quedarán guardadas? puedo ver esas conversaciones luego en algun lugar a ver como las plantearon los diferentes perfiles? será demasiado interesante poder ver como se desembolvieron esos usuarios hipoteticos". Storage and visibility settled in S3.
 - **L4 (design evidence, 2026-11-17):** the reported screenshot was an auto-open, not a consent card: `route_new_character_intent("...para crear un personaje bien hecho?...", allow_descriptive_seed=False)` returns `True` for the exact utterance, and on an `allow`/`clarify` decision `_guided_open_profile` widens it into a guided session, so the path question (`pending_kind="path"`) replaces the answer entirely.
 - **L5 (label refinement, 2026-11-17):** `offer` stops being a class and becomes a presentation expectation (`offer_expected`), because it shares the same opening behavior as `answer` and would have split one legal transition across two columns. The taxonomy keeps five classes; the parse test asserts the closed set.
+- **L6 (contract gap found by the corpus, 2026-11-17):** two writers independently hit the same collision. Rules as first written sent a bare statement about the author's world ("estoy armando el mapa político…") to `unknown`, which would have made every sharing turn ask a clarifying question. Rules 2 and 6 are now explicit: a statement about the author's own material is `answer`, and `unknown` is reserved for an imperative or volition whose class or target cannot be determined ("hacelo"), which is exactly the case `_guided_open_profile` must never widen into a character sheet.
