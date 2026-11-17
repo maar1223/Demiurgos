@@ -279,3 +279,72 @@ def test_dimension_coverage() -> None:
         if _bare(_field(turn["block"], "Class") or "") != FLOW_STEP
     )
     assert decisions >= 180, f"the corpus has {decisions} opening decisions; S6 targets 180-240"
+
+
+# ---------------------------------------------------------------------------
+# Runner harness (T5): the simulated pass validates the measurement, not the
+# model. Live evaluation is opt-in and never runs here.
+# ---------------------------------------------------------------------------
+
+
+def _runner():
+    import intent_corpus_runner  # noqa: PLC0415
+
+    return intent_corpus_runner
+
+
+def test_runner_agrees_with_the_contract_parser() -> None:
+    runner = _runner()
+    mine = {
+        _frontmatter(path.read_text(encoding="utf-8"), path.name)[0]["id"]: len(turns)
+        for path, _front, turns in _conversations()
+    }
+    theirs = {
+        conversation.id: len(conversation.turns)
+        for conversation in runner.load_corpus()
+    }
+    assert mine == theirs
+
+
+def test_runner_self_consistency_is_perfect() -> None:
+    import asyncio  # noqa: PLC0415
+
+    runner = _runner()
+    report = asyncio.run(runner.evaluate(runner.simulated_decider, runner.load_corpus(), "simulated"))
+
+    assert len(report.decisions) == 182
+    assert report.false_opens == []
+    assert report.false_closes == []
+    assert report.unavailable == []
+    assert report.expected_no_open > 0 and report.expected_open_scored > 0
+
+
+def test_runner_counts_a_false_open() -> None:
+    """A decider that always opens must show every negative as a false-open."""
+    import asyncio  # noqa: PLC0415
+
+    runner = _runner()
+
+    async def always_open(_conversation, turn):
+        return runner.Decision(True, "start_flow", raw="always-open")
+
+    report = asyncio.run(runner.evaluate(always_open, runner.load_corpus(), "negative-control"))
+
+    assert len(report.false_opens) == report.expected_no_open
+    assert report.false_opens, "the negative control must produce false opens"
+    assert report.false_closes == []
+
+
+def test_report_renders_both_rates() -> None:
+    import asyncio  # noqa: PLC0415
+
+    runner = _runner()
+    report = asyncio.run(
+        runner.evaluate(runner.simulated_decider, runner.load_corpus()[:1], "simulated")
+    )
+    rendered = runner.render_report(report)
+
+    assert "false-open" in rendered
+    assert "false-close" in rendered
+    assert "Not measured at the gate" in rendered
+    assert "accuracy" not in rendered.lower()
