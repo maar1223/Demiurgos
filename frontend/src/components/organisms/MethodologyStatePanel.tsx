@@ -25,6 +25,29 @@ const SCOPE_TERM_KEY =
     Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? ""
   ];
 
+/** Numeric version rank: "1.4" and "1.4.0" compare equal; a prerelease tail is
+ *  ignored on purpose (the library publishes plain versions). */
+function versionRank(version: string): number[] {
+  return version
+    .split(/[.-]/)
+    .map((part) => Number.parseInt(part, 10))
+    .map((value) => (Number.isFinite(value) ? value : 0));
+}
+
+/** Descending comparison, so the newest version sorts first. */
+function compareVersions(a: string, b: string): number {
+  const left = versionRank(a);
+  const right = versionRank(b);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (right[index] ?? 0) - (left[index] ?? 0);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
 interface MethodologySelection {
   skill_id: string;
   version: string;
@@ -102,6 +125,10 @@ export function MethodologyStatePanel({
   /** Trigger description fold state (UX): the approval badge stays visible
    *  while the (potentially long) description can be collapsed. */
   const [triggerOpen, setTriggerOpen] = useState(true);
+  /** Version disclosure: newest + active + in-view stay visible; the rest fold
+   *  behind "Ver versiones anteriores". Declared with the other hooks because
+   *  the empty state returns before the derived values exist. */
+  const [showAllVersions, setShowAllVersions] = useState(false);
 
   if (!selected) {
     return (
@@ -118,8 +145,10 @@ export function MethodologyStatePanel({
       item.skill_id === selected.skill_id && item.version === selected.version,
   );
   /** Every published version of this skill (SC-SB-4: "versions filtered by
-   *  skill_id"). */
-  const versions = published.filter((item) => item.skill_id === selected.skill_id);
+   *  skill_id"), newest first. */
+  const versions = published
+    .filter((item) => item.skill_id === selected.skill_id)
+    .sort((a, b) => compareVersions(a.version, b.version));
 
   /** Action payload: the selected published entry as an inventory item.
    *  `clasificacion`/`trust_attributes` default when the published record
@@ -183,6 +212,21 @@ export function MethodologyStatePanel({
       ? activeActivation.version
       : null;
   const isActiveVersion = activeVersion === selected.version;
+  /** The rule the Owner asked for: always show the newest, keep the active and
+   *  the one in view (they can be older), and collapse the rest behind a
+   *  disclosure. Nothing is hidden that carries a badge. */
+  const latestVersion = versions[0]?.version ?? null;
+  const alwaysVisible = new Set(
+    [latestVersion, activeVersion, selected.version].filter(
+      (version): version is string => Boolean(version),
+    ),
+  );
+  const hiddenVersions = versions.filter(
+    (version) => !alwaysVisible.has(version.version),
+  );
+  const visibleVersions = showAllVersions ? versions : versions.filter(
+    (version) => alwaysVisible.has(version.version),
+  );
 
   /** Wraps the download so a rejection surfaces the inline alert instead of
    *  failing silently (REQ-IMP-1). */
@@ -225,7 +269,7 @@ export function MethodologyStatePanel({
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
-            {versions.map((version) => {
+            {visibleVersions.map((version) => {
               const isCurrent = version.version === selected.version;
               const isActive = version.version === activeVersion;
               return (
@@ -258,6 +302,19 @@ export function MethodologyStatePanel({
               );
             })}
           </ul>
+        )}
+        {hiddenVersions.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAllVersions((current) => !current)}
+            className="mt-2 cursor-pointer text-small text-action underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+          >
+            {showAllVersions
+              ? t("methodology.state.hideOlder")
+              : t("methodology.state.showOlder", {
+                  count: hiddenVersions.length,
+                })}
+          </button>
         )}
       </div>
 

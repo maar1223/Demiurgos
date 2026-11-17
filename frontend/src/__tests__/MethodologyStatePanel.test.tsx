@@ -576,3 +576,87 @@ describe("MethodologyStatePanel guided-flow activation (S6)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("MethodologyStatePanel version collapse (Owner rule)", () => {
+  /** Five character versions: the newest (1.4) and the active (1.2) must always
+   *  show; everything else collapses behind a disclosure. */
+  const fiveVersions: MethodologyStatus = {
+    published: ["1.0", "1.1", "1.2", "1.3", "1.4"].map((version) => ({
+      skill_id: "narrative-character-creation",
+      version,
+      name: "Creación de Personajes",
+      description: "",
+      digest: `d-${version}`,
+      published_at: "2026-01-01",
+    })),
+    activations: {
+      Vibrantes: {
+        world: "Vibrantes",
+        skill_id: "narrative-character-creation",
+        version: "1.2",
+        digest: "d-1.2",
+        activated_at: "2026-01-02",
+      },
+    },
+    drafts: [],
+  };
+
+  const renderFive = (version: string) =>
+    renderPanel({
+      status: fiveVersions,
+      world: "Vibrantes",
+      selected: { skill_id: "narrative-character-creation", version },
+    });
+
+  it("shows the newest plus the active one and collapses the rest", () => {
+    renderFive("1.4");
+
+    expect(screen.getByText("v1.4")).toBeInTheDocument();
+    expect(screen.getByText("v1.2")).toBeInTheDocument();
+    expect(screen.queryByText("v1.3")).not.toBeInTheDocument();
+    expect(screen.queryByText("v1.1")).not.toBeInTheDocument();
+    expect(screen.queryByText("v1.0")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Ver versiones anteriores (3)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the version in view visible even when it is old", () => {
+    renderFive("1.3");
+
+    expect(screen.getByText("v1.4")).toBeInTheDocument();
+    expect(screen.getByText("v1.3")).toBeInTheDocument();
+    expect(screen.getByText("v1.2")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Ver versiones anteriores (2)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reveals and hides the older versions", () => {
+    renderFive("1.4");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ver versiones anteriores (3)" }),
+    );
+    for (const version of ["v1.0", "v1.1", "v1.2", "v1.3", "v1.4"]) {
+      expect(screen.getByText(version)).toBeInTheDocument();
+    }
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ocultar versiones anteriores" }),
+    );
+    expect(screen.queryByText("v1.0")).not.toBeInTheDocument();
+  });
+
+  it("sorts newest first", () => {
+    renderFive("1.4");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ver versiones anteriores (3)" }),
+    );
+
+    const labels = screen
+      .getAllByText(/^v1\.\d$/)
+      .map((node) => node.textContent);
+    expect(labels).toEqual(["v1.4", "v1.3", "v1.2", "v1.1", "v1.0"]);
+  });
+});

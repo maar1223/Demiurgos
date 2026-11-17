@@ -968,6 +968,8 @@ export const messages = {
     "methodology.state.selected": "En vista",
     "methodology.state.active": "Activa",
     "methodology.state.activeVersion": "Activa: v{version}",
+    "methodology.state.showOlder": "Ver versiones anteriores ({count})",
+    "methodology.state.hideOlder": "Ocultar versiones anteriores",
     "methodology.action.activateFlow": "Usar en el flujo guiado",
     "methodology.action.activateFlowTitle":
       "Fija esta versión para las sesiones guiadas nuevas de este mundo",
@@ -3333,6 +3335,8 @@ export const messages = {
     "methodology.state.selected": "In view",
     "methodology.state.active": "Active",
     "methodology.state.activeVersion": "Active: v{version}",
+    "methodology.state.showOlder": "Show older versions ({count})",
+    "methodology.state.hideOlder": "Hide older versions",
     "methodology.action.activateFlow": "Use in the guided flow",
     "methodology.action.activateFlowTitle":
       "Pin this version for this world's new guided sessions",
