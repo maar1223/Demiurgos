@@ -235,14 +235,47 @@ def test_coverage_matrix() -> None:
         assert any(not offer for offer in offers), f"{profile}: needs an answer without an offer"
         assert any(name in OPENING for name in names), f"{profile}: needs an opening turn"
 
-    # Negatives dominate: the expensive error is a false open.
-    total = sum(len(turns) for turns in per_profile.values())
-    openings = sum(
-        1
+    # Negatives dominate: the expensive error is a false open. Flow steps are
+    # not opening decisions, so they never count on either side of the ratio.
+    decisions = [
+        turn
         for turns in per_profile.values()
         for turn in turns
-        if turn["class"] in OPENING
-    )
+        if turn["class"] != FLOW_STEP
+    ]
+    total = len(decisions)
+    openings = sum(1 for turn in decisions if turn["class"] in OPENING)
     assert openings * 2 <= total, (
         f"opening turns are {openings}/{total}; the corpus must stay negative-heavy"
     )
+
+
+def test_dimension_coverage() -> None:
+    """S6: the matrix is crossed by dimensions, not just enumerated by persona."""
+    conversations = _conversations()
+    languages = {front["language"] for _, front, _ in conversations}
+    attachments = {front["attachment"] for _, front, _ in conversations}
+    references = {front["reference"] for _, front, _ in conversations}
+    depths = {front["depth"] for _, front, _ in conversations}
+    registers = {front["register"] for _, front, _ in conversations}
+
+    assert "en" in languages, "the corpus needs English utterances"
+    assert "es-non-native" in languages, "the corpus needs non-native Spanish"
+    assert "present" in attachments, "the corpus needs turns carrying an attachment"
+    assert "named" in references, "the corpus needs turns naming an existing entity"
+    assert "ongoing" in depths, "the corpus needs ongoing conversations"
+    assert "ambiguous" in registers, "the corpus needs an ambiguous register"
+
+    per_profile: dict[str, int] = {}
+    for path, front, _ in conversations:
+        per_profile[front["profile"]] = per_profile.get(front["profile"], 0) + 1
+    for profile, count in per_profile.items():
+        assert count >= 8, f"{profile}: wave 2 needs at least 8 conversations, got {count}"
+
+    decisions = sum(
+        1
+        for _, _, turns in conversations
+        for turn in turns
+        if _bare(_field(turn["block"], "Class") or "") != FLOW_STEP
+    )
+    assert decisions >= 180, f"the corpus has {decisions} opening decisions; S6 targets 180-240"
