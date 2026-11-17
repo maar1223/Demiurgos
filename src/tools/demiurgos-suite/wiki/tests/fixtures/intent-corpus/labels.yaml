@@ -1,0 +1,62 @@
+version: 1
+
+# Closed set of opening classes (S4). Only opening classes may start a flow,
+# a skill activation or an edit, and only after consent — an explicit
+# imperative is the single documented exception for start_flow.
+classes:
+  answer:
+    opens_state_machine: false
+    legal_next: reply
+    notes: An offer may be appended AFTER the reply; it never replaces it.
+  start_flow:
+    opens_state_machine: true
+    legal_next: open_imperative | consent_suggestion
+    requires_target: flow_id
+  activate_skill:
+    opens_state_machine: true
+    legal_next: explicit_confirmation
+    requires_target: skill_id
+  edit:
+    opens_state_machine: true
+    legal_next: proposal_then_confirmation
+    requires_target: entity_or_file
+  unknown:
+    opens_state_machine: false
+    legal_next: reply_plus_one_question
+
+# Turns inside an already-open flow are owned by the flow contract and are
+# never classified by this taxonomy.
+flow_step:
+  opens_state_machine: false
+  classified_by: guided_flow_contract
+  examples: [path, level, confirm, reject]
+
+# Ordered decision procedure (S5). First match wins.
+decision_rules:
+  - id: 1
+    match: explicit_uncertainty
+    markers: ["no sé si", "quizás", "quizas", "todavía no", "todavia no", "estoy pensando"]
+    class: answer
+    rationale: Uncertainty wins over volition; the author is thinking aloud.
+  - id: 2
+    match: question_or_request_for_input
+    class: answer
+    rationale: A question wins over a command.
+  - id: 3
+    match: change_verb_on_existing_target
+    class: edit
+  - id: 4
+    match: explicit_skill_or_method_activation
+    class: activate_skill
+  - id: 5
+    match: explicit_command_or_first_person_volition
+    class: start_flow
+    rationale: No uncertainty and no request for input.
+  - id: 6
+    match: otherwise
+    class: unknown
+
+tie_breakers:
+  - question_beats_command
+  - uncertainty_beats_volition
+  - mentioning_a_capability_is_not_activation
