@@ -53,6 +53,10 @@ interface MethodologyStatePanelProps {
   /** Chat toggle, page-owned (refetches status). `on` adds the selected
    *  version to the world's chat; false removes the skill from it. */
   onToggleCompanion?: (skillId: string, version: string, on: boolean) => void;
+  /** Guided-flow activation, page-owned (refetches status). This is the pin
+   *  the guided sessions read — NOT the chat companion and NOT the row you are
+   *  viewing. Omitted only where the caller cannot pin (e.g. ideas-global). */
+  onActivate?: (skillId: string, version: string) => void;
   /** World whose first-activation latency notice is active (R-UI notice). */
   latencyNoticeWorld?: string | null;
   /** Request in flight — disables the chat actions. */
@@ -85,6 +89,7 @@ export function MethodologyStatePanel({
   onExportar,
   onSelect,
   onToggleCompanion,
+  onActivate,
   latencyNoticeWorld,
   busy = false,
   compareSelection,
@@ -168,6 +173,16 @@ export function MethodologyStatePanel({
   /** ideas-global is the assistant's null-mundo context, NOT a workshop
    *  world: it never gets a chat block (the companion routes 404 it). */
   const isIdeasGlobal = world === GLOBAL_ASSISTANT_CONTEXT;
+  /** The version the guided flow actually runs in this world. The version
+   *  badge used to read "Seleccionada" for the row being VIEWED, which is a
+   *  different thing and made "1.4 is selected" look like "1.4 is active"
+   *  (2026-11-17: 1.4 was never activated and nobody could do it). */
+  const activeActivation = world ? status?.activations?.[world] ?? null : null;
+  const activeVersion =
+    activeActivation && activeActivation.skill_id === selected.skill_id
+      ? activeActivation.version
+      : null;
+  const isActiveVersion = activeVersion === selected.version;
 
   /** Wraps the download so a rejection surfaces the inline alert instead of
    *  failing silently (REQ-IMP-1). */
@@ -197,6 +212,11 @@ export function MethodologyStatePanel({
         <h3 className="font-heading text-small font-semibold text-primary">
           {t("methodology.state.versions")}
         </h3>
+        {activeVersion && (
+          <p className="mt-1 text-small text-muted">
+            {t("methodology.state.activeVersion", { version: activeVersion })}
+          </p>
+        )}
         {versions.length === 0 ? (
           <p className="mt-2 text-small text-muted">
             {t("methodology.state.noVersions", {
@@ -207,6 +227,7 @@ export function MethodologyStatePanel({
           <ul className="mt-3 space-y-2">
             {versions.map((version) => {
               const isCurrent = version.version === selected.version;
+              const isActive = version.version === activeVersion;
               return (
                 <li key={version.version}>
                   <button
@@ -222,6 +243,11 @@ export function MethodologyStatePanel({
                     <span className="font-medium text-primary">
                       v{version.version}
                     </span>
+                    {isActive && (
+                      <Badge variant="success">
+                        {t("methodology.state.active")}
+                      </Badge>
+                    )}
                     {isCurrent && (
                       <Badge variant="info">
                         {t("methodology.state.selected")}
@@ -356,14 +382,27 @@ export function MethodologyStatePanel({
         </h3>
         <div className="mt-3 flex flex-wrap gap-2">
           {isMiMundo ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => onAdaptar(item)}
-              title={t("methodology.state.adaptTitle")}
-            >
-              {t("methodology.state.adapt")}
-            </Button>
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onAdaptar(item)}
+                title={t("methodology.state.adaptTitle")}
+              >
+                {t("methodology.state.adapt")}
+              </Button>
+              {onActivate !== undefined && Boolean(world) && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={!world || busy || isActiveVersion}
+                  onClick={() => onActivate(selected.skill_id, selected.version)}
+                  title={t("methodology.action.activateFlowTitle")}
+                >
+                  {t("methodology.action.activateFlow")}
+                </Button>
+              )}
+            </>
           ) : (
             <>
               <Button

@@ -17,6 +17,7 @@ import { EditorLayout } from "@/components/templates/EditorLayout";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import {
+  activateMethodology,
   activateCompanion,
   deactivateCompanion,
   exportPublished,
@@ -178,6 +179,28 @@ export default function ToolWorkshop() {
     [world, status, loadStatus],
   );
 
+  /** Guided-flow activation (S6): the control that was missing. It pins the
+   *  selected version for this world and refetches the shared status, so the
+   *  "Activa" badge and the panel never guess. */
+  const handleActivate = useCallback(
+    async (skillId: string, version: string) => {
+      if (!world) {
+        return;
+      }
+      setBusy(true);
+      setStatusErrorKey(null);
+      try {
+        await activateMethodology(world, skillId, version);
+        await loadStatus();
+      } catch {
+        setStatusErrorKey("toolworkshop.status.activateError");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [world, loadStatus],
+  );
+
   /** Catalogo "Comparar" (SC-SB-4.2): toggles the selected item in the
    *  compare selection shared with the catalog sidebar (REQ-LIB-7 caps at
    *  two, replacing the oldest on a third selection). */
@@ -316,6 +339,9 @@ export default function ToolWorkshop() {
               onSelect={setSelected}
               onToggleCompanion={(skillId, version, on) =>
                 void handleToggleCompanion(skillId, version, on)
+              }
+              onActivate={(skillId, version) =>
+                void handleActivate(skillId, version)
               }
               latencyNoticeWorld={latencyNoticeWorld}
               onAdaptar={(item) => void handleAdaptar(item)}

@@ -108,6 +108,7 @@ function renderPanel(
     onComparar: vi.fn(),
     onExportar: vi.fn(),
     onToggleCompanion: vi.fn(),
+    onActivate: vi.fn(),
     busy: false,
     latencyNoticeWorld: null,
     ...overrides,
@@ -534,5 +535,44 @@ describe("scope block (R3 / REQ-TRE-6)", () => {
     const block = screen.getByText("Alcance de taller").closest("div")!;
     const chip = within(block).getByText(SCOPE_TERM).closest("[data-axis]");
     expect(chip).toHaveAttribute("data-axis", AXIS_SCOPE);
+  });
+});
+
+describe("MethodologyStatePanel guided-flow activation (S6)", () => {
+  it("distinguishes the active version from the one in view", () => {
+    renderPanel({ selected: { skill_id: "eneagrama", version: "1.3.0" } });
+
+    expect(screen.getByText("Activa: v1.2.0")).toBeInTheDocument();
+    const activeRow = screen.getByText("v1.2.0").closest("li");
+    const viewedRow = screen.getByText("v1.3.0").closest("li");
+    expect(activeRow && within(activeRow).getByText("Activa")).toBeTruthy();
+    expect(viewedRow && within(viewedRow).getByText("En vista")).toBeTruthy();
+    expect(viewedRow && within(viewedRow).queryByText("Activa")).toBeNull();
+  });
+
+  it("pins the selected version for the world's guided flow", () => {
+    const props = renderPanel({
+      selected: { skill_id: "eneagrama", version: "1.3.0" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Usar en el flujo guiado" }),
+    );
+    expect(props.onActivate).toHaveBeenCalledWith("eneagrama", "1.3.0");
+  });
+
+  it("disables the action when the selected version is already active", () => {
+    renderPanel({ selected: { skill_id: "eneagrama", version: "1.2.0" } });
+
+    expect(
+      screen.getByRole("button", { name: "Usar en el flujo guiado" }),
+    ).toBeDisabled();
+  });
+
+  it("never offers the action without a world", () => {
+    renderPanel({ world: undefined });
+    expect(
+      screen.queryByRole("button", { name: "Usar en el flujo guiado" }),
+    ).not.toBeInTheDocument();
   });
 });

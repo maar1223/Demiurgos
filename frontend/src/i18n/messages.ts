@@ -965,7 +965,12 @@ export const messages = {
     "methodology.state.versions": "Versiones",
     "methodology.state.noVersions":
       "No hay versiones publicadas de {skillId}.",
-    "methodology.state.selected": "Seleccionada",
+    "methodology.state.selected": "En vista",
+    "methodology.state.active": "Activa",
+    "methodology.state.activeVersion": "Activa: v{version}",
+    "methodology.action.activateFlow": "Usar en el flujo guiado",
+    "methodology.action.activateFlowTitle":
+      "Fija esta versión para las sesiones guiadas nuevas de este mundo",
     "methodology.state.origin": "Origen",
     "methodology.state.rootSkill":
       "Skill raíz (no derivada de otra metodología).",
@@ -3325,7 +3330,12 @@ export const messages = {
       "Select a methodology to view its status and actions.",
     "methodology.state.versions": "Versions",
     "methodology.state.noVersions": "No published versions of {skillId}.",
-    "methodology.state.selected": "Selected",
+    "methodology.state.selected": "In view",
+    "methodology.state.active": "Active",
+    "methodology.state.activeVersion": "Active: v{version}",
+    "methodology.action.activateFlow": "Use in the guided flow",
+    "methodology.action.activateFlowTitle":
+      "Pin this version for this world's new guided sessions",
     "methodology.state.origin": "Origin",
     "methodology.state.rootSkill":
       "Root skill (not derived from another methodology).",

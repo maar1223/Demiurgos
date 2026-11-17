@@ -42,6 +42,7 @@ vi.mock("@/api/coCreation", async (importOriginal) => {
 import { useWorlds } from "@/hooks/useWorlds";
 import {
   activateCompanion,
+  activateMethodology,
   deactivateCompanion,
   getMethodologyInventory,
   getMethodologyStatus,
@@ -240,6 +241,54 @@ describe("ToolWorkshop", () => {
         "OtroMundo",
         "guided-character-v1",
         "1.2.0",
+      );
+    });
+  });
+
+  it("pins the selected version for the guided flow and refetches status", async () => {
+    // S6: the control that was missing — the page owns activateMethodology, the
+    // panel only renders the action. 2026-11-17: 1.4 was "selected" in the
+    // Taller and never activated, because nothing called this.
+    const user = userEvent.setup();
+    (activateMethodology as Mock).mockResolvedValue({
+      world: "Vibrantes",
+      skill_id: "guided-character-v1",
+      version: "1.2.0",
+      digest: "abc",
+      activated_at: "2026-01-01",
+    });
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    await user.click(screen.getByRole("option", { name: "Vibrantes" }));
+    await user.click(screen.getByRole("button", { name: "Cambiar" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Usar en el flujo guiado" }),
+      ).toBeEnabled();
+    });
+    const callsBefore = (getMethodologyStatus as Mock).mock.calls.length;
+    await user.click(
+      screen.getByRole("button", { name: "Usar en el flujo guiado" }),
+    );
+
+    await waitFor(() => {
+      expect(activateMethodology).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
+    await waitFor(() => {
+      expect((getMethodologyStatus as Mock).mock.calls.length).toBeGreaterThan(
+        callsBefore,
       );
     });
   });
