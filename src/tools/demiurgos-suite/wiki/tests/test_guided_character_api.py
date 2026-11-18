@@ -2212,7 +2212,9 @@ def _expected_transition(state, guided, explicitness, target) -> str:
     if not guided:
         return "answer"
     if target is None or target.kind != "flow" or target.id not in api_server.GUIDED_FLOW_IDS:
-        return "answer"
+        # A command that names no flow the server can open asks one closed
+        # question instead of guessing or staying silent.
+        return "clarify" if explicitness == "imperative" else "answer"
     return "open" if explicitness == "imperative" else "offer"
 
 
@@ -2246,13 +2248,13 @@ def test_opening_target_resolution_never_opens_an_unknown_or_skill_target() -> N
         guided=True, explicitness="imperative", target=_UNKNOWN_TARGET,
     )
     assert api_server._opening_profile(unknown) is None
-    assert api_server._opening_transition(unknown) == "answer"
+    assert api_server._opening_transition(unknown) == "clarify"
 
     skill = _policy_decision(
         guided=True, explicitness="imperative", target=_SKILL_TARGET,
     )
     assert api_server._opening_profile(skill) is None
-    assert api_server._opening_transition(skill) == "answer"
+    assert api_server._opening_transition(skill) == "clarify"
 
     declared = _policy_decision(
         guided=True, explicitness="imperative", target=_FLOW_TARGET,
@@ -2569,3 +2571,35 @@ def test_opening_profile_resolves_every_declared_flow_with_a_published_method() 
             assert profile is None, flow_id
 
     assert api_server._opening_profile(decision("guided-nope")) is None
+
+
+def test_target_question_names_only_the_flows_that_can_open() -> None:
+    """The closed question lists real options, not declarations that cannot open."""
+    copy = api_server._target_question_copy()
+    assert copy.endswith("?")
+    available = api_server._available_flow_ids()
+    assert available, "at least the embedded character contract must resolve"
+    assert set(available) <= set(api_server.GUIDED_FLOW_IDS)
+    labels = {
+        "guided-character": "personaje",
+        "guided-system": "sistema",
+        "guided-chronology": "cronología",
+        "guided-entity": "entidad",
+    }
+    for flow_id in available:
+        assert labels[flow_id] in copy, flow_id
+
+
+def test_target_question_response_is_a_clarification() -> None:
+    from semantic_intent import SemanticResult
+
+    decision = _policy_decision(
+        guided=True, explicitness="imperative", target=_UNKNOWN_TARGET,
+    )
+    result = SemanticResult(decision=decision, attempts=1, request_id="r-1")
+    payload = api_server._target_question_response(result)
+
+    assert payload["state"] == "clarify"
+    assert payload["action"] == "ask_question"
+    assert payload["response"] == api_server._target_question_copy()
+    assert payload["guided"] is False

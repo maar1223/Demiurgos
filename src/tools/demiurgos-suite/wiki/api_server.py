@@ -140,6 +140,8 @@ from guided_flow import (
     GUIDED_FLOW_IDS,
     FOUNDATIONAL_METHOD_BY_FLOW,
     GUIDED_SYSTEM_FLOW,
+    GUIDED_CHRONOLOGY_FLOW,
+    GUIDED_ENTITY_FLOW,
     GuidedFlowProfile,
     builtin_profile,
     detail_plan_for,
@@ -9522,6 +9524,8 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                     )
                     if opened is not None:
                         return opened
+            elif transition == "clarify":
+                return _target_question_response(replay)
             elif transition == "offer" and replay_principal is not None:
                 return _guided_consent_suggestion(
                     mundo, body, replay_principal, replay,
@@ -9618,6 +9622,8 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                 reference_name=reference_name,
             )
         # No authenticated principal: answer rather than offer without a token.
+    elif transition == "clarify":
+        return _target_question_response(result)
     # Answer the turn. Self-contained decisions answer directly with Hermes'
     # voice. Memory writes + skill routing are SIDE EFFECTS: they never mutate
     # the returned envelope (SC-08).
@@ -10275,12 +10281,69 @@ def _resolve_input_flow(
     return builtin_profile(GUIDED_CHARACTER_FLOW) if default_character else None
 
 
+_FLOW_TARGET_LABELS = {
+    "es": {
+        GUIDED_CHARACTER_FLOW: "un personaje",
+        GUIDED_SYSTEM_FLOW: "un sistema",
+        GUIDED_CHRONOLOGY_FLOW: "una cronología",
+        GUIDED_ENTITY_FLOW: "una entidad",
+    },
+    "en": {
+        GUIDED_CHARACTER_FLOW: "a character",
+        GUIDED_SYSTEM_FLOW: "a system",
+        GUIDED_CHRONOLOGY_FLOW: "a chronology",
+        GUIDED_ENTITY_FLOW: "an entity",
+    },
+}
+
+_TARGET_QUESTION_PREFIX = {
+    "es": "¿Qué querés crear: ",
+    "en": "What do you want to create: ",
+}
+
+_TARGET_QUESTION_FALLBACK = {
+    "es": "¿Qué querés crear? Contame un poco más y lo armamos.",
+    "en": "What do you want to create? Tell me a bit more and we will build it.",
+}
+
+
+def _declared_flow_profile(flow_id: str) -> GuidedFlowProfile | None:
+    """Resolve one declared flow: the embedded character contract or its method."""
+    profile = builtin_profile(flow_id)
+    if profile is not None:
+        return profile
+    library = _methodology_library()
+    candidates = library.list_methods_for_flow(flow_id)
+    if not candidates:
+        return None
+    return library.flow_profile_for(flow_id, candidates[0].skill_id)
+
+
+def _available_flow_ids() -> list[str]:
+    """Flows the server can actually open here, in a stable order."""
+    return [flow_id for flow_id in sorted(GUIDED_FLOW_IDS) if _declared_flow_profile(flow_id) is not None]
+
+
+def _target_question_copy() -> str:
+    """One closed question naming only the flows that can open right now."""
+    language = "es" if resolve_domain_language("conversation") == "es" else "en"
+    labels = [_FLOW_TARGET_LABELS[language][flow_id] for flow_id in _available_flow_ids()]
+    if not labels:
+        return _TARGET_QUESTION_FALLBACK[language]
+    if len(labels) == 1:
+        joined = labels[0]
+    else:
+        separator = " o " if language == "es" else " or "
+        joined = ", ".join(labels[:-1]) + separator + labels[-1]
+    return f"{_TARGET_QUESTION_PREFIX[language]}{joined}?"
+
+
 def _opening_profile(decision: SemanticDecision | None) -> GuidedFlowProfile | None:
     """The flow the validated decision named, or None. Never inferred from text.
 
     Only a guided decision that explicitly names a declared flow target can
     open one. A missing target, a ``skill`` target, or an unknown flow id is
-    never guessed: the server answers the turn and opens nothing (S5/L6).
+    never guessed.
     """
     if decision is None or not decision.guided:
         return None
@@ -10291,37 +10354,38 @@ def _opening_profile(decision: SemanticDecision | None) -> GuidedFlowProfile | N
         or target.id not in GUIDED_FLOW_IDS
     ):
         return None
-    profile = builtin_profile(target.id)
-    if profile is not None:
-        return profile
-    # Only the character contract is server-embedded. Every other declared flow
-    # resolves through its published foundational method, exactly like
-    # `_resolve_input_flow`. A declared flow with no published method cannot
-    # open, and the turn is answered instead of opening the wrong sheet.
-    library = _methodology_library()
-    candidates = library.list_methods_for_flow(target.id)
-    if not candidates:
-        return None
-    return library.flow_profile_for(target.id, candidates[0].skill_id)
+    return _declared_flow_profile(target.id)
 
 
 def _opening_transition(decision: SemanticDecision | None) -> str:
-    """One of: "answer", "offer", "open", "blocked".
+    """One of: "answer", "offer", "open", "clarify", "blocked".
 
     The whole opening policy is this truth table over fields the gate already
     emits (S4). No row reads the utterance: state, ``guided``, explicitness and
-    the validated target are the only inputs. A guided intent without a valid
-    named flow is answered, never guessed (S5/L6).
+    the validated target are the only inputs.
     """
     if decision is None or decision.state == "blocked":
         return "blocked"
     if not decision.guided:
         return "answer"
-    if _opening_profile(decision) is None:
-        return "answer"
+    if _opening_profile(decision) is not None:
+        return "open" if decision.guided_explicitness == "imperative" else "offer"
     if decision.guided_explicitness == "imperative":
-        return "open"
-    return "offer"
+        # The gate is sure this is a command but named no flow it can open:
+        # ask exactly one closed question instead of guessing or staying silent.
+        return "clarify"
+    return "answer"
+
+
+def _target_question_response(result: SemanticResult) -> dict:
+    """Answer with one closed question naming the flows that can open."""
+    payload = result.as_dict()
+    payload["state"] = "clarify"
+    payload["action"] = "ask_question"
+    payload["response"] = _target_question_copy()
+    payload["guided"] = False
+    payload.pop("guided_explicitness", None)
+    return payload
 
 
 async def _open_guided_continuation(
@@ -11653,7 +11717,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         "ai_ask_activity: semantic state=%s guided=%s explicitness=%s transition=%s",
         decision.state, decision.guided, decision.guided_explicitness, transition,
     )
-    if transition in {"open", "offer"}:
+    if transition in {"open", "offer", "clarify"}:
         principal = _resolve_principal(request)
         ticket = None
         profile = _opening_profile(decision) if transition == "open" else None

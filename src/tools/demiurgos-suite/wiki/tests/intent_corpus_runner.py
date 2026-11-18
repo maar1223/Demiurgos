@@ -333,6 +333,9 @@ def _live_session(world: str):
                 return Decision(opens=False, class_name="answer", offer=True, raw=raw)
             if transition == "blocked":
                 return Decision(False, None, raw=raw)
+            if transition == "clarify":
+                # One closed question naming the flows that can open.
+                return Decision(False, "unknown", raw=raw + " | clarify-target")
             return Decision(False, "answer", raw=raw)
 
     return LiveSession()

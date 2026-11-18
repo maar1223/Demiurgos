@@ -4610,7 +4610,8 @@ class TestSemanticActivitySSE:
             json={"prompt": "¿qué es un Eneatipo?", "session_id": "chat-1"},
         )
 
-        # It reaches the adapter guard (None here), never the guided handoff.
+        # A non-guided clarify reaches the adapter guard (None here) and fails
+        # closed as a stream; it never takes the guided handoff.
         assert response.status_code == 200
         kinds = [event["kind"] for event in _parse_sse(response.text)]
         assert kinds[0] == "semantic_decision"
@@ -4645,9 +4646,9 @@ class TestSemanticActivitySSE:
     def test_activity_agent_imperative_never_invents_a_flow(
         self, client, monkeypatch
     ):
-        """S3: the imperative flag never guesses a flow. With no declaration
-        matching the entity, the silent character default is gone and the turn
-        stays plain chat."""
+        """S3/S5: the imperative flag never guesses a flow. With no declared
+        target the boundary hands off, and the replayed turn asks one closed
+        question instead of opening the old silent character default."""
         runs = _SemanticRuns(_semantic_payload(
             "clarify", guided=True, guided_explicitness="imperative",
         ))
@@ -4659,9 +4660,8 @@ class TestSemanticActivitySSE:
             json={"prompt": "hacelo ya", "session_id": "chat-1"},
         )
 
-        assert response.status_code == 200
-        kinds = [event["kind"] for event in _parse_sse(response.text)]
-        assert kinds[0] == "semantic_decision"
+        assert response.status_code == 503
+        assert response.json()["code"] == "guided_handoff"
 
 
     def test_guided_handoff_ticket_replays_with_one_semantic_run(
