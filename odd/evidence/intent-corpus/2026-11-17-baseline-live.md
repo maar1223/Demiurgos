@@ -1,3 +1,12 @@
+> **Superseded measurement (2026-11-18):** this run counted
+> `proposal_ready`/`require_confirmation` + `musing` as an open. The server
+> returns a consent offer for those (`_semantic_guided_continuation` creates
+> nothing), so 3 of the 11 listed false-opens are not opens — they are answers
+> replaced by a consent card. Corrected count from this same run:
+> **false-open 8/153 (7 lexical + 1 gate), false-close 5/26, 3 offers replacing
+> an answer.** A confirming re-run is pending because the Hermes gateway was
+> down.
+
 # Intent corpus run — live (gateway env default)
 
 - Generated: 2026-11-17 23:49 UTC

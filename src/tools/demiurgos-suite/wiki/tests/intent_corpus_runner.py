@@ -75,6 +75,9 @@ class Decision:
     target: str | None = None
     raw: str = ""
     error: str | None = None
+    # A consent offer is not an open, but it replaces the answer: measured
+    # separately because it is the S3/S7 defect, not the hijack.
+    offer: bool = False
 
 
 @dataclass
@@ -123,6 +126,14 @@ class Report:
     @property
     def unavailable(self) -> list[TurnResult]:
         return [r for r in self.decisions if r.decision.error]
+
+    @property
+    def answer_replaced_by_offer(self) -> list[TurnResult]:
+        """The author asked something and got a consent card instead of an answer."""
+        return [
+            r for r in self.decisions
+            if r.decision.offer and r.turn.expected_class == "answer"
+        ]
 
     @property
     def expected_no_open(self) -> int:
@@ -268,8 +279,17 @@ def _live_session(world: str):
                 f"state={state} guided={decision.guided} "
                 f"explicitness={decision.guided_explicitness}"
             )
+            # End-to-end transition, not just the gate: the 503 handoff replays
+            # this decision into ``/ai/ask``. A continuation state only opens on
+            # an imperative; otherwise `_semantic_guided_continuation` returns a
+            # consent offer and creates nothing.
             if state in api_server.CONTINUATION_STATES:
-                return Decision(True, "start_flow", raw=raw)
+                if decision.guided_explicitness != "imperative":
+                    return Decision(False, "answer", raw=raw, offer=True)
+                resolved = api_server._resolve_input_flow(turn.text)
+                if resolved is None:
+                    return Decision(False, None, raw=raw + " | ambiguous flow")
+                return Decision(True, "start_flow", resolved.flow_id, raw)
             if state in {"allow", "clarify"}:
                 profile = api_server._guided_open_profile(turn.text, decision)
                 if profile is not None:
@@ -325,6 +345,8 @@ def render_report(report: Report) -> str:
         f"- **false-close**: {report.rate(len(report.false_closes), report.expected_open_scored)}"
         " — the cheap error: the author retries.",
         f"- unavailable: {len(report.unavailable)}",
+        f"- **answer replaced by a consent offer**: {len(report.answer_replaced_by_offer)}"
+        " — not an open, but the reply never reaches the author (S3/S7).",
         "",
         "## By expected class",
         "",
