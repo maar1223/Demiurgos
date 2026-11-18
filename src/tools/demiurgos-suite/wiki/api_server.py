@@ -488,10 +488,16 @@ class _LazyBinding:
     def __init__(self, factory: Callable[[], Any]) -> None:
         self._factory = factory
         self._value: Any = None
+        # FastAPI runs sync endpoints in a threadpool: two concurrent guided
+        # requests used to build the store twice, and the second `_migrate`
+        # crashed with "duplicate column name" (2026-11-18 desktop report).
+        self._lock = threading.Lock()
 
     def _resolve(self) -> Any:
         if self._value is None:
-            self._value = self._factory()
+            with self._lock:
+                if self._value is None:
+                    self._value = self._factory()
         return self._value
 
     def __getattr__(self, name: str) -> Any:

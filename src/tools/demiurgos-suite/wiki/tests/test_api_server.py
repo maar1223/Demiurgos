@@ -10814,3 +10814,80 @@ def test_ai_ask_keeps_a_normal_author_facing_answer(client: TestClient, monkeypa
 
     assert response.status_code == 200
     assert response.json()["response"] == answer
+
+
+def test_lazy_binding_builds_once_under_concurrent_access() -> None:
+    """The lazy store must not be built twice by two request threads.
+
+    Four concurrent guided-session requests raced the first construction and a
+    second `_migrate` crashed with "duplicate column name" (2026-11-18).
+    """
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    builds: list[int] = []
+    barrier = threading.Barrier(8)
+    marker = object()
+
+    def factory():
+        builds.append(1)
+        time.sleep(0.02)
+        return SimpleNamespace(marker=marker)
+
+    binding = api_server._LazyBinding(factory)
+    seen: list[object] = []
+    errors: list[BaseException] = []
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            seen.append(binding.marker)
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not errors
+    assert len(builds) == 1
+    assert seen and all(item is marker for item in seen)
+
+
+def test_lazy_binding_retries_after_a_factory_failure() -> None:
+    """A raising factory must not poison the singleton or deadlock."""
+    import threading
+    from types import SimpleNamespace
+
+    calls: list[int] = []
+    barrier = threading.Barrier(4)
+
+    def factory():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("first build failed")
+        return SimpleNamespace(value="built")
+
+    binding = api_server._LazyBinding(factory)
+    with pytest.raises(RuntimeError):
+        binding.value
+    assert binding._value is None
+
+    outcomes: list[str] = []
+
+    def worker():
+        barrier.wait(timeout=5)
+        outcomes.append(binding.value)
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not any(t.is_alive() for t in threads)
+    assert outcomes == ["built"] * 4
+    assert len(calls) == 2

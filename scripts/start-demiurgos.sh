@@ -103,6 +103,7 @@ RUNTIME_BASE="${XDG_RUNTIME_DIR:-${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/demiu
 STATE_DIR="$RUNTIME_BASE/demiurgos-launcher"
 API_LOG="$LOG_DIR/demiurgos-api.log"
 GATEWAY_LOG="$LOG_DIR/demiurgos-gateway.log"
+LAUNCHER_LOG="$LOG_DIR/launcher.log"
 
 # Data-root pointer (S2-8): platformdirs user_config_dir("demiurgos") — the
 # byte-compatible location owned by data_root.py (POINTER_NAME = data-root.json).
@@ -314,6 +315,13 @@ bridge_gateway_key() {
 
 ensure_runtime_dirs() {
     mkdir -p "$STATE_DIR" "$LOG_DIR"
+}
+
+log_event() {
+    # Desktop launches run with Terminal=false: this file is the ONLY record of
+    # what the launcher decided (active version, readiness, rollback). A logging
+    # failure must never abort a boot, so every write is best-effort.
+    printf '%s %s\n' "$(date -Is)" "$*" >>"$LAUNCHER_LOG" 2>/dev/null || true
 }
 
 pid_file() {
@@ -529,6 +537,7 @@ rollback_if_boot_failed() {
     # Best-effort: stop the broken API (pid file or port owner) so the
     # previous version can bind the port. Failure must not abort the flip.
     stop_component api || true
+    log_event "rollback current -> app/$prev"
     printf 'API failed to become ready; rolling back current -> app/%s\n' "$prev" >&2
     ln -sfn "app/$prev" "$INSTALL_ROOT/current"
     export DEMIURGOS_ROLLBACK_ATTEMPTED=1
@@ -644,6 +653,7 @@ start_component() {
     local name="$1" pid port
     if owned_pid "$name"; then
         read -r pid < "$(pid_file "$name")"
+        log_event "component $name already running (pid $pid)"
         printf 'Already running %s (pid %s)\n' "$name" "$pid"
         return 0
     fi
@@ -657,6 +667,7 @@ start_component() {
         if adopt_existing_component "$name" "$port"; then
             return 0
         fi
+        log_event "component $name failed: port $port held by an untracked process"
         printf 'Cannot start %s: port %s is already in use by an untracked process\n' "$name" "$port" >&2
         return 1
     fi
@@ -803,6 +814,7 @@ start_services() {
     # Hermes is OPTIONAL (S2-2): the app boots without the provider and the
     # assistant degrades. The gateway is started only when the CLI is found;
     # otherwise an advisory is printed and the boot continues.
+    log_event "boot app=$APP_ROOT version=${DEMIURGOS_APP_VERSION:-dev} api_port=$API_PORT gateway_port=$GATEWAY_PORT health_polls=$HEALTH_POLLS"
     if [ -z "$HERMES_BIN" ] || [ ! -x "$HERMES_BIN" ]; then
         printf 'Hermes CLI not found; the assistant will be unavailable.\n' >&2
         printf 'Install or enable Hermes later to use the assistant.\n' >&2
@@ -814,8 +826,10 @@ start_services() {
     # Required readiness covers the API ONLY (S2-2). The gateway is best-effort:
     # when present it is reported, but its absence never aborts the boot.
     if wait_for_health "$API_PORT"; then
+        log_event "api ready on 127.0.0.1:$API_PORT"
         printf 'API ready on 127.0.0.1:%s\n' "$API_PORT"
     else
+        log_event "api NOT ready after $HEALTH_POLLS polls on port $API_PORT"
         printf 'API did not become ready; check its log\n' >&2
         # S6-2/D6: bounded boot rollback — fall back to the previous bootable
         # version when the new one fails to boot. `exec` replaces this process
@@ -836,6 +850,7 @@ notify_failure() {
     case "${DEMIURGOS_NO_NOTIFY:-}" in
         1|true|yes|TRUE|YES|True) return 0 ;;
     esac
+    log_event "notify: $1"
     command -v notify-send >/dev/null 2>&1 || return 0
     notify-send "Demiurgos" "$1" >/dev/null 2>&1 || true
 }

@@ -533,24 +533,42 @@ class GuidedSessionStore:
         )
         self._conn.commit()
 
+    def _add_column(self, columns: set[str], name: str, ddl: str) -> bool:
+        """Add one column unless it is already there, tolerating a lost race.
+
+        Two processes (or two stores opened at once before the lock landed) can
+        both read a stale column list and both run the same ALTER. The loser
+        gets ``duplicate column name``, which is a success for this purpose.
+        """
+        if name in columns:
+            return False
+        try:
+            self._conn.execute(ddl)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
+            return False
+        columns.add(name)
+        return True
+
     def _migrate(self) -> None:
         """Additive migration for databases created before the path columns (S1)."""
         columns = {
             str(row["name"])
             for row in self._conn.execute("PRAGMA table_info(guided_sessions)")
         }
-        if "path" not in columns:
-            self._conn.execute(
-                "ALTER TABLE guided_sessions ADD COLUMN path TEXT NOT NULL DEFAULT 'explore'",
-            )
-        if "skipped_fields_json" not in columns:
-            self._conn.execute(
-                "ALTER TABLE guided_sessions ADD COLUMN skipped_fields_json TEXT NOT NULL DEFAULT '[]'",
-            )
-        if "turn_decision_json" not in columns:
-            self._conn.execute(
-                "ALTER TABLE guided_sessions ADD COLUMN turn_decision_json TEXT NOT NULL DEFAULT ''",
-            )
+        self._add_column(
+            columns, "path",
+            "ALTER TABLE guided_sessions ADD COLUMN path TEXT NOT NULL DEFAULT 'explore'",
+        )
+        self._add_column(
+            columns, "skipped_fields_json",
+            "ALTER TABLE guided_sessions ADD COLUMN skipped_fields_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._add_column(
+            columns, "turn_decision_json",
+            "ALTER TABLE guided_sessions ADD COLUMN turn_decision_json TEXT NOT NULL DEFAULT ''",
+        )
 
     def set_path(
         self, session_id: str, authorization_binding: str, path: str,

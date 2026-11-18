@@ -485,3 +485,85 @@ def test_legacy_migration_preserves_existing_session_data(tmp_path: Path) -> Non
     assert recovered.mode == "fast" and recovered.depth == "fundamental"
     assert recovered.reference_name == "Rhyz" and recovered.revision == 3
     assert recovered.messages[0].content["text"] == "hola"
+
+
+def test_migrate_tolerates_a_column_added_by_a_concurrent_process(tmp_path) -> None:
+    """A lost ALTER race is success: the column a second writer added is there.
+
+    Two processes can read the same stale column list and both run the same
+    ALTER (2026-11-18 desktop report: ``duplicate column name``). The loser must
+    not fail the boot.
+    """
+    store = GuidedSessionStore(tmp_path / "guided.sqlite")
+
+    added = store._add_column(
+        set(),
+        "turn_decision_json",
+        "ALTER TABLE guided_sessions ADD COLUMN turn_decision_json TEXT NOT NULL DEFAULT ''",
+    )
+
+    assert added is False
+    columns = {
+        str(row["name"])
+        for row in store._conn.execute("PRAGMA table_info(guided_sessions)")
+    }
+    assert "turn_decision_json" in columns
+
+
+_LEGACY_DDL = """
+CREATE TABLE guided_sessions (
+    session_id TEXT PRIMARY KEY, world TEXT NOT NULL, phase TEXT NOT NULL,
+    revision INTEGER NOT NULL, owner_binding TEXT NOT NULL,
+    messages_json TEXT NOT NULL, pending_question TEXT,
+    candidate_json TEXT NOT NULL, reference_context TEXT NOT NULL DEFAULT '',
+    reference_name TEXT, relation_goal TEXT NOT NULL DEFAULT '',
+    confirmation_input TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL,
+    depth TEXT NOT NULL, methodology_snapshot_json TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    revalidation_required INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        "ALTER TABLE guided_sessions ADD COLUMN broken TEXT NOT NULL DEFAULT",
+        "ALTER TABLE no_such_table ADD COLUMN x TEXT",
+        "this is not sql",
+    ],
+)
+def test_add_column_reraises_every_non_duplicate_operational_error(tmp_path, ddl) -> None:
+    store = GuidedSessionStore(tmp_path / "guided.sqlite")
+    with pytest.raises(sqlite3.OperationalError) as excinfo:
+        store._add_column(set(), "broken", ddl)
+    assert "duplicate column name" not in str(excinfo.value).lower()
+
+
+def test_concurrent_open_of_one_legacy_db_never_raises(tmp_path) -> None:
+    import threading
+
+    db = tmp_path / "legacy-concurrent.sqlite3"
+    con = sqlite3.connect(db)
+    con.execute(_LEGACY_DDL)
+    con.commit()
+    con.close()
+
+    failures: list[str] = []
+    barrier = threading.Barrier(4)
+
+    def worker():
+        try:
+            barrier.wait(timeout=5)
+            GuidedSessionStore(db)
+        except BaseException as exc:
+            failures.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert failures == []
+    assert not any(t.is_alive() for t in threads)
