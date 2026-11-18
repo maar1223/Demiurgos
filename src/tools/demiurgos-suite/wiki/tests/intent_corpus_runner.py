@@ -369,6 +369,16 @@ def render_report(report: Report) -> str:
         r for r in report.decisions
         if r.turn.expected_class in NOT_MEASURED_AT_GATE and r.expected_opens
     ]
+    if report.mode.startswith("live"):
+        lines += [
+            "",
+            "## Limits",
+            "",
+            "Context is world-less (`SemanticContext()`): the gate classified each",
+            "utterance without a world ficha or graph, because the corpus is",
+            "world-agnostic. A run with real world context is a separate fidelity pass.",
+        ]
+
     lines += [
         "",
         "## Not measured at the gate",
