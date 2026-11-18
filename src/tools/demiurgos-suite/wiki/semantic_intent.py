@@ -11,6 +11,7 @@ originate here.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping
@@ -270,6 +271,29 @@ class SemanticContinuation:
     delta: Mapping[str, Any] | None = None
 
 
+MAX_TARGET_ID_CHARS = 64
+"""Bounded identifier for a provider-proposed opening target."""
+
+_TARGET_KINDS = ("flow", "skill")
+_TARGET_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+@dataclass(frozen=True)
+class SemanticTarget:
+    """Provider-proposed opening target; the server validates and routes.
+
+    The decision says WHICH flow or skill the author's command is about. The
+    server never infers it from the utterance: an invalid or unknown target is
+    dropped, and a guided imperative without one asks exactly one question.
+    """
+
+    kind: str
+    id: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"kind": self.kind, "id": self.id}
+
+
 @dataclass(frozen=True)
 class SemanticDecision:
     """Immutable validated Hermes decision. ``reference`` is server-issued only."""
@@ -282,6 +306,7 @@ class SemanticDecision:
     guided: bool = False
     continuation: SemanticContinuation | None = None
     guided_explicitness: GuidedExplicitness = "musing"
+    target: SemanticTarget | None = None
 
 
 @dataclass(frozen=True)
@@ -367,6 +392,27 @@ def _validate_continuation(state: str, guided: bool, value: Any):
     return SemanticContinuation("delta", delta=dict(delta))
 
 
+def _validate_target(guided: bool, value: Any) -> SemanticTarget | None:
+    """Bounded provider target; malformed, unknown or non-guided is dropped.
+
+    Dropping never fails the envelope: the answer is still valid, and the
+    opening policy asks one question instead of guessing a flow.
+    """
+    if value is None or guided is not True:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {"kind", "id"}:
+        return None
+    kind = value.get("kind")
+    identifier = value.get("id")
+    if kind not in _TARGET_KINDS:
+        return None
+    if not isinstance(identifier, str) or len(identifier) > MAX_TARGET_ID_CHARS:
+        return None
+    if not _TARGET_ID_RE.match(identifier):
+        return None
+    return SemanticTarget(kind=kind, id=identifier)
+
+
 def validate_semantic_decision(value: Any) -> SemanticValidation:
     """Strictly validate a provider envelope before any routing decision.
 
@@ -409,6 +455,8 @@ def validate_semantic_decision(value: Any) -> SemanticValidation:
         else "musing"
     )
 
+    target = _validate_target(guided, value.get("target"))
+
     reference = value.get("reference")
     if reference is not None:
         return SemanticValidation(False, INVALID_ENVELOPE_REASON)
@@ -428,6 +476,7 @@ def validate_semantic_decision(value: Any) -> SemanticValidation:
             guided=guided,
             continuation=continuation,
             guided_explicitness=guided_explicitness,
+            target=target,
         ),
     )
 
@@ -477,6 +526,8 @@ class SemanticResult:
             result["reason"] = self.reason
         if self.decision is not None:
             result["guided"] = self.decision.guided
+            if self.decision.target is not None:
+                result["target"] = self.decision.target.as_dict()
             if self.decision.session_id is not None:
                 result["session_id"] = self.decision.session_id
             if self.decision.reference is not None:
@@ -599,6 +650,17 @@ class SemanticIntentProvider:
             "when the author directly commands creating or starting a guided entity "
             "— a character or a world system — for example \"crea un personaje\" or "
             "\"crea un sistema\"; otherwise use musing). "
+            "When guided is true, also include target as {\"kind\": \"flow\" or "
+            "\"skill\", \"id\": \"<identifier>\"}: for a flow use guided-character "
+            "(personaje), guided-system (sistema), guided-chronology (cronología) or "
+            "guided-entity (entidad genérica); for a skill use its published id. Omit "
+            "target entirely when guided is false. Creating means the author asks you "
+            "to make it now. These are NOT guided commands: a question asking for "
+            "advice, ideas or an opinion about creating something; a statement about "
+            "the author's own material; an explicit uncertainty such as \"no sé si\" "
+            "or \"quizás\"; and a bare imperative with no identifiable entity "
+            "(\"hacelo\"), which must be answered with exactly one clarifying "
+            "question. "
             "When state is require_confirmation include continuation "
             "{\"outcome\": \"question\", \"question\": \"<one concise confirmation "
             "question>\"}. When state is proposal_ready include continuation "
@@ -613,7 +675,7 @@ class SemanticIntentProvider:
             + distilled_block
             + recent_block
             + memory_block
-            + " Never include reference, proposal, target, digest, revision, or "
+            + " Never include reference, proposal, digest, revision, or "
             "authority fields; those are server-owned. Never write or claim "
             "approval. Author input: " + author_input
             # Volatile ids go LAST so the whole instruction block above stays a

@@ -838,3 +838,70 @@ def test_provider_prompt_requests_a_user_facing_answer_not_a_meta_note() -> None
     assert "author-facing reply" in prompt
     assert "same language as the author's input" in prompt
     assert "the author wants" in prompt
+
+
+# -- Opening target (intent-opening-policy S5) ------------------------------
+
+
+def test_valid_target_is_preserved() -> None:
+    payload = valid_payload(
+        "allow",
+        guided_explicitness="imperative",
+        target={"kind": "flow", "id": "guided-character"},
+    )
+    result = validate_semantic_decision(payload)
+    assert result.admitted
+    assert result.decision.target.kind == "flow"
+    assert result.decision.target.id == "guided-character"
+
+
+def test_target_is_dropped_without_rejecting_the_envelope() -> None:
+    for bad in (
+        "guided-character",
+        {"kind": "flow"},
+        {"kind": "world", "id": "guided-character"},
+        {"kind": "flow", "id": "Guided Character"},
+        {"kind": "flow", "id": "guided-character", "extra": 1},
+        {"kind": "flow", "id": 3},
+        {"kind": "flow", "id": "x" * 65},
+    ):
+        result = validate_semantic_decision(valid_payload("allow", target=bad))
+        assert result.admitted, bad
+        assert result.decision.target is None, bad
+
+
+def test_target_is_dropped_when_the_decision_is_not_guided() -> None:
+    result = validate_semantic_decision(
+        valid_payload("allow", guided=False, target={"kind": "flow", "id": "guided-character"})
+    )
+    assert result.admitted
+    assert result.decision.target is None
+
+
+def test_target_reaches_the_result_envelope() -> None:
+    from semantic_intent import SemanticDecision, SemanticResult, SemanticTarget
+
+    decision = SemanticDecision(
+        state="require_confirmation",
+        response="ok",
+        request_id="r-1",
+        guided=True,
+        guided_explicitness="imperative",
+        target=SemanticTarget("skill", "narrative-chronology-creation"),
+    )
+    payload = SemanticResult(decision=decision, attempts=1, request_id="r-1").as_dict()
+    assert payload["target"] == {"kind": "skill", "id": "narrative-chronology-creation"}
+
+
+def test_prompt_requires_a_bounded_target_and_the_negative_rules() -> None:
+    from semantic_intent import SemanticIntentProvider
+
+    prompt = SemanticIntentProvider(object())._build_prompt("hola", "req-1", None)
+
+    assert "target" in prompt
+    assert "guided-character" in prompt
+    assert "guised" not in prompt
+    for marker in ("advice", "uncertainty", "hacelo", "clarifying"):
+        assert marker in prompt, marker
+    # The provider now owns `target`; it is no longer a forbidden field.
+    assert "proposal, target, digest" not in prompt
