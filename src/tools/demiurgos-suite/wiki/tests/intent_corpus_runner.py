@@ -7,7 +7,7 @@ apart.
 - ``--simulated`` proves the harness against its own labels. It never proves a
   model: agreement here is agreement with the contract, nothing more.
 - ``--live`` runs the real semantic gate plus the real server policy
-  (``_guided_open_profile``) and is opt-in because it costs provider calls.
+  (``_opening_transition``) and is opt-in because it costs provider calls.
 
 Usage (from the repo root):
 
@@ -280,22 +280,20 @@ def _live_session(world: str):
                 f"explicitness={decision.guided_explicitness}"
             )
             # End-to-end transition, not just the gate: the 503 handoff replays
-            # this decision into ``/ai/ask``. A continuation state only opens on
-            # an imperative; otherwise `_semantic_guided_continuation` returns a
-            # consent offer and creates nothing.
-            if state in api_server.CONTINUATION_STATES:
-                if decision.guided_explicitness != "imperative":
-                    return Decision(False, "answer", raw=raw, offer=True)
-                resolved = api_server._resolve_input_flow(turn.text)
-                if resolved is None:
-                    return Decision(False, None, raw=raw + " | ambiguous flow")
-                return Decision(True, "start_flow", resolved.flow_id, raw)
-            if state in {"allow", "clarify"}:
-                profile = api_server._guided_open_profile(turn.text, decision)
-                if profile is not None:
-                    return Decision(True, "start_flow", profile.flow_id, raw)
-                return Decision(False, "answer" if state == "allow" else "unknown", raw=raw)
-            return Decision(False, None, raw=raw)
+            # this decision into ``/ai/ask``. The server's S4 truth table is the
+            # policy under test; no row reads the utterance.
+            transition = api_server._opening_transition(decision)
+            if transition == "open":
+                profile = api_server._opening_profile(decision)
+                if profile is None:
+                    return Decision(False, None, raw=raw + " | no valid flow target")
+                return Decision(True, "start_flow", profile.flow_id, raw)
+            if transition == "offer":
+                # A consent offer is not an open, but the reply is an answer.
+                return Decision(opens=False, class_name="answer", offer=True, raw=raw)
+            if transition == "blocked":
+                return Decision(False, None, raw=raw)
+            return Decision(False, "answer", raw=raw)
 
     return LiveSession()
 

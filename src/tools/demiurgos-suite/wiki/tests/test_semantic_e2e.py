@@ -151,6 +151,7 @@ def _continuation_semantic_payload(state="proposal_ready", **overrides):
         "session_id": "chat-1",
         "guided": True,
         "guided_explicitness": "imperative",
+        "target": {"kind": "flow", "id": "guided-character"},
         "continuation": {
             "outcome": "question" if state == "require_confirmation" else "delta",
             "question": "¿Creo este personaje?" if state == "require_confirmation" else None,

@@ -1601,7 +1601,7 @@ class TestAiAsk:
     def test_natural_character_message_handoffs_to_guided_session(self, client: TestClient, monkeypatch):
         """Hermes-first: a natural character message becomes a guarded guided
         session only through a validated require_confirmation decision, and its
-        first turn is the server-owned creation-path question."""
+        first turn is the gate's typed confirmation for the named target."""
         _principal(monkeypatch)
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
@@ -1618,8 +1618,9 @@ class TestAiAsk:
         assert payload["state"] == "require_confirmation"
         assert payload["guided_session_id"].startswith("guided-")
         assert payload["guided_revision"] == 1
-        assert payload["guided_state"]["path"] == ""
-        assert payload["guided_state"]["phase"] == "conversation"
+        assert payload["guided_state"]["path"] == "explore"
+        assert payload["guided_state"]["phase"] == "confirmation"
+        assert payload["guided_state"]["pending_question"] == "¿Creo este personaje?"
         assert payload["guided_state"]["session_id"] == payload["guided_session_id"]
         assert runs.starts == 1
 
@@ -1724,7 +1725,7 @@ class TestAiAsk:
         # Hermes decides require_confirmation; the canonical graph evidence is
         # gathered ONCE server-side and bound to the guarded session.
         assert payload["state"] == "require_confirmation"
-        assert payload["guided_state"]["path"] == ""
+        assert payload["guided_state"]["path"] == "explore"
         assert payload["guided_revision"] == 1
         assert payload["guided_state"]["candidate"]["proposals"] == {}
         assert payload["guided_state"]["candidate"]["accepted_canon"] == {}
@@ -1739,7 +1740,7 @@ class TestAiAsk:
         assert "Patient tactician." in state.reference_context
 
         confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "1",
+            "prompt": "sí",
             "session_id": "chat-1",
             "guided_session_id": payload["guided_session_id"],
             "guided_revision": payload["guided_revision"],
@@ -1810,12 +1811,13 @@ class TestAiAsk:
             "section": "personajes",
             "session_id": "chat-1",
         }).json()
-        assert first["guided_state"]["path"] == ""
+        assert first["guided_state"]["path"] == "explore"
+        assert first["guided_state"]["phase"] == "confirmation"
         assert first["guided_revision"] == 1
         assert guided_calls == []
 
-        # The factual shortcut is gone: while the creation path is unpinned, a
-        # non-choice message re-asks the server-owned question (no semantic
+        # The factual shortcut is gone: while the typed confirmation is pending,
+        # a non-choice message re-asks the server-owned question (no semantic
         # gate, no guided provider, no plain-chat call), so the state stays
         # safe.
         factual = client.post("/api/test_mundo/ai/ask", json={
@@ -1829,12 +1831,12 @@ class TestAiAsk:
         assert factual.status_code == 200
         factual_payload = factual.json()
         assert factual_payload["guided_session_id"] == first["guided_session_id"]
-        assert factual_payload["guided_state"]["path"] == ""
+        assert factual_payload["guided_state"]["path"] == "explore"
         assert guided_calls == []
         assert runs.starts == 1
 
         confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "1",
+            "prompt": "sí",
             "section": "personajes",
             "session_id": "chat-1",
             "guided_session_id": first["guided_session_id"],
@@ -1843,8 +1845,8 @@ class TestAiAsk:
 
         assert confirmed.status_code == 200
         confirmed_payload = confirmed.json()
-        # The path is chosen; the narrative level is the server-owned turn before
-        # the guided provider runs.
+        # The confirmation resolves; the narrative level is the server-owned
+        # turn before the guided provider runs.
         assert confirmed_payload["guided_state"]["pending_kind"] == "level"
         assert guided_calls == []
 
@@ -1933,7 +1935,7 @@ class TestAiAsk:
             # confirmation and the provider does not run before explicit
             # confirmation, so no facts are invented prematurely.
             assert payload["state"] == "require_confirmation"
-            assert payload["guided_state"]["path"] == ""
+            assert payload["guided_state"]["path"] == "explore"
             assert payload["guided_revision"] == 1
             assert len(seen) == before
             # The uncertainty is retained in the session (never read/linked) and
@@ -1944,12 +1946,13 @@ class TestAiAsk:
             assert "personajes/" not in state.reference_context
 
             confirmed = client.post("/api/test_mundo/ai/ask", json={
-                "prompt": "1",
+                "prompt": "sí",
                 "guided_session_id": payload["guided_session_id"],
                 "guided_revision": payload["guided_revision"],
             })
             assert confirmed.status_code == 200
-            # The path is chosen; the level turn still precedes the provider.
+            # The confirmation resolves; the level turn still precedes the
+            # provider.
             assert confirmed.json()["guided_state"]["pending_kind"] == "level"
             assert len(seen) == before
 
@@ -2569,8 +2572,8 @@ def _semantic_payload(state="allow", **overrides):
 def _continuation_semantic_payload(state="proposal_ready", **overrides):
     """Single-run envelope: semantic decision + typed guided continuation.
 
-    Defaults to ``imperative`` so the legacy auto-open machinery assertions
-    stay valid; musing/consent tests override ``guided_explicitness``.
+    Defaults to ``imperative`` with a declared character target so the S4 table
+    opens it; musing/consent tests override ``guided_explicitness``.
     """
     payload = {
         "state": state,
@@ -2579,6 +2582,7 @@ def _continuation_semantic_payload(state="proposal_ready", **overrides):
         "session_id": "chat-1",
         "guided": True,
         "guided_explicitness": "imperative",
+        "target": {"kind": "flow", "id": "guided-character"},
         "continuation": {
             "outcome": "question" if state == "require_confirmation" else "delta",
             "question": "¿Creo este personaje?" if state == "require_confirmation" else None,
@@ -4258,7 +4262,10 @@ class TestSemanticRouting:
         typed continuation the guarded machinery cannot back a server-owned
         session/proposal, so the envelope fails closed to blocked."""
         for state in ("require_confirmation", "proposal_ready"):
-            runs = _SemanticRuns(_semantic_payload(state))
+            runs = _SemanticRuns(_semantic_payload(
+                state, guided_explicitness="imperative",
+                target={"kind": "flow", "id": "guided-character"},
+            ))
             _wire_semantic_provider(monkeypatch, runs)
             with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
                 response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
@@ -4294,7 +4301,11 @@ class TestSemanticRouting:
     def test_canon_mutation_request_never_touches_canon(self, client: TestClient, monkeypatch):
         target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
         original = target.read_bytes()
-        runs = _SemanticRuns(_semantic_payload("proposal_ready", response="I will rewrite the canon."))
+        runs = _SemanticRuns(_semantic_payload(
+            "proposal_ready", response="I will rewrite the canon.",
+            guided_explicitness="imperative",
+            target={"kind": "flow", "id": "guided-character"},
+        ))
         _wire_semantic_provider(monkeypatch, runs)
         with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
             response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Modifica el canon"})
@@ -4555,6 +4566,7 @@ class TestSemanticActivitySSE:
         """
         runs = _SemanticRuns(_semantic_payload(
             "clarify", guided=True, guided_explicitness="imperative",
+            target={"kind": "flow", "id": "guided-character"},
         ))
         _wire_semantic_provider(monkeypatch, runs)
         _principal(monkeypatch, "author-1")
@@ -4604,6 +4616,7 @@ class TestSemanticActivitySSE:
         """
         runs = _SemanticRuns(_semantic_payload(
             "clarify", guided=True, guided_explicitness="imperative",
+            target={"kind": "flow", "id": "guided-character"},
         ))
         _wire_semantic_provider(monkeypatch, runs)
 
@@ -4647,6 +4660,7 @@ class TestSemanticActivitySSE:
         decision: opening the guided flow costs exactly ONE semantic run."""
         runs = _SemanticRuns(_semantic_payload(
             "clarify", guided=True, guided_explicitness="imperative",
+            target={"kind": "flow", "id": "guided-character"},
         ))
         _wire_semantic_provider(monkeypatch, runs)
         _principal(monkeypatch, "author-1")
@@ -4699,14 +4713,61 @@ class TestSemanticActivitySSE:
         assert opened.status_code == 200, opened.text
         body = opened.json()
         assert body["guided"] is True
-        assert body["guided_state"]["path"] == ""
-        assert "Antes de empezar" in body["response"]
+        assert body["guided_state"]["phase"] == "confirmation"
+        assert body["response"] == "¿Creo este personaje?"
+        assert runs.starts == 1
+
+    def test_activity_offer_handoff_replays_the_answer_with_one_run(
+        self, client, monkeypatch
+    ):
+        """S4/S7: a musing guided offer hands off (no profile) and the /ai/ask
+        replay returns the gate's answer plus the consent card, one run total."""
+        answer = "Empieza por el deseo y el conflicto del personaje."
+        runs = _SemanticRuns(_continuation_semantic_payload(
+            "require_confirmation", guided_explicitness="musing", response=answer,
+        ))
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_CONSENT_TOKENS", {})
+        monkeypatch.setattr(
+            api_server, "_named_reference_context", lambda _m, _p: ("", False, None),
+        )
+
+        handoff = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Quisiera que me propongas un compañero para ese mundo",
+            "session_id": "chat-1",
+        })
+        assert handoff.status_code == 503
+        token = handoff.json()["handoff_token"]
+
+        offered = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Quisiera que me propongas un compañero para ese mundo",
+            "session_id": "chat-1",
+            "guided_handoff_token": token,
+        })
+
+        assert offered.status_code == 200, offered.text
+        body = offered.json()
+        assert body["consent"] == "required"
+        assert body["consent_token"].startswith("ct-")
+        assert body["response"] == answer
+        assert body["response"] != api_server.GUIDED_CONSENT_SUGGESTION_TEXT
+        assert "guided_session_id" not in body
         assert runs.starts == 1
 
     def test_guided_handoff_ticket_is_single_use(self, client, monkeypatch):
-        """A replayed ticket is burned: the second call pays its own gate run."""
+        """A replayed ticket is burned: the second call pays its own gate run.
+
+        The second decision is a non-guided ``allow`` for the same creation
+        words, so the retired lexical net no longer opens anything: the turn is
+        answered and no guided session is created (S4/S6/S10).
+        """
         runs = _SemanticRuns(
-            _semantic_payload("clarify", guided=True, guided_explicitness="imperative"),
+            _semantic_payload(
+                "clarify", guided=True, guided_explicitness="imperative",
+                target={"kind": "flow", "id": "guided-character"},
+            ),
             _semantic_payload("allow", guided=False),
         )
         _wire_semantic_provider(monkeypatch, runs)
@@ -4733,7 +4794,8 @@ class TestSemanticActivitySSE:
         })
         assert second.status_code == 200
         assert runs.starts == 2  # the ticket was burned; the gate interpreted again
-        assert second.json()["guided_session_id"] != first.json()["guided_session_id"]
+        assert "guided_session_id" not in second.json()
+        assert second.json()["state"] == "allow"
 
     def test_guided_handoff_ticket_rejects_a_different_turn(
         self, client, monkeypatch
@@ -4741,7 +4803,10 @@ class TestSemanticActivitySSE:
         """The ticket is bound to the exact turn: a different prompt falls
         through to the gate instead of replaying someone else's decision."""
         runs = _SemanticRuns(
-            _semantic_payload("clarify", guided=True, guided_explicitness="imperative"),
+            _semantic_payload(
+                "clarify", guided=True, guided_explicitness="imperative",
+                target={"kind": "flow", "id": "guided-character"},
+            ),
             _semantic_payload("allow", guided=False),
         )
         _wire_semantic_provider(monkeypatch, runs)
@@ -5032,7 +5097,10 @@ class TestSemanticSingleRunContinuation:
         assert envelope["consent"] == "required"
         assert envelope["consent_token"].startswith("ct-")
         assert envelope["guided_explicitness"] == "musing"
-        assert envelope["response"] == api_server.GUIDED_CONSENT_SUGGESTION_TEXT
+        # S7: the gate's answer survives the offer; the consent card renders
+        # its own copy, so the canned suggestion is never the message body.
+        assert envelope["response"] == "Hermes semantic answer."
+        assert envelope["response"] != api_server.GUIDED_CONSENT_SUGGESTION_TEXT
         assert "guided_session_id" not in envelope
         assert "guided_revision" not in envelope
         assert "guided_state" not in envelope

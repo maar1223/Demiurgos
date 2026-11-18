@@ -335,6 +335,27 @@ def test_runner_counts_a_false_open() -> None:
     assert report.false_closes == []
 
 
+def test_runner_counts_an_answer_replaced_by_a_consent_offer() -> None:
+    """S3/S7: an offer is not an open, but it replaces the answer and is scored
+    separately so the policy measurement can see the defect."""
+    import asyncio  # noqa: PLC0415
+
+    runner = _runner()
+
+    async def always_offer(_conversation, turn):
+        return runner.Decision(opens=False, class_name="answer", offer=True, raw="offer")
+
+    report = asyncio.run(runner.evaluate(
+        always_offer, runner.load_corpus(), "negative-control",
+    ))
+
+    assert report.false_opens == []
+    assert report.answer_replaced_by_offer
+    assert len(report.answer_replaced_by_offer) == sum(
+        1 for result in report.decisions if result.turn.expected_class == "answer"
+    )
+
+
 def test_report_renders_both_rates() -> None:
     import asyncio  # noqa: PLC0415
 
@@ -346,5 +367,6 @@ def test_report_renders_both_rates() -> None:
 
     assert "false-open" in rendered
     assert "false-close" in rendered
+    assert "answer replaced by a consent offer" in rendered
     assert "Not measured at the gate" in rendered
     assert "accuracy" not in rendered.lower()
