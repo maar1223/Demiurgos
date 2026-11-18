@@ -103,6 +103,16 @@ class TurnResult:
     def false_close(self) -> bool:
         return self.scored and self.expected_opens and not self.decision.opens
 
+    @property
+    def wrong_target(self) -> bool:
+        """Opened, but not the flow the contract pinned."""
+        return (
+            self.decision.opens
+            and self.turn.expected_target is not None
+            and self.decision.target is not None
+            and self.decision.target != self.turn.expected_target
+        )
+
 
 @dataclass
 class Report:
@@ -126,6 +136,10 @@ class Report:
     @property
     def unavailable(self) -> list[TurnResult]:
         return [r for r in self.decisions if r.decision.error]
+
+    @property
+    def wrong_targets(self) -> list[TurnResult]:
+        return [r for r in self.decisions if r.wrong_target]
 
     @property
     def answer_replaced_by_offer(self) -> list[TurnResult]:
@@ -345,6 +359,8 @@ def render_report(report: Report) -> str:
         f"- unavailable: {len(report.unavailable)}",
         f"- **answer replaced by a consent offer**: {len(report.answer_replaced_by_offer)}"
         " — not an open, but the reply never reaches the author (S3/S7).",
+        f"- **wrong target**: {len(report.wrong_targets)}"
+        " — opened a declared flow that is not the one the contract pinned.",
         "",
         "## By expected class",
         "",
@@ -361,11 +377,15 @@ def render_report(report: Report) -> str:
         )
 
     lines += ["", "## Failures", ""]
-    failures = report.false_opens + report.false_closes
+    failures = report.false_opens + report.false_closes + report.wrong_targets
     if not failures:
         lines.append("None.")
     for result in failures:
-        kind = "FALSE-OPEN" if result.false_open else "FALSE-CLOSE"
+        kind = (
+            "FALSE-OPEN" if result.false_open
+            else "WRONG-TARGET" if result.wrong_target
+            else "FALSE-CLOSE"
+        )
         lines += [
             f"- **{kind}** `{result.conversation.profile}` {result.conversation.path.name} "
             f"turn {result.turn.number}",

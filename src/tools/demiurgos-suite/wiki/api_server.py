@@ -10275,7 +10275,18 @@ def _opening_profile(decision: SemanticDecision | None) -> GuidedFlowProfile | N
         or target.id not in GUIDED_FLOW_IDS
     ):
         return None
-    return builtin_profile(target.id)
+    profile = builtin_profile(target.id)
+    if profile is not None:
+        return profile
+    # Only the character contract is server-embedded. Every other declared flow
+    # resolves through its published foundational method, exactly like
+    # `_resolve_input_flow`. A declared flow with no published method cannot
+    # open, and the turn is answered instead of opening the wrong sheet.
+    library = _methodology_library()
+    candidates = library.list_methods_for_flow(target.id)
+    if not candidates:
+        return None
+    return library.flow_profile_for(target.id, candidates[0].skill_id)
 
 
 def _opening_transition(decision: SemanticDecision | None) -> str:

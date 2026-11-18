@@ -2542,3 +2542,31 @@ def test_finished_exchange_is_never_interrupted_by_the_level_question(
     assert turned.status_code == 200, turned.text
     assert turned.json()["pending_kind"] == ""
     assert len(calls) == 1
+
+
+def test_opening_profile_resolves_every_declared_flow_with_a_published_method() -> None:
+    """A declared flow opens only if its profile resolves; never a wrong sheet."""
+    import api_server
+    from semantic_intent import SemanticDecision, SemanticTarget
+
+    def decision(flow_id: str) -> SemanticDecision:
+        return SemanticDecision(
+            state="allow",
+            response="ok",
+            request_id="r-1",
+            guided=True,
+            guided_explicitness="imperative",
+            target=SemanticTarget("flow", flow_id),
+        )
+
+    library = api_server._methodology_library()
+    for flow_id in sorted(api_server.GUIDED_FLOW_IDS):
+        candidates = library.list_methods_for_flow(flow_id)
+        profile = api_server._opening_profile(decision(flow_id))
+        if candidates or flow_id == api_server.GUIDED_CHARACTER_FLOW:
+            assert profile is not None, flow_id
+            assert profile.flow_id == flow_id
+        else:
+            assert profile is None, flow_id
+
+    assert api_server._opening_profile(decision("guided-nope")) is None
