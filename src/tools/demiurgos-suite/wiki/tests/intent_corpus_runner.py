@@ -256,6 +256,27 @@ async def simulated_decider(conversation: Conversation, turn: Turn) -> Decision:
     )
 
 
+def _recent_turns_window(
+    conversation: Conversation, turn: Turn, *, limit: int, char_cap: int,
+) -> str:
+    """Replay the prior author turns of the same conversation for the gate.
+
+    The live decider classified each turn statelessly, so anaphoric acceptances
+    ("Dale, armémoslo con tu método") saw no antecedent and landed as false
+    closes (S12a). The window uses the same shape ``api_server._gate_recent_turns``
+    produces: one role-prefixed line per turn, whitespace collapsed and capped.
+    Corpus conversations contain only author turns, so the role is always
+    ``Author``.
+    """
+    prior = [t for t in conversation.turns if t.number < turn.number][-limit:]
+    lines: list[str] = []
+    for earlier in prior:
+        text = " ".join(str(earlier.text).split())[:char_cap]
+        if text:
+            lines.append(f"Author: {text}")
+    return "\n".join(lines)
+
+
 def _live_session(world: str):
     """Import the server lazily so the simulated mode has no side effects."""
     sys.path.insert(0, str(HERE.parent))
@@ -281,6 +302,11 @@ def _live_session(world: str):
         async def decide(self, conversation: Conversation, turn: Turn) -> Decision:
             result = await api_server._semantic_gate(
                 world, turn.text, context=SemanticContext(),
+                recent_turns=_recent_turns_window(
+                    conversation, turn,
+                    limit=api_server.GATE_RECENT_TURNS,
+                    char_cap=api_server.GATE_RECENT_TURN_CHARS,
+                ),
             )
             decision = result.decision
             if decision is None:
@@ -318,7 +344,8 @@ async def evaluate(
     mode: str,
     concurrency: int = 1,
 ) -> Report:
-    """Run one decision per turn. Order is preserved; the gate is stateless."""
+    """Run one decision per turn. Order is preserved; the decider replays
+    the conversation's own prior turns to the live gate."""
     report = Report(
         mode=mode,
         digest=corpus_digest(),

@@ -10125,6 +10125,22 @@ async def _semantic_guided_continuation(
             reference_context=reference_context,
             reference_name=reference_name,
         )
+    # Path question first (S11): a require_confirmation command opens through
+    # the same entry as allow/clarify, so the session starts with ``path`` unset
+    # and the creation-path question IS the first turn. The typed yes/no
+    # confirmation is redundant there. ``proposal_ready`` keeps its typed delta
+    # below because that data is not redundant.
+    if decision.state == "require_confirmation":
+        profile = _opening_profile(decision)
+        if profile is not None:
+            opened = await _open_guided_from_intent(
+                mundo, body, result, principal, profile,
+                reference_context, reference_name,
+            )
+            if opened is not None:
+                return opened
+        # No declared flow or no methodology: fall through to the typed
+        # continuation, whose fail-closed shape reports the missing backing.
     # An imperative continuation opens the flow its decision named and uses the
     # typed continuation from the SAME run (S4: "open the named target"). The
     # flow is never guessed; ``_open_guided_continuation`` fails closed when the

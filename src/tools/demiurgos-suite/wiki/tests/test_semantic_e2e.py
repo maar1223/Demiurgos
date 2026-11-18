@@ -493,7 +493,11 @@ class TestSingleRunContinuationE2E:
         envelope = response.json()
         assert response.status_code == 200
         assert envelope["state"] == "require_confirmation"
-        assert envelope["response"] == "¿Creo este personaje?"
+        # S11: the single run opens the creation-path question, not the typed
+        # yes/no confirmation.
+        assert "Antes de empezar" in envelope["response"]
+        assert envelope["guided_state"]["path"] == ""
+        assert envelope["guided_state"]["pending_kind"] == "path"
         assert runs.starts == 1
         legacy.assert_not_awaited()
 

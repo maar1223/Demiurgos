@@ -180,24 +180,23 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
     first_state = first.json()["guided_state"]
     assert first_state["reference"]["name"] == "Rhyz El Resonante"
     assert first_state["reference"]["verified"] is True
-    # The typed confirmation opens the named flow; the reference is already
-    # bound to the session and survives the confirmation.
-    assert first_state["path"] == "explore"
-    assert first_state["phase"] == "confirmation"
+    # S11: the session opens with the creation-path question; the reference is
+    # already bound to the session and survives the path/level turns.
+    assert first_state["path"] == ""
+    assert first_state["pending_kind"] == "path"
 
-    accepted = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "sí", "session_id": "chat-1",
+    path_state = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
         "guided_session_id": first_state["session_id"],
         "guided_revision": first_state["revision"],
     })
-    assert accepted.status_code == 200
-    path_state = accepted.json()["guided_state"]
-    assert path_state["pending_kind"] == "level"
+    assert path_state.status_code == 200
+    assert path_state.json()["guided_state"]["pending_kind"] == "level"
 
     levelled = client.post("/api/vibrantes/ai/ask", json={
         "prompt": "1", "session_id": "chat-1",
-        "guided_session_id": path_state["session_id"],
-        "guided_revision": path_state["revision"],
+        "guided_session_id": path_state.json()["guided_state"]["session_id"],
+        "guided_revision": path_state.json()["guided_state"]["revision"],
     })
     assert levelled.status_code == 200
     accepted_state = levelled.json()["guided_state"]
@@ -678,16 +677,17 @@ def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatc
     response = client.post("/api/vibrantes/ai/ask", json={"prompt": "I want to create Rhyz's wife"})
 
     assert response.status_code == 200
-    # S4: an imperative continuation opens the named flow with the gate's own
-    # typed confirmation; it never falls through to invented prose.
-    assert response.json()["response"] == "¿Creo este personaje?"
-    assert response.json()["guided_state"]["phase"] == "confirmation"
+    # S4/S11: an imperative continuation opens the named flow with the
+    # creation-path question; it never falls through to invented prose.
+    assert "Antes de empezar" in response.json()["response"]
+    assert response.json()["guided_state"]["path"] == ""
+    assert response.json()["guided_state"]["pending_kind"] == "path"
     prose.assert_not_awaited()
 
 
-def test_confirmation_text_follows_configured_language_in_both_entry_paths(monkeypatch, tmp_path) -> None:
+def test_server_owned_copy_follows_configured_language_in_both_entry_paths(monkeypatch, tmp_path) -> None:
     async def provider(*_args):
-        raise AssertionError("provider must not run before confirmation")
+        raise AssertionError("provider must not run before the server-owned questions")
 
     (tmp_path / "vibrantes").mkdir()
     monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
@@ -737,22 +737,20 @@ def test_confirmation_text_follows_configured_language_in_both_entry_paths(monke
     english_with_spanish_prompt = client.post("/api/vibrantes/ai/ask", json={
         "prompt": "crea esa cosa",
     }).json()
-    assert english_with_spanish_prompt["response"] == "¿Creo este personaje?"
-    assert english_with_spanish_prompt["guided_state"]["phase"] == "confirmation"
-    english_ambiguous = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "quizás",
+    # S11: the /ai/ask entry opens with the creation-path question, whose copy
+    # follows the configured language too.
+    assert english_with_spanish_prompt["response"].startswith("Before we start:")
+    assert english_with_spanish_prompt["guided_state"]["path"] == ""
+    assert english_with_spanish_prompt["guided_state"]["pending_kind"] == "path"
+    english_path_answered = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1",
         "guided_session_id": english_with_spanish_prompt["guided_session_id"],
         "guided_revision": english_with_spanish_prompt["guided_revision"],
     }).json()
-    assert english_ambiguous["response"] == (
-        "Please answer yes to start the guided character proposal, or no to cancel."
+    assert english_path_answered["guided_state"]["pending_kind"] == "level"
+    assert english_path_answered["guided_state"]["pending_question"].startswith(
+        "What narrative level does this character occupy:"
     )
-    english_declined = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "no",
-        "guided_session_id": english_with_spanish_prompt["guided_session_id"],
-        "guided_revision": english_ambiguous["guided_revision"],
-    }).json()
-    assert english_declined["response"] == "No character proposal was started."
 
 
 def test_guided_start_normalizes_structured_question_for_public_state(monkeypatch, tmp_path) -> None:
@@ -1942,8 +1940,8 @@ def test_consent_stays_server_side_with_flag_on(monkeypatch, tmp_path) -> None:
     }).json()
     assert imperative["guided_explicitness"] == "imperative"
     assert imperative["guided_session_id"].startswith("guided-")
-    assert imperative["guided_state"]["path"] == "explore"
-    assert imperative["guided_state"]["phase"] == "confirmation"
+    assert imperative["guided_state"]["path"] == ""
+    assert imperative["guided_state"]["pending_kind"] == "path"
     assert "consent" not in imperative
     assert any(
         state.world == "vibrantes"
@@ -2356,16 +2354,15 @@ def test_agent_imperative_opens_the_path_question_on_ai_ask(monkeypatch, tmp_pat
     assert calls == []
 
 
-def test_clear_creation_command_uses_the_gate_confirmation_with_the_named_target(
+def test_clear_creation_command_opens_with_the_path_question_and_the_named_target(
     monkeypatch, tmp_path,
 ) -> None:
-    """S4/S5: an imperative continuation opens the named flow and uses the
-    gate's own typed confirmation.
+    """S4/S5/S11: an imperative continuation opens the named flow, and a
+    require_confirmation command starts with the creation-path question.
 
-    The 2026-11-11 path-question-first branch for continuation states was part
-    of the retired opening net: with the target contract the typed continuation
-    is authoritative, so the confirmation question is asked instead of being
-    replaced by a second server-owned question surface.
+    The 2026-11-11 rule is restored: the yes/no typed confirmation is redundant
+    when the creation-path question itself is the first turn, so the session
+    opens with ``path`` unset.
     """
     calls = []
 
@@ -2406,26 +2403,28 @@ def test_clear_creation_command_uses_the_gate_confirmation_with_the_named_target
     assert first.status_code == 200, first.text
     body = first.json()
     assert body["guided"] is True
-    assert body["guided_state"]["path"] == "explore"
-    assert body["guided_state"]["phase"] == "confirmation"
-    assert body["response"] == "¿Creo este personaje?"
-    assert "Antes de empezar" not in body["response"]
-    assert calls == []  # the typed confirmation is server-owned
+    assert body["guided_state"]["path"] == ""
+    assert body["guided_state"]["phase"] == "conversation"
+    assert body["guided_state"]["pending_kind"] == "path"
+    assert "Antes de empezar" in body["response"]
+    assert body["response"] != "¿Creo este personaje?"
+    assert calls == []  # the creation-path question is server-owned
 
-    confirmed = client.post("/api/vibrantes/ai/ask", json={
-        "prompt": "sí", "session_id": "chat-1",
+    path_answered = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "1", "session_id": "chat-1",
         "guided_session_id": body["guided_session_id"],
         "guided_revision": body["guided_revision"],
     })
-    assert confirmed.status_code == 200, confirmed.text
-    confirmed_state = confirmed.json()["guided_state"]
-    assert confirmed_state["pending_kind"] == "level"
+    assert path_answered.status_code == 200, path_answered.text
+    path_state = path_answered.json()["guided_state"]
+    assert path_state["path"] == "explore"
+    assert path_state["pending_kind"] == "level"
     assert calls == []
 
     levelled = client.post("/api/vibrantes/ai/ask", json={
         "prompt": "1", "session_id": "chat-1",
-        "guided_session_id": confirmed_state["session_id"],
-        "guided_revision": confirmed_state["revision"],
+        "guided_session_id": path_state["session_id"],
+        "guided_revision": path_state["revision"],
     })
     assert levelled.status_code == 200, levelled.text
     assert levelled.json()["guided_state"]["level"] == "1º"

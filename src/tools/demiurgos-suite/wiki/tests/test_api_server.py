@@ -1601,7 +1601,7 @@ class TestAiAsk:
     def test_natural_character_message_handoffs_to_guided_session(self, client: TestClient, monkeypatch):
         """Hermes-first: a natural character message becomes a guarded guided
         session only through a validated require_confirmation decision, and its
-        first turn is the gate's typed confirmation for the named target."""
+        first turn is the creation-path question (S11) for the named target."""
         _principal(monkeypatch)
         monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
         monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
@@ -1618,9 +1618,11 @@ class TestAiAsk:
         assert payload["state"] == "require_confirmation"
         assert payload["guided_session_id"].startswith("guided-")
         assert payload["guided_revision"] == 1
-        assert payload["guided_state"]["path"] == "explore"
-        assert payload["guided_state"]["phase"] == "confirmation"
-        assert payload["guided_state"]["pending_question"] == "¿Creo este personaje?"
+        assert payload["guided_state"]["path"] == ""
+        assert payload["guided_state"]["phase"] == "conversation"
+        assert payload["guided_state"]["pending_kind"] == "path"
+        assert "Antes de empezar" in payload["response"]
+        assert payload["guided_state"]["pending_question"] == payload["response"]
         assert payload["guided_state"]["session_id"] == payload["guided_session_id"]
         assert runs.starts == 1
 
@@ -1723,9 +1725,11 @@ class TestAiAsk:
         assert response.status_code == 200
         payload = response.json()
         # Hermes decides require_confirmation; the canonical graph evidence is
-        # gathered ONCE server-side and bound to the guarded session.
+        # gathered ONCE server-side and bound to the guarded session. S11: the
+        # session opens with the creation-path question, path unset.
         assert payload["state"] == "require_confirmation"
-        assert payload["guided_state"]["path"] == "explore"
+        assert payload["guided_state"]["path"] == ""
+        assert payload["guided_state"]["pending_kind"] == "path"
         assert payload["guided_revision"] == 1
         assert payload["guided_state"]["candidate"]["proposals"] == {}
         assert payload["guided_state"]["candidate"]["accepted_canon"] == {}
@@ -1739,29 +1743,30 @@ class TestAiAsk:
         assert state.reference_name == "Rhyz"
         assert "Patient tactician." in state.reference_context
 
-        confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "sí",
+        path_answered = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1",
             "session_id": "chat-1",
             "guided_session_id": payload["guided_session_id"],
             "guided_revision": payload["guided_revision"],
         })
 
-        assert confirmed.status_code == 200
-        confirmed_payload = confirmed.json()
-        assert confirmed_payload["guided_state"]["pending_kind"] == "level"
+        assert path_answered.status_code == 200
+        path_payload = path_answered.json()
+        assert path_payload["guided_state"]["path"] == "explore"
+        assert path_payload["guided_state"]["pending_kind"] == "level"
         assert len(seen) == 0
 
         levelled = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "1",
             "session_id": "chat-1",
             "guided_session_id": payload["guided_session_id"],
-            "guided_revision": confirmed_payload["guided_revision"],
+            "guided_revision": path_payload["guided_revision"],
         })
         assert levelled.status_code == 200
         levelled_payload = levelled.json()
         assert levelled_payload["guided_state"]["phase"] == "conversation"
         assert levelled_payload["guided_state"]["level"] == "1º"
-        assert levelled_payload["guided_revision"] == confirmed_payload["guided_revision"] + 1
+        assert levelled_payload["guided_revision"] == path_payload["guided_revision"] + 1
         assert len(seen) == 1
         assert "Patient tactician." in seen[0]
         assert "personajes/rhyz.md" not in seen[0]
@@ -1811,15 +1816,15 @@ class TestAiAsk:
             "section": "personajes",
             "session_id": "chat-1",
         }).json()
-        assert first["guided_state"]["path"] == "explore"
-        assert first["guided_state"]["phase"] == "confirmation"
+        assert first["guided_state"]["path"] == ""
+        assert first["guided_state"]["pending_kind"] == "path"
         assert first["guided_revision"] == 1
         assert guided_calls == []
 
-        # The factual shortcut is gone: while the typed confirmation is pending,
-        # a non-choice message re-asks the server-owned question (no semantic
-        # gate, no guided provider, no plain-chat call), so the state stays
-        # safe.
+        # The factual shortcut is gone: while the creation-path question is
+        # pending, a non-choice message re-asks the server-owned question (no
+        # semantic gate, no guided provider, no plain-chat call), so the state
+        # stays safe.
         factual = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "me puedes indicar cual es el papel que cumple Rhyz?",
             "section": "personajes",
@@ -1831,23 +1836,25 @@ class TestAiAsk:
         assert factual.status_code == 200
         factual_payload = factual.json()
         assert factual_payload["guided_session_id"] == first["guided_session_id"]
-        assert factual_payload["guided_state"]["path"] == "explore"
+        assert factual_payload["guided_state"]["path"] == ""
+        assert factual_payload["guided_state"]["pending_kind"] == "path"
         assert guided_calls == []
         assert runs.starts == 1
 
-        confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "sí",
+        path_answered = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1",
             "section": "personajes",
             "session_id": "chat-1",
             "guided_session_id": first["guided_session_id"],
             "guided_revision": factual_payload["guided_revision"],
         })
 
-        assert confirmed.status_code == 200
-        confirmed_payload = confirmed.json()
-        # The confirmation resolves; the narrative level is the server-owned
+        assert path_answered.status_code == 200
+        path_payload = path_answered.json()
+        # The path answer resolves; the narrative level is the server-owned
         # turn before the guided provider runs.
-        assert confirmed_payload["guided_state"]["pending_kind"] == "level"
+        assert path_payload["guided_state"]["path"] == "explore"
+        assert path_payload["guided_state"]["pending_kind"] == "level"
         assert guided_calls == []
 
         levelled = client.post("/api/test_mundo/ai/ask", json={
@@ -1855,7 +1862,7 @@ class TestAiAsk:
             "section": "personajes",
             "session_id": "chat-1",
             "guided_session_id": first["guided_session_id"],
-            "guided_revision": confirmed_payload["guided_revision"],
+            "guided_revision": path_payload["guided_revision"],
         })
         assert levelled.status_code == 200
         levelled_payload = levelled.json()
@@ -1864,7 +1871,7 @@ class TestAiAsk:
         assert levelled_payload["guided_state"]["phase"] == "conversation"
         assert levelled_payload["guided_state"]["level"] == "1º"
         assert len(guided_calls) == 1
-        assert guided_calls[0].base_revision == confirmed_payload["guided_revision"]
+        assert guided_calls[0].base_revision == path_payload["guided_revision"]
         assert guided_calls[0].reference_name == "Rhyz"
         assert "Patient tactician." in guided_calls[0].reference_context
 
@@ -1931,35 +1938,38 @@ class TestAiAsk:
             })
             assert response.status_code == 200
             payload = response.json()
-            # Confirmation-first: the unresolved/ambiguous reference enters
-            # confirmation and the provider does not run before explicit
-            # confirmation, so no facts are invented prematurely.
+            # Path question first (S11): the unresolved/ambiguous reference
+            # enters a session whose first turn is the creation-path question,
+            # and the provider does not run before the author chooses it, so no
+            # facts are invented prematurely.
             assert payload["state"] == "require_confirmation"
-            assert payload["guided_state"]["path"] == "explore"
+            assert payload["guided_state"]["path"] == ""
+            assert payload["guided_state"]["pending_kind"] == "path"
             assert payload["guided_revision"] == 1
             assert len(seen) == before
             # The uncertainty is retained in the session (never read/linked) and
-            # reaches the provider only after confirmation to ask for clarification.
+            # reaches the provider only after path + level so it asks for
+            # clarification.
             state = api_server._GUIDED_SESSIONS.recover(payload["guided_session_id"], "tester")
             assert state is not None
             assert expected in state.reference_context
             assert "personajes/" not in state.reference_context
 
-            confirmed = client.post("/api/test_mundo/ai/ask", json={
-                "prompt": "sí",
+            path_answered = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "1",
                 "guided_session_id": payload["guided_session_id"],
                 "guided_revision": payload["guided_revision"],
             })
-            assert confirmed.status_code == 200
-            # The confirmation resolves; the level turn still precedes the
+            assert path_answered.status_code == 200
+            # The path answer resolves; the level turn still precedes the
             # provider.
-            assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+            assert path_answered.json()["guided_state"]["pending_kind"] == "level"
             assert len(seen) == before
 
             levelled = client.post("/api/test_mundo/ai/ask", json={
                 "prompt": "1",
                 "guided_session_id": payload["guided_session_id"],
-                "guided_revision": confirmed.json()["guided_revision"],
+                "guided_revision": path_answered.json()["guided_revision"],
             })
             assert levelled.status_code == 200
             assert levelled.json()["guided_state"]["level"] == "1º"
@@ -2216,27 +2226,28 @@ class TestGuidedSessionDurability:
                 "guided_revision": first["guided_revision"],
             })
         assert factual.status_code == 200
-        # Hermes interpreted the factual message; the guarded confirmation just
-        # re-prompts (no factual shortcut, no plain-chat fallback).
+        # Hermes interpreted the factual message; the pending creation-path
+        # question just re-prompts (no factual shortcut, no plain-chat fallback).
         assert factual.json()["guided_session_id"] == first["guided_session_id"]
         assert factual.json()["guided_revision"] == first["guided_revision"] + 1
+        assert factual.json()["guided_state"]["pending_kind"] == "path"
         normal.assert_not_awaited()
 
-        confirmed = client.post("/api/test_mundo/ai/ask", json={
-            "prompt": "sí", **context,
+        path_answered = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "1", **context,
             "guided_session_id": first["guided_session_id"],
             "guided_revision": factual.json()["guided_revision"],
         })
-        assert confirmed.status_code == 200
-        assert confirmed.json()["guided_state"]["phase"] == "conversation"
-        # The confirmation resolves; the level turn still precedes the provider.
-        assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+        assert path_answered.status_code == 200
+        assert path_answered.json()["guided_state"]["path"] == "explore"
+        # The path answer resolves; the level turn still precedes the provider.
+        assert path_answered.json()["guided_state"]["pending_kind"] == "level"
         assert calls == []
 
         levelled = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "1", **context,
             "guided_session_id": first["guided_session_id"],
-            "guided_revision": confirmed.json()["guided_revision"],
+            "guided_revision": path_answered.json()["guided_revision"],
         })
         assert levelled.status_code == 200
         assert levelled.json()["guided_state"]["level"] == "1º"
@@ -4713,8 +4724,11 @@ class TestSemanticActivitySSE:
         assert opened.status_code == 200, opened.text
         body = opened.json()
         assert body["guided"] is True
-        assert body["guided_state"]["phase"] == "confirmation"
-        assert body["response"] == "¿Creo este personaje?"
+        # S11: the replayed require_confirmation opens with the creation-path
+        # question, not the typed yes/no confirmation.
+        assert body["guided_state"]["path"] == ""
+        assert body["guided_state"]["pending_kind"] == "path"
+        assert "Antes de empezar" in body["response"]
         assert runs.starts == 1
 
     def test_activity_offer_handoff_replays_the_answer_with_one_run(
@@ -4878,7 +4892,7 @@ class TestSemanticSingleRunContinuation:
         assert pending["principal_id"] == "tester"
         assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
 
-    def test_require_confirmation_single_run_begins_guarded_confirmation(self, client: TestClient, monkeypatch):
+    def test_require_confirmation_single_run_begins_with_the_path_question(self, client: TestClient, monkeypatch):
         runs = self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("require_confirmation"))
         with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
             response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._CONFIRM_PROMPT})
@@ -4886,23 +4900,28 @@ class TestSemanticSingleRunContinuation:
         envelope = response.json()
         assert envelope["state"] == "require_confirmation"
         assert envelope["action"] == "request_confirmation"
-        assert envelope["response"] == "¿Creo este personaje?"
+        # S11: the creation-path question is the first turn; the redundant
+        # typed yes/no confirmation is not asked.
+        assert "Antes de empezar" in envelope["response"]
+        assert envelope["response"] != "¿Creo este personaje?"
         assert envelope["guided_session_id"].startswith("guided-")
         assert envelope["guided_revision"] == 1
-        assert envelope["guided_state"]["phase"] == "confirmation"
-        assert envelope["guided_state"]["pending_question"] == "¿Creo este personaje?"
+        assert envelope["guided_state"]["path"] == ""
+        assert envelope["guided_state"]["pending_kind"] == "path"
+        assert envelope["guided_state"]["pending_question"] == envelope["response"]
         assert "proposal_id" not in envelope and "proposed_digest" not in envelope
         assert runs.starts == 1
         legacy.assert_not_awaited()
         assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
 
-    def test_confirmation_state_answers_flow_through_guarded_machinery(self, client: TestClient, monkeypatch):
+    def test_path_state_answers_flow_through_guarded_machinery(self, client: TestClient, monkeypatch):
         runs = self._wire_continuation(
             client, monkeypatch,
             _continuation_semantic_payload("require_confirmation"),
             _semantic_payload("allow"),
         )
         started = client.post("/api/test_mundo/ai/ask", json={"prompt": self._CONFIRM_PROMPT}).json()
+        assert started["guided_state"]["pending_kind"] == "path"
         sid, revision = started["guided_session_id"], started["guided_revision"]
 
         guided_calls = []
@@ -4922,19 +4941,19 @@ class TestSemanticSingleRunContinuation:
             "guided-character-v1", True, True, True, 90_000,
         ))
         with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
-            confirmed = client.post("/api/test_mundo/ai/ask", json={
-                "prompt": "sí", "session_id": "chat-1",
+            path_answered = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "1", "session_id": "chat-1",
                 "guided_session_id": sid, "guided_revision": revision,
             })
-        assert confirmed.status_code == 200
-        assert confirmed.json()["guided_state"]["phase"] == "conversation"
-        assert confirmed.json()["guided_state"]["pending_kind"] == "level"
+        assert path_answered.status_code == 200
+        assert path_answered.json()["guided_state"]["path"] == "explore"
+        assert path_answered.json()["guided_state"]["pending_kind"] == "level"
         assert len(guided_calls) == 0
 
         levelled = client.post("/api/test_mundo/ai/ask", json={
             "prompt": "1", "session_id": "chat-1",
             "guided_session_id": sid,
-            "guided_revision": confirmed.json()["guided_revision"],
+            "guided_revision": path_answered.json()["guided_revision"],
         })
         assert levelled.status_code == 200
         assert levelled.json()["guided_state"]["level"] == "1º"
@@ -5110,8 +5129,9 @@ class TestSemanticSingleRunContinuation:
         assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
 
     def test_imperative_guided_intent_carries_explicitness_and_auto_opens(self, client: TestClient, monkeypatch):
-        """REQ-GFC-02: an explicit imperative keeps today's auto-open and the
-        envelope carries the server-derived explicitness."""
+        """REQ-GFC-02 / S11: an explicit imperative keeps today's auto-open and
+        the envelope carries the server-derived explicitness; a
+        require_confirmation command starts with the creation-path question."""
         runs = self._wire_continuation(
             client, monkeypatch,
             _continuation_semantic_payload("require_confirmation", guided_explicitness="imperative"),
@@ -5123,9 +5143,49 @@ class TestSemanticSingleRunContinuation:
         envelope = response.json()
         assert envelope["guided_explicitness"] == "imperative"
         assert envelope["guided_session_id"].startswith("guided-")
-        assert envelope["guided_state"]["phase"] == "confirmation"
+        assert envelope["guided_state"]["path"] == ""
+        assert envelope["guided_state"]["pending_kind"] == "path"
         assert "consent" not in envelope
         assert runs.starts == 1
+
+    def test_require_confirmation_opens_the_path_question_while_proposal_ready_keeps_its_delta(
+        self, client: TestClient, monkeypatch,
+    ):
+        """S11: the entry shape follows the state, not the explicitness.
+
+        A require_confirmation command drops the redundant yes/no confirmation
+        and starts with the creation-path question; ``proposal_ready`` keeps its
+        typed proposal because that data is not redundant.
+        """
+        runs = self._wire_continuation(
+            client, monkeypatch,
+            _continuation_semantic_payload(
+                "require_confirmation", guided_explicitness="imperative",
+            ),
+            _continuation_semantic_payload(
+                "proposal_ready", guided_explicitness="imperative",
+            ),
+        )
+
+        confirmed = client.post(
+            "/api/test_mundo/ai/ask", json={"prompt": self._CONFIRM_PROMPT},
+        ).json()
+        assert confirmed["state"] == "require_confirmation"
+        assert confirmed["guided_state"]["path"] == ""
+        assert confirmed["guided_state"]["pending_kind"] == "path"
+        assert "Antes de empezar" in confirmed["response"]
+        assert confirmed["response"] != "¿Creo este personaje?"
+
+        proposal = client.post(
+            "/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT},
+        ).json()
+        assert proposal["state"] == "proposal_ready"
+        assert proposal["action"] == "show_proposal"
+        assert proposal["target"] == "personajes/rhyz-s-wife.md"
+        assert proposal["proposed_digest"]
+        assert proposal["proposed_content"]
+        assert "Antes de empezar" not in proposal["response"]
+        assert runs.starts == 2
 
     def test_keeps_chatting_after_suggestion_declines_and_suppresses_repeat(self, client: TestClient, monkeypatch):
         """REQ-GFC-06: a suggestion left unaccepted is a session decline; later

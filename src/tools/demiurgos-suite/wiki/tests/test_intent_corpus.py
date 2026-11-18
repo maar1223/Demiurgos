@@ -370,3 +370,42 @@ def test_report_renders_both_rates() -> None:
     assert "answer replaced by a consent offer" in rendered
     assert "Not measured at the gate" in rendered
     assert "accuracy" not in rendered.lower()
+
+
+def test_live_decider_replays_the_prior_author_turns(monkeypatch) -> None:
+    """S12a: a second-turn live decision carries the prior author turn.
+
+    A stateless live decider cannot resolve an anaphoric acceptance ("Dale,
+    armémoslo con tu método"), so the runner replays the conversation's prior
+    author turns in the same shape ``api_server._gate_recent_turns`` builds. The
+    gate is faked: the test never calls the network.
+    """
+    import asyncio  # noqa: PLC0415
+
+    import api_server  # noqa: PLC0415
+
+    runner = _runner()
+    conversation = next(c for c in runner.load_corpus() if len(c.turns) >= 2)
+    second = conversation.turns[1]
+    seen: dict = {}
+
+    async def fake_gate(mundo: str, prompt: str, **kwargs):
+        seen.update(kwargs)
+        seen["prompt"] = prompt
+        return api_server.SemanticResult(
+            decision=None, attempts=0, request_id="r-1", session_id=None,
+            unavailable=True,
+        )
+
+    monkeypatch.setattr(api_server, "_adopt_existing_state_once", lambda: None)
+    monkeypatch.setattr(api_server, "_GATEWAY_KEY", "test-key")
+    monkeypatch.setattr(api_server, "_semantic_gate", fake_gate)
+
+    decision = asyncio.run(
+        runner._live_session("__intent_corpus__").decide(conversation, second)
+    )
+
+    assert decision.error == "unavailable"
+    assert seen["recent_turns"], "the second turn must receive a context window"
+    assert seen["recent_turns"].startswith("Author: ")
+    assert conversation.turns[0].text.split()[0] in seen["recent_turns"]
