@@ -148,6 +148,33 @@ The launcher also warns at boot when `frontend/src` is newer than
 `frontend/dist`; `scripts/start-demiurgos.sh --build-if-stale` rebuilds before
 starting.
 
+### Verifying assistant world-reading (MANDATORY)
+
+The assistant reading the author's world through the entity graph is the
+product's differentiator; a blind graph turns Demiurgos into a generic chat
+without any test failing. The full contract, incident record and failure-mode
+table live in `docs/architecture/ASSISTANT_WORLD_READING.md` — read it before
+touching any of these:
+
+- `data_root.py` / `state_paths.py`, or the data-root split;
+- launcher env exports (`DEMIURGOS_DATA_ROOT`, `DEMIURGOS_ROOT`, `HERMES_HOME`);
+- `install.sh` / `install.ps1` / `scripts/provision-hermes.*` /
+  `hermes_profile_config.py` (any writer of `<HERMES_HOME>/config.yaml`);
+- `graph_indexer.py`, `mcp_adapter.py`, `graph_mcp_server.py`, `mcp_launcher.py`,
+  `warmup_gateway.py`;
+- the install layout or the payload manifest.
+
+Before closing such a change, run the gate for `ASSISTANT_WORLD_READING.md` §5
+and paste its output as evidence:
+
+```bash
+python3 scripts/check_assistant_graph.py        # exit 0 = wiring is sound
+```
+
+A green `/api/{mundo}/graph/status` is **not** evidence: the API and the MCP
+server build two independent indexes. Only the MCP side counts, and only a
+world-only question answered from a ficha (level C) closes the gate.
+
 ---
 
 ## Engram (MANDATORY)
