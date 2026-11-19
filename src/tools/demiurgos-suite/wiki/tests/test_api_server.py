@@ -8526,6 +8526,172 @@ class TestGlobalAssistantContext:
         assert activity.json()["code"] == "activity_unavailable"
 
 
+class TestAssistantTurnInterruption:
+    """S1/S2: a turn that produces no answer must be bounded and visible.
+
+    Production incident (2026-11-19): the answer run's first token took longer
+    than the 30 s per-event silence ceiling, the server cancelled the run, and
+    neither side logged the close — the author saw the opaque fail-closed copy
+    with no reason and no retry.
+    """
+
+    def _answer_adapter(self):
+        class Adapter:
+            available = True
+            capability = _activity_capability()
+
+            def start(self, request):
+                return "run-answer"
+
+            async def events(self, run_id):
+                yield {"event": "message.delta", "run_id": run_id, "delta": "Sigo."}
+                yield {"event": "run.completed", "run_id": run_id, "output": "Sigo."}
+
+            async def cancel(self, run_id):
+                return None
+
+        return Adapter()
+
+    def test_silence_ceiling_closes_the_stream_and_logs_the_close(
+        self, client: TestClient, monkeypatch, caplog,
+    ):
+        class SilentAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def __init__(self):
+                self.cancelled: list[str] = []
+
+            def start(self, request):
+                return "run-silent"
+
+            async def events(self, run_id):
+                await asyncio.sleep(3600)
+                yield {"event": "run.completed", "run_id": run_id, "output": "never"}
+
+            async def cancel(self, run_id):
+                self.cancelled.append(run_id)
+
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(_semantic_payload("allow")))
+        adapter = SilentAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        monkeypatch.setattr(api_server, "ACTIVITY_EVENT_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(api_server, "ACTIVITY_STREAM_BUDGET_SECONDS", 5.0)
+
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/api/ideas-global/ai/ask/activity", json={
+                "prompt": "sigo con la historia", "session_id": "silence-1",
+            })
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        # The production shape: an authoritative allow decision, no answer.
+        assert events[0]["kind"] == "semantic_decision"
+        assert events[0]["state"] == "allow"
+        assert "answer" not in kinds
+        assert kinds[-1] == "terminal"
+        # The run really was stopped, which is the ``/v1/runs/<id>/stop`` seen
+        # in the incident log.
+        assert adapter.cancelled == ["run-silent"]
+        # And the close is now diagnosable instead of silent.
+        assert "run-silent" in caplog.text
+        assert "silence" in caplog.text
+        assert "answer_seen=False" in caplog.text
+
+    def test_total_budget_bounds_a_run_that_never_terminates(
+        self, client: TestClient, monkeypatch, caplog,
+    ):
+        class ChattyAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def start(self, request):
+                return "run-chatty"
+
+            async def events(self, run_id):
+                # Bounded at 4 s of yields so a broken budget cannot hang the
+                # suite; the 0.15 s budget must fire long before that.
+                for _ in range(400):
+                    await asyncio.sleep(0.01)
+                    yield {"event": "message.delta", "run_id": run_id, "delta": "x"}
+
+            async def cancel(self, run_id):
+                return None
+
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(_semantic_payload("allow")))
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", ChattyAdapter())
+        monkeypatch.setattr(api_server, "ACTIVITY_EVENT_TIMEOUT_SECONDS", 0.5)
+        monkeypatch.setattr(api_server, "ACTIVITY_STREAM_BUDGET_SECONDS", 0.15)
+
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/api/ideas-global/ai/ask/activity", json={
+                "prompt": "sigo", "session_id": "budget-1",
+            })
+
+        kinds = [event["kind"] for event in _parse_sse(response.text)]
+        assert kinds[-1] == "terminal"
+        assert "budget" in caplog.text
+
+    def test_routing_starts_before_the_semantic_gate_finishes(
+        self, client: TestClient, monkeypatch,
+    ):
+        order: list[str] = []
+
+        class SlowGateRuns:
+            async def start(self, request):
+                order.append("gate_start")
+                return "run-gate"
+
+            async def events(self, run_id):
+                await asyncio.sleep(0.2)
+                order.append("gate_end")
+                yield {
+                    "event": "run.completed",
+                    "run_id": run_id,
+                    "output": json.dumps(_semantic_payload("allow")),
+                }
+
+        async def fake_route(prompt, mundo, distilled_state):
+            order.append("route_start")
+            return None
+
+        _wire_semantic_provider(monkeypatch, SlowGateRuns())
+        monkeypatch.setattr(api_server, "_route_skill", fake_route)
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", self._answer_adapter())
+
+        response = client.post("/api/ideas-global/ai/ask/activity", json={
+            "prompt": "sigo con la historia", "session_id": "parallel-1",
+        })
+
+        assert response.status_code == 200
+        assert "route_start" in order
+        # Serial routing paid a full awaited classification AFTER the gate.
+        assert order.index("route_start") < order.index("gate_end")
+
+    def test_graph_warm_builds_each_world_and_never_raises(
+        self, monkeypatch, tmp_path: Path,
+    ):
+        worlds = tmp_path / "mundos"
+        for name in ("Vibrantes", "Otro"):
+            (worlds / name / "lore").mkdir(parents=True)
+        monkeypatch.setattr(api_server, "_mundos_dir", lambda: worlds)
+        built: list[str] = []
+
+        def fake_get_graph(mundo):
+            built.append(mundo)
+            if mundo == "Otro":
+                raise RuntimeError("boom")
+            return object()
+
+        monkeypatch.setattr(api_server, "_get_graph", fake_get_graph)
+
+        api_server._warm_graph_indices()
+
+        # Every world was attempted, and one failure did not stop the sweep.
+        assert built == ["Otro", "Vibrantes"]
+
+
 class TestPublishedAdjuntoRoute:
     """PR2: ``GET .../published/{skill}/{version}/adjunto/{path:path}`` serves a
     single pinned carrier as raw ``text/markdown`` (R14/R17; D1-D4)."""

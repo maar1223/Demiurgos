@@ -395,6 +395,16 @@ async def _lifespan(app: FastAPI):
         ).start()
     except Exception:  # noqa: BLE001 — never block startup
         logger.warning("assistant acceptance convergence could not start")
+    # Warm the entity graph off the boot path (S4): the first assistant turn
+    # after a reboot must not pay ``EntityGraphIndex.build`` on the event loop.
+    try:
+        threading.Thread(
+            target=_warm_graph_indices,
+            name="assistant-graph-warmup",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001 — never block startup
+        logger.warning("assistant graph warmup could not start")
     try:
         yield
     finally:
@@ -7298,6 +7308,27 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
     return _graph_indices[mundo]
 
 
+def _warm_graph_indices() -> None:
+    """Build every world's graph index off the boot path.
+
+    ``_get_graph`` builds lazily on first use, which made the FIRST assistant
+    turn after a reboot the slowest one: the author resumes a long conversation
+    hours later and pays the whole ``EntityGraphIndex.build`` synchronously
+    inside that turn, on the same event loop that has to stream the answer.
+    A failure is logged and swallowed — the lazy path stays the only contract.
+    """
+    try:
+        worlds = [world["name"] for world in _list_worlds()]
+    except Exception as exc:  # noqa: BLE001 — warming must never raise
+        logger.warning("Graph warmup skipped: %s", exc)
+        return
+    for mundo in worlds:
+        try:
+            _get_graph(mundo)
+        except Exception as exc:  # noqa: BLE001 — one world never stops the sweep
+            logger.warning("Graph warmup failed for %r: %s", mundo, exc)
+
+
 # Cached whole-world reconciliation plans, keyed by the resolved world directory.
 # ``build_global_plan`` is pure Python CPU (about one second on a real world) and
 # the client only needs it to label one button, so a repeated preview must not
@@ -8757,7 +8788,16 @@ def _gateway_headers() -> dict[str, str]:
 # this seam with a fake adapter; unsupported or unreachable providers remain a
 # neutral fallback and never receive a run submission.
 ACTIVITY_ADAPTER = None
-ACTIVITY_EVENT_TIMEOUT_SECONDS = 30.0
+# Per-event SILENCE ceiling: how long the stream waits without receiving any
+# event from the run. A long creative answer over a mature session can spend
+# 18-28 s just prefilling before its first token (measured 2026-11-19:
+# in=34176 -> 18.8 s, in=50789 -> 27.6 s), so the former 30 s value cancelled
+# legitimate turns mid-thought and surfaced the opaque fail-closed copy.
+ACTIVITY_EVENT_TIMEOUT_SECONDS = 120.0
+# TOTAL stream budget: a separate hard bound so a run that keeps trickling
+# events can never hold the response open forever. Independent of the silence
+# ceiling above.
+ACTIVITY_STREAM_BUDGET_SECONDS = 300.0
 # Companion-gated awaited routing budget: one small Hermes classification run
 # (same class as the already-awaited semantic gate) may delay the prompt build
 # by at most this long in companion worlds; on timeout the prompt falls back to
@@ -8954,6 +8994,17 @@ def forget_assistant_memory(mundo: str, entry_id: int, hard: bool = False):
     except Exception:
         removed = False
     return {"removed": removed, "id": entry_id, "hard": hard}
+
+
+def _abandon_route_task(task: "asyncio.Task[Any] | None") -> None:
+    """Cancel a routing task whose turn short-circuited before awaiting it.
+
+    Routing now starts before the semantic gate, so a blocked decision, a guided
+    handoff, or an unavailable adapter returns without ever awaiting it. Left
+    pending it would keep running past the response and die unreferenced.
+    """
+    if task is not None and not task.done():
+        task.cancel()
 
 
 async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> str | None:
@@ -11699,6 +11750,17 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             mundo, body.prompt,
         )
     distilled_state = _distilled_summary(body.session_id)
+    # Skill routing runs CONCURRENTLY with the semantic gate. Both depend only
+    # on the prompt and the world, and routing used to be awaited AFTER the gate,
+    # paying its own 4.9-5.1 s on top of a 5-28 s gate (measured 2026-11-19).
+    # Starting it here hides the classification inside the gate while keeping
+    # one single routing decision per turn: the SAME task is awaited below and
+    # reused at stream close.
+    early_route_task = None
+    if body.session_id and _CONVERSATION_MEMORY is not None:
+        early_route_task = asyncio.create_task(
+            _route_skill(body.prompt, mundo, distilled_state)
+        )
     result = await _semantic_gate(
         mundo, body.prompt + attachment_metadata_note(attachments),
         context=context,
@@ -11718,6 +11780,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     if transition == "blocked":
         # No validated decision or a blocked decision: fail closed, no stream
         # from the adapter and nothing opens.
+        _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
     logger.info(
         "ai_ask_activity: semantic state=%s guided=%s explicitness=%s transition=%s",
@@ -11744,11 +11807,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             "ai_ask_activity: 503 guided_handoff (transition=%s, state=%s, ticket=%s)",
             transition, decision.state, bool(ticket),
         )
+        _abandon_route_task(early_route_task)
         return _guided_handoff_response(ticket)
 
     # Admitted adapter + stream guards (not classifiers) after the decision.
     adapter = ACTIVITY_ADAPTER
     if adapter is None:
+        _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
     try:
         probe = getattr(adapter, "probe", None)
@@ -11759,12 +11824,15 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         if not bool(getattr(adapter, "available")):
             capability = getattr(adapter, "capability", None)
             reason = getattr(capability, "reason", ACTIVITY_UNAVAILABLE_REASON)
+            _abandon_route_task(early_route_task)
             return _fail_closed_activity_response(result, request_id)
         capability = getattr(adapter, "capability")
         events = getattr(adapter, "events")
         if not callable(events):
+            _abandon_route_task(early_route_task)
             return _fail_closed_activity_response(result, request_id)
     except Exception:
+        _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
 
     # Memory context for the activity surface (side effects). Only a real
@@ -11789,10 +11857,8 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # stream close (exactly one routing decision per turn).
     library = _methodology_library()
     companions = library.list_companions(mundo)
-    early_route_task = None
     skill_contract = None
-    if body.session_id and _CONVERSATION_MEMORY is not None:
-        early_route_task = asyncio.create_task(_route_skill(body.prompt, mundo, distilled_state))
+    if early_route_task is not None:
         try:
             winner = await asyncio.wait_for(
                 asyncio.shield(early_route_task), ROUTING_AWAIT_TIMEOUT_SECONDS
@@ -11830,6 +11896,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             world_root=world_root,
         )
     except Exception:
+        _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
 
     async def stream():
@@ -11839,6 +11906,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         # re-emits the joined snapshot on each delta), so memory keeps the last
         # snapshot instead of joining them, which would duplicate every prefix.
         assistant_answer = ""
+        started_at = time.monotonic()
+        # Why the stream ended without a terminal event. Never user-visible; it
+        # is the only diagnostic for a turn that produced no answer.
+        close_reason = "stream_ended"
 
         def emit(event) -> str:
             nonlocal assistant_answer
@@ -11866,12 +11937,29 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 while True:
                     if await request.is_disconnected():
                         disconnected = True
+                        close_reason = "client_disconnected"
+                        break
+                    remaining = ACTIVITY_STREAM_BUDGET_SECONDS - (
+                        time.monotonic() - started_at
+                    )
+                    if remaining <= 0:
+                        close_reason = "budget_exceeded"
                         break
                     try:
                         raw_event = await asyncio.wait_for(
-                            iterator.__anext__(), timeout=ACTIVITY_EVENT_TIMEOUT_SECONDS
+                            iterator.__anext__(),
+                            timeout=min(ACTIVITY_EVENT_TIMEOUT_SECONDS, remaining),
                         )
                     except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        # A timeout shorter than the silence ceiling means the
+                        # total budget ran out, not the provider stalling.
+                        close_reason = (
+                            "budget_exceeded"
+                            if remaining <= ACTIVITY_EVENT_TIMEOUT_SECONDS
+                            else "silence_timeout"
+                        )
                         break
                     for event in translator.translate(raw_event):
                         if isinstance(event, TerminalEvent):
@@ -11915,13 +12003,32 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     yield emit(event)
         except asyncio.CancelledError:
             disconnected = True
+            close_reason = "client_disconnected"
             raise
         except Exception:
+            close_reason = "stream_error"
             if not disconnected:
                 for event in translator.finalize():
                     yield emit(event)
         finally:
             if not completed:
+                # The only record of WHY a turn produced no answer. Without it
+                # the incident was undiagnosable from the API log: the run was
+                # cancelled and the client rendered the opaque fail-closed copy.
+                if disconnected:
+                    logger.info(
+                        "ai_ask_activity: run closed on disconnect "
+                        "(request=%s run=%s answer_seen=%s elapsed=%.1fs)",
+                        request_id, run_id, bool(assistant_answer),
+                        time.monotonic() - started_at,
+                    )
+                else:
+                    logger.warning(
+                        "ai_ask_activity: run closed without a terminal answer "
+                        "(request=%s run=%s reason=%s answer_seen=%s elapsed=%.1fs)",
+                        request_id, run_id, close_reason,
+                        bool(assistant_answer), time.monotonic() - started_at,
+                    )
                 await _cancel_activity(adapter, run_id)
             # Resolve the fire-and-forget skill routing (side effect for
             # analytics / future summaries) and persist the user turn with it.
