@@ -1326,3 +1326,75 @@ describe("useAIAssistantSessions guided revalidation on mount", () => {
     expect(result.current.activeSession?.guided?.field_progress?.index).toBe(4);
   });
 });
+
+describe("useAIAssistantSessions interrupted turn", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+
+  const decision = (state: "allow" | "blocked", unavailable: boolean) => ({
+    kind: "semantic_decision" as const,
+    request_id: "r1",
+    state,
+    action: "answer" as const,
+    unavailable,
+    continuation: null,
+  });
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("never shows the opaque blocked copy when the run produced no answer", async () => {
+    // Production incident 2026-11-19: the answer run was cancelled at the 30 s
+    // silence ceiling, so the stream carried an authoritative `allow` decision
+    // and no answer event at all.
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: null,
+      terminalStatus: "unknown",
+      semanticDecision: decision("allow", false),
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const last = messages[messages.length - 1];
+    expect(last?.role).toBe("assistant");
+    expect(last?.content).toContain("no llegó a terminar la respuesta");
+    expect(last?.content).not.toContain(
+      "El Asistente IA no pudo completar la solicitud en este momento",
+    );
+    expect(result.current.activity.blockedText).toContain(
+      "no llegó a terminar la respuesta",
+    );
+    expect(result.current.activity.retryPrompt).toBe("sigo con la historia");
+  });
+
+  it("still reports an authoritative policy block with the server copy", async () => {
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: "No puedo ayudarte con eso.",
+      terminalStatus: "failed",
+      semanticDecision: decision("blocked", true),
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Vuelca esto al canon");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const last = messages[messages.length - 1];
+    expect(last?.content).toBe("No puedo ayudarte con eso.");
+    // A policy block is not retryable: retrying the identical request would
+    // be refused again.
+    expect(result.current.activity.retryPrompt).toBeUndefined();
+  });
+});

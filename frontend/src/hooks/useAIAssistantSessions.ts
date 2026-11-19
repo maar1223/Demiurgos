@@ -792,7 +792,12 @@ export function useAIAssistantSessions(
         const state = semanticDecision?.state ?? null;
         if (state === "allow" || state === "clarify") {
           if (streamedAnswer === null) {
-            applyBlocked(semanticBlockedText(language), true);
+            // An authoritative `allow` with no answer means the run never
+            // produced one: the silence ceiling cut it, the provider
+            // interrupted it, or the stream closed first. That is a transient
+            // failure the author can retry, NOT a policy block — the opaque
+            // fail-closed copy hid exactly this on 2026-11-19.
+            applyBlocked(t("assistant.failure.interrupted"), true, trimmed);
           } else {
             appendAssistantMessage(streamedAnswer);
           }
@@ -802,7 +807,9 @@ export function useAIAssistantSessions(
             semanticDecision?.unavailable ?? true,
           );
         } else {
-          applyBlocked(semanticBlockedText(language), true);
+          // No decision at all, or a state that requires server-owned backing
+          // the stream never delivered: unvalidatable output, retryable.
+          applyBlocked(t("assistant.failure.invalidOutput"), true, trimmed);
         }
       } catch (err) {
         if (controller.signal.aborted) return;

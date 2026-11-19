@@ -398,10 +398,15 @@ describe("assistant activity transport", () => {
     });
 
     const messages = result.current.activeSession?.messages ?? [];
-    expect(messages[messages.length - 1]?.content).toBe(semanticBlockedText("es"));
+    // Safety unchanged: the unvalidated answer is never shown. Only the copy
+    // changed (S1) — the opaque fail-closed string is replaced by the specific,
+    // retryable invalid-output message.
+    expect(messages[messages.length - 1]?.content).toBe("assistant.failure.invalidOutput");
+    expect(messages[messages.length - 1]?.content).not.toBe(semanticBlockedText("es"));
     expect(messages.some((message) => message.content === "looks harmless")).toBe(false);
     expect(result.current.activity.blocked).toBe(true);
     expect(result.current.activity.availability).toBe("unavailable");
+    expect(result.current.activity.retryPrompt).toBe("hello");
   });
 
   it("fails closed to localized copy on a malformed semantic decision", async () => {
@@ -420,7 +425,8 @@ describe("assistant activity transport", () => {
     });
 
     const messages = result.current.activeSession?.messages ?? [];
-    expect(messages[messages.length - 1]?.content).toBe(semanticBlockedText("es"));
+    expect(messages[messages.length - 1]?.content).toBe("assistant.failure.invalidOutput");
+    expect(messages[messages.length - 1]?.content).not.toBe(semanticBlockedText("es"));
     expect(messages.some((message) => message.content === "looks harmless")).toBe(false);
     expect(result.current.activity.blocked).toBe(true);
   });
