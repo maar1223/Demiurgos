@@ -1346,6 +1346,41 @@ describe("AIAssistantSidebar semantic decision UX", () => {
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("shows a live elapsed timer beside the processing spinner", async () => {
+    vi.useFakeTimers();
+    try {
+      useSessionsMock.mockReturnValue(createSessionsState({ isSending: true }));
+
+      render(<AIAssistantSidebar mundo="Vibrantes" />);
+      await act(async () => {});
+
+      expect(screen.getByRole("timer")).toHaveTextContent("0:00");
+
+      act(() => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(screen.getByRole("timer")).toHaveTextContent("0:03");
+
+      act(() => {
+        vi.advanceTimersByTime(62000);
+      });
+      expect(screen.getByRole("timer")).toHaveTextContent("1:05");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides the elapsed timer when the turn finishes", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({ isSending: true }));
+    const { rerender } = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(screen.getByRole("timer")).toBeInTheDocument();
+
+    useSessionsMock.mockReturnValue(createSessionsState({ isSending: false }));
+    rerender(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+  });
 });
 
 describe("AIAssistantSidebar new conversation", () => {

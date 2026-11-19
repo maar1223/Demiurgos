@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Icon } from "@/components/atoms/Icon";
 import { GuidedChoiceCard } from "@/components/molecules/GuidedChoiceCard";
 import { Spinner } from "@/components/atoms/Spinner";
+import { ElapsedTime } from "@/components/atoms/ElapsedTime";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
 import {
   INCOMPLETE_EVIDENCE_WARNING,
@@ -1116,8 +1117,9 @@ function ChatScreen({
 
           {isSending && (
             <div className="flex justify-start">
-              <div className="rounded-lg bg-surface px-4 py-2.5">
+              <div className="flex items-center gap-2 rounded-lg bg-surface px-4 py-2.5">
                 <Spinner size="sm" />
+                <ElapsedTime className="text-xs text-muted" />
               </div>
             </div>
           )}
