@@ -349,7 +349,7 @@ merge_graph_mcp() {
 
     if [ ! -x "$venv_python" ] || [ ! -f "$wiki_dir/hermes_profile_config.py" ]; then
         printf 'install.sh: no hay intérprete o módulo de merge utilizable; se omite el MCP del grafo.\n' >&2
-        printf 'install.sh: sin él el asistente NO puede leer el mundo — ver docs/architecture/ASSISTANT_WORLD_READING.md\n' >&2
+        printf 'Demiurgos: sin el MCP del grafo el asistente NO puede leer el mundo — ver docs/architecture/ASSISTANT_WORLD_READING.md\n' >&2
         return 0
     fi
 
