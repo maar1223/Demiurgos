@@ -247,6 +247,7 @@ install_demiurgos() {
     fi
 
     merge_skills_dirs
+    merge_graph_mcp
     merge_assistant_platform_hint
 }
 
@@ -328,6 +329,47 @@ PY
     else
         warn "No se pudo registrar el directorio de skills. El resto de los pasos de instalación no se ven afectados."
         warn "Reintenta manualmente: $venv_python - $wiki_dir $HERMES_CONFIG $root"
+    fi
+}
+
+# Conectar el MCP del grafo al perfil de producto (mcp_servers.demiurgos-graph).
+# Es el cableado que permite al asistente LEER el mundo en vez de responder como
+# un chat genérico: la entrada registrada lanza mcp_launcher.py, que resuelve el
+# data root y el mundo en runtime. Idempotente y correctiva (cura una entrada
+# vieja con --mundos-path hardcodeado). Best-effort, igual que merge_skills_dirs:
+# sin venv/helper se avisa y se omite, nunca aborta el instalador.
+# Contrato: docs/architecture/ASSISTANT_WORLD_READING.md
+merge_graph_mcp() {
+    step "Conectando el grafo del mundo al asistente..."
+
+    local root wiki_dir venv_python
+    root="$(checkout_root)"
+    wiki_dir="$root/$WIKI_REL"
+    venv_python="$root/.venv/bin/python"
+
+    if [ ! -x "$venv_python" ] || [ ! -f "$wiki_dir/hermes_profile_config.py" ]; then
+        printf 'install.sh: no hay intérprete o módulo de merge utilizable; se omite el MCP del grafo.\n' >&2
+        printf 'install.sh: sin él el asistente NO puede leer el mundo — ver docs/architecture/ASSISTANT_WORLD_READING.md\n' >&2
+        return 0
+    fi
+
+    if "$venv_python" - "$wiki_dir" "$HERMES_CONFIG" <<'PY'
+import sys
+from pathlib import Path
+
+# Registro idempotente y correctivo: lanza mcp_launcher.py, que resuelve el data
+# root y el mundo en runtime. Nunca un --mundos-path hardcodeado al árbol de código.
+sys.path.insert(0, sys.argv[1])
+from hermes_profile_config import merge_graph_mcp_server
+
+if merge_graph_mcp_server(Path(sys.argv[2])):
+    print(sys.argv[2])
+PY
+    then
+        ok "Grafo del mundo conectado al asistente"
+    else
+        printf 'install.sh: no se pudo registrar el MCP del grafo; el asistente NO podrá leer el mundo.\n' >&2
+        printf 'install.sh: vuelve a ejecutar el instalador para reintentar el registro.\n' >&2
     fi
 }
 

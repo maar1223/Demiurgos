@@ -37,6 +37,21 @@ from pathlib import Path
 #: Canonical location of the Demiurgos-owned skills folder under a checkout root.
 SKILLS_DIR_REL = Path("data") / "methodology" / "skills"
 
+#: MCP server that gives the assistant its world-reading tools. This is the
+#: product's differentiator: without it the assistant answers like a generic
+#: chat. See ``docs/architecture/ASSISTANT_WORLD_READING.md``.
+GRAPH_MCP_SERVER_NAME = "demiurgos-graph"
+
+#: Entry point the product registers. It resolves the data root at runtime
+#: (``data_root.resolve_data_root``) and derives ``--mundo``; registering
+#: ``graph_mcp_server.py`` directly would force a hardcoded ``--mundos-path``,
+#: which is how the assistant went blind on 2026-11-18.
+GRAPH_MCP_LAUNCHER_REL = Path("src") / "tools" / "demiurgos-suite" / "wiki" / "mcp_launcher.py"
+
+#: The launcher-exported app-root variable (code tree), used only as the
+#: profile's ``cwd`` and as the prefix of an app-relative entry point.
+GRAPH_MCP_APP_ROOT_EXPR = "${env:DEMIURGOS_ROOT}"
+
 #: The gateway plugin a provisioned test profile must opt into (REQ-TPP-1).
 PLUGIN_NAME = "demiurgos-idea-capture"
 
@@ -97,6 +112,53 @@ def merge_skills_external_dirs(config_path: Path, skills_dir: Path) -> bool:
     if entry in dirs:
         return False
     dirs.append(entry)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
+def merge_graph_mcp_server(config_path: Path) -> bool:
+    """Ensure ``mcp_servers.demiurgos-graph`` launches ``mcp_launcher.py``.
+
+    The server is the assistant's only structured way to read the author's
+    world, so its registration is a product invariant, not a local tweak:
+
+    - the entry point is ``mcp_launcher.py``, which resolves ``<data root>/mundos``
+      through ``data_root.resolve_data_root()`` and derives ``--mundo``;
+    - no ``--mundos-path`` and no world name are ever written, because a
+      hardcoded author-data path is exactly the 2026-11-18 incident (the profile
+      pointed at the code tree, where ``mundos/`` does not exist);
+    - the merge is idempotent AND corrective: a stale entry is rewritten, since
+      ``config.yaml`` survives upgrades and nothing else would heal it.
+
+    Sibling servers and every other top-level key are preserved. Returns True
+    when the config was written, False when the entry was already canonical.
+    """
+    import yaml
+
+    data: dict = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    servers = data.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcp_servers"] = servers
+
+    canonical = {
+        "command": "python3",
+        "cwd": GRAPH_MCP_APP_ROOT_EXPR,
+        "args": [f"{GRAPH_MCP_APP_ROOT_EXPR}/{GRAPH_MCP_LAUNCHER_REL.as_posix()}"],
+    }
+    current = servers.get(GRAPH_MCP_SERVER_NAME)
+    merged = {**current, **canonical} if isinstance(current, dict) else canonical
+    if merged == current:
+        return False
+
+    servers[GRAPH_MCP_SERVER_NAME] = merged
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
