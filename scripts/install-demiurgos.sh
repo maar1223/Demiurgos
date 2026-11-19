@@ -601,8 +601,18 @@ applications_dir() {
     printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 }
 
+install_entrypoint() {
+    # Copy, never execute: the payload stays data. The wrapper lives outside
+    # `current` so an install or rollback flip cannot break the shortcut.
+    local bin="$INSTALL_ROOT/bin"
+    mkdir -p "$bin" 2>/dev/null || return 1
+    cp "$INSTALL_ROOT/current/scripts/demiurgos" "$bin/demiurgos" 2>/dev/null || return 1
+    chmod 0755 "$bin/demiurgos" 2>/dev/null || true
+    printf '%s\n' "$bin/demiurgos"
+}
+
 install_desktop_entry() {
-    local app_root="$INSTALL_ROOT/current" template menu_dir
+    local app_root="$INSTALL_ROOT/current" template menu_dir entry
     [ "$OS" = "Linux" ] || return 0
     template="$app_root/$DESKTOP_TEMPLATE_REL"
     if [ ! -f "$template" ]; then
@@ -612,7 +622,9 @@ install_desktop_entry() {
     menu_dir="$(applications_dir)"
     mkdir -p "$menu_dir" 2>/dev/null \
         || { warn "cannot create $menu_dir; the applications menu entry is skipped"; return 0; }
-    sed "s|@PROJECT_ROOT@|$app_root|g" "$template" > "$menu_dir/Demiurgos.desktop" 2>/dev/null \
+    entry="$(install_entrypoint || printf '%s' "$app_root/scripts/start-demiurgos.sh")"
+    sed -e "s|@PROJECT_ROOT@|$app_root|g" -e "s|@LAUNCHER_ENTRY@|$entry|g" \
+        "$template" > "$menu_dir/Demiurgos.desktop" 2>/dev/null \
         || { warn "cannot write the applications menu entry; skipped"; return 0; }
     chmod 0644 "$menu_dir/Demiurgos.desktop" 2>/dev/null || true
     printf 'install-demiurgos: applications menu entry at %s/Demiurgos.desktop\n' "$menu_dir" >&2

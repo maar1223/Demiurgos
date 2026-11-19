@@ -121,7 +121,7 @@ GATEWAY_PORT="${DEMIURGOS_GATEWAY_PORT:-8642}"
 # (finite attempts); env overrides exist so harnesses can shorten the wait.
 # The defaults are the product behavior (20 polls x 1s, matching the old
 # wait_for_port budget so the happy path is equivalent).
-HEALTH_POLLS="${DEMIURGOS_HEALTH_POLLS:-20}"
+HEALTH_POLLS="${DEMIURGOS_HEALTH_POLLS:-120}"
 HEALTH_POLL_INTERVAL="${DEMIURGOS_HEALTH_POLL_INTERVAL:-1}"
 
 DESKTOP_SOURCE="$APP_ROOT/desktop/Demiurgos.desktop"
@@ -475,9 +475,17 @@ except Exception:
 # serving nothing, and the rollback needs the health signal. The happy-path
 # outcome is equivalent to the old wait_for_port budget.
 wait_for_health() {
-    local port="$1" polls=0
+    local port="$1" name="${2:-}" polls=0
     while [ "$polls" -lt "$HEALTH_POLLS" ]; do
         if http_health_ok "$port"; then return 0; fi
+        # "Slow" and "dead" are different failures. A cold start may need a
+        # minute (worlds, graph, warmup), so the budget is generous; but once
+        # the tracked process is gone, waiting the whole budget only delays the
+        # notification and hides the real reason.
+        if [ -n "$name" ] && [ -r "$(pid_file "$name")" ] && ! owned_pid "$name"; then
+            log_event "component $name exited before port $port became healthy"
+            return 1
+        fi
         sleep "$HEALTH_POLL_INTERVAL"
         polls=$((polls + 1))
     done
@@ -825,7 +833,7 @@ start_services() {
 
     # Required readiness covers the API ONLY (S2-2). The gateway is best-effort:
     # when present it is reported, but its absence never aborts the boot.
-    if wait_for_health "$API_PORT"; then
+    if wait_for_health "$API_PORT" api; then
         log_event "api ready on 127.0.0.1:$API_PORT"
         printf 'API ready on 127.0.0.1:%s\n' "$API_PORT"
     else
@@ -911,15 +919,34 @@ show_status() {
 #     "Untrusted application launcher" on GNOME/Nautilus until it is marked
 #     metadata::trusted, so creating it behind the user's back looks broken
 #     instead of helpful.
+resolve_entrypoint() {
+    # Installed layout: the entry point must live OUTSIDE `current` so a flip or
+    # a dangling link cannot take the shortcut down. Dev checkout: the wrapper
+    # ships in scripts/ and needs no copy.
+    if [ "$(basename "$APP_ROOT")" = "current" ]; then
+        local bin="$INSTALL_ROOT/bin"
+        mkdir -p "$bin" 2>/dev/null || true
+        if cp "$APP_ROOT/scripts/demiurgos" "$bin/demiurgos" 2>/dev/null; then
+            chmod 0755 "$bin/demiurgos" 2>/dev/null || true
+            printf '%s\n' "$bin/demiurgos"
+            return 0
+        fi
+        printf '%s\n' "$APP_ROOT/scripts/start-demiurgos.sh"
+        return 0
+    fi
+    printf '%s\n' "$APP_ROOT/scripts/demiurgos"
+}
+
 install_desktop() {
-    local with_icon="$1" menu_dir="" icon_dir=""
+    local with_icon="$1" menu_dir="" icon_dir="" entry=""
     [ -f "$DESKTOP_SOURCE" ] || { printf 'Desktop file missing: %s\n' "$DESKTOP_SOURCE" >&2; return 1; }
     menu_dir="$(applications_dir)"
     mkdir -p "$menu_dir"
     # Substitute the app-root placeholder so the entry survives moves and
     # upgrades: APP_ROOT is the logical `current` path, not a version dir.
-    sed "s|@PROJECT_ROOT@|$APP_ROOT|g" "$DESKTOP_SOURCE" \
-        > "$menu_dir/Demiurgos.desktop"
+    entry="$(resolve_entrypoint)"
+    sed -e "s|@PROJECT_ROOT@|$APP_ROOT|g" -e "s|@LAUNCHER_ENTRY@|$entry|g" \
+        "$DESKTOP_SOURCE" > "$menu_dir/Demiurgos.desktop"
     chmod 0644 "$menu_dir/Demiurgos.desktop"
     printf 'Installed: %s/Demiurgos.desktop\n' "$menu_dir"
     [ "$with_icon" = "1" ] || return 0
@@ -930,8 +957,8 @@ install_desktop() {
     fi
     # A read-only or otherwise unwritable Desktop must not fail `install`: the
     # menu entry is already written and the icon was never a requirement.
-    sed "s|@PROJECT_ROOT@|$APP_ROOT|g" "$DESKTOP_SOURCE" 2>/dev/null \
-        > "$icon_dir/Demiurgos.desktop" \
+    sed -e "s|@PROJECT_ROOT@|$APP_ROOT|g" -e "s|@LAUNCHER_ENTRY@|$entry|g" \
+        "$DESKTOP_SOURCE" 2>/dev/null > "$icon_dir/Demiurgos.desktop" \
         || { printf 'Cannot write %s/Demiurgos.desktop; skipped the desktop icon.\n' "$icon_dir" >&2; return 0; }
     chmod 0755 "$icon_dir/Demiurgos.desktop"
     printf 'Installed: %s/Demiurgos.desktop\n' "$icon_dir"

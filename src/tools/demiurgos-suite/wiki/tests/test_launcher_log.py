@@ -55,3 +55,29 @@ def test_port_conflict_is_written_to_the_launcher_log(tmp_path) -> None:
         done = _run(f"API_PORT={port}; start_component api || true", log, tmp_path)
     assert done.returncode == 0
     assert "port" in log.read_text(encoding="utf-8").lower()
+
+
+def test_readiness_fails_fast_when_the_api_process_died(tmp_path) -> None:
+    """A dead process must not burn the whole cold-start budget."""
+    log = tmp_path / "logs" / "launcher.log"
+    log.parent.mkdir()
+    pid_file = tmp_path / "api.pid"
+    pid_file.write_text("424242\n")
+    body = (
+        'http_health_ok(){ return 1; }; '
+        f'pid_file(){{ echo "{pid_file}"; }}; '
+        'owned_pid(){ return 1; }; '
+        'wait_for_health 8000 api && echo ready || echo failed'
+    )
+    done = _run(body, log, tmp_path)
+
+    assert "failed" in done.stdout
+    assert "exited before" in log.read_text(encoding="utf-8")
+
+
+def test_readiness_succeeds_when_the_api_answers(tmp_path) -> None:
+    log = tmp_path / "launcher.log"
+    body = 'http_health_ok(){ return 0; }; wait_for_health 8000 api && echo ready'
+    done = _run(body, log, tmp_path)
+
+    assert "ready" in done.stdout

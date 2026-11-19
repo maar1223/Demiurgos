@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "c749cf7",
+  "source_commit": "67ee58b",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

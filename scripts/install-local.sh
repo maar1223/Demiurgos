@@ -243,7 +243,7 @@ PY
 
 for rel in \
     install.sh install.ps1 start-api.ps1 start-gateway.ps1 \
-    scripts/start-demiurgos.sh scripts/install-demiurgos.sh \
+    scripts/start-demiurgos.sh scripts/demiurgos scripts/install-demiurgos.sh \
     scripts/install-demiurgos.ps1 scripts/provision-hermes.sh \
     scripts/provision-hermes.ps1 scripts/collect-diagnostics.sh \
     scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
@@ -291,6 +291,10 @@ prune_local_versions 0
 # --- restart ---------------------------------------------------------------
 if [ "$RESTART" = 1 ]; then
     printf 'install-local: restarting the launcher...\n' >&2
+    # Refresh the desktop entry so the shortcut points at the stable entry point
+    # (<install_root>/bin/demiurgos) instead of this versioned path. Idempotent
+    # and menu-only: no desktop icon is created here.
+    "$INSTALL_ROOT/current/scripts/start-demiurgos.sh" install >/dev/null 2>&1 || true
     if ! "$INSTALL_ROOT/current/scripts/start-demiurgos.sh" restart; then
         fail "the launcher restart failed; the previous version is still installed and rollback stays available"
     fi

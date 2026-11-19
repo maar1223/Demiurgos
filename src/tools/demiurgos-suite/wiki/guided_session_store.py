@@ -54,6 +54,13 @@ from guided_character_protocol import (
 
 SESSION_TTL = timedelta(days=30)
 
+SCHEMA_VERSION = 1
+"""On-disk schema generation. Bump it whenever a migration is not reversible."""
+
+
+class GuidedSchemaTooNew(RuntimeError):
+    """The database was written by a newer build; refuse to migrate it down."""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS guided_sessions (
     session_id TEXT PRIMARY KEY,
@@ -125,8 +132,12 @@ class GuidedSessionStore:
             self._db_path, check_same_thread=False,
         )
         self._conn.row_factory = sqlite3.Row
+        # Forward migrations are one-way: an older build (a launcher rollback)
+        # must refuse a newer database loudly instead of silently ALTERing it.
+        self._guard_schema_version()
         self._conn.execute(_SCHEMA)
         self._migrate()
+        self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._conn.commit()
         # Session ids created or mutated by THIS process. A session absent from
         # this set at recovery time came from durable storage (a restart).
@@ -532,6 +543,16 @@ class GuidedSessionStore:
             ),
         )
         self._conn.commit()
+
+    def _guard_schema_version(self) -> None:
+        version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > SCHEMA_VERSION:
+            self._conn.close()
+            raise GuidedSchemaTooNew(
+                "guided session database schema "
+                f"v{version} is newer than this build supports (v{SCHEMA_VERSION}); "
+                "refusing to migrate it",
+            )
 
     def _add_column(self, columns: set[str], name: str, ddl: str) -> bool:
         """Add one column unless it is already there, tolerating a lost race.

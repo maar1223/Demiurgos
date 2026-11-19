@@ -178,7 +178,9 @@ def test_install_writes_the_menu_entry_and_no_desktop_icon(tmp_path):
     entry = menu.read_text(encoding="utf-8")
     assert "@PROJECT_ROOT@" not in entry
     exec_line = next(ln for ln in entry.splitlines() if ln.startswith("Exec="))
-    assert exec_line.endswith("/scripts/start-demiurgos.sh start")
+    # The dev checkout points at the stable wrapper, never at a versioned path.
+    assert exec_line.endswith("/scripts/demiurgos start")
+    assert "current/scripts" not in exec_line
     assert not (tmp_path / "home" / "Escritorio" / MENU_NAME).exists()
 
 
@@ -358,23 +360,35 @@ def _installer_entry_harness() -> str:
         'DESKTOP_TEMPLATE_REL="desktop/Demiurgos.desktop"\n'
         + grab("applications_dir")
         + "\n"
+        + grab("install_entrypoint")
+        + "\n"
         + grab("install_desktop_entry")
         + "\ninstall_desktop_entry\n"
     )
 
 
 def _run_installer_entry(
-    tmp_path: Path, os_name: str, *, with_template: bool = True
+    tmp_path: Path,
+    os_name: str,
+    *,
+    with_template: bool = True,
+    with_wrapper: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     root = tmp_path / "install"
     if with_template:
         (root / "current" / "desktop").mkdir(parents=True, exist_ok=True)
         (root / "current" / "desktop" / MENU_NAME).write_text(
             "[Desktop Entry]\n"
-            "Exec=@PROJECT_ROOT@/scripts/start-demiurgos.sh start\n"
+            "Exec=@LAUNCHER_ENTRY@ start\n"
             "Icon=@PROJECT_ROOT@/icon.svg\n",
             encoding="utf-8",
         )
+    if with_wrapper:
+        scripts = root / "current" / "scripts"
+        scripts.mkdir(parents=True, exist_ok=True)
+        wrapper = scripts / "demiurgos"
+        wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
     harness = 'set -u\nwarn() { printf "WARN: %s\\n" "$*" >&2; }\n' + _installer_entry_harness()
     env = _env(tmp_path)
     env["INSTALL_ROOT"] = str(root)
@@ -394,6 +408,19 @@ def test_installer_entry_writes_the_menu_on_linux(tmp_path):
     assert stat.S_IMODE(menu.stat().st_mode) == 0o644
     entry = menu.read_text(encoding="utf-8")
     assert "@PROJECT_ROOT@" not in entry
+    assert "@LAUNCHER_ENTRY@" not in entry
+    installed = tmp_path / "install" / "bin" / "demiurgos"
+    assert installed.is_file()
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o755
+    assert f"Exec={installed} start" in entry
+
+
+@_POSIX_BASH
+def test_installer_entry_falls_back_when_the_payload_lacks_the_wrapper(tmp_path):
+    """An older payload still gets a working entry, never a broken Exec."""
+    result = _run_installer_entry(tmp_path, "Linux", with_wrapper=False)
+    assert result.returncode == 0, result.stderr
+    entry = (tmp_path / "data" / "applications" / MENU_NAME).read_text(encoding="utf-8")
     assert f"Exec={tmp_path / 'install'}/current/scripts/start-demiurgos.sh start" in entry
 
 

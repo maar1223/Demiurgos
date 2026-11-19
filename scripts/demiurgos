@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Demiurgos — stable launcher entry point.
+#
+# The desktop entry points HERE, never at `<install_root>/current/scripts/...`:
+# `current` flips on every install and rollback, and a dangling or half-written
+# link used to take the shortcut down with it (2026-11-18 desktop report).
+# This wrapper resolves the active version at launch, repairs a broken link to
+# the newest bootable version, and falls back to a dev checkout when run from
+# one. Every decision lands in logs/launcher.log: desktop launches have no
+# terminal, so that file is the only diagnosis surface.
+set -uo pipefail
+
+SELF="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+LOG_DIR="$ROOT/logs"
+LAUNCHER_LOG="$LOG_DIR/launcher.log"
+ACTION="${1:-start}"
+
+log_event() {
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    printf '%s %s\n' "$(date -Is)" "entrypoint: $*" >>"$LAUNCHER_LOG" 2>/dev/null || true
+}
+
+bootable() {
+    [ -x "$1/scripts/start-demiurgos.sh" ] && [ -x "$1/.venv/bin/python" ]
+}
+
+boot() {
+    exec "$1/scripts/start-demiurgos.sh" "$ACTION"
+}
+
+current_target=""
+if [ -e "$ROOT/current" ] || [ -L "$ROOT/current" ]; then
+    current_target="$(readlink -f "$ROOT/current" 2>/dev/null || true)"
+fi
+if [ -n "$current_target" ] && bootable "$current_target"; then
+    boot "$current_target"
+fi
+
+log_event "current is unusable at $ROOT; scanning app/"
+newest=""
+while IFS= read -r candidate; do
+    candidate="${candidate%/}"
+    if bootable "$candidate"; then
+        newest="$candidate"
+        break
+    fi
+done < <(ls -1dt "$ROOT"/app/*/ 2>/dev/null)
+if [ -n "$newest" ]; then
+    log_event "repairing current -> app/$(basename "$newest")"
+    ln -sfn "app/$(basename "$newest")" "$ROOT/current" 2>/dev/null || true
+    boot "$newest"
+fi
+
+# Dev checkout: this file lives in <repo>/scripts and <repo> is bootable.
+if bootable "$ROOT"; then
+    log_event "running the dev checkout at $ROOT"
+    boot "$ROOT"
+fi
+
+log_event "no bootable Demiurgos version under $ROOT"
+if [ "${DEMIURGOS_NO_NOTIFY:-}" != "1" ] && command -v notify-send >/dev/null 2>&1; then
+    notify-send "Demiurgos" "Ninguna versión instalada pudo arrancar. Revisa $LAUNCHER_LOG" >/dev/null 2>&1 || true
+fi
+exit 1

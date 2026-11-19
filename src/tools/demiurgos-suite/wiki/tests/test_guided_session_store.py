@@ -567,3 +567,31 @@ def test_concurrent_open_of_one_legacy_db_never_raises(tmp_path) -> None:
 
     assert failures == []
     assert not any(t.is_alive() for t in threads)
+
+
+def test_refuses_a_database_written_by_a_newer_build(tmp_path) -> None:
+    """A rollback must fail loudly, never migrate a newer schema downwards."""
+    db = tmp_path / "future.sqlite3"
+    con = sqlite3.connect(db)
+    con.execute("PRAGMA user_version = 99")
+    con.commit()
+    con.close()
+
+    with pytest.raises(guided_session_store.GuidedSchemaTooNew) as excinfo:
+        GuidedSessionStore(db)
+
+    assert "newer than this build" in str(excinfo.value)
+
+
+def test_fresh_database_records_the_schema_version(tmp_path) -> None:
+    store = GuidedSessionStore(tmp_path / "fresh.sqlite3")
+    version = int(store._conn.execute("PRAGMA user_version").fetchone()[0])
+    assert version == guided_session_store.SCHEMA_VERSION
+
+
+def test_reopening_a_current_database_keeps_its_version(tmp_path) -> None:
+    db = tmp_path / "reopen.sqlite3"
+    GuidedSessionStore(db)
+    store = GuidedSessionStore(db)
+    version = int(store._conn.execute("PRAGMA user_version").fetchone()[0])
+    assert version == guided_session_store.SCHEMA_VERSION
