@@ -12,7 +12,9 @@ import base64
 import json
 import os
 import sys
+import uuid
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -20,6 +22,41 @@ from .base import ChunkResult, ImageAnalysis, ProviderAdapter
 
 if TYPE_CHECKING:
     from ..schemas import Chunk, ProviderConfig
+
+
+# ---------------------------------------------------------------------------
+# Chat-completion headers
+# ---------------------------------------------------------------------------
+
+#: Stable per-process conversation id. OpenCode Go asks for a stable
+#: ``x-opencode-session`` so the relay can route and reuse the prompt cache;
+#: a request without it is rejected with HTTP 400 "MissingSessionID". One
+#: process-wide id is enough: the intent is affinity, not isolation.
+_OPENCODE_SESSION_ID = f"demiurgos-{uuid.uuid4().hex}"
+
+
+def _is_opencode_endpoint(endpoint: str) -> bool:
+    """True when ``endpoint`` is OpenCode Go (requires the session header)."""
+    host = (urlsplit(endpoint or "").hostname or "").lower()
+    return host == "opencode.ai" or host.endswith(".opencode.ai")
+
+
+def chat_headers(
+    cfg: object, api_key: str, *, session_id: str | None = None
+) -> dict[str, str]:
+    """Headers for one OpenAI-compatible chat-completion request.
+
+    Every direct provider call (text analysis, enrichment, image description)
+    goes through here, so the OpenCode Go session header cannot be forgotten on
+    one path while the others keep working.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if _is_opencode_endpoint(str(getattr(cfg, "endpoint", "") or "")):
+        headers["x-opencode-session"] = session_id or _OPENCODE_SESSION_ID
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -326,10 +363,7 @@ class LlmProvider(ProviderAdapter):
         Returns:
             Parsed JSON dict from the LLM response, or None on failure.
         """
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = chat_headers(cfg, api_key)
 
         async with httpx.AsyncClient(timeout=cfg.timeout) as client:
             for attempt in range(3):
@@ -355,8 +389,17 @@ class LlmProvider(ProviderAdapter):
                     KeyError,
                     TypeError,
                 ) as exc:
+                    # The status line alone ("400 Bad Request") hides the
+                    # provider's reason, which is what makes a missing header
+                    # diagnosable. Keep the body bounded.
+                    detail = ""
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        try:
+                            detail = " " + exc.response.text[:300]
+                        except Exception:  # noqa: BLE001 - body is best-effort
+                            detail = ""
                     print(
-                        f"  \u26a0 LLM call failed (attempt {attempt+1}/3): {exc}",
+                        f"  \u26a0 LLM call failed (attempt {attempt+1}/3): {exc}{detail}",
                         file=sys.stderr,
                     )
                     if attempt < 2:
