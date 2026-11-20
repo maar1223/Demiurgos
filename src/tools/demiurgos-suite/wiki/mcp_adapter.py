@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .graph_indexer import EntityGraphIndex
+from .assistant_memory_store import AssistantMemoryStore
 from .narrative_utils import (
     engram_search,
     engram_get_observation,
@@ -50,6 +51,7 @@ class GraphMCPAdapter:
         project: str | None = None,
         engram_enabled: bool = True,
         engram_cmd: str = "engram",
+        memory_store: AssistantMemoryStore | None = None,
     ) -> None:
         self._default_index = index
         self._indexes: dict[str, EntityGraphIndex] = {}
@@ -60,6 +62,11 @@ class GraphMCPAdapter:
         self._project = project or "demiurgos"
         self._engram_enabled = engram_enabled
         self._engram_cmd = engram_cmd
+        # The product's own memory is the only conflict source after the Engram
+        # cutover. ``None`` means "open the default store on first use", which
+        # keeps the adapter cheap to construct and hermetic in tests.
+        self._memory_store = memory_store
+        self._memory_store_lock = threading.Lock()
 
     # -------------------------------------------------------------------
     # Index resolution (per-world lazy build)
@@ -243,11 +250,13 @@ class GraphMCPAdapter:
         }
 
     def tool_lore_conflicts(self, entity_path: str, mundo: str = "") -> dict[str, Any]:
-        """Detect contradictions between entity content and Engram memory.
+        """Detect contradictions between an entity and the product's own memory.
 
         ``mundo`` is the world to query (optional; defaults to the configured
         world).  Returns ``{"conflicts": [...], "entity_path": "..."}``.
-        Empty conflicts list means no contradictions found.
+        Empty conflicts list means no contradictions found.  ``memory_available``
+        is ``False`` when the memory store cannot be read, so an empty list is
+        never mistaken for a clean bill of health.
         """
         # Get entity from index
         entity = self._index_for(mundo).get_entity(entity_path)
@@ -257,45 +266,54 @@ class GraphMCPAdapter:
         # Extract claims from entity content
         entity_claims = extract_claims(entity.content, entity_path)
 
-        # If Engram disabled, return entity claims only (no comparison possible)
-        if not self._engram_enabled:
-            return {
-                "conflicts": [],
-                "entity_path": entity_path,
-                "exists": True,
-                "entity_claims_count": len(entity_claims),
-            }
-
-        # Search Engram for related observations
-        engram_hits = engram_search(
-            entity.name, mundo or self._project, engram_cmd=self._engram_cmd, limit=5,
+        memory_available, memory_claims = self._memory_claims(
+            entity.name, mundo or self._project,
         )
 
-        # Get full observation content and extract claims
-        all_engram_claims: list[dict[str, str]] = []
-        for hit in engram_hits:
-            obs_id = hit.get("id", 0)
-            if not obs_id:
-                continue
-            obs_content = engram_get_observation(
-                obs_id, engram_cmd=self._engram_cmd,
-            )
-            if obs_content:
-                claims = extract_claims(obs_content, f"engram#{obs_id}")
-                for c in claims:
-                    c["id"] = str(obs_id)
-                all_engram_claims.extend(claims)
-
         # Compare and detect conflicts
-        conflicts = compare_claims(entity_claims, all_engram_claims)
+        conflicts = compare_claims(entity_claims, memory_claims)
 
         return {
             "conflicts": conflicts,
             "entity_path": entity_path,
             "exists": True,
             "entity_claims_count": len(entity_claims),
-            "engram_claims_count": len(all_engram_claims),
+            "memory_claims_count": len(memory_claims),
+            "memory_available": memory_available,
         }
+
+    def _memory_claims(
+        self, entity_name: str, world: str,
+    ) -> tuple[bool, list[dict[str, str]]]:
+        """Return ``(available, claims)`` from the product's assistant memory.
+
+        The memory store is an optimization for conflict detection, never a hard
+        dependency: an unreadable database (missing, locked, schema-incompatible)
+        degrades to ``(False, [])`` so the MCP tool still answers.
+        """
+        try:
+            store = self._memory_store
+            if store is None:
+                with self._memory_store_lock:
+                    if self._memory_store is None:
+                        self._memory_store = AssistantMemoryStore()
+                    store = self._memory_store
+            entries = store.search(
+                entity_name, world=world, limit=10, include_proposals=False,
+            )
+        except Exception:  # noqa: BLE001 - a tool must never fail on memory I/O
+            return False, []
+
+        claims: list[dict[str, str]] = []
+        for entry in entries:
+            entry_id = getattr(entry, "id", None)
+            statement = getattr(entry, "statement", "") or ""
+            if not statement:
+                continue
+            for claim in extract_claims(statement, f"assistant-memory#{entry_id}"):
+                claim["id"] = str(entry_id)
+                claims.append(claim)
+        return True, claims
 
     def tool_auto_tag(self, text: str, mundo: str) -> dict[str, Any]:
         """Analyse text for known entity mentions and themes.

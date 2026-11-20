@@ -370,12 +370,36 @@ class TestLoreSearch:
 # =============================================================================
 
 
+class _FakeMemoryEntry:
+    """Minimal stand-in for ``AssistantMemoryStore``'s ``MemoryEntry``."""
+
+    def __init__(self, entry_id: int, statement: str, entity: str = "Rhyz") -> None:
+        self.id = entry_id
+        self.statement = statement
+        self.entity = entity
+
+
+class _FakeMemoryStore:
+    """Records the retrieval call so the test can pin world and query."""
+
+    def __init__(self, entries: list | None = None, raises: Exception | None = None) -> None:
+        self._entries = entries or []
+        self._raises = raises
+        self.calls: list[dict] = []
+
+    def search(self, query: str, *, world: str = "", limit: int = 5, **_: object) -> list:
+        self.calls.append({"query": query, "world": world, "limit": limit})
+        if self._raises is not None:
+            raise self._raises
+        return list(self._entries)
+
+
 class TestLoreConflicts:
     def test_conflicts_entity_not_found(self) -> None:
         """Missing entity returns {exists: false, conflicts: []}."""
         index = _mock_index()
         index.get_entity.return_value = None
-        adapter = GraphMCPAdapter(index)
+        adapter = GraphMCPAdapter(index, memory_store=_FakeMemoryStore())
 
         result = adapter.tool_lore_conflicts("no-existe.md")
 
@@ -383,27 +407,8 @@ class TestLoreConflicts:
         assert result["conflicts"] == []
         assert result["entity_path"] == "no-existe.md"
 
-    def test_conflicts_engram_disabled(self) -> None:
-        """With engram disabled, returns entity claim count and no conflicts."""
-        index = _mock_index()
-        detail = _make_detail("Rhyz", "personajes/rhyz.md")
-        detail.content = (
-            "---\nestado: vivo\naño_nacimiento: 1400\n---\n"
-            "# Rhyz\n\nRhyz nació en 1400 AR.\n"
-        )
-        index.get_entity.return_value = detail
-        adapter = GraphMCPAdapter(index, engram_enabled=False)
-
-        result = adapter.tool_lore_conflicts("personajes/rhyz.md")
-
-        assert result["exists"] is True
-        assert result["conflicts"] == []
-        assert "entity_claims_count" in result
-
-    def test_conflicts_detects_date_contradiction(self) -> None:
-        """Detects conflict when entity and Engram disagree on dates."""
-        from unittest.mock import patch
-
+    def test_conflicts_detects_date_contradiction_from_memory(self) -> None:
+        """Conflicts come from the product's own memory, not from Engram."""
         index = _mock_index()
         detail = _make_detail("Rhyz", "personajes/rhyz.md")
         detail.content = (
@@ -411,22 +416,94 @@ class TestLoreConflicts:
             "# Rhyz\n\nRhyz murió en 1450.\n"
         )
         index.get_entity.return_value = detail
-        adapter = GraphMCPAdapter(index, engram_enabled=True)
+        store = _FakeMemoryStore(
+            [_FakeMemoryEntry(99, "---\nestado: muerto\naño_muerte: 1452\n---\nRhyz murió en el año 1452.")]
+        )
+        adapter = GraphMCPAdapter(index, project="Vibrantes", memory_store=store)
 
-        mock_engram_hits = [
-            {"id": 99, "title": "Rhyz death timeline", "preview": "Rhyz died in 1452..."},
-        ]
-        mock_obs_content = "---\nestado: muerto\naño_muerte: 1452\n---\nRhyz murió en el año 1452."
-
-        with patch("wiki.mcp_adapter.engram_search", return_value=mock_engram_hits):
-            with patch("wiki.mcp_adapter.engram_get_observation", return_value=mock_obs_content):
-                result = adapter.tool_lore_conflicts("personajes/rhyz.md")
+        result = adapter.tool_lore_conflicts("personajes/rhyz.md")
 
         assert result["exists"] is True
+        assert result["memory_available"] is True
+        assert result["memory_claims_count"] >= 1
         assert len(result["conflicts"]) >= 1
-        # Should detect either date or status contradiction
         conflict_types = {c["conflict_type"] for c in result["conflicts"]}
         assert "date_contradiction" in conflict_types or "status_contradiction" in conflict_types
+        assert all(c["source_b"].startswith("assistant-memory#") for c in result["conflicts"])
+        # The active world is the lookup scope, and the entity name is the query.
+        assert store.calls == [{"query": "Rhyz", "world": "Vibrantes", "limit": 10}]
+
+    def test_conflicts_uses_the_requested_world(self, monkeypatch) -> None:
+        """An explicit ``mundo`` scopes the memory lookup to that world."""
+        index = _mock_index()
+        index.get_entity.return_value = _make_detail("Rhyz", "personajes/rhyz.md")
+        store = _FakeMemoryStore()
+        adapter = GraphMCPAdapter(index, project="Vibrantes", memory_store=store)
+        # A named world normally builds its own index; keep the mock in play.
+        monkeypatch.setattr(adapter, "_index_for", lambda mundo: index)
+
+        adapter.tool_lore_conflicts("personajes/rhyz.md", mundo="Vibrantes-Legacy")
+
+        assert store.calls[0]["world"] == "Vibrantes-Legacy"
+
+    def test_conflicts_no_memory_matches(self) -> None:
+        """A reachable store with no related entries yields no conflicts."""
+        index = _mock_index()
+        index.get_entity.return_value = _make_detail("Rhyz", "personajes/rhyz.md")
+        adapter = GraphMCPAdapter(index, memory_store=_FakeMemoryStore())
+
+        result = adapter.tool_lore_conflicts("personajes/rhyz.md")
+
+        assert result["memory_available"] is True
+        assert result["memory_claims_count"] == 0
+        assert result["conflicts"] == []
+        assert "entity_claims_count" in result
+
+    def test_conflicts_memory_unavailable_degrades(self) -> None:
+        """An unreadable store degrades to no conflicts instead of raising."""
+        index = _mock_index()
+        index.get_entity.return_value = _make_detail("Rhyz", "personajes/rhyz.md")
+        store = _FakeMemoryStore(raises=RuntimeError("schema mismatch"))
+        adapter = GraphMCPAdapter(index, memory_store=store)
+
+        result = adapter.tool_lore_conflicts("personajes/rhyz.md")
+
+        assert result["exists"] is True
+        assert result["memory_available"] is False
+        assert result["conflicts"] == []
+        assert "entity_claims_count" in result
+
+    def test_conflicts_resolves_the_product_store_by_default(self) -> None:
+        """Without an injected store, the adapter opens ``AssistantMemoryStore``."""
+        from unittest.mock import patch
+
+        index = _mock_index()
+        index.get_entity.return_value = _make_detail("Rhyz", "personajes/rhyz.md")
+        store = _FakeMemoryStore()
+
+        with patch("wiki.mcp_adapter.AssistantMemoryStore", return_value=store) as ctor:
+            adapter = GraphMCPAdapter(index, project="Vibrantes")
+            adapter.tool_lore_conflicts("personajes/rhyz.md")
+
+        ctor.assert_called_once_with()
+        assert store.calls[0]["world"] == "Vibrantes"
+
+    def test_conflicts_default_store_failure_degrades(self) -> None:
+        """When the product store cannot even be opened, conflicts degrade."""
+        from unittest.mock import patch
+
+        index = _mock_index()
+        index.get_entity.return_value = _make_detail("Rhyz", "personajes/rhyz.md")
+        adapter = GraphMCPAdapter(index)
+
+        with patch(
+            "wiki.mcp_adapter.AssistantMemoryStore",
+            side_effect=RuntimeError("unsupported schema version"),
+        ):
+            result = adapter.tool_lore_conflicts("personajes/rhyz.md")
+
+        assert result["memory_available"] is False
+        assert result["conflicts"] == []
 
 
 # =============================================================================

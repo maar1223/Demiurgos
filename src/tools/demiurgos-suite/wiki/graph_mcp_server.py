@@ -213,12 +213,13 @@ def lore_search(query: str, mundo: str = "") -> dict:
 
 @mcp.tool()
 def lore_conflicts(entity_path: str, mundo: str = "") -> dict:
-    """Detect contradictions between an entity's content and Engram memory.
+    """Detect contradictions between an entity's content and the author's memory.
 
     Compares structured claims (dates, status, names, relationships)
-    from the entity file against Engram observations. Returns a list of
-    conflicts with claim_a, source_a, claim_b, source_b, and conflict_type.
-    Empty conflicts list = no contradictions found.
+    from the entity file against the product's own assistant memory for the
+    same world. Returns a list of conflicts with claim_a, source_a, claim_b,
+    source_b, and conflict_type, plus ``memory_available`` so an empty list is
+    never mistaken for a clean result. Empty conflicts list = no contradictions.
     ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
