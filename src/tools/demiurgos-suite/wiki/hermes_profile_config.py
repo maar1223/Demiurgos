@@ -48,6 +48,11 @@ GRAPH_MCP_SERVER_NAME = "demiurgos-graph"
 #: which is how the assistant went blind on 2026-11-18.
 GRAPH_MCP_LAUNCHER_REL = Path("src") / "tools" / "demiurgos-suite" / "wiki" / "mcp_launcher.py"
 
+#: Legacy MCP server the product used to register for cross-session memory.
+#: Engram is no longer part of the product (its own assistant memory replaced
+#: it), so provisioning removes this entry from profiles that still carry it.
+ENGRAM_MCP_SERVER_NAME = "engram"
+
 #: The launcher-exported app-root variable (code tree), used only as the
 #: profile's ``cwd`` and as the prefix of an app-relative entry point.
 GRAPH_MCP_APP_ROOT_EXPR = "${env:DEMIURGOS_ROOT}"
@@ -162,6 +167,40 @@ def merge_graph_mcp_server(config_path: Path) -> bool:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
+def remove_engram_mcp_server(config_path: Path) -> bool:
+    """Drop the legacy ``mcp_servers.engram`` entry from the product profile.
+
+    The product keeps its own assistant memory, so the Engram MCP server is no
+    longer provisioned. A profile written by an older installer still carries
+    the entry, and nothing else would heal it — so this runs next to
+    :func:`merge_graph_mcp_server` on every install and re-run.
+
+    It is corrective and idempotent: every other MCP server and every other
+    top-level key is preserved, a missing or malformed config is left untouched,
+    and a profile without the entry is not rewritten. Returns True when the
+    config was written, False when there was nothing to remove.
+    """
+    import yaml
+
+    if not config_path.is_file():
+        return False
+    try:
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    servers = loaded.get("mcp_servers")
+    if not isinstance(servers, dict) or ENGRAM_MCP_SERVER_NAME not in servers:
+        return False
+
+    del servers[ENGRAM_MCP_SERVER_NAME]
+    config_path.write_text(
+        yaml.safe_dump(loaded, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
     return True
 

@@ -28,6 +28,7 @@ from hermes_profile_config import (
     GRAPH_MCP_LAUNCHER_REL,
     GRAPH_MCP_SERVER_NAME,
     merge_graph_mcp_server,
+    remove_engram_mcp_server,
 )
 
 _HERE = Path(__file__).resolve().parent
@@ -173,3 +174,85 @@ def test_shipped_installer_wires_the_graph_after_provisioning_the_runtime():
     runtime = main_flow.index("provision_hermes_runtime")
     graph = main_flow.index("provision_graph_mcp")
     assert runtime < graph
+
+
+# =============================================================================
+# Engram cutover — corrective removal of the legacy MCP server
+# =============================================================================
+
+
+def _config_with_engram(tmp_path: Path, extra_server: dict | None = None) -> Path:
+    mcp_servers = {
+        "engram": {
+            "command": "engram",
+            "args": ["mcp", "--tools=mem_save,mem_search"],
+        },
+        GRAPH_MCP_SERVER_NAME: {"command": "python3", "args": ["stale.py"]},
+        "other": extra_server or {"command": "other-binary"},
+    }
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {"model": {"default": "deepseek-v4.1-flash"}, "mcp_servers": mcp_servers},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_removes_the_legacy_engram_server_and_preserves_everything_else(tmp_path):
+    """The corrective removal drops only ``mcp_servers.engram``."""
+    config = _config_with_engram(tmp_path)
+
+    assert remove_engram_mcp_server(config) is True
+
+    data = _read_yaml(config)
+    assert "engram" not in data["mcp_servers"]
+    assert data["mcp_servers"]["other"] == {"command": "other-binary"}
+    assert data["mcp_servers"][GRAPH_MCP_SERVER_NAME] == {
+        "command": "python3", "args": ["stale.py"],
+    }
+    assert data["model"] == {"default": "deepseek-v4.1-flash"}
+
+
+def test_removal_is_idempotent_and_reports_no_write_when_absent(tmp_path):
+    """A second run writes nothing and returns False."""
+    config = _config_with_engram(tmp_path)
+
+    assert remove_engram_mcp_server(config) is True
+    assert remove_engram_mcp_server(config) is False
+    assert remove_engram_mcp_server(config) is False
+
+
+def test_removal_tolerates_a_missing_config(tmp_path):
+    """No config yet is not an error — nothing to remove, nothing created."""
+    config = tmp_path / "missing" / "config.yaml"
+
+    assert remove_engram_mcp_server(config) is False
+    assert not config.exists()
+
+
+def test_removal_tolerates_a_non_mapping_mcp_servers_key(tmp_path):
+    """A malformed config is left untouched instead of crashing provisioning."""
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({"mcp_servers": ["nope"]}), encoding="utf-8")
+
+    assert remove_engram_mcp_server(config) is False
+    assert _read_yaml(config) == {"mcp_servers": ["nope"]}
+
+
+def test_provisioning_sequence_heals_an_existing_install(tmp_path):
+    """merge + remove is what both installers run: the graph is registered and
+    the Engram block is gone, in one idempotent pass."""
+    config = _config_with_engram(tmp_path)
+
+    merge_graph_mcp_server(config)
+    remove_engram_mcp_server(config)
+
+    data = _read_yaml(config)
+    assert "engram" not in data["mcp_servers"]
+    assert data["mcp_servers"][GRAPH_MCP_SERVER_NAME]["args"] == [
+        "${env:DEMIURGOS_ROOT}/" + GRAPH_MCP_LAUNCHER_REL.as_posix()
+    ]
+    assert data["mcp_servers"]["other"] == {"command": "other-binary"}

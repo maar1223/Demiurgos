@@ -11,9 +11,8 @@
 # private source clone, no JS package manager.
 #
 # OPT-IN — --with-cli-stack (or DEMIURGOS_WITH_CLI_STACK=1) runs the
-# author CLI stack instead: Hermes Agent, Engram persistent memory
-# and the Demiurgos narrative skills — the historical behavior of
-# this script, preserved verbatim below.
+# author CLI stack instead: Hermes Agent and the Demiurgos narrative
+# skills — the historical behavior of this script, preserved below.
 #
 # Env:
 #   DEMIURGOS_URL_BASE   public channel base (https:// or file://
@@ -57,8 +56,6 @@ DEMIURGOS_URL_BASE="${DEMIURGOS_URL_BASE:-https://raw.githubusercontent.com/${CH
 DEMIURGOS_REPO_OWNER="maar12""23"
 DEMIURGOS_REPO_NAME="Dem""iurgos"
 DEMIURGOS_REPO="https://github.com/${DEMIURGOS_REPO_OWNER}/${DEMIURGOS_REPO_NAME}.git"
-ENGRAM_VERSION="1.17.0"
-ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_CONFIG="$DEMIURGOS_HERMES_HOME/config.yaml"
 # Product runtime isolation (S5/S6): every Hermes CLI call below resolves the
 # dedicated profile, and the binary is the pinned checkout's exact launcher —
@@ -143,93 +140,7 @@ install_hermes() {
     ok "Runtime de Hermes instalado en $DEMIURGOS_HOME/hermes-agent"
 }
 
-# ── Etapa 3: Instalar Engram ──────────────────────────────
-install_engram() {
-    step "Instalando Engram (memoria persistente)..."
-    
-    local engram_bin="$DEMIURGOS_HOME/bin/engram"
-    
-    if [ -f "$engram_bin" ]; then
-        ok "Engram ya instalado en $engram_bin"
-        export PATH="$DEMIURGOS_HOME/bin:$PATH"
-        return 0
-    fi
-    
-    # Intentar primero la instalación global
-    if command -v engram &>/dev/null; then
-        ok "Engram encontrado en PATH ($(command -v engram))"
-        return 0
-    fi
-    
-    mkdir -p "$DEMIURGOS_HOME/bin"
-    
-    local download_url="https://github.com/$ENGRAM_REPO/releases/download/v$ENGRAM_VERSION/engram-${OS}-${ARCH}"
-    if [ "$OS" = "windows" ]; then
-        download_url="${download_url}.exe"
-    fi
-    
-    curl -fsSL "$download_url" -o "$engram_bin" || fail "No se pudo descargar Engram. Verifica tu conexión."
-    chmod +x "$engram_bin"
-    
-    export PATH="$DEMIURGOS_HOME/bin:$PATH"
-    ok "Engram $ENGRAM_VERSION instalado"
-}
-
-# ── Etapa 4: Configurar Engram MCP en Hermes ──────────────
-configure_engram() {
-    step "Conectando Engram a Hermes..."
-    
-    local engram_path="${1:-$DEMIURGOS_HOME/bin/engram}" hermes_bin="${HERMES_BIN:-}"
-    
-    # Verificar si ya está configurado
-    if [ -f "$HERMES_CONFIG" ] && grep -q "engram" "$HERMES_CONFIG" 2>/dev/null; then
-        ok "Engram ya configurado en Hermes"
-        return 0
-    fi
-    
-    # Intentar primero con la CLI del runtime de producto (Demiurgos la
-    # provisiona en install_hermes; HERMES_HOME ya apunta al perfil dedicado).
-    if [ -x "$hermes_bin" ]; then
-        "$hermes_bin" mcp add engram --command "$engram_path" --args mcp --args --tools=agent 2>/dev/null && {
-            ok "Engram conectado a Hermes (vía CLI)"
-            return 0
-        }
-    fi
-    
-    # Alternativa: inyectar en config.yaml
-    if [ ! -f "$HERMES_CONFIG" ]; then
-        mkdir -p "$(dirname "$HERMES_CONFIG")"
-        echo "---" > "$HERMES_CONFIG"
-    fi
-    
-# Inyectar bloque MCP en config.yaml (sin sobrescribir mcp: existente)
-if grep -q "^mcp:" "$HERMES_CONFIG" 2>/dev/null; then
-    # mcp: ya existe — agregar engram debajo
-    if ! grep -q "engram:" "$HERMES_CONFIG" 2>/dev/null; then
-        cat >> "$HERMES_CONFIG" <<EOF
-  engram:
-    type: stdio
-    command: $engram_path
-    args: ["mcp", "--tools=agent"]
-EOF
-    fi
-else
-    # mcp: no existe — agregar todo el bloque
-    cat >> "$HERMES_CONFIG" <<EOF
-
-mcp:
-  engram:
-    type: stdio
-    command: $engram_path
-    args: ["mcp", "--tools=agent"]
-EOF
-fi
-
-    
-    ok "Engram conectado a Hermes"
-}
-
-# ── Etapa 5: Registrar el directorio de skills de Demiurgos ─
+# ── Etapa 3: Registrar el directorio de skills de Demiurgos ─
 # The Demiurgos-owned skills folder lives in the checkout
 # (data/methodology/skills/) and is registered in the dedicated product profile
 # through an idempotent YAML merge (hermes_profile_config.merge_skills_external_dirs)
@@ -360,10 +271,12 @@ from pathlib import Path
 # Registro idempotente y correctivo: lanza mcp_launcher.py, que resuelve el data
 # root y el mundo en runtime. Nunca un --mundos-path hardcodeado al árbol de código.
 sys.path.insert(0, sys.argv[1])
-from hermes_profile_config import merge_graph_mcp_server
+from hermes_profile_config import merge_graph_mcp_server, remove_engram_mcp_server
 
-if merge_graph_mcp_server(Path(sys.argv[2])):
-    print(sys.argv[2])
+config = Path(sys.argv[2])
+merge_graph_mcp_server(config)
+# La memoria del producto es propia; se retira el servidor Engram heredado.
+remove_engram_mcp_server(config)
 PY
     then
         ok "Grafo del mundo conectado al asistente"
@@ -373,7 +286,7 @@ PY
     fi
 }
 
-# ── Etapa 5.5: Configurar el perfil demiurgos-mcp ─────────
+# ── Etapa 3.5: Configurar el perfil demiurgos-mcp ─────────
 configure_mcp_profile() {
     step "Configurando perfil demiurgos-mcp (MCP serve)..."
 
@@ -417,7 +330,7 @@ configure_mcp_profile() {
     fi
 }
 
-# ── Etapa 6: Entorno Python + dependencias ────────────────
+# ── Etapa 4: Entorno Python + dependencias ────────────────
 # Los launchers ejecutan la API con "$PROJECT_ROOT/.venv/bin/python", así que
 # el checkout necesita su propio entorno virtual. Todo aquí es de mejor esfuerzo:
 # un intérprete ausente avisa y retorna en vez de abortar el instalador.
@@ -463,7 +376,7 @@ prepare_python_env() {
     fi
 }
 
-# ── Etapa 7: Creación del puntero del data-root ───────────
+# ── Etapa 5: Creación del puntero del data-root ───────────
 # Los launchers exportan DEMIURGOS_DATA_ROOT, pero un proceso iniciado a mano
 # (hermes, cron, una API arrancada directamente) no tiene launcher y resuelve el
 # data-root a partir del puntero inicial escrito aquí. El propio write_pointer()
@@ -639,8 +552,8 @@ versioned installer core fetched from the public channel — no admin rights,
 no compiler, no pre-installed Python/Node, no private source clone.
 
   --with-cli-stack     OPT-IN: install the author CLI stack instead (Hermes
-                       Agent, Engram persistent memory, Demiurgos narrative
-                       skills) — the historical behavior of this script.
+                       Agent and the Demiurgos narrative skills) — the
+                       historical behavior of this script.
                        Env equivalent: DEMIURGOS_WITH_CLI_STACK=1
 
 Env:
@@ -654,8 +567,6 @@ USAGE
 main_cli_stack() {
     check_prerequisites
     install_hermes
-    install_engram
-    configure_engram "$DEMIURGOS_HOME/bin/engram"
     # The venv must exist before the skills merge: it runs through the
     # checkout venv Python.
     prepare_python_env

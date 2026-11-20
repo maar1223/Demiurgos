@@ -809,9 +809,13 @@ from pathlib import Path
 # Registers mcp_servers.demiurgos-graph -> mcp_launcher.py, which resolves the
 # data root and the world at runtime. Never a hardcoded --mundos-path.
 sys.path.insert(0, sys.argv[1])
-from hermes_profile_config import merge_graph_mcp_server
+from hermes_profile_config import merge_graph_mcp_server, remove_engram_mcp_server
 
-merge_graph_mcp_server(Path(sys.argv[2]))
+config = Path(sys.argv[2])
+merge_graph_mcp_server(config)
+# The product keeps its own assistant memory; drop the legacy Engram server
+# from profiles written by older installers (idempotent, preserves siblings).
+remove_engram_mcp_server(config)
 PY
     then
         printf 'install-demiurgos: assistant graph wired at %s\n' "$config" >&2

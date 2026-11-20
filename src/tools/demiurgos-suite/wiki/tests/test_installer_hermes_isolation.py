@@ -4,8 +4,8 @@
 The one-command bootstrap (``install.sh``) is the SOLE provisioner of the
 dedicated product Hermes root: it resolves ``DEMIURGOS_HERMES_HOME`` with the
 same chain as the launcher and points ``HERMES_CONFIG`` at
-``<dedicated root>/config.yaml``, so the Engram MCP block and every product
-write target the dedicated profile — never the personal ``~/.hermes``. No
+``<dedicated root>/config.yaml``, so every product write targets the
+dedicated profile — never the personal ``~/.hermes``. No
 ``active_profile`` pointer is ever created under the dedicated root (spec
 ``hermes-isolated-profile``).
 
@@ -54,8 +54,8 @@ def test_installer_derives_dedicated_hermes_home_with_shared_chain():
 
 def test_installer_points_hermes_config_at_dedicated_root():
     """Spec 'Installer writes only the dedicated config': HERMES_CONFIG is the
-    dedicated root's config.yaml, so every write through the variable (the
-    Engram MCP block) targets the product profile."""
+    dedicated root's config.yaml, so every write through the variable targets
+    the product profile."""
     text = _text(INSTALL_SH)
     assert _HERMES_CONFIG in text
 
@@ -70,13 +70,11 @@ def test_installer_never_writes_personal_hermes_config():
 
 
 def test_installer_config_writes_go_through_hermes_config_variable():
-    """Spec 'Installer writes only the dedicated config': configure_engram's
-    provisioning writes (parent mkdir, the `---` seed, the mcp: heredocs) all
-    go through $HERMES_CONFIG, which now resolves under the dedicated root."""
+    """Spec 'Installer writes only the dedicated config': every provisioning
+    write goes through $HERMES_CONFIG, which resolves under the dedicated root."""
     text = _text(INSTALL_SH)
-    assert 'mkdir -p "$(dirname "$HERMES_CONFIG")"' in text
-    assert '> "$HERMES_CONFIG"' in text
-    assert '>> "$HERMES_CONFIG"' in text
+    assert '"$venv_python" - "$wiki_dir" "$HERMES_CONFIG"' in text
+    assert '"$venv_python" - "$wiki_dir" "$HERMES_CONFIG" "$root"' in text
 
 
 def test_installer_creates_no_active_profile():
@@ -180,13 +178,23 @@ def test_installer_uses_the_product_runtime_binary():
     whatever `hermes` happens to be on the user's PATH."""
     text = _text(INSTALL_SH)
     assert 'HERMES_BIN="$DEMIURGOS_HOME/hermes-agent/.hermes/bin/hermes"' in text
-    assert '"$hermes_bin" mcp add engram' in text
     assert '"$hermes_bin" profile create demiurgos-mcp' in text
     # No bare PATH-based selection remains in the CLI-stack path.
     assert "if command -v hermes" not in text
     assert "$(command -v hermes)" not in text
-    assert "hermes mcp add engram" not in text
     assert "hermes profile list" not in text
+
+
+def test_installer_does_not_install_or_register_engram():
+    """S1/S2: the product no longer installs Engram nor registers its MCP
+    server in the product profile."""
+    text = _text(INSTALL_SH)
+    assert "install_engram" not in text
+    assert "configure_engram" not in text
+    assert "ENGRAM_VERSION" not in text
+    assert "ENGRAM_REPO" not in text
+    assert "mcp add engram" not in text
+    assert "gentleman-programming/engram" not in text.lower()
 
 
 def test_installer_mcp_profile_lives_under_the_dedicated_root():
