@@ -55,7 +55,7 @@ Antes de implementar CUALQUIER herramienta web de Demiurgos, en orden:
 | Canon-safety: el canon es sagrado, las contradicciones se señalan antes de llegar a la página | Un editor de wiki genérico sin gobierno de canon |
 | Intención sobre comandos: el Autor habla naturalmente, la plataforma orquesta | Una máquina de formularios ni un asistente de campos |
 | Proveedor de IA intercambiable (Hermes es uno de ellos) | Sinónimo de Hermes |
-| Con memoria persistente obligatoria (Engram) | Un chat efímero sin memoria |
+| Con memoria persistente propia (SQLite, sin servicios de terceros) | Un chat efímero sin memoria |
 | Escritura siempre detrás de compuertas con aprobación explícita | Un sistema que persiste lo que la IA propone automáticamente |
 
 ### 1.3 Autor objetivo
@@ -73,7 +73,7 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 | **Agnosticismo de proveedor** | Configuración unificada de proveedores (texto/visión); Hermes es el proveedor conversacional actual y tratado como componente reemplazable | `[DECISIÓN CERRADA]` |
 | **Fronteras seguras de propuesta/escritura** | Las propuestas no alteran Canon ni runtime; los borradores de trabajo pueden autoguardarse, pero toda promoción a Canon, publicación o activación ocurre solo tras aprobación con digest + token de un solo uso | `[DECISIÓN CERRADA]` |
 | **Divulgación progresiva** | Primero lo esencial, después lo profundo; una pregunta a la vez; opciones solo cuando ayudan (máx. 5) | `[DECISIÓN CERRADA]` |
-| **Memoria persistente** | Engram es la memoria obligatoria del flujo del agente/ODD; el runtime web distribuido no la requiere y persiste su estado durable en SQLite | `[DECISIÓN CERRADA]` |
+| **Memoria persistente** | El producto mantiene su propia memoria del asistente en SQLite (hechos, preferencias y relaciones por mundo), inyectada por prompt y curada por políticas deterministas; no depende de Engram ni de ningún servicio externo. El flujo ODD del agente usa Engram por fuera del producto | `[DECISIÓN CERRADA]` |
 | **Metodología como contenido** | Las metodologías creativas (qué preguntar, cómo explorar) son contenido editable del Autor (skills), no lógica incrustada en el servidor | `[DECISIÓN CERRADA]` |
 | **Co-creación asistida** | En la creación de skills, Hermes conversa y **redacta la propuesta**; el backend valida/compila y protege el kernel; el Autor aprueba la publicación. Hermes no escribe ni decide canon | `[DECISIÓN CERRADA]` |
 | **Co-creación adaptativa** | El sistema **aprende el vocabulario y la estructura del mundo** y **pregunta ante la ambigüedad** en lugar de asumir; el LLM propone y el backend conserva **contexto, procedencia y seguridad**; el Autor confirma | `[DECISIÓN CERRADA]` |
@@ -115,7 +115,7 @@ La co-creación es **adaptativa**: la plataforma aprende el **vocabulario y la e
 │        │                       │                                    │
 │        │                       ▼                                    │
 │        │            ┌─────────────────────┐                        │
-│        └────────────│   HERMES (prov.)     │◀── Engram (memoria)    │
+│        └────────────│   HERMES (prov.)     │◀── prompt + memoria    │
 │   UI ◀──── SSE ◀────│  runs adapter +      │                        │
 │   (chat/assistant)  │  semantic gate       │                        │
 │                     └─────────────────────┘                        │
@@ -172,7 +172,7 @@ la aplicación, sobre el canal público:
 | **Almacenamiento** | Archivos del mundo + papelera + snapshots de historial | Solo vía rutas gated del backend | `[ACTUAL]` |
 | **Skills** | Metodologías de creación (contenido editable del Autor) | Ninguna por sí mismas: ejecutan dentro de rieles del kernel | `[OBJETIVO]` |
 | **Proveedores de IA** | Texto (extracción/escritura) y visión (imágenes) bajo configuración unificada | Ninguna: proveedores no confiables y acotados | `[ACTUAL]` |
-| **Engram** | Memoria persistente de sesiones, decisiones y artefactos | Ninguna sobre el canon: registro, no fuente | `[ACTUAL]` |
+| **Memoria del asistente** | Memoria persistente propia (SQLite): hechos, preferencias y relaciones por mundo, inyectada en el prompt | Ninguna sobre el canon: contexto, no fuente; la evidencia viva gana | `[ACTUAL]` |
 | **Canales externos (p. ej. Skool/Telegram)** | Comunidad/entitlement para ideas, paquetes compartidos y acceso autorizado a actualizaciones | Ninguna hasta validación/revisión del Autor | `[OBJETIVO]` |
 
 ---
@@ -216,7 +216,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 | Plantillas/catálogos | `[ACTUAL]` | Catálogos narrativos en `plantillas/` con `_catalog.json` |
 | Búsqueda/índice | `[ACTUAL]` | Search del grafo + `lore_search`; indexado vía sync_lore y `ReindexCoordinator` |
 | Persistencia y revisión | `[ACTUAL]` | Pipeline de escritura gated (confirmación digest+token), papelera, historial |
-| Memoria persistente | `[ACTUAL]` | Engram (MCP): `mem_save/search/context`; obligatoria para el flujo del agente/ODD. El runtime web usa SQLite y trata Engram como auxiliar (`api_server.py:662,9539`) |
+| Memoria persistente | `[ACTUAL]` | Propia del producto: `AssistantMemoryStore` (SQLite + FTS5) guarda hechos, preferencias y relaciones por mundo; `memory_curator` decide propuesta-vs-canon y `_memory_context` la inyecta por prompt. El producto no instala, registra ni consulta Engram |
 | Imágenes | `[ACTUAL]` subida de media + `image_indexer` + proveedor de visión + `nanobanana` · `[PROPUESTO]` flujos de imagen de personaje profundos | No es objetivo de la iniciativa de skills; profundidad es decisión abierta (sección 10) |
 | Configuración/instalación | `[ACTUAL]` | onboarding + Centro de Configuración (en el Perfil de la wiki, `/perfil`; sin página/ruta independiente); wizard legacy `web-config-ui` retirado (histórico, solo referencia) |
 | Workflows narrativos | `[ACTUAL]` | Orquestador AGENTS.md + máquina de fases + `.demiurgos-estado.json` |
@@ -274,6 +274,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 - Los **proveedores de IA son no confiables y acotados**: envelopes estrictamente validados, contexto server-verificado, fail-closed sin fallback léxico autónomo. `[DECISIÓN CERRADA]`
 - Un fallo del asistente **no es un solo mensaje opaco**: el envelope bloqueado lleva un `reason` acotado (`invalid_output`, `provider_auth`, `provider_quota`, `provider_rejected`, `provider_unreachable`) con copia localizada propia, y una sesión guiada muerta (401/409) se descarta en el cliente en vez de reenviarse. Un rechazo no reintentable del upstream (400/401/402/403/404) no se reintenta, y un circuit breaker acotado deja de llamar al proveedor durante un enfriamiento corto tras fallos consecutivos (inmediato ante un rechazo de cuenta: autenticación o cuota). `[ACTUAL]`
 - Un turno que **termina sin respuesta no es un bloqueo**: el techo de silencio del stream es de 120 s por evento (era 30 s, dentro de la latencia normal de un turno largo) con un presupuesto total acotado de 300 s, el cierre se registra en el log con request id, run id, motivo y si hubo respuesta, y el cliente muestra una copia específica con "Reintentar" en lugar del texto genérico de fail-closed. El primer turno tras un reinicio no paga la construcción del grafo: se precalienta en segundo plano al arrancar. `[ACTUAL]` (`odd/tasks/assistant-turn-latency-and-interruption.md`)
+- La **memoria del asistente es propia del producto**: `AssistantMemoryStore` (SQLite + FTS5) guarda hechos, preferencias y relaciones por mundo, `memory_curator` decide propuesta-vs-canon, y `_memory_context` inyecta el contexto en el prompt. El producto no instala, registra ni consulta Engram: ningún prompt le indica usar herramientas de Engram, el MCP del grafo no expone datos de Engram (`lore_search` devuelve solo `graph_matches`) y `lore_conflicts` compara el canon contra la memoria propia. `[ACTUAL]` (`odd/tasks/assistant-memory-engram-cutover.md`)
 - La **metodología creativa es contenido**, no código: los rieles de seguridad (kernel) son del servidor; la guía creativa vive en skills editables. `[DECISIÓN CERRADA]`
 - **Progressive disclosure** en toda superficie: esencial primero, detalle después. `[DECISIÓN CERRADA]`
 - La **activación de skills no modifica `AGENTS.md`**; el orquestador narrativo permanece como artefacto estático, nunca como contrato reescrito dinámicamente. `[DECISIÓN CERRADA]`
@@ -359,7 +360,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no al Taller de Herram
 | **G3** | Modelo de autorización | **[DECISIÓN CERRADA]** Arquitectura preparada para multiusuario (ownership/workspace/world/roles/permisos), con implementación inicial monousuario/local. El Core es gratuito y los módulos usan entitlements de compra única; Skool queda separado como comunidad y canal de descuentos, no como autoridad de acceso o escritura |
 | **G4** | Indexado de fondo | `ReindexCoordinator` por operación vs servicio/indexador de fondo global con watch |
 | **G5** | Alcance de flujos de imagen | Subida/media + `image_indexer` + visión actuales vs generación/regeneración profunda de imágenes de personaje |
-| **G6** | Rol de Engram como memoria de plataforma | Registro de co-creación vs fuente de contexto de búsqueda; sincronización con el worker `engram_sync` |
+| **G6** | Rol de Engram como memoria de plataforma | **[DECISIÓN CERRADA]** *(2026-11-20)* Engram **no** es memoria del producto: el asistente usa su propia memoria SQLite (`AssistantMemoryStore` + `memory_curator`) inyectada por prompt. El worker `engram_sync` queda como herramienta de autor, fuera del runtime |
 | **G7** | Idioma de UI en runtime | `DEMIURGOS_LANGUAGE` estático actual vs cambio dinámico con persistencia (el frontend ya tiene `useAppLanguage`) |
 | **G8** | Instalación/despliegue | **[DECISIÓN CERRADA]** *(2026-10-02)* Instalación **local de un solo comando**: canal público de artefactos precompilados, `uv` + ruedas binarias (sin compilador), sin permisos de administrador, launcher portable y rollback acotado a la versión anterior. **Docker queda como canal paralelo futuro, no como canal principal** (rompería la promesa de un solo comando y exigiría privilegios). Esta decisión **supersede #2330** (ejecutables nativos, diferidos): la distribución *source-visible* con `uv` + wheels es el enfoque vigente. Detalle en `docs/install/` y `docs/architecture/INSTALL_LAYOUT.md` |
 | **G9** | Modelo de licencias y activación | **[DECISIÓN CERRADA]** Módulos de **pago único**; la compra incluye **actualizaciones durante 1 año**; la **renovación colaborativa** es opcional y posterior; la **versión instalada nunca se bloquea**. La activación es **por plataforma**: 1 Windows + 1 macOS + 1 Linux + 1 servidor/VPS, con transferencia. Los cobros son agnósticos de proveedor (Stripe/Binance futuros) y los **descuentos se calculan en Demiurgos**, no en el proveedor |
