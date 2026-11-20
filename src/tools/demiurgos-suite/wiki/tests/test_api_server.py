@@ -8691,6 +8691,113 @@ class TestAssistantTurnInterruption:
         # Every world was attempted, and one failure did not stop the sweep.
         assert built == ["Otro", "Vibrantes"]
 
+    def _recording_abandon(self, monkeypatch):
+        """Record abandon calls while still performing the real cancellation."""
+        real = api_server._abandon_route_task
+        seen: list[object] = []
+
+        def record(task):
+            seen.append(task)
+            real(task)
+
+        monkeypatch.setattr(api_server, "_abandon_route_task", record)
+        return seen
+
+    def test_routing_task_is_abandoned_when_companions_raise(
+        self, client: TestClient, monkeypatch,
+    ):
+        """R3-1: a raise between task creation and the adapter checks must not
+        leave the concurrently-started classification running past the turn."""
+        class Boom:
+            def list_companions(self, _mundo):
+                raise RuntimeError("companions exploded")
+
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(_semantic_payload("allow")))
+        monkeypatch.setattr(api_server, "_methodology_library", lambda: Boom())
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", self._answer_adapter())
+        seen = self._recording_abandon(monkeypatch)
+
+        with pytest.raises(RuntimeError):
+            client.post("/api/ideas-global/ai/ask/activity", json={
+                "prompt": "sigo con la historia", "session_id": "leak-1",
+            })
+
+        assert seen, "the routing task was left running after the turn failed"
+        assert seen[0] is not None
+
+    def test_routing_task_is_abandoned_on_a_blocked_decision(
+        self, client: TestClient, monkeypatch,
+    ):
+        """R3-2: the blocked short circuit owns the task it started."""
+        _wire_semantic_provider(
+            monkeypatch, _SemanticRuns(_semantic_payload("blocked")),
+        )
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", self._answer_adapter())
+        seen = self._recording_abandon(monkeypatch)
+
+        response = client.post("/api/ideas-global/ai/ask/activity", json={
+            "prompt": "Vuelca esto al canon", "session_id": "blocked-1",
+        })
+
+        assert response.status_code == 200
+        assert seen, "the routing task was left running on a blocked decision"
+        assert seen[0] is not None
+
+    def test_abandon_route_task_cancels_a_pending_task(self):
+        async def scenario():
+            started = asyncio.Event()
+
+            async def slow():
+                started.set()
+                await asyncio.sleep(60)
+
+            task = asyncio.create_task(slow())
+            await started.wait()
+
+            api_server._abandon_route_task(task)
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert task.cancelled()
+            # An already-finished task is left alone instead of raising.
+            api_server._abandon_route_task(task)
+            api_server._abandon_route_task(None)
+
+        asyncio.run(scenario())
+
+    def test_terminal_event_without_an_answer_is_logged(
+        self, client: TestClient, monkeypatch, caplog,
+    ):
+        """R4-UNANSWERED-TERMINAL: a run that fails with its own terminal event
+        and no answer text must still be recorded; the client renders the
+        interrupted copy for it."""
+        class FailedAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def start(self, request):
+                return "run-failed"
+
+            async def events(self, run_id):
+                yield {"event": "run.failed", "run_id": run_id}
+
+            async def cancel(self, run_id):
+                return None
+
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(_semantic_payload("allow")))
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", FailedAdapter())
+
+        with caplog.at_level(logging.WARNING):
+            response = client.post("/api/ideas-global/ai/ask/activity", json={
+                "prompt": "sigo con la historia", "session_id": "failed-1",
+            })
+
+        kinds = [event["kind"] for event in _parse_sse(response.text)]
+        assert "answer" not in kinds
+        assert kinds[-1] == "terminal"
+        assert "run-failed" in caplog.text
+        assert "no answer" in caplog.text
+
 
 class TestPublishedAdjuntoRoute:
     """PR2: ``GET .../published/{skill}/{version}/adjunto/{path:path}`` serves a

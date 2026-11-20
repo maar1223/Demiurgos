@@ -11761,16 +11761,23 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         early_route_task = asyncio.create_task(
             _route_skill(body.prompt, mundo, distilled_state)
         )
-    result = await _semantic_gate(
-        mundo, body.prompt + attachment_metadata_note(attachments),
-        context=context,
-        request_id=request_id,
-        distilled_state=distilled_state,
-        recent_turns=_gate_recent_turns(body.session_id),
-        memory_context=_memory_context(
+    # Ownership rule for the task above: every path that leaves this endpoint
+    # before the stream takes it must abandon it. A client disconnect cancels
+    # this coroutine, so the guard is BaseException, not Exception.
+    try:
+        result = await _semantic_gate(
             mundo, body.prompt + attachment_metadata_note(attachments),
-        ),
-    )
+            context=context,
+            request_id=request_id,
+            distilled_state=distilled_state,
+            recent_turns=_gate_recent_turns(body.session_id),
+            memory_context=_memory_context(
+                mundo, body.prompt + attachment_metadata_note(attachments),
+            ),
+        )
+    except BaseException:
+        _abandon_route_task(early_route_task)
+        raise
     decision = result.decision
     # The S4 truth table decides the transition; no row reads the utterance.
     # "open" and "offer" both hand off to /ai/ask (the offer carries no
@@ -11787,22 +11794,26 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         decision.state, decision.guided, decision.guided_explicitness, transition,
     )
     if transition in {"open", "offer", "clarify"}:
-        principal = _resolve_principal(request)
-        ticket = None
-        profile = _opening_profile(decision) if transition == "open" else None
-        if principal is not None and context_kind != "global":
-            ticket = _issue_guided_handoff_ticket(
-                principal_id=principal.id,
-                session_id=body.session_id or "",
-                mundo=mundo,
-                prompt=body.prompt,
-                decision=decision,
-                attempts=result.attempts,
-                reference_context=reference_context,
-                reference_name=reference_name,
-                profile=profile,
-                graph_unavailable=graph_unavailable,
-            )
+        try:
+            principal = _resolve_principal(request)
+            ticket = None
+            profile = _opening_profile(decision) if transition == "open" else None
+            if principal is not None and context_kind != "global":
+                ticket = _issue_guided_handoff_ticket(
+                    principal_id=principal.id,
+                    session_id=body.session_id or "",
+                    mundo=mundo,
+                    prompt=body.prompt,
+                    decision=decision,
+                    attempts=result.attempts,
+                    reference_context=reference_context,
+                    reference_name=reference_name,
+                    profile=profile,
+                    graph_unavailable=graph_unavailable,
+                )
+        except BaseException:
+            _abandon_route_task(early_route_task)
+            raise
         logger.info(
             "ai_ask_activity: 503 guided_handoff (transition=%s, state=%s, ticket=%s)",
             transition, decision.state, bool(ticket),
@@ -11834,6 +11845,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     except Exception:
         _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
+    except asyncio.CancelledError:
+        _abandon_route_task(early_route_task)
+        raise
 
     # Memory context for the activity surface (side effects). Only a real
     # session is routed/persisted (fricción 4). The gate above ran stateless on
@@ -11855,14 +11869,21 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # Exactly one class injects — companion precedence is preserved by the
     # ``or`` short-circuit — and the single early_route_task is reused at
     # stream close (exactly one routing decision per turn).
-    library = _methodology_library()
-    companions = library.list_companions(mundo)
+    try:
+        library = _methodology_library()
+        companions = library.list_companions(mundo)
+    except BaseException:
+        _abandon_route_task(early_route_task)
+        raise
     skill_contract = None
     if early_route_task is not None:
         try:
             winner = await asyncio.wait_for(
                 asyncio.shield(early_route_task), ROUTING_AWAIT_TIMEOUT_SECONDS
             )
+        except asyncio.CancelledError:
+            _abandon_route_task(early_route_task)
+            raise
         except Exception:
             winner = None
         skill_contract = (
@@ -11871,20 +11892,20 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         )
     # Skill routing is fire-and-forget: it never blocks the response and its
     # skill_id is persisted at stream close.
-    activity_request = HermesActivityRequest(
-        request_id=request_id,
-        prompt=_build_ai_ask_prompt(
-            mundo, body,
-            distilled_state=distilled_state,
-            skill_contract=skill_contract,
-            attachments=attachments,
-            memory_context=_memory_context(
-                mundo, body.prompt + attachment_metadata_note(attachments),
-            ),
-        ),
-        session_id=_channel_session_id(body.session_id),
-    )
     try:
+        activity_request = HermesActivityRequest(
+            request_id=request_id,
+            prompt=_build_ai_ask_prompt(
+                mundo, body,
+                distilled_state=distilled_state,
+                skill_contract=skill_contract,
+                attachments=attachments,
+                memory_context=_memory_context(
+                    mundo, body.prompt + attachment_metadata_note(attachments),
+                ),
+            ),
+            session_id=_channel_session_id(body.session_id),
+        )
         run_id = adapter.start(activity_request)
         if inspect.isawaitable(run_id):
             run_id = await run_id
@@ -11895,6 +11916,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             session_id=activity_request.session_id,
             world_root=world_root,
         )
+    except asyncio.CancelledError:
+        _abandon_route_task(early_route_task)
+        raise
     except Exception:
         _abandon_route_task(early_route_task)
         return _fail_closed_activity_response(result, request_id)
@@ -11912,9 +11936,14 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         close_reason = "stream_ended"
 
         def emit(event) -> str:
-            nonlocal assistant_answer
+            nonlocal assistant_answer, close_reason
             if isinstance(event, AnswerEvent):
                 assistant_answer = event.response
+            elif isinstance(event, TerminalEvent) and close_reason == "stream_ended":
+                # Only a close that had no reason of its own adopts the terminal
+                # status; a silence/budget/timeout diagnosis always wins, and
+                # ``finalize()`` (status "unknown") must never overwrite it.
+                close_reason = f"terminal_{event.status}"
             return _sse_event(event.as_dict())
 
         yield _sse_event(_semantic_decision_event(result).as_dict())
@@ -12011,6 +12040,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 for event in translator.finalize():
                     yield emit(event)
         finally:
+            answered = bool(assistant_answer)
             if not completed:
                 # The only record of WHY a turn produced no answer. Without it
                 # the incident was undiagnosable from the API log: the run was
@@ -12019,7 +12049,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     logger.info(
                         "ai_ask_activity: run closed on disconnect "
                         "(request=%s run=%s answer_seen=%s elapsed=%.1fs)",
-                        request_id, run_id, bool(assistant_answer),
+                        request_id, run_id, answered,
                         time.monotonic() - started_at,
                     )
                 else:
@@ -12027,9 +12057,20 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                         "ai_ask_activity: run closed without a terminal answer "
                         "(request=%s run=%s reason=%s answer_seen=%s elapsed=%.1fs)",
                         request_id, run_id, close_reason,
-                        bool(assistant_answer), time.monotonic() - started_at,
+                        answered, time.monotonic() - started_at,
                     )
                 await _cancel_activity(adapter, run_id)
+            elif not answered:
+                # A terminal event arrived but the run never produced an answer
+                # text (for example run.failed). The client still renders the
+                # interrupted copy, so the server records it too (S1): otherwise
+                # this class of un-answered close stays silent.
+                logger.warning(
+                    "ai_ask_activity: run closed with a terminal event and no answer "
+                    "(request=%s run=%s reason=%s elapsed=%.1fs)",
+                    request_id, run_id, close_reason,
+                    time.monotonic() - started_at,
+                )
             # Resolve the fire-and-forget skill routing (side effect for
             # analytics / future summaries) and persist the user turn with it.
             # The user turn is persisted unconditionally (the prompt was sent);
