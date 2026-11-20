@@ -310,59 +310,42 @@ class TestServerIntegration:
 
 
 class TestLoreSearch:
-    def test_lore_search_returns_correct_shape(self) -> None:
-        """lore_search returns {graph_matches, engram_matches, query} with source tags."""
-        from unittest.mock import patch
-
+    def test_lore_search_returns_graph_matches_only(self) -> None:
+        """lore_search returns {graph_matches, query} — Engram is gone."""
         index = _mock_index()
         hit = _make_hit("Rhyz", path="personajes/rhyz.md")
         index.search.return_value = [hit]
-        adapter = GraphMCPAdapter(index, engram_enabled=True)
+        adapter = GraphMCPAdapter(index)
 
-        mock_engram = [
-            {"id": 42, "title": "Rhyz origin story", "preview": "Rhyz was born..."},
-        ]
+        result = adapter.tool_lore_search("Rhyz")
 
-        with patch("wiki.mcp_adapter.engram_search", return_value=mock_engram):
-            result = adapter.tool_lore_search("Rhyz")
-
-        assert "graph_matches" in result
-        assert "engram_matches" in result
-        assert "query" in result
+        assert set(result) == {"graph_matches", "query"}
         assert result["query"] == "Rhyz"
         assert len(result["graph_matches"]) == 1
         assert result["graph_matches"][0]["source"] == "graph"
         assert result["graph_matches"][0]["name"] == "Rhyz"
-        assert len(result["engram_matches"]) == 1
-        assert result["engram_matches"][0]["source"] == "engram"
-        assert result["engram_matches"][0]["id"] == 42
 
-    def test_lore_search_engram_disabled(self) -> None:
-        """With engram disabled, engram_matches is always empty."""
-        index = _mock_index()
-        hit = _make_hit("Vael")
-        index.search.return_value = [hit]
-        adapter = GraphMCPAdapter(index, engram_enabled=False)
-
-        result = adapter.tool_lore_search("Vael")
-
-        assert result["engram_matches"] == []
-        assert len(result["graph_matches"]) == 1
-        assert result["graph_matches"][0]["source"] == "graph"
-
-    def test_lore_search_empty_query_both_empty(self) -> None:
-        """Empty query returns empty arrays for both sources."""
-        from unittest.mock import patch
-
+    def test_lore_search_empty_query_returns_empty_matches(self) -> None:
+        """An empty query returns an empty match list, not an Engram probe."""
         index = _mock_index()
         index.search.return_value = []
-        adapter = GraphMCPAdapter(index, engram_enabled=True)
+        adapter = GraphMCPAdapter(index)
 
-        with patch("wiki.mcp_adapter.engram_search", return_value=[]):
-            result = adapter.tool_lore_search("")
+        result = adapter.tool_lore_search("")
 
-        assert result["graph_matches"] == []
-        assert result["engram_matches"] == []
+        assert result == {"graph_matches": [], "query": ""}
+
+    def test_adapter_has_no_engram_plumbing(self) -> None:
+        """The adapter neither exposes nor accepts Engram wiring."""
+        import inspect
+
+        import wiki.mcp_adapter as mcp_adapter
+
+        assert not hasattr(mcp_adapter, "engram_search")
+        assert not hasattr(mcp_adapter, "engram_get_observation")
+        params = inspect.signature(GraphMCPAdapter).parameters
+        assert "engram_enabled" not in params
+        assert "engram_cmd" not in params
 
 
 # =============================================================================
@@ -526,7 +509,7 @@ class TestLoreFormat:
                 "path": "personajes/rhyz.md",
                 "content": "Rhyz entrenó en las montañas durante años.",
             },
-            "engram": [
+            "memory": [
                 {"title": "Session 42", "preview": "We discussed Rhyz backstory."},
             ],
             "conflicts": [
@@ -541,7 +524,7 @@ class TestLoreFormat:
         result = adapter.tool_lore_format(data)
 
         assert "[[Rhyz El Resonante]]" in result
-        assert "Engram Context" in result
+        assert "Memory Context" in result
         assert "Conflicts" in result
         assert "date_contradiction" in result
 
@@ -557,7 +540,7 @@ class TestLoreFormat:
         result = adapter.tool_lore_format(data)
 
         assert "[[Ekkor]]" in result
-        assert "Engram Context" not in result
+        assert "Memory Context" not in result
         assert "Conflicts" not in result
 
     def test_format_empty_struct_returns_empty(self) -> None:
@@ -739,24 +722,17 @@ class TestNewServerTools:
         sig_il = inspect.signature(idea_link)
         assert list(sig_il.parameters.keys()) == ["content", "mundo"]
 
-    def test_init_with_no_engram(self) -> None:
-        """init() called with engram_enabled=False creates disabled adapter."""
-        from wiki.graph_mcp_server import (
-            init as server_init,
-            _adapter,
-            _engram_enabled,
-        )
-
-        # We can't call init() with real paths in test env, but we can
-        # verify the function signature accepts engram_enabled parameter.
+    def test_init_has_no_engram_plumbing(self) -> None:
+        """init() accepts no Engram wiring — the integration is removed."""
         import inspect
 
-        sig = inspect.signature(server_init)
-        params = sig.parameters
-        assert "engram_enabled" in params
-        assert params["engram_enabled"].default is True
-        assert "engram_cmd" in params
-        assert params["engram_cmd"].default == "engram"
+        from wiki import graph_mcp_server as server
+
+        params = inspect.signature(server.init).parameters
+        assert "engram_enabled" not in params
+        assert "engram_cmd" not in params
+        assert not hasattr(server, "_engram_enabled")
+        assert not hasattr(server, "_engram_cmd")
 
 
 # =============================================================================

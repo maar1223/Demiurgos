@@ -3,15 +3,12 @@ Narrative utilities — shared helpers for lore search, conflict detection,
 auto-tagging, idea linking, and lore formatting.
 
 All functions are deterministic, pure Python, no network/LLM calls.
-Engram integration uses subprocess CLI (same pattern as sync-ideas.py).
 """
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -203,96 +200,6 @@ def sanitize_shell_arg(arg: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Engram CLI helpers
-# ---------------------------------------------------------------------------
-
-def engram_search(
-    query: str,
-    project: str,
-    engram_cmd: str = "engram",
-    limit: int = 10,
-    timeout: int = 15,
-) -> list[dict[str, Any]]:
-    """Search Engram persistent memory via CLI subprocess.
-
-    Executes ``engram mem search --project <project> --query <query>``.
-    Returns parsed list of match dicts with keys: id, title, preview.
-    Gracefully returns empty list on any error (CLI not found, timeout, etc.).
-
-    Args:
-        query: Search query string.
-        project: Engram project name (e.g. "vibrantes").
-        engram_cmd: Path or name of the Engram CLI binary.
-        limit: Max results (default 10).
-        timeout: Subprocess timeout in seconds.
-    """
-    try:
-        result = subprocess.run(
-            [
-                engram_cmd, "mem", "search",
-                "--project", project,
-                "--query", query,
-                "--limit", str(limit),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return []
-
-        data = json.loads(result.stdout)
-
-        # Engram returns {"result": [{"id": N, "title": "...", ...}, ...]}
-        raw_results: list[dict[str, Any]] = data.get("result", [])
-        if not isinstance(raw_results, list):
-            return []
-
-        return [
-            {
-                "id": item.get("id", 0),
-                "title": str(item.get("title", "")),
-                "preview": str(item.get("content", ""))[:300],
-            }
-            for item in raw_results
-            if isinstance(item, dict)
-        ]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
-        return []
-
-
-def engram_get_observation(
-    obs_id: int,
-    engram_cmd: str = "engram",
-    timeout: int = 15,
-) -> str:
-    """Retrieve the full content of an Engram observation by ID.
-
-    Executes ``engram mem get-observation --id <obs_id>``.
-    Returns the observation content string. Returns empty string on error.
-
-    Args:
-        obs_id: Numeric observation ID.
-        engram_cmd: Path or name of the Engram CLI binary.
-        timeout: Subprocess timeout in seconds.
-    """
-    try:
-        result = subprocess.run(
-            [engram_cmd, "mem", "get-observation", "--id", str(obs_id)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return ""
-
-        data = json.loads(result.stdout)
-        return str(data.get("content", "") or data.get("observation", ""))
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
-        return ""
-
-
-# ---------------------------------------------------------------------------
 # Frontmatter parsing
 # ---------------------------------------------------------------------------
 
@@ -397,9 +304,9 @@ def _value_similarity(a: str, b: str) -> float:
 
 def compare_claims(
     entity_claims: list[dict[str, str]],
-    engram_claims: list[dict[str, str]],
+    other_claims: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    """Compare entity claims against Engram claims, returning conflicts.
+    """Compare entity claims against another claim set, returning conflicts.
 
     Matches claims by field and pattern type. When values differ, assigns
     a conflict_type from the taxonomy: date_contradiction, status_contradiction,
@@ -409,15 +316,15 @@ def compare_claims(
     """
     conflicts: list[dict[str, str]] = []
 
-    # Index engram claims by field for fast lookup
-    engram_by_field: dict[str, list[dict[str, str]]] = {}
-    for ec in engram_claims:
+    # Index the comparison claims by field for fast lookup
+    other_by_field: dict[str, list[dict[str, str]]] = {}
+    for ec in other_claims:
         field = ec.get("field", "")
-        engram_by_field.setdefault(field, []).append(ec)
+        other_by_field.setdefault(field, []).append(ec)
 
     for entity in entity_claims:
         field = entity.get("field", "")
-        candidates = engram_by_field.get(field, [])
+        candidates = other_by_field.get(field, [])
 
         for eng in candidates:
             # Skip if values are similar enough
@@ -438,7 +345,7 @@ def compare_claims(
                 "claim_a": entity.get("value", ""),
                 "source_a": entity.get("source", ""),
                 "claim_b": eng.get("value", ""),
-                "source_b": eng.get("source", f"engram#{eng.get('id', '?')}"),
+                "source_b": eng.get("source", f"assistant-memory#{eng.get('id', '?')}"),
                 "conflict_type": conflict_type_map.get(pattern, "unknown"),
             })
 
@@ -630,20 +537,20 @@ def format_lore(data: dict[str, Any]) -> str:
 
     Sections:
     - Entity summary (name, type, description, content preview)
-    - Engram context (observations)
+    - Memory context (the product's own memory entries)
     - Conflicts (if any)
 
     Empty sections are omitted. ZERO LLM calls.
 
     Args:
-        data: Dict with optional keys: entity, engram, conflicts.
+        data: Dict with optional keys: entity, memory, conflicts.
 
     Returns:
         Formatted markdown string, or empty string if all sections empty.
     """
     sections: list[str] = []
     entity = data.get("entity")
-    engram_items = data.get("engram", [])
+    memory_items = data.get("memory", [])
     conflicts = data.get("conflicts", [])
 
     # Entity section
@@ -670,12 +577,12 @@ def format_lore(data: dict[str, Any]) -> str:
         lines.append("")
         sections.append("\n".join(lines))
 
-    # Engram section
-    if engram_items and isinstance(engram_items, list):
+    # Memory section
+    if memory_items and isinstance(memory_items, list):
         lines = []
-        lines.append("## Engram Context")
+        lines.append("## Memory Context")
         lines.append("")
-        for i, obs in enumerate(engram_items, 1):
+        for i, obs in enumerate(memory_items, 1):
             if isinstance(obs, dict):
                 title = obs.get("title", f"Observation {i}")
                 preview = obs.get("preview", obs.get("content", ""))

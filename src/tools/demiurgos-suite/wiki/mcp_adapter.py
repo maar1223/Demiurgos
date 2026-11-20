@@ -7,13 +7,13 @@ JSON-serializable dicts (no dataclasses), suitable for MCP server tools.
 Usage::
 
     adapter = GraphMCPAdapter(index, mundos_path="mundos",
-                              project="vibrantes", engram_enabled=True)
+                              project="vibrantes")
     result = adapter.tool_search("Rhyz")   # → {"matches": [...]}
     entity = adapter.tool_read("personajes/Rhyz_El_Resonante.md")
 
 All methods are pure — no side effects, no I/O beyond what the index already
-performs internally. Engram tools use subprocess calls (same pattern as
-sync-ideas.py) with 15s timeout and graceful fallback.
+performs internally. Conflict detection reads the product's own assistant
+memory (``AssistantMemoryStore``); nothing here shells out to an external CLI.
 """
 
 from __future__ import annotations
@@ -25,8 +25,6 @@ from typing import Any
 from .graph_indexer import EntityGraphIndex
 from .assistant_memory_store import AssistantMemoryStore
 from .narrative_utils import (
-    engram_search,
-    engram_get_observation,
     extract_claims,
     compare_claims,
     extract_entities,
@@ -49,8 +47,6 @@ class GraphMCPAdapter:
         index: EntityGraphIndex,
         mundos_path: str | Path | None = None,
         project: str | None = None,
-        engram_enabled: bool = True,
-        engram_cmd: str = "engram",
         memory_store: AssistantMemoryStore | None = None,
     ) -> None:
         self._default_index = index
@@ -60,8 +56,6 @@ class GraphMCPAdapter:
             Path(mundos_path) if mundos_path else None
         )
         self._project = project or "demiurgos"
-        self._engram_enabled = engram_enabled
-        self._engram_cmd = engram_cmd
         # The product's own memory is the only conflict source after the Engram
         # cutover. ``None`` means "open the default store on first use", which
         # keeps the adapter cheap to construct and hermetic in tests.
@@ -209,12 +203,12 @@ class GraphMCPAdapter:
     # -------------------------------------------------------------------
 
     def tool_lore_search(self, query: str, mundo: str = "") -> dict[str, Any]:
-        """Search both the entity graph and Engram memory.
+        """Search the entity graph for entities matching ``query``.
 
         ``mundo`` defaults to the active world; pass another world name to
         search that world. When you return results, tell the user which world
-        they came from.  Returns ``{"graph_matches": [...], "engram_matches": [...], "query": "..."}``.
-        Each match is tagged with ``"source": "graph"|"engram"``.
+        they came from.  Returns ``{"graph_matches": [...], "query": "..."}``;
+        every match is tagged with ``"source": "graph"``.
         """
         # Graph search
         graph_hits = self._index_for(mundo).search(query)
@@ -233,19 +227,8 @@ class GraphMCPAdapter:
             for h in graph_hits
         ]
 
-        # Engram search (graceful fallback if disabled or fails)
-        engram_matches: list[dict[str, Any]] = []
-        if self._engram_enabled:
-            raw = engram_search(
-                query, mundo or self._project, engram_cmd=self._engram_cmd, limit=10,
-            )
-            for item in raw:
-                item["source"] = "engram"
-                engram_matches.append(item)
-
         return {
             "graph_matches": graph_matches,
-            "engram_matches": engram_matches,
             "query": query,
         }
 

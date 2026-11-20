@@ -1,7 +1,7 @@
 """
 tests/test_narrative_utils.py — Unit tests for narrative_utils.py helpers.
 
-Covers: constants, Engram subprocess (mocked), claim extraction,
+Covers: constants, claim extraction,
 conflict detection, entity/theme extraction, idea scanning/BM25,
 and lore formatting. Uses unittest (not pytest) for discovery via
 ``python -m unittest discover``.
@@ -9,8 +9,6 @@ and lore formatting. Uses unittest (not pytest) for discovery via
 
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -27,8 +25,6 @@ from wiki.narrative_utils import (  # noqa: E402
     CONFLICT_TYPES,
     THEME_MAP,
     compare_claims,
-    engram_get_observation,
-    engram_search,
     extract_claims,
     extract_entities,
     extract_themes,
@@ -126,150 +122,17 @@ class TestSanitizeShellArg(unittest.TestCase):
 
 
 # =============================================================================
-# engram_search — subprocess (mocked)
+# Engram CLI helpers — removed by the Engram cutover
 # =============================================================================
 
-class TestEngramSearch(unittest.TestCase):
-    """Engram search via subprocess — all subprocess calls mocked."""
+class TestEngramCutover(unittest.TestCase):
+    """The product no longer shells out to the Engram CLI."""
 
-    def test_engram_search_returns_parsed_results(self) -> None:
-        """Happy path: subprocess returns valid JSON from Engram."""
-        mock_stdout = json.dumps({
-            "result": [
-                {"id": 123, "title": "Test Memory", "content": "preview text here"},
-                {"id": 456, "title": "Another", "content": "more content"},
-            ]
-        })
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = mock_stdout
+    def test_engram_cli_helpers_are_gone(self) -> None:
+        import wiki.narrative_utils as narrative_utils
 
-        with patch("subprocess.run", return_value=mock_proc) as mock_run:
-            results = engram_search("test query", "test-project")
-
-        mock_run.assert_called_once()
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]["id"], 123)
-        self.assertEqual(results[0]["title"], "Test Memory")
-        self.assertEqual(results[0]["preview"], "preview text here")
-
-    def test_engram_search_empty_result_list(self) -> None:
-        """Engram returns empty result list — graceful."""
-        mock_stdout = json.dumps({"result": []})
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = mock_stdout
-
-        with patch("subprocess.run", return_value=mock_proc):
-            results = engram_search("no-match", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_nonzero_return_code(self) -> None:
-        """Subprocess returns non-zero exit code — graceful fallback to []."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.stdout = ""
-
-        with patch("subprocess.run", return_value=mock_proc):
-            results = engram_search("query", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_file_not_found(self) -> None:
-        """Engram CLI not installed — graceful fallback to []."""
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            results = engram_search("query", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_timeout(self) -> None:
-        """Subprocess timeout — graceful fallback to []."""
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 15)):
-            results = engram_search("query", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_invalid_json(self) -> None:
-        """Subprocess returns invalid JSON — graceful fallback to []."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = "not valid json {{{"
-
-        with patch("subprocess.run", return_value=mock_proc):
-            results = engram_search("query", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_result_not_list(self) -> None:
-        """Result key is not a list — graceful fallback to []."""
-        mock_stdout = json.dumps({"result": "not a list"})
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = mock_stdout
-
-        with patch("subprocess.run", return_value=mock_proc):
-            results = engram_search("query", "test-project")
-
-        self.assertEqual(results, [])
-
-    def test_engram_search_with_custom_cmd(self) -> None:
-        """Custom engram command path is passed to subprocess."""
-        mock_stdout = json.dumps({"result": []})
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = mock_stdout
-
-        with patch("subprocess.run", return_value=mock_proc) as mock_run:
-            engram_search("query", "test-project", engram_cmd="/custom/engram")
-
-        args, _ = mock_run.call_args
-        self.assertEqual(args[0][0], "/custom/engram")
-
-
-# =============================================================================
-# engram_get_observation — subprocess (mocked)
-# =============================================================================
-
-class TestEngramGetObservation(unittest.TestCase):
-    """Engram get-observation via subprocess — mocked."""
-
-    def test_get_observation_returns_content(self) -> None:
-        """Happy path: returns content string."""
-        mock_stdout = json.dumps({"content": "Full observation text"})
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = mock_stdout
-
-        with patch("subprocess.run", return_value=mock_proc):
-            result = engram_get_observation(123)
-
-        self.assertEqual(result, "Full observation text")
-
-    def test_get_observation_nonzero_code(self) -> None:
-        """Non-zero exit code → empty string."""
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.stdout = ""
-
-        with patch("subprocess.run", return_value=mock_proc):
-            result = engram_get_observation(999)
-
-        self.assertEqual(result, "")
-
-    def test_get_observation_missing_binary(self) -> None:
-        """Engram CLI not found → empty string."""
-        with patch("subprocess.run", side_effect=FileNotFoundError):
-            result = engram_get_observation(123)
-
-        self.assertEqual(result, "")
-
-    def test_get_observation_timeout(self) -> None:
-        """Timeout → empty string."""
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 15)):
-            result = engram_get_observation(123)
-
-        self.assertEqual(result, "")
+        self.assertFalse(hasattr(narrative_utils, "engram_search"))
+        self.assertFalse(hasattr(narrative_utils, "engram_get_observation"))
 
 
 # =============================================================================
@@ -670,7 +533,7 @@ class TestFormatLore(unittest.TestCase):
     """Deterministic lore formatting with wikilinks."""
 
     def test_format_full_struct(self) -> None:
-        """All three sections present → entity, engram, and conflicts sections."""
+        """All three sections present → entity, memory, and conflicts sections."""
         data = {
             "entity": {
                 "name": "Rhyz El Resonante",
@@ -680,7 +543,7 @@ class TestFormatLore(unittest.TestCase):
                 "path": "personajes/rhyz.md",
                 "content": "Rhyz nació en 1400 y fue mentor de Vael.",
             },
-            "engram": [
+            "memory": [
                 {"title": "Memory 1", "preview": "Observation about Rhyz"},
             ],
             "conflicts": [
@@ -693,7 +556,7 @@ class TestFormatLore(unittest.TestCase):
 
         self.assertIn("## Entity: [[Rhyz El Resonante]]", result)
         self.assertIn("**Type**: Ficha", result)
-        self.assertIn("## Engram Context", result)
+        self.assertIn("## Memory Context", result)
         self.assertIn("Memory 1", result)
         self.assertIn("## Conflicts", result)
         self.assertIn("date_contradiction", result)
@@ -708,7 +571,7 @@ class TestFormatLore(unittest.TestCase):
 
         self.assertIn("## Entity: [[Vael]]", result)
         self.assertIn("**Type**: Ficha", result)
-        self.assertNotIn("## Engram Context", result)
+        self.assertNotIn("## Memory Context", result)
         self.assertNotIn("## Conflicts", result)
 
     def test_format_empty_struct(self) -> None:

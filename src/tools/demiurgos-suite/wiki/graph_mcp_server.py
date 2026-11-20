@@ -4,7 +4,6 @@ Demiurgos MCP Server — standalone stdio MCP server wrapping GraphMCPAdapter.
 Usage::
 
     python graph_mcp_server.py --mundo vibrantes --mundos-path mundos
-    python graph_mcp_server.py --mundo vibrantes --mundos-path mundos --no-engram
 
 Hermes connects via the demiurgos-mcp profile and gains 13 tools.
 Every tool accepts an optional ``mundo`` parameter (defaults to the world
@@ -14,7 +13,7 @@ configured at launch) so the UI can query whichever world is active:
   - graph_links(entity_path?, kind, mundo?)   → {links: [...], kind}
   - graph_status(mundo?)                      → {entity_count, dirty, last_build}
   - graph_rebuild(mundo?)                     → {entity_count, rebuilt}
-  - lore_search(query, mundo?)                → {graph_matches, engram_matches}
+  - lore_search(query, mundo?)                → {graph_matches}
   - lore_conflicts(entity_path, mundo?)       → {conflicts, entity_path}
   - lore_format(data)                         → str (markdown with [[wikilinks]])
   - auto_tag(text, mundo)                     → {entities, themes}
@@ -63,15 +62,11 @@ from mcp.server.fastmcp import FastMCP             # noqa: E402
 mcp = FastMCP("demiurgos-mcp")
 _adapter: GraphMCPAdapter | None = None
 _index: EntityGraphIndex | None = None
-_engram_enabled: bool = True
-_engram_cmd: str = "engram"
 
 
 def init(
     mundo: str,
     mundos_path: str | Path,
-    engram_enabled: bool = True,
-    engram_cmd: str = "engram",
 ) -> tuple[int, str | None]:
     """Initialise the entity graph index and wire the adapter.
 
@@ -84,24 +79,16 @@ def init(
     Returns (entity_count, error_message).  error_message is None on success.
     Must be called before the MCP server starts accepting connections.
     """
-    global _adapter, _index, _engram_enabled, _engram_cmd
+    global _adapter, _index
 
     _mundos_path = Path(mundos_path).resolve()
-    _engram_enabled = engram_enabled
-    _engram_cmd = engram_cmd
     _index = EntityGraphIndex(_mundos_path)
 
     _adapter = GraphMCPAdapter(
         _index,
         mundos_path=mundos_path,
         project=mundo,
-        engram_enabled=_engram_enabled,
-        engram_cmd=_engram_cmd,
     )
-    if _engram_enabled:
-        print("[demiurgos-mcp] Engram integration enabled", file=sys.stderr)
-    else:
-        print("[demiurgos-mcp] Engram integration disabled", file=sys.stderr)
 
     return _index.entity_count, None
 
@@ -198,11 +185,10 @@ def graph_rebuild(mundo: str = "") -> dict:
 
 @mcp.tool()
 def lore_search(query: str, mundo: str = "") -> dict:
-    """Search both the entity graph and Engram persistent memory.
+    """Search the entity graph for entities matching a query.
 
-    Returns graph_matches (from the entity index) and engram_matches
-    (from Engram memory), each tagged with a source field.
-    Use this to find entities and related memories in one call.
+    Returns graph_matches, each tagged with ``"source": "graph"``.
+    Use this to find entities by name, title or tags.
     ``mundo`` defaults to the active world; pass another world name to
     search that world. When you return results, tell the user which world
     they came from.
@@ -230,7 +216,7 @@ def lore_conflicts(entity_path: str, mundo: str = "") -> dict:
 def lore_format(data: dict) -> str:
     """Format lore data into clean markdown with [[wikilinks]].
 
-    Accepts a dict with optional entity, engram, and conflicts keys.
+    Accepts a dict with optional entity, memory, and conflicts keys.
     Returns a deterministic markdown string. Empty sections omitted.
     Pure string templating — zero LLM/API calls.
     """
@@ -483,29 +469,9 @@ def main() -> None:
         required=True,
         help="Path to the mundos/ directory (relative or absolute)",
     )
-    parser.add_argument(
-        "--engram",
-        action="store_true",
-        default=True,
-        dest="engram_enabled",
-        help="Enable Engram integration (default: enabled)",
-    )
-    parser.add_argument(
-        "--no-engram",
-        action="store_false",
-        dest="engram_enabled",
-        help="Disable Engram integration — tools return empty Engram arrays",
-    )
-    parser.add_argument(
-        "--engram-cmd",
-        default="engram",
-        help="Path or name of the Engram CLI binary (default: engram)",
-    )
     args = parser.parse_args()
 
-    init(args.mundo, args.mundos_path,
-         engram_enabled=args.engram_enabled,
-         engram_cmd=args.engram_cmd)
+    init(args.mundo, args.mundos_path)
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
