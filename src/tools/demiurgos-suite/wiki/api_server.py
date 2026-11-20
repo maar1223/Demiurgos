@@ -691,7 +691,7 @@ def _local_state() -> LocalState:
     """Lazily-initialized authoritative local state registry (ONB-1.3).
 
     Lives in the state directory (``local-state.json``) and is runtime-authoritative:
-    Engram is recovery/context only and never governs readiness. The registry
+    assistant memory is recovery/context only and never governs readiness. The registry
     never touches ``.demiurgos-estado.json`` (narrative arc state).
     """
     global _LOCAL_STATE
@@ -11502,20 +11502,6 @@ def _build_ai_ask_prompt(
             "use generic search/read file tools (search_files, read_file) or lore_search for "
             "world lore when the graph tools allow answering directly. If the graph returns "
             "nothing for the world, say so plainly instead of inventing facts.]"
-        )
-
-        # Long-term memory guidance: engram as auxiliary, per-world memory.
-        # Live graph evidence always outranks stored memories (contamination
-        # guard); the block is world-keyed so facts never bleed across worlds.
-        parts.append(
-            "[Long-term memory guidance: Engram tools (mem_search, mem_save) are auxiliary "
-            "cross-session memory, not evidence. Use them only for durable notes: canon "
-            "decisions the author states in conversation, and author preferences (format, "
-            "tone, naming). Always key by world: prefix titles with the world name (e.g. "
-            '"Vibrantes: Impulsor canon decision") and include the world name in queries. '
-            "Never store ficha contents or raw world text in memory; store short facts only. "
-            "If a memory conflicts with the live graph or ficha, the live evidence wins: "
-            "answer from the ficha and treat the stale memory as unreliable.]"
         )
 
         # Entity graph context (search for entities matching the prompt)

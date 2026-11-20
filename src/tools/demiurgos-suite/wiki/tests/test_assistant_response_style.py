@@ -53,3 +53,18 @@ def test_old_plain_guidance_is_gone():
 
     prompt = _prompt()
     assert "Visible response guidance" not in prompt
+
+
+def test_prompt_never_mentions_engram():
+    """S1: the product prompt no longer points the model at Engram tools."""
+    prompt = _prompt().casefold()
+    assert "engram" not in prompt
+    assert "long-term memory guidance" not in prompt
+
+
+def test_prompt_carries_the_product_memory_block_when_provided():
+    """The replacement guidance still reaches the model: the product's own
+    memory is injected as a prompt block, not retrieved through a tool call."""
+    block = "[Relevant memory from earlier sessions:\n- (fact) Ganic llegó de fuera.\n]"
+    prompt = _prompt(memory_context=block)
+    assert block in prompt
