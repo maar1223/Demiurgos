@@ -17,6 +17,7 @@ master dry run or a tag; it cannot run locally and is not claimed here.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -60,6 +61,30 @@ def test_job_builds_a_hermetic_channel_and_a_test_signing_key():
     assert "MINISIGN_PUBKEY" in text
     assert "SHA256SUMS" in text
     assert "-Sm" in text
+
+
+def test_uv_download_url_resolves_to_the_versionless_upstream_asset():
+    text = _runs(_job())
+    upstream = re.search(r"^\s*\$uvUpstream\s*=\s*'([^']+)'\s*$", text, re.M)
+    local = re.search(r'^\s*\$uvLocal\s*=\s*"([^"]+)"\s*$', text, re.M)
+    url = re.search(r'^\s*\$uvUrl\s*=\s*"([^"]+)"\s*$', text, re.M)
+    assert upstream and local and url, "uv assignment block missing"
+    upstream_name, _local_name, url_template = (
+        upstream.group(1),
+        local.group(1),
+        url.group(1),
+    )
+    assert upstream_name == "uv-x86_64-pc-windows-msvc.zip", upstream_name
+    # The URL interpolates the versionless upstream asset, never the local
+    # versioned channel copy (that pairing 404s).
+    assert "$uvUpstream" in url_template and "$uvLocal" not in url_template
+    resolved = url_template.replace("$uvVersion", "0.5.24").replace(
+        "$uvUpstream", upstream_name
+    )
+    assert resolved == (
+        "https://github.com/astral-sh/uv/releases/download/0.5.24/"
+        "uv-x86_64-pc-windows-msvc.zip"
+    ), resolved
 
 
 def test_minisign_binary_is_the_x86_64_build():
