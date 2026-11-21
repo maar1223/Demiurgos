@@ -38,9 +38,27 @@ import {
 } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
+/**
+ * What a completed turn cost and consulted, persisted with the answer it
+ * produced. ``undefined`` on messages written before this metadata existed, so
+ * old conversations render no extra block and need no migration.
+ */
+export interface AssistantTurnMetadata {
+  /** Wall-clock duration of the turn, on the same clock as the visible timer. */
+  durationMs: number;
+  /** Every tool operation the turn reported, in first-seen order. */
+  items: AssistantActivityItem[];
+  /** Paths the turn confirmed it read, already filtered by the event parser. */
+  sources: string[];
+  /** Sanitized warnings attached to this turn. */
+  warnings: string[];
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
+  /** Duration and consulted sources of the turn that produced this answer. */
+  turn?: AssistantTurnMetadata;
   /**
    * Snapshot of the attachments sent WITH this user turn, kept for display in
    * the message. The conversation-level ``Session.attachments`` stays the
@@ -602,11 +620,26 @@ export function useAIAssistantSessions(
       let activityAccepted = false;
       let streamedAnswer: string | null = null;
       let semanticDecision: SemanticDecisionEvent | null = null;
+      // The turn's own record of what it did. Same clock as the visible
+      // ``ElapsedTime`` timer (wall clock), and the same reducer the live panel
+      // uses, so the persisted block can never disagree with what was shown.
+      const startedAt = Date.now();
+      let turnActivity: AssistantActivityState = INITIAL_ACTIVITY;
 
       /** Server-owned intake questions render as a choice card, so persisting
        *  their prose would duplicate them once a user message follows (S6). */
       const isServerOwnedQuestion = (guided?: GuidedCharacterSession): boolean =>
         guided?.pending_kind === "path" || guided?.pending_kind === "level";
+
+      const currentTurnMetadata = (): AssistantTurnMetadata => {
+        const turnEvidence = activityEvidence(turnActivity);
+        return {
+          durationMs: Math.max(0, Date.now() - startedAt),
+          items: turnActivity.items,
+          sources: turnEvidence.sources,
+          warnings: turnEvidence.warnings,
+        };
+      };
 
       const appendAssistantMessage = (content: string, guided?: GuidedCharacterSession) => {
         if (guided) {
@@ -617,7 +650,7 @@ export function useAIAssistantSessions(
         }
         const assistantMessage: Message | null = isServerOwnedQuestion(guided)
           ? null
-          : { role: "assistant", content };
+          : { role: "assistant", content, turn: currentTurnMetadata() };
         setSessions((prev) =>
           prev.map((s) =>
             s.id === sessionId
@@ -781,6 +814,9 @@ export function useAIAssistantSessions(
           onEvent: (event) => {
             if (event.kind === "semantic_decision") semanticDecision = event;
             if (event.kind === "answer") streamedAnswer = event.response;
+            // Accumulate the turn's own record with the same reducer the live
+            // panel uses; React state is asynchronous and stale inside a turn.
+            turnActivity = applyAssistantActivityEvent(turnActivity, event);
             setActivity((current) => applyAssistantActivityEvent(current, event));
           },
         });
@@ -867,6 +903,12 @@ export function useAIAssistantSessions(
             warning: INCOMPLETE_EVIDENCE_WARNING,
             status: "complete",
           }));
+          // The persisted record must carry the same warning the panel showed.
+          turnActivity = {
+            ...turnActivity,
+            warning: INCOMPLETE_EVIDENCE_WARNING,
+            status: "complete",
+          };
           appendAssistantMessage(streamedAnswer);
         } else if (isLostGuidedSession(err)) {
           recoverFromLostGuided();

@@ -281,7 +281,11 @@ describe("AIAssistantSidebar activity and evidence", () => {
 
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
-    expect(screen.queryByRole("region", { name: "Actividad y evidencia" })).not.toBeInTheDocument();
+    // The live panel owns the in-flight turn; the safe-channel copy explains
+    // why no source has been confirmed yet.
+    expect(
+      screen.getByRole("region", { name: "Actividad y evidencia" }),
+    ).toHaveTextContent(tEs("assistant.activity.safeChannel"));
   });
 
   it("explains when live activity is unavailable after the legacy fallback", () => {
@@ -2547,5 +2551,112 @@ describe("AIAssistantSidebar assistant health", () => {
 
     await screen.findByRole("textbox");
     expect(screen.queryByTestId("assistant-health-banner")).not.toBeInTheDocument();
+  });
+});
+
+describe("AIAssistantSidebar per-response turn details", () => {
+  const turn = {
+    durationMs: 27_400,
+    items: [
+      {
+        item_id: "i1",
+        operation: "Read world" as const,
+        status: "succeeded" as const,
+        path: "personajes/rhyz.md",
+      },
+    ],
+    sources: ["personajes/rhyz.md", "lore/canon.md"],
+    warnings: [],
+  };
+
+  const withTurn = (overrides: Partial<SessionsState> = {}) =>
+    createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "¿Cuándo nació Rhyz?",
+        messages: [
+          { role: "user", content: "¿Cuándo nació Rhyz?" },
+          { role: "assistant", content: "Rhyz nació en 1400.", turn },
+        ],
+        createdAt: 1,
+      },
+      ...overrides,
+    });
+
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue(lang("es"));
+  });
+
+  it("keeps the block collapsed and summarises duration and sources", async () => {
+    useSessionsMock.mockReturnValue(withTurn());
+    const user = userEvent.setup();
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const toggle = screen.getByRole("button", {
+      name: "Tardó 27 s · Consultó 2 fuentes",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("list", { name: tEs("assistant.turn.itemsAria") }),
+    ).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("list", { name: tEs("assistant.turn.itemsAria") }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Leer del mundo")).toBeInTheDocument();
+    expect(screen.getByText("personajes/rhyz.md")).toBeInTheDocument();
+  });
+
+  it("says so when the turn consulted no sources", () => {
+    useSessionsMock.mockReturnValue(
+      withTurn({
+        activeSession: {
+          id: "session-42",
+          title: "¿Cuándo nació Rhyz?",
+          messages: [
+            { role: "user", content: "¿Cuándo nació Rhyz?" },
+            {
+              role: "assistant",
+              content: "Rhyz nació en 1400.",
+              turn: { ...turn, sources: [], items: [] },
+            },
+          ],
+          createdAt: 1,
+        },
+      }),
+    );
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: "Tardó 27 s · No consultó fuentes" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders nothing extra for a legacy message without turn metadata", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.queryByText(/Tardó/)).not.toBeInTheDocument();
+  });
+
+  it("shows the live panel only while the turn is running", () => {
+    useSessionsMock.mockReturnValue(withTurn());
+    const closed = render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.queryByRole("region", { name: tEs("assistant.activity.sectionAria") }),
+    ).not.toBeInTheDocument();
+    closed.unmount();
+
+    useSessionsMock.mockReturnValue(withTurn({ isSending: true }));
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+    expect(
+      screen.getByRole("region", { name: tEs("assistant.activity.sectionAria") }),
+    ).toBeInTheDocument();
   });
 });

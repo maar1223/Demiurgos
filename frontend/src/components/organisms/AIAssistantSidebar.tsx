@@ -16,6 +16,7 @@ import {
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
+import type { AssistantTurnMetadata } from "@/hooks/useAIAssistantSessions";
 import { chatAttachmentThumbnailUrl } from "@/api/chatAttachments";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
@@ -67,9 +68,9 @@ const SAFE_ACTIVITY_WARNINGS = new Set([
   NEUTRAL_EVIDENCE_WARNING,
 ]);
 
-// Keep the activity/evidence integration intact, but hide its presentation
-// until the provider exposes reliable structured consulted-file evidence.
-const ACTIVITY_EVIDENCE_UI_ENABLED = false;
+// The live panel is a per-turn surface only: once the answer arrives, the same
+// information lives in the collapsed block under that answer.
+const ACTIVITY_EVIDENCE_UI_ENABLED = true;
 
 // The launcher restarts the Hermes gateway in the background, so a gateway
 // reported down can come back while this panel stays open. Re-check on a slow
@@ -255,6 +256,88 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * The per-response record of a finished turn: how long it took and what it
+ * consulted. Closed by default so the conversation stays readable, and rendered
+ * only for messages that carry ``turn`` (old conversations have none).
+ */
+function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
+  const { t } = useAppLanguage();
+  const [open, setOpen] = useState(false);
+  const sources = turn.sources.filter(isSafeEvidencePath);
+  const warnings = Array.from(
+    new Set([
+      ...turn.warnings.map((warning) => safeActivityWarning(warning)),
+      ...turn.items.map((item) => safeActivityWarning(item.warning)),
+    ]),
+  ).filter((warning): warning is string => Boolean(warning));
+  const seconds = Math.max(1, Math.round(turn.durationMs / 1000));
+  const summary =
+    sources.length === 0
+      ? t("assistant.turn.summaryNone", { seconds })
+      : sources.length === 1
+        ? t("assistant.turn.summaryOne", { seconds })
+        : t("assistant.turn.summaryMany", { seconds, sources: sources.length });
+
+  return (
+    <div className="mt-2 border-t border-edge pt-2 text-xs">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="text-left text-muted transition-colors hover:text-primary"
+      >
+        {summary}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          {turn.items.length > 0 && (
+            <ul aria-label={t("assistant.turn.itemsAria")} className="space-y-1">
+              {turn.items.map((item) => (
+                <li key={item.item_id} className="flex items-center justify-between gap-2">
+                  <span className="text-muted">
+                    {activityOperationLabel(item.operation, t)}
+                  </span>
+                  <span
+                    className={cn(
+                      item.status === "failed" ? "text-status-error" : "text-muted",
+                    )}
+                  >
+                    {activityStatusLabel(item.status, t)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {warnings.length > 0 && (
+            <div role="alert" className="text-status-error">
+              {warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          )}
+
+          {sources.length > 0 ? (
+            <ul
+              aria-label={t("assistant.activity.confirmedSources", { count: sources.length })}
+              className="space-y-1 pl-3 text-muted"
+            >
+              {sources.map((source) => (
+                <li key={source} className="break-words">
+                  {source}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted">{t("assistant.turn.noSources")}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -799,11 +882,14 @@ function ChatScreen({
                 )}
               >
                 {msg.role === "assistant" ? (
-                  <MarkdownBody
-                    content={msg.content}
-                    mundo={mundo}
-                    className="prose-sm"
-                  />
+                  <>
+                    <MarkdownBody
+                      content={msg.content}
+                      mundo={mundo}
+                      className="prose-sm"
+                    />
+                    {msg.turn && <TurnDetails turn={msg.turn} />}
+                  </>
                 ) : (
                   <>
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -1124,7 +1210,7 @@ function ChatScreen({
             </div>
           )}
 
-          {ACTIVITY_EVIDENCE_UI_ENABLED && showActivityEvidence && (
+          {ACTIVITY_EVIDENCE_UI_ENABLED && isSending && showActivityEvidence && (
             <ActivityEvidence activity={activity} evidence={evidence} isSending={isSending} />
           )}
 

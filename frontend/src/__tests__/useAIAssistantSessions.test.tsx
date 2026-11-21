@@ -1398,3 +1398,115 @@ describe("useAIAssistantSessions interrupted turn", () => {
     expect(result.current.activity.retryPrompt).toBeUndefined();
   });
 });
+
+describe("useAIAssistantSessions turn metadata", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+
+  const allowDecision = {
+    kind: "semantic_decision" as const,
+    request_id: "r1",
+    state: "allow" as const,
+    action: "answer" as const,
+    unavailable: false,
+    continuation: null,
+  };
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("persists the duration and the consulted sources on the answer", async () => {
+    streamMock.mockImplementation(async (_mundo, _request, options) => {
+      options?.onAccepted?.();
+      options?.onEvent?.(allowDecision);
+      options?.onEvent?.({
+        kind: "activity",
+        request_id: "r1",
+        item_id: "i1",
+        operation: "Read world",
+        status: "running",
+      });
+      options?.onEvent?.({
+        kind: "activity",
+        request_id: "r1",
+        item_id: "i1",
+        operation: "Read world",
+        status: "succeeded",
+        path: "personajes/rhyz.md",
+      });
+      options?.onEvent?.({
+        kind: "answer",
+        request_id: "r1",
+        response: "Rhyz nació en 1400.",
+      });
+      return {
+        accepted: true,
+        events: [],
+        answer: "Rhyz nació en 1400.",
+        terminalStatus: "succeeded" as const,
+        semanticDecision: allowDecision,
+      };
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("¿Cuándo nació Rhyz?");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const last = messages[messages.length - 1];
+    expect(last?.role).toBe("assistant");
+    expect(last?.turn).toBeDefined();
+    expect(last?.turn?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(last?.turn?.items).toEqual([
+      {
+        item_id: "i1",
+        operation: "Read world",
+        status: "succeeded",
+        path: "personajes/rhyz.md",
+      },
+    ]);
+    expect(last?.turn?.sources).toEqual(["personajes/rhyz.md"]);
+    expect(last?.turn?.warnings).toEqual([]);
+  });
+
+  it("attaches the turn to a failed turn too", async () => {
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: null,
+      terminalStatus: "unknown",
+      semanticDecision: allowDecision,
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("sigo con la historia");
+    });
+
+    const messages = result.current.activeSession?.messages ?? [];
+    const last = messages[messages.length - 1];
+    expect(last?.content).toContain("no llegó a terminar la respuesta");
+    expect(typeof last?.turn?.durationMs).toBe("number");
+    expect(last?.turn?.items).toEqual([]);
+    expect(last?.turn?.sources).toEqual([]);
+  });
+
+  it("leaves a legacy message without turn metadata alone", () => {
+    seedSessions([
+      {
+        id: "s1",
+        title: "Vieja",
+        messages: [{ role: "assistant", content: "hola" }],
+        createdAt: 1,
+      } as unknown as Session,
+    ]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    expect(result.current.sessions[0].messages[0].turn).toBeUndefined();
+  });
+});
