@@ -2594,7 +2594,7 @@ describe("AIAssistantSidebar per-response turn details", () => {
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
     const toggle = screen.getByRole("button", {
-      name: "Tardó 27 s · Consultó 2 fuentes",
+      name: "Tardó 27 s · Consultó 1 fuente",
     });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(
@@ -2608,10 +2608,16 @@ describe("AIAssistantSidebar per-response turn details", () => {
       screen.getByRole("list", { name: tEs("assistant.turn.itemsAria") }),
     ).toBeInTheDocument();
     expect(screen.getByText("Leer del mundo")).toBeInTheDocument();
+
+    // The confirmed paths live behind their own toggle, labelled as what the
+    // model actually read.
+    await user.click(screen.getByRole("button", { name: "Fuentes confirmadas (1)" }));
     expect(screen.getByText("personajes/rhyz.md")).toBeInTheDocument();
+    // The second entry in `turn.sources` was never confirmed by an item.
+    expect(screen.queryByText("lore/canon.md")).not.toBeInTheDocument();
   });
 
-  it("labels injected fichas as world context, not as a tool call", () => {
+  it("labels injected fichas as world context, not as a tool call", async () => {
     useSessionsMock.mockReturnValue(
       withTurn({
         activeSession: {
@@ -2644,16 +2650,19 @@ describe("AIAssistantSidebar per-response turn details", () => {
 
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
+    const user = userEvent.setup();
+    const toggle = screen.getByRole("button", {
+      name: "Tardó 27 s · No consultó fuentes · Contexto: 1 ficha",
+    });
+    await user.click(toggle);
+
+    expect(screen.getByText("Contexto del mundo")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Contexto inyectado (1)" }));
+    expect(screen.getByText("lore/ayagar.md")).toBeInTheDocument();
+    // Never advertised as something the model read.
     expect(
-      screen.getByRole("button", { name: "Tardó 27 s · Consultó 1 fuente" }),
-    ).toBeInTheDocument();
-    return userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: /Tardó 27 s/ }))
-      .then(() => {
-        expect(screen.getByText("Contexto del mundo")).toBeInTheDocument();
-        expect(screen.getByText("lore/ayagar.md")).toBeInTheDocument();
-      });
+      screen.queryByRole("button", { name: /Fuentes confirmadas/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("says so when the turn consulted no sources", () => {

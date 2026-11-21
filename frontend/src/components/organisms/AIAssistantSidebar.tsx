@@ -110,6 +110,39 @@ function activityOperationLabel(
   return t("assistant.activity.operation.worldActivity");
 }
 
+/** Operation the backend uses for the fichas it injects into the prompt. */
+const WORLD_CONTEXT_OPERATION = "World context";
+
+interface ConfirmedActivityItem {
+  operation: string;
+  status: string;
+  path?: string;
+}
+
+/**
+ * Split the confirmed paths by who read them: the graph tools the model called
+ * versus the fichas the backend pasted into the prompt. Counting both as
+ * "consultó fuentes" overstates what the model did; hiding the injected ones
+ * understates what actually grounded the answer.
+ */
+function splitConfirmedSources(items: ConfirmedActivityItem[]): {
+  tools: string[];
+  context: string[];
+} {
+  const succeeded = (item: ConfirmedActivityItem): boolean =>
+    item.status === "succeeded" &&
+    typeof item.path === "string" &&
+    isSafeEvidencePath(item.path);
+  return {
+    tools: items
+      .filter((item) => succeeded(item) && item.operation !== WORLD_CONTEXT_OPERATION)
+      .map((item) => item.path as string),
+    context: items
+      .filter((item) => succeeded(item) && item.operation === WORLD_CONTEXT_OPERATION)
+      .map((item) => item.path as string),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Date helper                                                        */
 /* ------------------------------------------------------------------ */
@@ -176,7 +209,10 @@ interface ActivityEvidenceProps {
 function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidenceProps) {
   const { t } = useAppLanguage();
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const sources = evidence.sources.filter(isSafeEvidencePath);
+  const [contextOpen, setContextOpen] = useState(false);
+  const { tools: toolSources, context: contextSources } = splitConfirmedSources(
+    activity.items,
+  );
   const warnings = Array.from(
     new Set([
       ...evidence.warnings.map(safeActivityWarning),
@@ -223,24 +259,49 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
         </div>
       )}
 
-      {sources.length > 0 ? (
-        <div className="mt-2 border-t border-edge pt-2">
-          <button
-            type="button"
-            aria-expanded={sourcesOpen}
-            onClick={() => setSourcesOpen((open) => !open)}
-            className="text-left text-muted hover:text-primary"
-          >
-            {t("assistant.activity.confirmedSources", { count: sources.length })}
-          </button>
-          {sourcesOpen && (
-            <ul className="mt-1.5 space-y-1 pl-3 text-muted">
-              {sources.map((source) => (
-                <li key={source} className="break-words">
-                  {source}
-                </li>
-              ))}
-            </ul>
+      {toolSources.length > 0 || contextSources.length > 0 ? (
+        <div className="mt-2 space-y-1.5 border-t border-edge pt-2">
+          {toolSources.length > 0 && (
+            <div>
+              <button
+                type="button"
+                aria-expanded={sourcesOpen}
+                onClick={() => setSourcesOpen((open) => !open)}
+                className="text-left text-muted hover:text-primary"
+              >
+                {t("assistant.activity.confirmedSources", { count: toolSources.length })}
+              </button>
+              {sourcesOpen && (
+                <ul className="mt-1.5 space-y-1 pl-3 text-muted">
+                  {toolSources.map((source) => (
+                    <li key={source} className="break-words">
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {contextSources.length > 0 && (
+            <div>
+              <button
+                type="button"
+                aria-expanded={contextOpen}
+                onClick={() => setContextOpen((open) => !open)}
+                className="text-left text-muted hover:text-primary"
+              >
+                {t("assistant.activity.injectedContext", { count: contextSources.length })}
+              </button>
+              {contextOpen && (
+                <ul className="mt-1.5 space-y-1 pl-3 text-muted">
+                  {contextSources.map((source) => (
+                    <li key={source} className="break-words">
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       ) : (
@@ -268,7 +329,11 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
 function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
   const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
-  const sources = turn.sources.filter(isSafeEvidencePath);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const { tools: toolSources, context: contextSources } = splitConfirmedSources(
+    turn.items,
+  );
   const warnings = Array.from(
     new Set([
       ...turn.warnings.map((warning) => safeActivityWarning(warning)),
@@ -276,12 +341,21 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
     ]),
   ).filter((warning): warning is string => Boolean(warning));
   const seconds = Math.max(1, Math.round(turn.durationMs / 1000));
-  const summary =
-    sources.length === 0
+  // "Consultó" counts only what the MODEL read through the graph tools; the
+  // fichas the backend injected are reported separately, never as a read.
+  const base =
+    toolSources.length === 0
       ? t("assistant.turn.summaryNone", { seconds })
-      : sources.length === 1
+      : toolSources.length === 1
         ? t("assistant.turn.summaryOne", { seconds })
-        : t("assistant.turn.summaryMany", { seconds, sources: sources.length });
+        : t("assistant.turn.summaryMany", { seconds, sources: toolSources.length });
+  const contextSegment =
+    contextSources.length === 0
+      ? ""
+      : contextSources.length === 1
+        ? t("assistant.turn.contextSegmentOne")
+        : t("assistant.turn.contextSegmentMany", { sources: contextSources.length });
+  const summary = base + contextSegment;
 
   return (
     <div className="mt-2 border-t border-edge pt-2 text-xs">
@@ -322,18 +396,51 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
             </div>
           )}
 
-          {sources.length > 0 ? (
-            <ul
-              aria-label={t("assistant.activity.confirmedSources", { count: sources.length })}
-              className="space-y-1 pl-3 text-muted"
-            >
-              {sources.map((source) => (
-                <li key={source} className="break-words">
-                  {source}
-                </li>
-              ))}
-            </ul>
-          ) : (
+          {toolSources.length > 0 && (
+            <div>
+              <button
+                type="button"
+                aria-expanded={sourcesOpen}
+                onClick={() => setSourcesOpen((current) => !current)}
+                className="text-left text-muted hover:text-primary"
+              >
+                {t("assistant.activity.confirmedSources", { count: toolSources.length })}
+              </button>
+              {sourcesOpen && (
+                <ul className="mt-1 pl-3 text-muted">
+                  {toolSources.map((source) => (
+                    <li key={source} className="break-words">
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {contextSources.length > 0 && (
+            <div>
+              <button
+                type="button"
+                aria-expanded={contextOpen}
+                onClick={() => setContextOpen((current) => !current)}
+                className="text-left text-muted hover:text-primary"
+              >
+                {t("assistant.activity.injectedContext", { count: contextSources.length })}
+              </button>
+              {contextOpen && (
+                <ul className="mt-1 pl-3 text-muted">
+                  {contextSources.map((source) => (
+                    <li key={source} className="break-words">
+                      {source}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {toolSources.length === 0 && contextSources.length === 0 && (
             <p className="text-muted">{t("assistant.turn.noSources")}</p>
           )}
         </div>
