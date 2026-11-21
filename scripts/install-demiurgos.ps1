@@ -752,6 +752,33 @@ function Invoke-DataRootBootstrap {
     Invoke-SeedMethodologyPayload
 }
 
+function Get-PointerValueBestEffort {
+    # A hand-damaged pointer must never fail the same-version re-run, so this
+    # reader never calls Fail (unlike Get-PointerValue).
+    if (-not (Test-Path -LiteralPath $pointerFile -PathType Leaf)) { return "" }
+    try {
+        $record = Get-Content -LiteralPath $pointerFile -Raw | ConvertFrom-Json
+        if ($record.data_root) { return [string]$record.data_root }
+    } catch {
+        # Best-effort repair: an unreadable pointer leaves the re-run as-is.
+    }
+    return ""
+}
+
+function Invoke-DataRootRepair {
+    # Same-version re-run repair with its documented contract intact: exit 0,
+    # "nothing to do". Never guess a root, never create one the user did not
+    # choose, and never abort the re-run on a repair failure.
+    $pointed = Get-PointerValueBestEffort
+    if (-not $pointed) {
+        if (-not $env:DEMIURGOS_DATA_ROOT) { return }
+        $script:dataRoot = $env:DEMIURGOS_DATA_ROOT
+    } else {
+        $script:dataRoot = $pointed
+    }
+    Invoke-SeedMethodologyPayload
+}
+
 # --- Windows Start Menu entry ----------------------------------------------
 # Parity with the Linux applications-menu entry: written by the installer and
 # never fatal. The visible Desktop icon stays opt-in
@@ -846,10 +873,10 @@ try {
         Install-StartMenuShortcut
         Invoke-HermesProvision
         Invoke-GraphMcpProvision
-        # Repair the data root too: a user whose content folder was deleted (or
-        # an install that predates the seed bootstrap) gets the pointer, .env
-        # and the foundational seeds back without reinstalling the app.
-        Invoke-DataRootBootstrap
+        # Repair the seed tree too: a user whose folder was deleted (or an
+        # install that predates the seed bootstrap) gets it back. Best-effort:
+        # the re-run's documented contract stays "nothing to do" / exit 0.
+        Invoke-DataRootRepair
         if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
             Restart-StackAfterInstall
         }

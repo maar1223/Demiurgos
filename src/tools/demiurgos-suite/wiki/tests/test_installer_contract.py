@@ -1607,7 +1607,99 @@ class TestMethodologySeedBootstrap:
         start = text.index("# Idempotent re-run")
         end = text.index("\nfi\n", start) + len("\nfi\n")
         early_exit = text[start:end]
-        assert "bootstrap_data_root" in early_exit
+        assert "repair_data_root_best_effort" in early_exit
+
+    def _stage_same_version_install(self, env: dict[str, str]) -> Path:
+        """Build the minimal app/<version> tree the early-exit path expects."""
+        install_root = Path(env["DEMIURGOS_HOME"])
+        app = install_root / "app" / "1.2.3"
+        for sub in ("scripts", "desktop", "data/methodology"):
+            (app / sub).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_REPO_ROOT / "scripts" / "demiurgos", app / "scripts" / "demiurgos")
+        shutil.copy2(_REPO_ROOT / "desktop" / "Demiurgos.desktop", app / "desktop")
+        shutil.copytree(
+            _REPO_ROOT / "data" / "methodology" / "seeds",
+            app / "data" / "methodology" / "seeds",
+        )
+        (install_root / "current").symlink_to("app/1.2.3")
+        return app
+
+    @staticmethod
+    def _same_version_rerun_env(env: dict[str, str]) -> dict[str, str]:
+        rerun = {k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"}
+        rerun.update(
+            DEMIURGOS_VERSION="1.2.3",
+            DEMIURGOS_URL_BASE="file:///nonexistent",
+            DEMIURGOS_HERMES_SKIP="1",
+        )
+        return rerun
+
+    def test_the_early_exit_rerun_actually_restores_a_deleted_seed_tree(
+        self, tmp_path: Path
+    ):
+        """S3: the early-exit re-run itself (not its source text) restores the tree."""
+        env = _seed_env(tmp_path)
+        self._stage_same_version_install(env)
+        assert _run_seed_only(env).returncode == 0
+        data_root = Path(env["HOME"]) / "Documents" / "Demiurgos"
+        pointer = Path(env["XDG_CONFIG_HOME"]) / "demiurgos" / "data-root.json"
+        before = (pointer.read_bytes(), (data_root / ".env").read_bytes())
+
+        shutil.rmtree(data_root / "data" / "methodology" / "seeds")
+        rerun = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=self._same_version_rerun_env(env),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+        seeds = data_root / "data" / "methodology" / "seeds"
+        assert len([p for p in seeds.rglob("*") if p.is_file()]) == 19
+        assert (pointer.read_bytes(), (data_root / ".env").read_bytes()) == before
+        assert not list(seeds.parent.parent.rglob("*.tmp.*"))
+
+    def test_a_corrupt_pointer_never_fails_the_same_version_rerun(
+        self, tmp_path: Path
+    ):
+        """S5: a hand-damaged pointer must not turn 'nothing to do' into exit 1."""
+        env = _seed_env(tmp_path)
+        self._stage_same_version_install(env)
+        pointer = Path(env["XDG_CONFIG_HOME"]) / "demiurgos" / "data-root.json"
+        pointer.parent.mkdir(parents=True)
+        pointer.write_text('{"schema_version": 1, "data_root": \n', encoding="utf-8")
+        before = pointer.read_bytes()
+
+        rerun = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=self._same_version_rerun_env(env),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+        assert "nothing to do" in rerun.stdout + rerun.stderr
+        assert pointer.read_bytes() == before
+
+    def test_a_rerun_without_a_pointer_never_creates_a_data_root(
+        self, tmp_path: Path
+    ):
+        """S5: the repair path stays out of ~/Documents when no root is known."""
+        env = _seed_env(tmp_path)
+        self._stage_same_version_install(env)
+
+        rerun = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=self._same_version_rerun_env(env),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+        assert not (Path(env["HOME"]) / "Documents").exists()
 
     def test_an_existing_seed_tree_is_preserved_byte_for_byte(self, tmp_path: Path):
         env = _seed_env(tmp_path)
@@ -1656,8 +1748,11 @@ class TestWindowsMethodologySeedBootstrap:
         start = text.index("if ($alreadyCurrent) {")
         end = text.index("\n    }\n", start)
         early_exit = text[start:end]
-        assert "Invoke-DataRootBootstrap" in early_exit
+        assert "Invoke-DataRootRepair" in early_exit
         assert "Invoke-GraphMcpProvision" in early_exit
+        # The re-run keeps its documented exit-0 contract: the repair must be a
+        # best-effort reader, never the bootstrapping path that can Fail.
+        assert "Invoke-DataRootBootstrap" not in early_exit
 
 
 class TestWindowsDataRootDocumentsDefault:

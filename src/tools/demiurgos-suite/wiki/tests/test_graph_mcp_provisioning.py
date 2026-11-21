@@ -198,6 +198,25 @@ def test_windows_core_wires_the_graph_after_provisioning_the_runtime():
     )
 
 
+def test_windows_graph_program_matches_the_posix_program():
+    """S4: the .ps1 wires the graph through the exact POSIX merge program."""
+    posix = (REPO_ROOT / "scripts" / "install-demiurgos.sh").read_text(encoding="utf-8")
+    windows = (REPO_ROOT / "scripts" / "install-demiurgos.ps1").read_text(
+        encoding="utf-8"
+    )
+    sh_prog = posix.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    ps_prog = windows.split("$program = @'\n", 1)[1].split("\n'@", 1)[0]
+
+    def body(text: str) -> list[str]:
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+
+    assert body(ps_prog) == body(sh_prog)
+
+
 # =============================================================================
 # Engram cutover — corrective removal of the legacy MCP server
 # =============================================================================

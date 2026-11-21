@@ -803,6 +803,20 @@ bootstrap_data_root() {
     seed_methodology_payload
 }
 
+# The same-version re-run is a repair path with a documented contract: it exits
+# 0 ("nothing to do"). Never guess a root from a corrupt pointer, never create
+# one the user did not choose, and never let a repair failure abort the re-run.
+repair_data_root_best_effort() {
+    local pointed
+    pointed="$(read_pointer_value 2>/dev/null || true)"
+    if [ -z "$pointed" ]; then
+        pointed="${DEMIURGOS_DATA_ROOT:-}"
+    fi
+    [ -n "$pointed" ] || return 0
+    DATA_ROOT="$pointed"
+    seed_methodology_payload
+}
+
 # --- seed-only entry point (S0-A; test/ops seam) -----------------------------
 # DEMIURGOS_SEED_ONLY=1 performs ONLY the data-root bootstrap-once + .env seed
 # (design S3-7) and exits 0 — the exact code path the full install runs at the
@@ -897,10 +911,11 @@ if [ -L "$INSTALL_ROOT/current" ] && [ "$(readlink "$INSTALL_ROOT/current")" = "
     mkdir -p "$STAGING_ROOT"
     provision_hermes_runtime
     provision_graph_mcp
-    # Repair the data root too: a user whose content folder was deleted (or an
-    # install that predates the seed bootstrap) gets the pointer, .env and the
-    # foundational seeds back without reinstalling the app.
-    bootstrap_data_root
+    # Repair the data root too: a user whose seed folder was deleted (or an
+    # install that predates the seed bootstrap) gets the foundational seeds
+    # back. Best-effort: the re-run's documented contract stays "nothing to
+    # do" / exit 0, even with a corrupt pointer or an unwritable home.
+    repair_data_root_best_effort
     if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
         restart_after_install
     fi
