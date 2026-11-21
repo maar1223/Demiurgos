@@ -451,11 +451,14 @@ jobs:
           Copy-Item scripts\lib\verify_checksum.ps1 (Join-Path $channel 'scripts\lib\verify_checksum.ps1')
 
           # Pinned uv archive + the signed checksum table the installer verifies.
+          # Upstream asset names are versionless (the version lives in the path);
+          # the channel copy keeps the installer's versioned contract name.
           $uvVersion = $env:UV_VERSION
-          $uvName = "uv-x86_64-pc-windows-msvc-$uvVersion.zip"
-          $uvUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvName"
-          Invoke-WebRequest -Uri $uvUrl -OutFile (Join-Path $channel "uv\$uvName") -UseBasicParsing
-          $uvSha = (Get-FileHash -Algorithm SHA256 (Join-Path $channel "uv\$uvName")).Hash.ToLowerInvariant()
+          $uvUpstream = 'uv-x86_64-pc-windows-msvc.zip'
+          $uvLocal = "uv-x86_64-pc-windows-msvc-$uvVersion.zip"
+          $uvUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvUpstream"
+          Invoke-WebRequest -Uri $uvUrl -OutFile (Join-Path $channel "uv\$uvLocal") -UseBasicParsing
+          $uvSha = (Get-FileHash -Algorithm SHA256 (Join-Path $channel "uv\$uvLocal")).Hash.ToLowerInvariant()
           "UV_SHA_X86_64_WINDOWS_MSVC=$uvSha" |
             Set-Content (Join-Path $channel 'uv-shas.env') -Encoding ascii
 
@@ -466,8 +469,9 @@ jobs:
           $minisignDir = Join-Path $env:RUNNER_TEMP 'minisign'
           Expand-Archive -LiteralPath $minisignZip -DestinationPath $minisignDir -Force
           $minisign = Get-ChildItem $minisignDir -Recurse -Filter minisign.exe |
+            Where-Object { $_.FullName -match '[\\/]x86_64[\\/]' } |
             Select-Object -First 1
-          if (-not $minisign) { throw 'minisign.exe not found in the release zip' }
+          if (-not $minisign) { throw 'x86_64 minisign.exe not found in the release zip' }
           $key = Join-Path $minisignDir 'test.key'
           $pub = Join-Path $minisignDir 'test.pub'
           & $minisign.FullName -G -W -p $pub -s $key

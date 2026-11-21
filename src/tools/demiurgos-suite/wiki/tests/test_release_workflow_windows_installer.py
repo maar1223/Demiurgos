@@ -50,11 +50,23 @@ def test_job_builds_a_hermetic_channel_and_a_test_signing_key():
     assert "file://" in text
     assert "uv-shas.env" in text
     assert "UV_SHA_X86_64_WINDOWS_MSVC" in text
+    # Upstream uv assets are versionless (version in the path); the channel copy
+    # keeps the installer's versioned contract name. Pinning both sides stops
+    # the 404 the reviewer found in the first draft.
+    assert "uv-x86_64-pc-windows-msvc.zip" in text
+    assert 'uv-x86_64-pc-windows-msvc-$uvVersion.zip' in text
     assert "minisign.exe" in text
     assert "-G -W" in text
     assert "MINISIGN_PUBKEY" in text
     assert "SHA256SUMS" in text
     assert "-Sm" in text
+
+
+def test_minisign_binary_is_the_x86_64_build():
+    text = _runs(_job())
+    selection = text[text.index("$minisign = Get-ChildItem") :]
+    selection = selection[: selection.index("if (-not $minisign)")]
+    assert "x86_64" in selection, selection
 
 
 def test_job_runs_the_real_installer_and_validates_seeds_and_graph():
@@ -70,7 +82,37 @@ def test_job_runs_the_real_installer_and_validates_seeds_and_graph():
     assert "mcp_launcher.py" in text
 
 
-def test_job_never_publishes():
+def test_repair_run_deletes_the_seed_tree_before_reinstalling():
     text = _runs(_job())
+    delete_at = text.index("Remove-Item -LiteralPath $seeds -Recurse -Force")
+    assert delete_at < text.rindex("-File $installer")
+    assert "DEMIURGOS_VERSION = $version" in text
+
+
+def test_payload_manifest_ships_exactly_the_19_seed_files():
+    import json
+
+    manifest = json.loads(
+        (REPO_ROOT / "payload_manifest.json").read_text(encoding="utf-8")
+    )
+    seeds = [
+        path
+        for path in manifest["payload"]
+        if path.startswith("data/methodology/seeds/")
+    ]
+    assert len(seeds) == 19, len(seeds)
+
+
+def test_job_never_publishes():
+    job = _job()
+    assert job.get("permissions") in (None, {"contents": "read"})
+    text = _runs(job)
     assert "gh release" not in text
     assert "git push" not in text
+    # Actions can publish without a run: no release/publish action may appear.
+    uses = [str(step.get("uses", "")) for step in job["steps"]]
+    assert not [
+        action
+        for action in uses
+        if "release" in action.lower() or "publish" in action.lower()
+    ], uses
