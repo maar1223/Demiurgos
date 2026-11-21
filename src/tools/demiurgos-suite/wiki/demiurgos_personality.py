@@ -102,6 +102,12 @@ _IDENTITY_PROMPTS: dict[str, str] = {
 }
 
 
+def _names_an_entity(name: str, gate: list[str]) -> bool:
+    """True when any gated query token is a prefix of a word in the name."""
+    words = str(name or "").lower().split()
+    return any(word.startswith(token) for token in gate for word in words)
+
+
 def _graph_context_entries(
     query: str,
     graph_index: "EntityGraphIndex | None",
@@ -117,13 +123,26 @@ def _graph_context_entries(
     if graph_index is None or not query:
         return []
 
+    # Injection is gated on the query NAMING an entity. Without the gate the
+    # top-5 of a vague question ("estuvimos creando una ficha...") is pure
+    # noise — BM25 scores it high because common words match everywhere — and
+    # the prompt then hands the model five irrelevant fichas that it must
+    # discard. The graph tools still cover the unnamed case.
+    from wiki.graph_indexer import gate_tokens
+
+    gate = gate_tokens(query)
+    if not gate:
+        return []
+
     try:
         hits = graph_index.search(query)
         if not hits:
             return []
 
         entries: list[tuple[str, str]] = []
-        for hit in hits[:max_hits]:
+        for hit in hits:
+            if not _names_an_entity(getattr(hit, "name", ""), gate):
+                continue
             detail = graph_index.get_entity(hit.path)
             if detail is None:
                 continue
@@ -131,6 +150,8 @@ def _graph_context_entries(
             entries.append(
                 (hit.path, f"### {detail.title} ({detail.type})\n{content}")
             )
+            if len(entries) >= max_hits:
+                break
         return entries
     except Exception:
         _logger.warning(

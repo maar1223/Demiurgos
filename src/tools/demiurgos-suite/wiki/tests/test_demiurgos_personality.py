@@ -15,7 +15,11 @@ _WIKI = _HERE.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
-from demiurgos_personality import build_fichas_context, build_identity_prompt  # noqa: E402
+from demiurgos_personality import (  # noqa: E402
+    build_fichas_context,
+    build_identity_prompt,
+    graph_context_with_sources,
+)
 
 
 def test_fichas_context_excludes_order_manifest(tmp_path) -> None:
@@ -85,3 +89,60 @@ def test_identity_prompt_preserves_identity_and_multi_world_search() -> None:
     assert "Transparencia de mundo" in prompt
     assert "otros mundos" in prompt
     assert "'Aurelia'" in prompt
+
+class _FakeHit:
+    def __init__(self, path: str, name: str, score: float = 10.0) -> None:
+        self.path = path
+        self.name = name
+        self.score = score
+
+
+class _FakeDetail:
+    def __init__(self, title: str, type_: str, content: str) -> None:
+        self.title = title
+        self.type = type_
+        self.content = content
+
+
+class _FakeGraph:
+    """Minimal EntityGraphIndex surface used by the injection."""
+
+    def __init__(self, hits, details) -> None:
+        self._hits = hits
+        self._details = details
+
+    def search(self, _query):
+        return list(self._hits)
+
+    def get_entity(self, path):
+        return self._details.get(path)
+
+
+def test_context_injection_requires_the_query_to_name_an_entity() -> None:
+    """A vague question must not inject fichas (S10).
+
+    The measured failure: "estuvimos creando la ficha de Hesia..." scored five
+    unrelated fichas above a legitimate hit, so the prompt carried noise the
+    model had to discard.
+    """
+    hit = _FakeHit("lore/dvex.md", "Dvex del Stal 6")
+    detail = _FakeDetail("Dvex del Stal 6", "criatura", "Contenido.")
+    graph = _FakeGraph([hit], {"lore/dvex.md": detail})
+
+    block, sources = graph_context_with_sources(
+        "estuvimos creando la ficha de Hesia pero no la terminamos", graph,
+    )
+
+    assert block == ""
+    assert sources == []
+
+
+def test_context_injection_includes_the_entity_the_query_names() -> None:
+    hit = _FakeHit("personajes/ganic.md", "Ganic")
+    detail = _FakeDetail("Ganic", "personaje", "Ganic llego de fuera.")
+    graph = _FakeGraph([hit], {"personajes/ganic.md": detail})
+
+    block, sources = graph_context_with_sources("\u00bfQui\u00e9n es Ganic?", graph)
+
+    assert "Ganic llego de fuera." in block
+    assert sources == ["personajes/ganic.md"]

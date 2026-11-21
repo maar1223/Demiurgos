@@ -551,6 +551,18 @@ class TestEntityEnvelope(unittest.TestCase):
             self.assertEqual(hits[0].shape, "sistema")
             self.assertIsNotNone(hits[0].canon_state)
 
+    def test_gate_tokens_drop_function_words(self) -> None:
+        """Only content words may gate context injection.
+
+        "es" and "del" are prefixes of unrelated entity names, which is how
+        noise fichas reached the prompt (odd/tasks/assistant-turn-metadata-and-dropdown.md S10).
+        """
+        from wiki.graph_indexer import gate_tokens
+
+        self.assertEqual(gate_tokens("\u00bfQu\u00e9 es Hesia?"), ["hesia"])
+        self.assertEqual(gate_tokens("contame la historia del origen"), ["contame", "historia", "origen"])
+        self.assertEqual(gate_tokens("del Stal"), ["stal"])
+
     def test_punctuated_question_still_finds_the_entity(self) -> None:
         """Punctuation must never become part of a query token.
 

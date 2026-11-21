@@ -39,6 +39,44 @@ from .okf_contract import validate as okf_validate
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
 
+#: Function words that must never gate the prompt's context injection on
+#: their own: they are prefixes of unrelated entity names ("es" -> "Estados",
+#: "del" -> "Dvin del Stal 1"), which is how junk fichas reached the prompt.
+GATE_STOPWORDS = frozenset(
+    """
+    a al algo algun alguna algunas alguno algunos ante antes aqui asi cada como
+    cómo con contra cual cuál cuales cuando cuándo de del desde donde dónde el él
+    ella ellas ello ellos en entre era eran es esa esas ese eso esos esta está
+    estaba estas este esto estos fue fueron ha has hasta hay la las le les lo los
+    mas más me mi mis mucho muy nada ni no nos nosotros o os otra otras otro otros
+    para pero poco por porque que qué quien quién quienes se sea ser si sí sin
+    sobre son su sus tambien también tan tanto te tiene tienen todo todos tu tus
+    un una unas uno unos y ya yo
+    about after again all also am an and any are as at be been before being but by
+    can could did do does doing for from had has have he her here his how i if in
+    into is it its just me more my no not of on once only or other our out over
+    should so some than that the their them then there these they this those to
+    too under up very was we were what when where which who why will with would
+    you your
+    """.split()
+)
+
+GATE_MIN_TOKEN_LEN = 3
+
+
+def gate_tokens(text: str) -> list[str]:
+    """Content tokens used to decide whether a query *names* an entity.
+
+    Only these may gate context injection; the full token list is still used
+    for scoring, where idf already discounts common words.
+    """
+    return [
+        token
+        for token in _tokenize(text)
+        if len(token) >= GATE_MIN_TOKEN_LEN and token not in GATE_STOPWORDS
+    ]
+
+
 def _tokenize(text: str) -> list[str]:
     """Lowercase word tokens with punctuation removed.
 

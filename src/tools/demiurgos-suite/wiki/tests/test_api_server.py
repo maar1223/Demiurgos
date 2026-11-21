@@ -8818,6 +8818,7 @@ class TestAssistantTurnInterruption:
 
         class Hit:
             path = "lore/ayagar.md"
+            name = "Ayagar"
 
         class Detail:
             title = "Ayagar"
