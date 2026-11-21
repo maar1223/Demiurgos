@@ -2653,10 +2653,12 @@ describe("AIAssistantSidebar per-response turn details", () => {
     });
     await user.click(toggle);
 
-    expect(screen.getByText("Contexto del mundo")).toBeInTheDocument();
+    // An injected ficha is listed as context, never as an operation the model
+    // performed: no "Contexto del mundo — Confirmado" row.
+    expect(screen.queryByText("Contexto del mundo")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Contexto inyectado (1)" }));
     expect(screen.getByText("lore/ayagar.md")).toBeInTheDocument();
-    // Never advertised as something the model read.
+    // And it is never advertised as something the model read.
     expect(
       screen.queryByRole("button", { name: /Fuentes confirmadas/ }),
     ).not.toBeInTheDocument();

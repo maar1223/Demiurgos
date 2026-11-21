@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Icon } from "@/components/atoms/Icon";
 import { GuidedChoiceCard } from "@/components/molecules/GuidedChoiceCard";
@@ -83,7 +78,9 @@ function isSafeEvidencePath(value: string): boolean {
   const parts = value.split("/");
   return (
     SAFE_SOURCE_ROOTS.has(parts[0]) &&
-    parts.every((part) => part && part !== "." && part !== ".." && !part.startsWith("."))
+    parts.every(
+      (part) => part && part !== "." && part !== ".." && !part.startsWith("."),
+    )
   );
 }
 
@@ -104,9 +101,12 @@ function activityOperationLabel(
   operation: "Search world" | "Read world" | "World context",
   t: TFunction,
 ): string {
-  if (operation === "Search world") return t("assistant.activity.operation.searchWorld");
-  if (operation === "World context") return t("assistant.activity.operation.worldContext");
-  if (operation === "Read world") return t("assistant.activity.operation.readWorld");
+  if (operation === "Search world")
+    return t("assistant.activity.operation.searchWorld");
+  if (operation === "World context")
+    return t("assistant.activity.operation.worldContext");
+  if (operation === "Read world")
+    return t("assistant.activity.operation.readWorld");
   return t("assistant.activity.operation.worldActivity");
 }
 
@@ -135,7 +135,8 @@ function splitConfirmedSources(items: ConfirmedActivityItem[]): {
     // as zero, so the honest number is how many calls succeeded.
     toolCalls: items.filter(
       (item) =>
-        item.operation !== WORLD_CONTEXT_OPERATION && item.status === "succeeded",
+        item.operation !== WORLD_CONTEXT_OPERATION &&
+        item.status === "succeeded",
     ).length,
     context: items
       .filter(
@@ -157,8 +158,18 @@ function formatDate(ts: number): string {
   const d = new Date(ts);
   const day = d.getDate();
   const months = [
-    "ene", "feb", "mar", "abr", "may", "jun",
-    "jul", "ago", "sep", "oct", "nov", "dic",
+    "ene",
+    "feb",
+    "mar",
+    "abr",
+    "may",
+    "jun",
+    "jul",
+    "ago",
+    "sep",
+    "oct",
+    "nov",
+    "dic",
   ];
   return `${day} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
@@ -212,7 +223,11 @@ interface ActivityEvidenceProps {
   isSending: boolean;
 }
 
-function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidenceProps) {
+function ActivityEvidence({
+  activity,
+  evidence,
+  isSending,
+}: ActivityEvidenceProps) {
   const { t } = useAppLanguage();
   const [contextOpen, setContextOpen] = useState(false);
   const { context: contextSources } = splitConfirmedSources(activity.items);
@@ -229,28 +244,42 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
       className="mb-3 rounded-lg border border-edge bg-surface/70 px-3 py-2.5 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-primary">{t("assistant.activity.title")}</h3>
+        <h3 className="font-medium text-primary">
+          {t("assistant.activity.title")}
+        </h3>
         {activity.status === "running" && (
-          <span className="text-action">{t("assistant.activity.queryingSources")}</span>
+          <span className="text-action">
+            {t("assistant.activity.queryingSources")}
+          </span>
         )}
       </div>
 
       {activity.items.length > 0 && (
-        <ul aria-label={t("assistant.activity.listAria")} className="mt-2 space-y-1.5">
-          {activity.items.map((item) => (
-            <li key={item.item_id} className="flex items-center justify-between gap-2">
-              <span className="text-muted">
-                {activityOperationLabel(item.operation, t)}
-              </span>
-              <span
-                className={cn(
-                  item.status === "failed" ? "text-status-error" : "text-muted",
-                )}
+        <ul
+          aria-label={t("assistant.activity.listAria")}
+          className="mt-2 space-y-1.5"
+        >
+          {activity.items
+            .filter((item) => item.operation !== WORLD_CONTEXT_OPERATION)
+            .map((item) => (
+              <li
+                key={item.item_id}
+                className="flex items-center justify-between gap-2"
               >
-                {activityStatusLabel(item.status, t)}
-              </span>
-            </li>
-          ))}
+                <span className="text-muted">
+                  {activityOperationLabel(item.operation, t)}
+                </span>
+                <span
+                  className={cn(
+                    item.status === "failed"
+                      ? "text-status-error"
+                      : "text-muted",
+                  )}
+                >
+                  {activityStatusLabel(item.status, t)}
+                </span>
+              </li>
+            ))}
         </ul>
       )}
 
@@ -272,7 +301,9 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
                 onClick={() => setContextOpen((open) => !open)}
                 className="text-left text-muted hover:text-primary"
               >
-                {t("assistant.activity.injectedContext", { count: contextSources.length })}
+                {t("assistant.activity.injectedContext", {
+                  count: contextSources.length,
+                })}
               </button>
               {contextOpen && (
                 <ul className="mt-1.5 space-y-1 pl-3 text-muted">
@@ -289,14 +320,15 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
       ) : (
         <p className="mt-2 border-t border-edge pt-2 text-muted">
           {activity.availability === "unavailable"
-            ? activity.availabilityReason === "file_evidence_contract_unverified"
+            ? activity.availabilityReason ===
+              "file_evidence_contract_unverified"
               ? t("assistant.activity.unavailableContract")
               : t("assistant.activity.unavailable")
             : isSending
               ? t("assistant.activity.safeChannel")
-            : activity.status === "running"
-              ? t("assistant.activity.waiting")
-              : t("assistant.activity.noSources")}
+              : activity.status === "running"
+                ? t("assistant.activity.waiting")
+                : t("assistant.activity.noSources")}
         </p>
       )}
     </section>
@@ -312,7 +344,9 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
   const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
-  const { toolCalls, context: contextSources } = splitConfirmedSources(turn.items);
+  const { toolCalls, context: contextSources } = splitConfirmedSources(
+    turn.items,
+  );
   const warnings = Array.from(
     new Set([
       ...turn.warnings.map((warning) => safeActivityWarning(warning)),
@@ -333,7 +367,9 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
       ? ""
       : contextSources.length === 1
         ? t("assistant.turn.contextSegmentOne")
-        : t("assistant.turn.contextSegmentMany", { sources: contextSources.length });
+        : t("assistant.turn.contextSegmentMany", {
+            sources: contextSources.length,
+          });
   const summary = base + contextSegment;
 
   return (
@@ -349,21 +385,31 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
       {open && (
         <div className="mt-1.5 space-y-1.5">
           {turn.items.length > 0 && (
-            <ul aria-label={t("assistant.turn.itemsAria")} className="space-y-1">
-              {turn.items.map((item) => (
-                <li key={item.item_id} className="flex items-center justify-between gap-2">
-                  <span className="text-muted">
-                    {activityOperationLabel(item.operation, t)}
-                  </span>
-                  <span
-                    className={cn(
-                      item.status === "failed" ? "text-status-error" : "text-muted",
-                    )}
+            <ul
+              aria-label={t("assistant.turn.itemsAria")}
+              className="space-y-1"
+            >
+              {turn.items
+                .filter((item) => item.operation !== WORLD_CONTEXT_OPERATION)
+                .map((item) => (
+                  <li
+                    key={item.item_id}
+                    className="flex items-center justify-between gap-2"
                   >
-                    {activityStatusLabel(item.status, t)}
-                  </span>
-                </li>
-              ))}
+                    <span className="text-muted">
+                      {activityOperationLabel(item.operation, t)}
+                    </span>
+                    <span
+                      className={cn(
+                        item.status === "failed"
+                          ? "text-status-error"
+                          : "text-muted",
+                      )}
+                    >
+                      {activityStatusLabel(item.status, t)}
+                    </span>
+                  </li>
+                ))}
             </ul>
           )}
 
@@ -383,7 +429,9 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
                 onClick={() => setContextOpen((current) => !current)}
                 className="text-left text-muted hover:text-primary"
               >
-                {t("assistant.activity.injectedContext", { count: contextSources.length })}
+                {t("assistant.activity.injectedContext", {
+                  count: contextSources.length,
+                })}
               </button>
               {contextOpen && (
                 <ul className="mt-1 pl-3 text-muted">
@@ -442,7 +490,9 @@ function ChatScreen({
   const [input, setInput] = useState("");
   const [consentMethodId, setConsentMethodId] = useState("factory");
   const [consentMethodTouched, setConsentMethodTouched] = useState(false);
-  const [consentPath, setConsentPath] = useState<"explore" | "fields">("explore");
+  const [consentPath, setConsentPath] = useState<"explore" | "fields">(
+    "explore",
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -476,14 +526,16 @@ function ChatScreen({
   useEffect(() => {
     if (!gatewayDown) return;
     const onFocus = () => void checkHealth();
-    const interval = window.setInterval(() => void checkHealth(), HEALTH_RECHECK_MS);
+    const interval = window.setInterval(
+      () => void checkHealth(),
+      HEALTH_RECHECK_MS,
+    );
     window.addEventListener("focus", onFocus);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", onFocus);
     };
   }, [gatewayDown, checkHealth]);
-
 
   // Type-to-focus: when the Author starts typing while reading (focus on the
   // page, a button, or the panel), the first printable key goes to the
@@ -506,13 +558,20 @@ function ChatScreen({
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       // Printable characters, plus dead keys/IME so Spanish accents are not
       // lost before the composer receives focus.
-      if (event.key.length !== 1 && event.key !== "Dead" && event.key !== "Process") return;
+      if (
+        event.key.length !== 1 &&
+        event.key !== "Dead" &&
+        event.key !== "Process"
+      )
+        return;
       if (isTypingTarget(event.target)) return;
       const element = event.target as HTMLElement | null;
       // Space activates a focused control; it must not become composer focus.
       if (
         event.key === " " &&
-        element?.closest('button, a, [role="button"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]')
+        element?.closest(
+          'button, a, [role="button"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]',
+        )
       ) {
         return;
       }
@@ -528,7 +587,9 @@ function ChatScreen({
   useEffect(() => {
     try {
       messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
-    } catch { /* jsdom */ }
+    } catch {
+      /* jsdom */
+    }
   }, [activeSession?.messages, isSending]);
 
   const { language: appLanguage, t } = useAppLanguage();
@@ -556,7 +617,9 @@ function ChatScreen({
   const guidedLevelPending =
     activeSession?.guided?.pending_kind === "level" &&
     activeSession.guided.phase === "conversation";
-  const guidedPendingQuestion = (activeSession?.guided?.pending_question ?? "").trim();
+  const guidedPendingQuestion = (
+    activeSession?.guided?.pending_question ?? ""
+  ).trim();
   const guidedCardPending = guidedPathPending || guidedLevelPending;
   const storedMessages = activeSession?.messages ?? [];
   const messages =
@@ -576,7 +639,8 @@ function ChatScreen({
     activeSession?.guided?.phase === "conversation"
       ? (activeSession.guided.pending_question ?? "").trim()
       : "";
-  const guidedTargetSection = activeSession?.guided?.flow?.target_section ?? null;
+  const guidedTargetSection =
+    activeSession?.guided?.flow?.target_section ?? null;
   const canReviewInCurrentSection =
     !guidedTargetSection || !section || section === guidedTargetSection;
   const lastMessage = messages[messages.length - 1];
@@ -587,7 +651,10 @@ function ChatScreen({
     !guidedCardPending &&
     Boolean(guidedPendingText) &&
     !isSending &&
-    !(lastMessage?.role === "assistant" && lastMessage.content.trim().endsWith(guidedPendingText));
+    !(
+      lastMessage?.role === "assistant" &&
+      lastMessage.content.trim().endsWith(guidedPendingText)
+    );
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
   const consentToken = activeSession?.consentToken;
   const guidedMethodology = activeSession?.guided?.methodology ?? null;
@@ -598,7 +665,8 @@ function ChatScreen({
     // An attachment is a complete turn on its own: ask for a summary (or the
     // image question) with the localized default when nothing was typed (S6).
     const onlyImages =
-      attachments.length > 0 && attachments.every((item) => item.kind === "image");
+      attachments.length > 0 &&
+      attachments.every((item) => item.kind === "image");
     const fallback = onlyImages
       ? t("assistant.attach.defaultPromptImage")
       : t("assistant.attach.defaultPrompt");
@@ -650,7 +718,12 @@ function ChatScreen({
     } else if (!whisperIsTranscribing) {
       whisperStartRecording();
     }
-  }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
+  }, [
+    whisperIsRecording,
+    whisperIsTranscribing,
+    whisperStartRecording,
+    whisperStopRecording,
+  ]);
 
   const guidedMethodName = guidedMethodology
     ? guidedMethodology.factory
@@ -659,7 +732,9 @@ function ChatScreen({
           const name =
             guidedMethods.find(
               (method) => method.skill_id === guidedMethodology.skill_id,
-            )?.name ?? guidedMethodology.skill_id ?? "";
+            )?.name ??
+            guidedMethodology.skill_id ??
+            "";
           // S6: the pin must be visible — activating a newer methodology
           // otherwise looks like nothing happened.
           const version = guidedMethodology.skill_version;
@@ -687,19 +762,26 @@ function ChatScreen({
     if (!consentMethodTouched) {
       setConsentMethodId(
         consentFlowKey === "character"
-          ? (guidedMethodDefault?.skill_id ?? guidedMethods[0]?.skill_id ?? "factory")
+          ? (guidedMethodDefault?.skill_id ??
+              guidedMethods[0]?.skill_id ??
+              "factory")
           : (guidedMethodDefault?.skill_id ?? guidedMethods[0]?.skill_id ?? ""),
       );
     }
   }, [
-    consentToken, consentFlowKey, guidedMethodDefault, guidedMethods,
+    consentToken,
+    consentFlowKey,
+    guidedMethodDefault,
+    guidedMethods,
     consentMethodTouched,
   ]);
 
   const consentChoice = (): GuidedMethodChoice | undefined => {
     if (consentMethodId === "factory" || !consentMethodId) {
       // Only the character flow has a builtin factory contract.
-      return consentFlowKey === "character" ? { skill_id: "factory" } : undefined;
+      return consentFlowKey === "character"
+        ? { skill_id: "factory" }
+        : undefined;
     }
     const chosen = guidedMethods.find(
       (method) => method.skill_id === consentMethodId,
@@ -710,7 +792,8 @@ function ChatScreen({
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()
-    .find((message) => message.role === "user")?.content.trim();
+    .find((message) => message.role === "user")
+    ?.content.trim();
   const suggestions = mundo
     ? [
         t("assistant.suggestion.rhyz"),
@@ -725,11 +808,11 @@ function ChatScreen({
       ];
   const canProposeEdit = Boolean(
     onProposeEdit &&
-      section &&
-      filePath &&
-      activeSession?.id &&
-      latestUserPrompt &&
-      !isSending,
+    section &&
+    filePath &&
+    activeSession?.id &&
+    latestUserPrompt &&
+    !isSending,
   );
   const proposeEditDisabledReason = !mundo
     ? t("assistant.propose.disabled.noWorld")
@@ -740,12 +823,22 @@ function ChatScreen({
         : isSending
           ? t("assistant.propose.disabled.sending")
           : t("assistant.propose.enabled");
-  const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
+  const hasAssistantAnswer = messages.some(
+    (message) => message.role === "assistant",
+  );
   // Legacy sessions stored provider notes (intención, mundo, estado, fase) as
   // proposals; they are session metadata, never Author-facing details.
   const guidedMetaProposalKeys = new Set([
-    "intencion", "intent", "mundo", "world", "estado", "status",
-    "fase", "phase", "modo", "mode",
+    "intencion",
+    "intent",
+    "mundo",
+    "world",
+    "estado",
+    "status",
+    "fase",
+    "phase",
+    "modo",
+    "mode",
   ]);
   const meaningfulGuidedProposalKeys = Object.keys(
     activeSession?.guided?.candidate?.proposals ?? {},
@@ -760,23 +853,24 @@ function ChatScreen({
   // create the sheet at "Campo 4 de 21" would invite a half-empty ficha.
   const guidedQuestionnaireOpen = Boolean(
     activeSession?.guided?.path === "fields" &&
-      activeSession.guided.field_progress &&
-      !activeSession.guided.field_progress.complete,
+    activeSession.guided.field_progress &&
+    !activeSession.guided.field_progress.complete,
   );
   // Once the author is already on the created sheet, offering to create it (or
   // to re-open its diff) is noise: the target file IS the current file.
   const guidedTargetIsCurrentFile = Boolean(
     guidedTargetPreview &&
-      section &&
-      filePath &&
-      guidedTargetPreview.toLowerCase() === `${section}/${filePath}`.toLowerCase(),
+    section &&
+    filePath &&
+    guidedTargetPreview.toLowerCase() ===
+      `${section}/${filePath}`.toLowerCase(),
   );
   const guidedFieldProgress = activeSession?.guided?.field_progress ?? null;
   const guidedFieldActive = Boolean(
     activeSession?.guided?.path === "fields" &&
-      activeSession.guided.pending_kind !== "level" &&
-      guidedFieldProgress &&
-      !guidedFieldProgress.complete,
+    activeSession.guided.pending_kind !== "level" &&
+    guidedFieldProgress &&
+    !guidedFieldProgress.complete,
   );
   const visibleGuidedProposal =
     activeSession?.guided?.proposal &&
@@ -784,12 +878,12 @@ function ChatScreen({
       ? activeSession.guided.proposal
       : null;
   const hasGuidedCandidate = Boolean(
-    activeSession?.guided && (
-      meaningfulGuidedProposalKeys.length > 0 ||
-      Object.keys(activeSession.guided.candidate?.accepted_canon ?? {}).length > 0 ||
+    activeSession?.guided &&
+    (meaningfulGuidedProposalKeys.length > 0 ||
+      Object.keys(activeSession.guided.candidate?.accepted_canon ?? {}).length >
+        0 ||
       activeSession.guided.phase === "review" ||
-      activeSession.guided.phase === "complete"
-    ),
+      activeSession.guided.phase === "complete"),
   );
   const showActivityEvidence =
     isSending ||
@@ -813,7 +907,14 @@ function ChatScreen({
       prompt: latestUserPrompt,
       sessionId: activeSession.id,
     });
-  }, [activeSession?.id, filePath, isSending, latestUserPrompt, onProposeEdit, section]);
+  }, [
+    activeSession?.id,
+    filePath,
+    isSending,
+    latestUserPrompt,
+    onProposeEdit,
+    section,
+  ]);
 
   const handleGuidedReview = useCallback(async () => {
     if (!onGuidedReview || isSending) return;
@@ -824,7 +925,13 @@ function ChatScreen({
     if (!requestGuidedReview || !activeSession?.guided) return;
     const proposal = await requestGuidedReview();
     if (proposal) await onGuidedReview(proposal);
-  }, [activeSession?.guided, activeSession?.pendingReview, isSending, onGuidedReview, requestGuidedReview]);
+  }, [
+    activeSession?.guided,
+    activeSession?.pendingReview,
+    isSending,
+    onGuidedReview,
+    requestGuidedReview,
+  ]);
 
   return (
     <>
@@ -932,7 +1039,7 @@ function ChatScreen({
         )}
 
         <div className="space-y-3">
-           {messages.map((msg, i) => (
+          {messages.map((msg, i) => (
             <div
               key={i}
               className={cn(
@@ -986,7 +1093,10 @@ function ChatScreen({
                                 {attachment.kind}
                               </span>
                             )}
-                            <span className="max-w-[10rem] truncate" title={attachment.name}>
+                            <span
+                              className="max-w-[10rem] truncate"
+                              title={attachment.name}
+                            >
                               {attachment.name}
                             </span>
                           </li>
@@ -1000,243 +1110,263 @@ function ChatScreen({
                 )}
               </div>
             </div>
-           ))}
+          ))}
 
-           {showGuidedPending && (
-             <div className="flex justify-start">
-               <div className="max-w-[85%] overflow-hidden rounded-lg bg-surface px-3 py-2 text-body leading-relaxed text-primary">
-                 <MarkdownBody content={guidedPendingText} mundo={mundo} className="prose-sm" />
-               </div>
-             </div>
-           )}
+          {showGuidedPending && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] overflow-hidden rounded-lg bg-surface px-3 py-2 text-body leading-relaxed text-primary">
+                <MarkdownBody
+                  content={guidedPendingText}
+                  mundo={mundo}
+                  className="prose-sm"
+                />
+              </div>
+            </div>
+          )}
 
-           {guidedMethodName && (
-             <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
-               {t("guided.methodCurrent", { name: guidedMethodName })}
-             </p>
-           )}
+          {guidedMethodName && (
+            <p className="mb-2 rounded-lg border border-edge bg-surface px-3 py-2 text-xs text-muted">
+              {t("guided.methodCurrent", { name: guidedMethodName })}
+            </p>
+          )}
 
-           {guidedFieldActive && guidedFieldProgress && (
-             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
-               <p className="text-xs text-muted">
-                 {t("guided.field.progress", {
-                   index: guidedFieldProgress.index,
-                   total: guidedFieldProgress.total,
-                 })}
-               </p>
-               <p className="mt-1 font-medium">{guidedFieldProgress.label}</p>
-               {guidedFieldProgress.hint && (
-                 <p className="mt-1 text-xs leading-snug text-muted">
-                   {guidedFieldProgress.hint}
-                 </p>
-               )}
-               <button
-                 type="button"
-                 onClick={() =>
-                   void sendMessage(t("guided.field.skipPrompt"), {
-                     displayText: t("guided.field.skipAction"),
-                   })
-                 }
-                 disabled={isSending}
-                 className="mt-2 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
-               >
-                 {t("guided.field.skipAction")}
-               </button>
-             </div>
-           )}
-
-           {guidedTargetPreview && !guidedQuestionnaireOpen && !guidedTargetIsCurrentFile && !isSending && onGuidedReview && requestGuidedReview && (
-             <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
-               {guidedTargetLevel !== undefined && (
-                 <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
-                   {guidedTargetLevel
-                     ? t("guided.create.level", { level: guidedTargetLevel })
-                     : t("guided.create.levelPending")}
-                 </p>
-               )}
-               <p className="text-xs text-muted">{t("guided.create.where")}</p>
-               <p className="mt-1 font-mono text-xs text-primary">{guidedTargetPreview}</p>
-               <button
-                 type="button"
-                 onClick={() => void handleGuidedReview()}
-                 className="mt-2 w-full rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text disabled:opacity-50"
-               >
-                 {t("guided.create.action")}
-               </button>
-               <p className="mt-2 text-[11px] leading-snug text-muted">
-                 {t("guided.create.hint")}
-               </p>
-             </div>
-           )}
-
-           {confirmationPending && (
-             <GuidedChoiceCard
-               title={t("assistant.confirm.title")}
-               body={t("assistant.confirm.body")}
-               options={[
-                 {
-                   label: t("assistant.confirm.yes"),
-                   primary: true,
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage(isSpanish ? "sí" : "yes", {
-                       displayText: t("assistant.confirm.yes"),
-                     }),
-                 },
-                 {
-                   label: t("assistant.confirm.no"),
-                   disabled: isSending,
-                   onClick: () =>
-                     void sendMessage("no", {
-                       displayText: t("assistant.confirm.no"),
-                     }),
-                 },
-               ]}
-             />
-           )}
-
-           {consentToken && (
-             <section
-               aria-labelledby="guided-consent-title"
-               className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
-             >
-                <h3 id="guided-consent-title" className="font-medium">
-                  {t("assistant.consent.title")}
-                </h3>
-                <p className="mt-1 text-xs leading-relaxed text-muted">
-                  {consentFlowKey === "system"
-                    ? t("assistant.consent.body.system")
-                    : consentFlowKey === "chronology"
-                      ? t("assistant.consent.body.chronology")
-                      : consentFlowKey === "entity"
-                        ? t("assistant.consent.body.entity")
-                        : t("assistant.consent.body.character")}
+          {guidedFieldActive && guidedFieldProgress && (
+            <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
+              <p className="text-xs text-muted">
+                {t("guided.field.progress", {
+                  index: guidedFieldProgress.index,
+                  total: guidedFieldProgress.total,
+                })}
+              </p>
+              <p className="mt-1 font-medium">{guidedFieldProgress.label}</p>
+              {guidedFieldProgress.hint && (
+                <p className="mt-1 text-xs leading-snug text-muted">
+                  {guidedFieldProgress.hint}
                 </p>
-                <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
-                  {t("guided.methodTitle")}
-                  <select
-                    value={consentMethodId}
-                    onChange={(event) => {
-                      setConsentMethodTouched(true);
-                      setConsentMethodId(event.target.value);
-                    }}
-                    disabled={isSending}
-                    className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
-                  >
-                    {consentFlowKey === "character" && guidedMethods.length === 0 && (
-                      <option value="factory">{t("guided.methodFactory")}</option>
-                    )}
-                    {guidedMethods.map((method) => (
-                      <option key={method.skill_id} value={method.skill_id}>
-                        {method.name} (v{method.version})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {consentFlowKey === "character" && (
-                  <fieldset className="mt-2 flex flex-col gap-1 text-xs text-muted">
-                    <legend className="mb-1">{t("guided.path.title")}</legend>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="guided-path"
-                        value="explore"
-                        checked={consentPath === "explore"}
-                        onChange={() => setConsentPath("explore")}
-                        disabled={isSending}
-                      />
-                      {t("guided.path.explore")}
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="guided-path"
-                        value="fields"
-                        checked={consentPath === "fields"}
-                        onChange={() => setConsentPath("fields")}
-                        disabled={isSending}
-                      />
-                      {t("guided.path.fields")}
-                    </label>
-                  </fieldset>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  void sendMessage(t("guided.field.skipPrompt"), {
+                    displayText: t("guided.field.skipAction"),
+                  })
+                }
+                disabled={isSending}
+                className="mt-2 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+              >
+                {t("guided.field.skipAction")}
+              </button>
+            </div>
+          )}
+
+          {guidedTargetPreview &&
+            !guidedQuestionnaireOpen &&
+            !guidedTargetIsCurrentFile &&
+            !isSending &&
+            onGuidedReview &&
+            requestGuidedReview && (
+              <div className="rounded-lg border border-action/40 bg-action/10 px-3 py-2 text-sm text-primary">
+                {guidedTargetLevel !== undefined && (
+                  <p className="mb-1 inline-flex rounded-full bg-action/20 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    {guidedTargetLevel
+                      ? t("guided.create.level", { level: guidedTargetLevel })
+                      : t("guided.create.levelPending")}
+                  </p>
                 )}
-               <div className="mt-3 flex flex-wrap gap-2">
-                 <button
-                   type="button"
-                   onClick={() => void resolveGuidedConsent(true, consentChoice(), consentPath)}
-                   disabled={isSending}
-                    className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {t("assistant.consent.yes")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void resolveGuidedConsent(false)}
-                    disabled={isSending}
-                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {t("assistant.consent.no")}
-                  </button>
-               </div>
-             </section>
-           )}
-
-            {guidedPathPending && !isSending && (
-              <GuidedChoiceCard
-                title={t("guided.path.title")}
-                variant="neutral"
-                stacked
-                options={[
-                  {
-                    label: t("guided.path.explore"),
-                    onClick: () =>
-                      void sendMessage("1", {
-                        displayText: t("guided.path.explore"),
-                      }),
-                  },
-                  {
-                    label: t("guided.path.fields"),
-                    onClick: () =>
-                      void sendMessage("2", {
-                        displayText: t("guided.path.fields"),
-                      }),
-                  },
-                ]}
-              />
+                <p className="text-xs text-muted">{t("guided.create.where")}</p>
+                <p className="mt-1 font-mono text-xs text-primary">
+                  {guidedTargetPreview}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleGuidedReview()}
+                  className="mt-2 w-full rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text disabled:opacity-50"
+                >
+                  {t("guided.create.action")}
+                </button>
+                <p className="mt-2 text-[11px] leading-snug text-muted">
+                  {t("guided.create.hint")}
+                </p>
+              </div>
             )}
 
-            {guidedLevelPending && !isSending && (
-              <GuidedChoiceCard
-                title={t("guided.level.title")}
-                variant="neutral"
-                stacked
-                options={[
-                  {
-                    label: t("guided.level.principal"),
-                    onClick: () =>
-                      void sendMessage("1", {
-                        displayText: t("guided.level.principal"),
-                      }),
-                  },
-                  {
-                    label: t("guided.level.secondary"),
-                    onClick: () =>
-                      void sendMessage("2", {
-                        displayText: t("guided.level.secondary"),
-                      }),
-                  },
-                  {
-                    label: t("guided.level.background"),
-                    onClick: () =>
-                      void sendMessage("3", {
-                        displayText: t("guided.level.background"),
-                      }),
-                  },
-                ]}
-              />
-            )}
+          {confirmationPending && (
+            <GuidedChoiceCard
+              title={t("assistant.confirm.title")}
+              body={t("assistant.confirm.body")}
+              options={[
+                {
+                  label: t("assistant.confirm.yes"),
+                  primary: true,
+                  disabled: isSending,
+                  onClick: () =>
+                    void sendMessage(isSpanish ? "sí" : "yes", {
+                      displayText: t("assistant.confirm.yes"),
+                    }),
+                },
+                {
+                  label: t("assistant.confirm.no"),
+                  disabled: isSending,
+                  onClick: () =>
+                    void sendMessage("no", {
+                      displayText: t("assistant.confirm.no"),
+                    }),
+                },
+              ]}
+            />
+          )}
 
-           {visibleGuidedProposal && (
+          {consentToken && (
+            <section
+              aria-labelledby="guided-consent-title"
+              className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
+            >
+              <h3 id="guided-consent-title" className="font-medium">
+                {t("assistant.consent.title")}
+              </h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {consentFlowKey === "system"
+                  ? t("assistant.consent.body.system")
+                  : consentFlowKey === "chronology"
+                    ? t("assistant.consent.body.chronology")
+                    : consentFlowKey === "entity"
+                      ? t("assistant.consent.body.entity")
+                      : t("assistant.consent.body.character")}
+              </p>
+              <label className="mt-2 flex flex-col gap-1 text-xs text-muted">
+                {t("guided.methodTitle")}
+                <select
+                  value={consentMethodId}
+                  onChange={(event) => {
+                    setConsentMethodTouched(true);
+                    setConsentMethodId(event.target.value);
+                  }}
+                  disabled={isSending}
+                  className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
+                >
+                  {consentFlowKey === "character" &&
+                    guidedMethods.length === 0 && (
+                      <option value="factory">
+                        {t("guided.methodFactory")}
+                      </option>
+                    )}
+                  {guidedMethods.map((method) => (
+                    <option key={method.skill_id} value={method.skill_id}>
+                      {method.name} (v{method.version})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {consentFlowKey === "character" && (
+                <fieldset className="mt-2 flex flex-col gap-1 text-xs text-muted">
+                  <legend className="mb-1">{t("guided.path.title")}</legend>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="guided-path"
+                      value="explore"
+                      checked={consentPath === "explore"}
+                      onChange={() => setConsentPath("explore")}
+                      disabled={isSending}
+                    />
+                    {t("guided.path.explore")}
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="guided-path"
+                      value="fields"
+                      checked={consentPath === "fields"}
+                      onChange={() => setConsentPath("fields")}
+                      disabled={isSending}
+                    />
+                    {t("guided.path.fields")}
+                  </label>
+                </fieldset>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void resolveGuidedConsent(
+                      true,
+                      consentChoice(),
+                      consentPath,
+                    )
+                  }
+                  disabled={isSending}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("assistant.consent.yes")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void resolveGuidedConsent(false)}
+                  disabled={isSending}
+                  className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("assistant.consent.no")}
+                </button>
+              </div>
+            </section>
+          )}
+
+          {guidedPathPending && !isSending && (
+            <GuidedChoiceCard
+              title={t("guided.path.title")}
+              variant="neutral"
+              stacked
+              options={[
+                {
+                  label: t("guided.path.explore"),
+                  onClick: () =>
+                    void sendMessage("1", {
+                      displayText: t("guided.path.explore"),
+                    }),
+                },
+                {
+                  label: t("guided.path.fields"),
+                  onClick: () =>
+                    void sendMessage("2", {
+                      displayText: t("guided.path.fields"),
+                    }),
+                },
+              ]}
+            />
+          )}
+
+          {guidedLevelPending && !isSending && (
+            <GuidedChoiceCard
+              title={t("guided.level.title")}
+              variant="neutral"
+              stacked
+              options={[
+                {
+                  label: t("guided.level.principal"),
+                  onClick: () =>
+                    void sendMessage("1", {
+                      displayText: t("guided.level.principal"),
+                    }),
+                },
+                {
+                  label: t("guided.level.secondary"),
+                  onClick: () =>
+                    void sendMessage("2", {
+                      displayText: t("guided.level.secondary"),
+                    }),
+                },
+                {
+                  label: t("guided.level.background"),
+                  onClick: () =>
+                    void sendMessage("3", {
+                      displayText: t("guided.level.background"),
+                    }),
+                },
+              ]}
+            />
+          )}
+
+          {visibleGuidedProposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
               <p className="text-xs text-muted">
                 {activeSession?.guided?.path === "fields"
@@ -1248,25 +1378,46 @@ function ChatScreen({
                       })
                     : t("assistant.proposal.title")}
               </p>
-              <p className="mt-1">{visibleGuidedProposal.label}: {visibleGuidedProposal.value}</p>
+              <p className="mt-1">
+                {visibleGuidedProposal.label}: {visibleGuidedProposal.value}
+              </p>
               <div className="mt-3 flex gap-2">
-                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50">{t("assistant.proposal.reject")}</button>
-                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50">{t("assistant.proposal.accept")}</button>
+                <button
+                  type="button"
+                  onClick={() => void resolveGuidedProposal(false)}
+                  disabled={isSending}
+                  className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50"
+                >
+                  {t("assistant.proposal.reject")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void resolveGuidedProposal(true)}
+                  disabled={isSending}
+                  className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50"
+                >
+                  {t("assistant.proposal.accept")}
+                </button>
               </div>
             </div>
           )}
 
-          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && !guidedQuestionnaireOpen && onGuidedReview && !isSending && canReviewInCurrentSection && !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
-            <button
-              type="button"
-              onClick={() => void handleGuidedReview()}
-              aria-label={t("assistant.review.action")}
-              className="flex w-full items-center gap-2 rounded-lg border border-action/50 bg-action/10 px-3 py-2 text-left text-sm font-medium text-primary transition-colors hover:border-action hover:bg-action/20 focus:outline-none focus:ring-2 focus:ring-action/60 active:bg-action/25 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Icon name="edit" size={16} />
-              <span>{t("assistant.review.action")}</span>
-            </button>
-          )}
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) &&
+            !guidedQuestionnaireOpen &&
+            onGuidedReview &&
+            !isSending &&
+            canReviewInCurrentSection &&
+            !(guidedTargetIsCurrentFile && !activeSession?.pendingReview) && (
+              <button
+                type="button"
+                onClick={() => void handleGuidedReview()}
+                aria-label={t("assistant.review.action")}
+                className="flex w-full items-center gap-2 rounded-lg border border-action/50 bg-action/10 px-3 py-2 text-left text-sm font-medium text-primary transition-colors hover:border-action hover:bg-action/20 focus:outline-none focus:ring-2 focus:ring-action/60 active:bg-action/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon name="edit" size={16} />
+                <span>{t("assistant.review.action")}</span>
+              </button>
+            )}
 
           {isSending && (
             <div className="flex justify-start">
@@ -1277,9 +1428,15 @@ function ChatScreen({
             </div>
           )}
 
-          {ACTIVITY_EVIDENCE_UI_ENABLED && isSending && showActivityEvidence && (
-            <ActivityEvidence activity={activity} evidence={evidence} isSending={isSending} />
-          )}
+          {ACTIVITY_EVIDENCE_UI_ENABLED &&
+            isSending &&
+            showActivityEvidence && (
+              <ActivityEvidence
+                activity={activity}
+                evidence={evidence}
+                isSending={isSending}
+              />
+            )}
 
           <div ref={messagesEndRef} />
         </div>
@@ -1299,7 +1456,8 @@ function ChatScreen({
         >
           <div className="flex items-start gap-2">
             <p className="flex-1">
-              {activity.blockedText ?? semanticBlockedText(isSpanish ? "es" : "en")}
+              {activity.blockedText ??
+                semanticBlockedText(isSpanish ? "es" : "en")}
             </p>
             {activity.retryPrompt && retryLastTurn && (
               <button
@@ -1347,7 +1505,10 @@ function ChatScreen({
                   <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded border border-edge bg-surface">
                     <Icon name="image" size={14} className="text-muted" />
                     <img
-                      src={chatAttachmentThumbnailUrl(attachmentMundo, attachment.id)}
+                      src={chatAttachmentThumbnailUrl(
+                        attachmentMundo,
+                        attachment.id,
+                      )}
                       alt=""
                       className="absolute inset-0 h-full w-full object-cover"
                       onError={(event) => {
@@ -1364,7 +1525,9 @@ function ChatScreen({
                   className="max-w-[12rem] truncate"
                   title={
                     attachment.truncated
-                      ? t("assistant.attach.truncated", { chars: attachment.chars })
+                      ? t("assistant.attach.truncated", {
+                          chars: attachment.chars,
+                        })
                       : attachment.name
                   }
                 >
@@ -1375,7 +1538,9 @@ function ChatScreen({
                   type="button"
                   onClick={() => removeAttachment(attachment.id)}
                   disabled={isSending}
-                  aria-label={t("assistant.attach.remove.aria", { name: attachment.name })}
+                  aria-label={t("assistant.attach.remove.aria", {
+                    name: attachment.name,
+                  })}
                   className="flex h-5 w-5 items-center justify-center rounded text-muted hover:text-primary disabled:opacity-50"
                 >
                   <Icon name="close" size={12} />
@@ -1439,10 +1604,7 @@ function ChatScreen({
               {whisperIsTranscribing ? (
                 <Icon name="spinner" size={16} className="animate-spin" />
               ) : (
-                <Icon
-                  name={whisperIsRecording ? "stop" : "mic"}
-                  size={16}
-                />
+                <Icon name={whisperIsRecording ? "stop" : "mic"} size={16} />
               )}
             </button>
 
@@ -1479,7 +1641,9 @@ function ChatScreen({
             {t("assistant.propose.label")}
           </button>
           {!canProposeEdit && (
-            <span className="text-xs text-muted">{proposeEditDisabledReason}</span>
+            <span className="text-xs text-muted">
+              {proposeEditDisabledReason}
+            </span>
           )}
         </div>
         <p className="mt-1 text-xs text-muted">
@@ -1510,10 +1674,7 @@ function HistoryScreen({
   onChatClick,
 }: HistoryScreenProps) {
   const { t } = useAppLanguage();
-  const totalMessages = sessions.reduce(
-    (acc, s) => acc + s.messages.length,
-    0,
-  );
+  const totalMessages = sessions.reduce((acc, s) => acc + s.messages.length, 0);
 
   const handleSessionClick = useCallback(
     (id: string) => {
@@ -1553,9 +1714,7 @@ function HistoryScreen({
       <div className="flex-1 overflow-y-auto py-2">
         {sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
-            <p className="text-xs text-muted">
-              {t("assistant.history.empty")}
-            </p>
+            <p className="text-xs text-muted">{t("assistant.history.empty")}</p>
           </div>
         ) : (
           <div className="space-y-0.5 px-2">
@@ -1644,9 +1803,10 @@ export function AIAssistantSidebar({
     onBusyChange?.(isSending);
   }, [isSending, onBusyChange]);
   const [guidedMethods, setGuidedMethods] = useState<GuidedMethodOption[]>([]);
-  const [guidedMethodDefault, setGuidedMethodDefault] = useState<
-    { skill_id: string; version: string } | null
-  >(null);
+  const [guidedMethodDefault, setGuidedMethodDefault] = useState<{
+    skill_id: string;
+    version: string;
+  } | null>(null);
   const consentToken = sessions.activeSession?.consentToken;
   const consentFlow = sessions.activeSession?.consentFlow;
   const guidedMethodSkillId =
