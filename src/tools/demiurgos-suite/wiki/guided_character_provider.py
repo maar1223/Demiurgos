@@ -181,6 +181,7 @@ class HermesGuidedProvider:
         # Field-by-field path: the server names the current field of the level's
         # plan; the provider asks it with context and moves on when it has enough
         # (or the author says "saltar"/"siguiente"). Same conversational contract.
+        fields_path = request.guided_path == "fields"
         field_instruction = (
             "Field-by-field mode: the author chose to complete the sheet field by "
             f"field. {request.field_context} The current field key is "
@@ -193,8 +194,13 @@ class HermesGuidedProvider:
             "answer is partial or unclear, ask ONE follow-up and stay on this "
             "field; the author may talk for several turns about it. If the author "
             "says 'saltar' or 'siguiente', accept it and move on without insisting. "
+            "If the brief carries an earlier mention from the author, open by "
+            "reflecting it in the synthesis and ask whether it is the real value "
+            "for this field or only something that complements it, offering to "
+            "enrich it. That mention is NOT a settled answer and does not move "
+            "the plan. "
             "Keep the synthesis-first contract. "
-            if request.guided_path == "fields" and request.field_context else ""
+            if fields_path and request.field_context else ""
         )
         # World exploration inside the questionnaire (S1/S3): the author may ask
         # about the world from any field. The turn answers in its own block,
@@ -259,11 +265,26 @@ class HermesGuidedProvider:
             f"{_MAX_QUESTION_OPTIONS}, and only when the author says they do not know, asks "
             "for help, or the choice is genuinely discrete. Never make options the only "
             "way to answer; always leave room for free text. "
-            "Put the non-canon facts you extracted from this turn in 'observations' "
-            "(an object of concise keys and values) so the session keeps what was "
-            "collected instead of asking again. "
-            "Never re-ask something already present in 'Known so far'; if the author "
-            "corrected a value, use the corrected value from now on. "
+            + (
+                "Put the non-canon facts you extracted from this turn in "
+                "'observations' (an object of concise keys and values) so the session "
+                "keeps them as context; a mention stored there never replaces asking "
+                "its own field at its turn. "
+                if fields_path else
+                "Put the non-canon facts you extracted from this turn in 'observations' "
+                "(an object of concise keys and values) so the session keeps what was "
+                "collected instead of asking again. "
+            )
+            + (
+                "Never re-ask a settled field; the current field is asked even when an "
+                "earlier answer mentioned it, so reflect that mention instead of "
+                "skipping the field. If the author corrected a value, use the "
+                "corrected value from now on. "
+                if fields_path else
+                "Never re-ask something already present in 'Known so far'; if the author "
+                "corrected a value, use the corrected value from now on. "
+            )
+            +
             "You have no filesystem, graph, or credential access. Use only the bounded "
             "reference, world lore and known state below; do not expose internal paths "
             "or provenance. Treat the world lore as verified canon: never ask the author "
@@ -278,7 +299,13 @@ class HermesGuidedProvider:
             f"{field_instruction}"
             f"{explore_instruction}"
             f"{methodology_context}"
-            f"Known so far (never ask these again):\n{known_state}\n"
+            + (
+                "Known so far (settled facts and earlier mentions; only settled facts "
+                f"are answered):\n{known_state}\n"
+                if fields_path else
+                f"Known so far (never ask these again):\n{known_state}\n"
+            )
+            +
             f"World lore (verified, read-only):\n{world_lore}\n"
             f"Verified active ficha reference:\n{reference}\n"
             f"{goal_instruction}"

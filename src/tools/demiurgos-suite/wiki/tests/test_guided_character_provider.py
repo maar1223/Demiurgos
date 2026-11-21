@@ -883,3 +883,50 @@ class TestConvergenceSpecimenB4:
             assert len(calls) == 1
 
         asyncio.run(scenario())
+
+
+def test_fields_prompt_reflects_an_earlier_mention_instead_of_skipping_it() -> None:
+    """S2/S3: a mention never settles the field; the brief drives a reflection."""
+
+    async def scenario() -> None:
+        prompts: list[str] = []
+
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return "run-1"
+
+            async def events(self, run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": "¿Ese es su deseo real?",
+                    },
+                }
+
+        provider = HermesGuidedProvider(Runs())
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        base = guided_request().__dict__
+        brief = (
+            "Current field: Deseo (27 of 36).\nWhat it expects: lo que lo mueve.\n"
+            "Earlier mention from the author (NOT settled — reflect it and ask "
+            "whether it is the real value for this field or only something that "
+            "complements it, offering to enrich it): entender a Ganic"
+        )
+        await invoke_bounded(
+            provider.invoke,
+            GuidedRequest(**{
+                **base, "flow_entity_type": "personaje", "guided_path": "fields",
+                "field_context": brief, "field_key": "deseo",
+            }),
+            capabilities,
+        )
+        prompt = prompts[0]
+        assert "Earlier mention from the author (NOT settled" in prompt
+        assert "entender a Ganic" in prompt
+        assert "That mention is NOT a settled answer" in prompt
+        assert "Known so far (settled facts and earlier mentions" in prompt
+        assert "Known so far (never ask these again)" not in prompt
+
+    asyncio.run(scenario())

@@ -288,3 +288,48 @@ def test_public_state_has_no_target_preview_while_the_candidate_is_incomplete() 
     )
     assert "target_preview" not in api_server._guided_public_state(state)
     assert "target_level" not in api_server._guided_public_state(state)
+
+
+def test_field_brief_reflects_an_earlier_mention_without_settling_it() -> None:
+    """S2: a partial idea from an earlier answer is carried into the brief."""
+    progress = {
+        "nivel": "1º", "index": 27, "total": 36, "key": "deseo", "label": "Deseo",
+        "hint": "Lo que lo mueve.", "examples": [], "optional": False,
+        "covered": [], "skipped": [], "complete": False,
+    }
+    brief = api_server._field_brief(progress, prior="entender a Ganic")
+    assert "Deseo" in brief
+    assert "Earlier mention from the author (NOT settled" in brief
+    assert "entender a Ganic" in brief
+    assert "enrich" in brief
+
+
+def test_guided_field_brief_reads_the_incidental_mention() -> None:
+    """S2/S3: the mention comes from the candidate; settlement is not assumed."""
+    from guided_character_body import current_field
+
+    state = SessionState("s-mention", "Vibrantes", "conversation", 2, "author")
+    state.path = "fields"
+    state.candidate = CandidateState(
+        observations={"nombre": "Hesia", "apodo": "Dos Llaves"},
+    )
+    state.settled_fields = ["nombre"]
+    _field, progress = current_field(
+        state.candidate, state.skipped_fields, state.settled_fields,
+    )
+    assert progress["key"] == "apodo"
+
+    brief = api_server._guided_field_brief(state, progress)
+    assert "Apodo" in brief
+    assert "Dos Llaves" in brief
+    assert "Earlier mention from the author (NOT settled" in brief
+
+
+def test_guided_field_brief_has_no_prior_block_without_a_mention() -> None:
+    from guided_character_body import current_field
+
+    state = SessionState("s-clean", "Vibrantes", "conversation", 1, "author")
+    state.path = "fields"
+    _field, progress = current_field(state.candidate, (), ())
+    brief = api_server._guided_field_brief(state, progress)
+    assert "Earlier mention" not in brief

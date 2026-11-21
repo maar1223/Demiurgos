@@ -3820,7 +3820,7 @@ def _first_author_input(state: SessionState) -> str:
     return "Empecemos"
 
 
-def _field_brief(progress: dict) -> str:
+def _field_brief(progress: dict, prior: str = "") -> str:
     """The bounded server-owned brief for the current questionnaire field."""
     if progress.get("complete"):
         return (
@@ -3836,7 +3836,31 @@ def _field_brief(progress: dict) -> str:
     examples = progress.get("examples") or []
     if examples:
         lines.append("Examples: " + " | ".join(examples))
+    if prior:
+        lines.append(
+            "Earlier mention from the author (NOT settled — reflect it and ask "
+            "whether it is the real value for this field or only something that "
+            f"complements it, offering to enrich it): {prior}"
+        )
     return "\n".join(lines)
+
+
+def _guided_field_brief(state: SessionState, progress: dict) -> str:
+    """The field brief plus the earlier mention, if the author left one.
+
+    A value already stored for the current field is only a mention: every asked
+    field is asked at its own turn (Owner decision 2026-11-21), so the brief
+    carries the fragment for the assistant to reflect instead of skipping it.
+    """
+    prior = ""
+    key = str(progress.get("key") or "")
+    if key:
+        from guided_character_body import field_for, incidental_field_value
+
+        spec = field_for(str(progress.get("nivel") or "1º"), key)
+        if spec is not None:
+            prior = incidental_field_value(state.candidate, spec)[:400].strip()
+    return _field_brief(progress, prior=prior)
 
 
 async def _guided_continue(
@@ -4017,7 +4041,7 @@ async def _guided_continue(
                 if skipped is not None:
                     state = skipped
         _, progress = current_field(state.candidate, state.skipped_fields, state.settled_fields)
-        field_context = _field_brief(progress)
+        field_context = _guided_field_brief(state, progress)
         # S2/S4: the directive this turn records and asks the provider to serve.
         field_key = str(progress.get("key") or "")
         field_progress = progress

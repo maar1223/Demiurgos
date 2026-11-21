@@ -23,7 +23,7 @@ Runners: `./.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `
 
 ## Tasks
 
-- [ ] T1 Cursor + `settled_fields` state + store migration/backfill + settlement on commit (S3, S4, S6, S7). Route: inline. Tests: body cursor, session settle/advance, store migration/legacy.
+- [x] T1 Cursor + `settled_fields` state + store migration/backfill + settlement on commit (S3, S4, S6, S7). Route: inline. Commit `3c19eb2`. Tests: body cursor (mention never advances, settlement does, completion, legacy backfill), session settle/advance and no-early-proposal, store migration/backfill + restart. Evidence: `-k guided` 447 passed.
 - [ ] T2 Prior-mention brief + provider prompt + served turn decision (S2, S4, S5). Route: inline. Tests: brief, prompt, served progress, no early proposal, completion proposal.
 - [ ] T3 Docs §10.9 + full backend/frontend verification (S8). Route: inline + independent verifier (Risk item 1).
 
