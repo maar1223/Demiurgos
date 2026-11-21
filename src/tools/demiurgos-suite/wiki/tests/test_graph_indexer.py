@@ -551,6 +551,40 @@ class TestEntityEnvelope(unittest.TestCase):
             self.assertEqual(hits[0].shape, "sistema")
             self.assertIsNotNone(hits[0].canon_state)
 
+    def test_punctuated_question_still_finds_the_entity(self) -> None:
+        """Punctuation must never become part of a query token.
+
+        "¿Quién es Ganic?" used to tokenize as "ganic?", which matched neither
+        the name prefix nor the corpus, so the ficha was not retrieved at all
+        and a sibling whose name starts with "Es" won the prefix bonus.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "personajes/Ganic.md",
+                "---\ntype: personaje\ntitle: Ganic\nstatus: proposed\n---\n"
+                "# Ganic\n\nGanic llego de fuera.\n",
+            )
+            self._write(
+                mundo_dir, "lore/Estados.md",
+                "---\ntype: concepto\ntitle: Estados y niveles\n---\n# Estados\n",
+            )
+            # Filler so the BM25 idf of "ganic" is positive: with two documents
+            # rank_bm25 yields idf 0 and the prefix bonus alone decides.
+            for name in ("Alfa", "Beta", "Gamma", "Delta"):
+                self._write(
+                    mundo_dir, f"lore/{name}.md",
+                    f"---\ntype: concepto\ntitle: {name}\n---\n# {name}\n",
+                )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+
+            hits = index.search("\u00bfQui\u00e9n es Ganic?")
+
+            paths = [hit.path for hit in hits]
+            self.assertIn("personajes/Ganic.md", paths)
+            self.assertEqual(hits[0].path, "personajes/Ganic.md")
+
 
 if __name__ == "__main__":
     unittest.main()

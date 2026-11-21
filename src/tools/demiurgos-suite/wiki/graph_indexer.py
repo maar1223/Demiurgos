@@ -36,6 +36,21 @@ from .okf_contract import (
 )
 from .okf_contract import validate as okf_validate
 
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _tokenize(text: str) -> list[str]:
+    """Lowercase word tokens with punctuation removed.
+
+    Natural-language queries arrive with punctuation ("¿Quién es Ganic?").
+    Splitting on whitespace alone turns the last word into ``ganic?``, which
+    then matches neither the name prefix nor the BM25 corpus, so a perfect
+    entity name silently stops retrieving anything. Query and corpus both go
+    through this function so their vocabularies stay comparable.
+    """
+    return _TOKEN_RE.findall(text.lower())
+
+
 # ---------------------------------------------------------------------------
 # Constants (mirror migrate_okf.py exclusions)
 # ---------------------------------------------------------------------------
@@ -671,7 +686,7 @@ class EntityGraphIndex:
         Task 2.9.
         """
         filters = filters or {}
-        tokens = query.lower().split()
+        tokens = _tokenize(query)
         has_tokens = bool(tokens)
 
         # Empty query with no filters â†’ fast return
@@ -693,7 +708,7 @@ class EntityGraphIndex:
                     f"{ent['title']} {ent['description']} "
                     + " ".join(tags_str)
                 )
-                corpus.append(doc.lower().split())
+                corpus.append(_tokenize(doc))
                 entity_paths.append(ent["path"])
 
             # Build BM25 index (only if we have search tokens)
