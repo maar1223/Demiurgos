@@ -16,8 +16,9 @@
 #   - The venv is created per version with the pinned uv and the hash-locked
 #     requirements (the uv cache makes repeats fast). Nothing is shared, so a
 #     version dir stays self-contained and rollback keeps working.
-#   - Previous versions are never deleted. The launcher's bounded rollback can
-#     always fall back to them.
+#   - The launcher's rollback target is always kept: `current` (never pruned)
+#     plus the newest other local build. Older local builds are pruned (default
+#     2; `--keep` overrides). Channel versions are never touched here.
 #
 # Usage: scripts/install-local.sh [--build|--no-build] [--no-restart]
 #                                [--dry-run] [--version LABEL] [--keep N]

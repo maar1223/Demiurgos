@@ -1799,6 +1799,143 @@ class TestObsoleteVersionPruning:
         assert current.is_dir()
         assert previous.is_dir()
 
+    @staticmethod
+    def _launcher_previous(install: Path, tmp_path: Path) -> str:
+        text = (_REPO_ROOT / "scripts" / "start-demiurgos.sh").read_text(
+            encoding="utf-8"
+        )
+        start = text.index("find_previous_version() {")
+        func = text[start : text.index("\n}\n", start) + 3]
+        script = tmp_path / "find_previous_version.sh"
+        script.write_text(func, encoding="utf-8")
+        result = subprocess.run(
+            ["bash", "-c", 'set -u; . "$0"; find_previous_version', str(script)],
+            env={
+                **os.environ,
+                "INSTALL_ROOT": str(install),
+                "APP_ROOT": str(install / "current"),
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    def _prune_settled(self, env: dict, install: Path) -> set[str]:
+        run_env = {k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"}
+        run_env["DEMIURGOS_PRUNE_ONLY"] = "1"
+        result = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return {path.name for path in (install / "app").iterdir()}
+
+    def test_previous_is_exactly_the_launchers_rollback_target(
+        self, tmp_path: Path
+    ):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        self._make_version(app, "0.13.0", bootable=True, mtime=4000)
+        self._make_version(app, "0.12.1", bootable=True, mtime=3000)
+        self._make_version(app, "0.12.5", bootable=True, mtime=3500)
+        self._make_version(app, "0.11.0", bootable=True, mtime=2000)
+        (install / "current").symlink_to("app/0.13.0")
+
+        assert self._prune_settled(env, install) == {
+            "0.13.0",
+            self._launcher_previous(install, tmp_path),
+        }
+
+    def test_equal_mtime_tie_matches_the_launcher(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        self._make_version(app, "0.13.0", bootable=True, mtime=4000)
+        self._make_version(app, "0.11.0", bootable=True, mtime=3000)
+        self._make_version(app, "0.12.1", bootable=True, mtime=3000)
+        (install / "current").symlink_to("app/0.13.0")
+
+        assert self._prune_settled(env, install) == {
+            "0.13.0",
+            self._launcher_previous(install, tmp_path),
+        }
+
+    def test_version_shape_boundaries_and_local_builds(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        self._make_version(app, "0.13.0", bootable=True, mtime=9000)
+        self._make_version(app, "0.12.1", bootable=True, mtime=8000)
+        for name, mtime in (
+            ("0.12.1+local.20260101.120000.abcdef1", 7000),
+            ("0.12.1-rc.1", 6000),
+            ("1.2.3.4", 5000),
+            ("0.12", 5000),
+            ("releases", 5000),
+        ):
+            self._make_version(app, name, bootable=False, mtime=mtime)
+        (install / "current").symlink_to("app/0.13.0")
+
+        assert self._prune_settled(env, install) == {
+            "0.13.0",
+            "0.12.1",
+            "1.2.3.4",
+            "0.12",
+            "releases",
+        }
+
+    @pytest.mark.skipif(
+        os.name == "nt" or os.geteuid() == 0,
+        reason="root ignores permission bits; POSIX only",
+    )
+    def test_a_failed_delete_warns_but_exits_zero(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        versions = (
+            ("0.13.0", 5000),
+            ("0.12.1", 4000),
+            ("0.11.0", 3000),
+            ("0.10.0", 2000),
+        )
+        for name, mtime in versions:
+            self._make_version(app, name, bootable=True, mtime=mtime)
+        (install / "current").symlink_to("app/0.13.0")
+        locked = app / "0.10.0" / "locked"
+        locked.mkdir()
+        (locked / "file").write_text("x", encoding="utf-8")
+        # Creating the locked subtree changed 0.10.0's mtime; pin every order.
+        for name, mtime in versions:
+            os.utime(app / name, (mtime, mtime))
+        os.chmod(locked, 0o555)
+        try:
+            run_env = {
+                k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"
+            }
+            run_env["DEMIURGOS_PRUNE_ONLY"] = "1"
+            result = subprocess.run(
+                ["bash", str(INSTALLER)],
+                env=run_env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        finally:
+            os.chmod(locked, 0o755)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "could not remove obsolete version" in result.stderr
+        assert not (app / "0.11.0").exists()
+        assert (app / "0.10.0").is_dir()  # partial delete, warned
+        assert (app / "0.12.1").is_dir()
+        assert (app / "0.13.0").is_dir()
+
     def test_prune_runs_on_fresh_install_and_same_version_repair(self):
         text = _text(INSTALLER)
         main = text[text.index("# --- main") :]
@@ -1807,6 +1944,9 @@ class TestObsoleteVersionPruning:
             "prune_old_versions"
         )
         assert main.index("commit_staging") < main.rindex("prune_old_versions")
+        assert main.rindex("prune_old_versions") < main.rindex(
+            "restart_after_install"
+        )
 
     def test_a_missing_current_symlink_never_prunes(self, tmp_path: Path):
         env = _seed_env(tmp_path)

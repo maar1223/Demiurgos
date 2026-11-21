@@ -129,3 +129,26 @@ def test_default_local_build_retention_keeps_two() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     assert "KEEP=2" in text
     assert "default 2" in text
+
+
+def test_default_local_build_retention_prunes_to_two(tmp_path: Path) -> None:
+    """Without --keep, the vehicle keeps current + previous (default 2)."""
+    install_root = _fake_install_root(tmp_path)
+    app = install_root / "app"
+    names = [
+        "0.9.0+local.20260101.010101.aaaaaaa",
+        "0.9.0+local.20260102.010101.bbbbbbb",
+        "0.9.0+local.20260103.010101.ccccccc",
+        "0.9.0+local.20260104.010101.ddddddd",
+    ]
+    for index, name in enumerate(names):
+        directory = app / name
+        directory.mkdir()
+        os.utime(directory, (1000 + index, 1000 + index))
+
+    result = _run(install_root, tmp_path, "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("would remove") == 2
+    assert names[0] in result.stdout
+    assert names[1] in result.stdout

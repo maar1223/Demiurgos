@@ -152,3 +152,18 @@ def test_job_never_publishes():
         for action in uses
         if "release" in action.lower() or "publish" in action.lower()
     ], uses
+
+
+def test_job_makes_fake_versions_bootable_and_prunes_after_commit():
+    run = _runs(_job())
+    block = run[run.index("# Prove the cleanup:") :]
+    assert "scripts\\start-demiurgos.ps1" in block and ".venv" in block
+    installer = (REPO_ROOT / "scripts" / "install-demiurgos.ps1").read_text(
+        encoding="utf-8"
+    )
+    main = installer[installer.index("# --- main") :]
+    assert main.index("Invoke-DataRootRepair") < main.index("Remove-OldVersions")
+    assert main.index("Invoke-CommitStaging") < main.rindex("Remove-OldVersions")
+    assert main.rindex("Remove-OldVersions") < main.rindex(
+        "Restart-StackAfterInstall"
+    )
