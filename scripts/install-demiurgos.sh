@@ -36,7 +36,10 @@
 #                            pointer but always seeds .env (S0-A, step 4).
 #                            The payload's foundational methodology seeds are
 #                            copied once into the data root (the app reads
-#                            them there, never from the code tree).
+#                            them there, never from the code tree). After a
+#                            successful install the obsolete app trees are
+#                            pruned: current + the newest bootable other (the
+#                            launcher's rollback target).
 #
 # The core NEVER runs a package manager other than the verified uv, NEVER
 # executes files from the payload (only the launcher the user starts runs),
@@ -72,6 +75,8 @@
 #                        gated-write regression harness
 #                        (test_install_auth_gated_write.py) invokes this mode
 #                        to exercise the REAL shipping seed path.
+#   DEMIURGOS_PRUNE_ONLY "1" -> test/ops seam: run ONLY the obsolete app-version
+#                        cleanup and exit 0 (no download, no uv, no staging).
 #   DEMIURGOS_FAKE_OS / DEMIURGOS_FAKE_ARCH / DEMIURGOS_FAKE_LIBC /
 #   DEMIURGOS_FAKE_MACOS_VERSION / DEMIURGOS_FAKE_GLIBC_VERSION
 #                        detection TEST SEAMS (same pattern as
@@ -817,6 +822,74 @@ repair_data_root_best_effort() {
     seed_methodology_payload
 }
 
+# Keep the running version and the exact version the launcher would roll back
+# to (`find_previous_version`: newest OTHER app/<version> with the launcher and
+# the layout venv). Every version tree carries its own ~323 MB venv, so a
+# channel that never prunes grows without bound. Best-effort: cleanup must
+# never fail an otherwise valid install, and an unknown `current` prunes
+# nothing.
+prune_old_versions() {
+    local app="$INSTALL_ROOT/app" current name dir mtime
+    local previous="" previous_mtime="" removed=0
+
+    [ -d "$app" ] || return 0
+    if [ ! -L "$INSTALL_ROOT/current" ]; then
+        warn "cannot determine the current version; skipping old-version cleanup"
+        return 0
+    fi
+    current="$(readlink "$INSTALL_ROOT/current")"
+    case "$current" in
+        app/*) current="${current#app/}" ;;
+        *)
+            warn "current does not point into app/ ($current); skipping old-version cleanup"
+            return 0
+            ;;
+    esac
+    case "$current" in
+        */*|"")
+            warn "current points outside app/ ($current); skipping old-version cleanup"
+            return 0
+            ;;
+    esac
+    if [ ! -d "$app/$current" ]; then
+        warn "current points to a missing app tree ($current); skipping old-version cleanup"
+        return 0
+    fi
+
+    # The rollback target, chosen exactly like the launcher.
+    for dir in "$app"/*/; do
+        [ -d "$dir" ] || continue
+        name="$(basename "$dir")"
+        [ "$name" = "$current" ] && continue
+        [ -f "$dir/scripts/start-demiurgos.sh" ] || continue
+        [ -d "$dir/.venv" ] || continue
+        mtime="$(stat -c %Y "$dir" 2>/dev/null || stat -f %m "$dir" 2>/dev/null || true)"
+        [ -n "$mtime" ] || continue
+        if [ -z "$previous_mtime" ] || [ "$mtime" -gt "$previous_mtime" ]; then
+            previous="$name"
+            previous_mtime="$mtime"
+        fi
+    done
+
+    for dir in "$app"/*/; do
+        [ -d "$dir" ] || continue
+        name="$(basename "$dir")"
+        [ "$name" = "$current" ] && continue
+        [ -n "$previous" ] && [ "$name" = "$previous" ] && continue
+        # Only version-shaped dirs: never remove an unrelated tree.
+        printf '%s\n' "$name" \
+            | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$' || continue
+        if rm -rf "$dir" 2>/dev/null; then
+            printf 'install-demiurgos: removed obsolete version %s\n' "$name" >&2
+            removed=$((removed + 1))
+        else
+            warn "could not remove obsolete version $dir"
+        fi
+    done
+    [ "$removed" -eq 0 ] || printf 'install-demiurgos: removed %s obsolete version(s)\n' "$removed" >&2
+    return 0
+}
+
 # --- seed-only entry point (S0-A; test/ops seam) -----------------------------
 # DEMIURGOS_SEED_ONLY=1 performs ONLY the data-root bootstrap-once + .env seed
 # (design S3-7) and exits 0 — the exact code path the full install runs at the
@@ -828,6 +901,14 @@ repair_data_root_best_effort() {
 if [ "${DEMIURGOS_SEED_ONLY:-0}" = "1" ]; then
     bootstrap_data_root
     printf 'install-demiurgos: seed-only done; data root is %s\n' "$DATA_ROOT" >&2
+    exit 0
+fi
+
+# Test/ops seam: prune old app versions only, with no download, uv or staging.
+# Exercises the real cleanup against a tmp install root.
+if [ "${DEMIURGOS_PRUNE_ONLY:-0}" = "1" ]; then
+    prune_old_versions
+    printf 'install-demiurgos: prune-only done\n' >&2
     exit 0
 fi
 
@@ -916,6 +997,7 @@ if [ -L "$INSTALL_ROOT/current" ] && [ "$(readlink "$INSTALL_ROOT/current")" = "
     # back. Best-effort: the re-run's documented contract stays "nothing to
     # do" / exit 0, even with a corrupt pointer or an unwritable home.
     repair_data_root_best_effort
+    prune_old_versions
     if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
         restart_after_install
     fi
@@ -930,10 +1012,11 @@ commit_staging
 write_channel_config
 provision_hermes_runtime
 provision_graph_mcp
-bootstrap_data_root
-install_desktop_entry
+    bootstrap_data_root
+    install_desktop_entry
+    prune_old_versions
 
-if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
+    if [ "${DEMIURGOS_RESTART_AFTER_INSTALL:-0}" = "1" ]; then
     restart_after_install
     exit 0
 fi

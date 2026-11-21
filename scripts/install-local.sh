@@ -41,7 +41,7 @@ Options:
   --no-restart   install and flip `current` without restarting the app
   --dry-run      print the plan and exit without writing anything
   --version V    override the local version label
-  --keep N       keep the newest N local builds (default 5); older ones are
+  --keep N       keep the newest N local builds (default 2); older ones are
                  pruned after a successful install, never the running one
   -h, --help     show this help
 
@@ -55,7 +55,7 @@ BUILD_MODE=auto
 RESTART=1
 DRY_RUN=0
 VERSION_OVERRIDE=""
-KEEP=5
+KEEP=2
 
 while [ "$#" -gt 0 ]; do
     case "$1" in

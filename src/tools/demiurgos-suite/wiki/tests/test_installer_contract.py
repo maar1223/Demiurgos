@@ -1730,6 +1730,144 @@ class TestMethodologySeedBootstrap:
         ).exists()
 
 
+@POSIX_RUNNER
+class TestObsoleteVersionPruning:
+    """Keep the running version plus the launcher's rollback target; delete older.
+
+    Every app/<version> tree carries its own ~323 MB venv, so a channel that
+    never prunes grows without bound. The safe policy is the launcher's own:
+    keep ``current`` and the newest OTHER bootable version (the exact one
+    ``find_previous_version`` would roll back to), and remove the rest.
+    """
+
+    @staticmethod
+    def _make_version(
+        app: Path, name: str, *, bootable: bool, mtime: int
+    ) -> Path:
+        version = app / name
+        (version / "scripts").mkdir(parents=True)
+        (version / "scripts" / "start-demiurgos.sh").write_text(
+            "#!/bin/sh\n", encoding="utf-8"
+        )
+        if bootable:
+            (version / ".venv").mkdir()
+        os.utime(version, (mtime, mtime))
+        return version
+
+    def test_prune_keeps_current_and_previous_and_removes_older(
+        self, tmp_path: Path
+    ):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        current = self._make_version(app, "0.13.0", bootable=True, mtime=4000)
+        previous = self._make_version(app, "0.12.1", bootable=True, mtime=3000)
+        older = self._make_version(app, "0.11.0", bootable=True, mtime=2000)
+        not_bootable = self._make_version(app, "0.10.0", bootable=False, mtime=1000)
+        unrelated = app / "keepme"
+        unrelated.mkdir()
+        (unrelated / "sentinel").write_text("keep", encoding="utf-8")
+        (install / "current").symlink_to("app/0.13.0")
+
+        run_env = {k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"}
+        run_env["DEMIURGOS_PRUNE_ONLY"] = "1"
+        result = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert current.is_dir()
+        assert previous.is_dir()
+        assert not older.exists()
+        assert not not_bootable.exists()
+        assert unrelated.is_dir()
+        assert "removed obsolete version 0.11.0" in result.stderr
+        assert "removed obsolete version 0.10.0" in result.stderr
+
+        again = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert again.returncode == 0, again.stdout + again.stderr
+        assert current.is_dir()
+        assert previous.is_dir()
+
+    def test_prune_runs_on_fresh_install_and_same_version_repair(self):
+        text = _text(INSTALLER)
+        main = text[text.index("# --- main") :]
+        assert main.count("prune_old_versions") >= 2
+        assert main.index("repair_data_root_best_effort") < main.index(
+            "prune_old_versions"
+        )
+        assert main.index("commit_staging") < main.rindex("prune_old_versions")
+
+    def test_a_missing_current_symlink_never_prunes(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        version = self._make_version(app, "0.13.0", bootable=True, mtime=1000)
+        run_env = {k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"}
+        run_env["DEMIURGOS_PRUNE_ONLY"] = "1"
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert version.is_dir()
+        assert "cannot determine" in (result.stdout + result.stderr).lower()
+
+    def test_a_broken_current_target_keeps_every_fallback(self, tmp_path: Path):
+        """A current symlink to a missing tree must not trigger any deletion."""
+        env = _seed_env(tmp_path)
+        install = Path(env["DEMIURGOS_HOME"])
+        app = install / "app"
+        fallback = self._make_version(app, "0.12.1", bootable=True, mtime=2000)
+        older = self._make_version(app, "0.11.0", bootable=True, mtime=1000)
+        (install / "current").symlink_to("app/0.99.0")
+        run_env = {k: v for k, v in env.items() if k != "DEMIURGOS_SEED_ONLY"}
+        run_env["DEMIURGOS_PRUNE_ONLY"] = "1"
+
+        result = subprocess.run(
+            ["bash", str(INSTALLER)],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert fallback.is_dir()
+        assert older.is_dir()
+        assert "missing app tree" in (result.stdout + result.stderr).lower()
+
+
+class TestWindowsObsoleteVersionPruning:
+    """Windows parity: the .ps1 keeps current + previous bootable and prunes."""
+
+    def test_ps1_prunes_obsolete_versions_and_keeps_the_rollback_target(self):
+        text = _text(PS_INSTALLER)
+        assert "function Remove-OldVersions" in text
+        assert "scripts\\start-demiurgos.ps1" in text
+        assert ".venv" in text
+        assert "removed obsolete version" in text
+        assert "missing app tree" in text
+        # Fresh install and same-version repair both prune.
+        main = text[text.index("# --- main") :]
+        assert main.count("Remove-OldVersions") >= 2
+
+
 class TestWindowsMethodologySeedBootstrap:
     """Windows parity: the data-root bootstrap copies the shipped seeds once."""
 

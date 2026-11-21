@@ -33,7 +33,10 @@
 #                            pointer but always seeds .env (S0-A, step 4).
 #                            The payload's foundational methodology seeds are
 #                            copied once into the data root (the app reads
-#                            them there, never from the code tree).
+#                            them there, never from the code tree). After a
+#                            successful install the obsolete app trees are
+#                            pruned: current + the newest bootable other (the
+#                            launcher's rollback target).
 #
 # The core NEVER runs a package manager other than the verified uv, NEVER
 # executes files from the payload (only the launcher the user starts runs),
@@ -793,6 +796,46 @@ function Invoke-DataRootRepair {
     Invoke-SeedMethodologyPayload
 }
 
+function Remove-OldVersions {
+    # Keep the running version and the exact version the launcher would roll
+    # back to (newest OTHER app\<version> with the launcher and the layout venv);
+    # remove the rest. Every version tree carries its own ~323 MB venv, so a
+    # channel that never prunes grows without bound. Best-effort: cleanup must
+    # never fail an otherwise valid install, and an unknown `current` prunes
+    # nothing.
+    $appDir = Join-Path $installRoot "app"
+    if (-not (Test-Path -LiteralPath $appDir -PathType Container)) { return }
+    $currentItem = Get-Item -LiteralPath (Join-Path $installRoot "current") -Force -ErrorAction SilentlyContinue
+    if (-not $currentItem -or -not $currentItem.LinkType -or -not $currentItem.Target) {
+        Warn "cannot determine the current version; skipping old-version cleanup"
+        return
+    }
+    $currentName = [string](Split-Path -Leaf $currentItem.Target)
+    if (-not $currentName -or
+        -not (Test-Path -LiteralPath (Join-Path $appDir $currentName) -PathType Container)) {
+        Warn "current points to a missing app tree ($currentName); skipping old-version cleanup"
+        return
+    }
+    $candidates = @(Get-ChildItem -LiteralPath $appDir -Directory -ErrorAction SilentlyContinue)
+    $previous = $candidates | Where-Object {
+        $_.Name -ne $currentName -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName "scripts\start-demiurgos.ps1") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName ".venv") -PathType Container)
+    } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+    foreach ($dir in $candidates) {
+        if ($dir.Name -eq $currentName) { continue }
+        if ($previous -and $dir.FullName -eq $previous.FullName) { continue }
+        if ($dir.Name -notmatch '^\d+\.\d+\.\d+([-+].*)?$') { continue }
+        try {
+            Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction Stop
+            Write-Host "install-demiurgos: removed obsolete version $($dir.Name)"
+        } catch {
+            Warn "could not remove obsolete version $($dir.FullName): $($_.Exception.Message)"
+        }
+    }
+}
+
 # --- Windows Start Menu entry ----------------------------------------------
 # Parity with the Linux applications-menu entry: written by the installer and
 # never fatal. The visible Desktop icon stays opt-in
@@ -891,6 +934,7 @@ try {
         # install that predates the seed bootstrap) gets it back. Best-effort:
         # the re-run's documented contract stays "nothing to do" / exit 0.
         Invoke-DataRootRepair
+        Remove-OldVersions
         if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
             Restart-StackAfterInstall
         }
@@ -907,6 +951,7 @@ try {
     Invoke-GraphMcpProvision
     Invoke-DataRootBootstrap
     Install-StartMenuShortcut
+    Remove-OldVersions
 
     if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
         Restart-StackAfterInstall

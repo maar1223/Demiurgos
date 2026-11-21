@@ -404,8 +404,9 @@ jobs:
     # AUD-17: run the REAL Windows installer core against a hermetic file://
     # channel built from the packaged payload. Proves a fresh install leaves the
     # foundational methodology seeds in the data root and wires demiurgos-graph
-    # into the assistant profile, and that a same-version re-run repairs a
-    # deleted seed tree. Runs on master dry runs and tags; it never publishes.
+    # into the assistant profile, that a same-version re-run repairs a deleted
+    # seed tree, and that obsolete app versions are pruned (current + previous
+    # bootable kept). Runs on master dry runs and tags; it never publishes.
     name: Windows installer (seeds + graph)
     needs: package
     runs-on: windows-latest
@@ -552,6 +553,27 @@ jobs:
           $restored = (Get-ChildItem -LiteralPath $seeds -Recurse -File).Count
           if ($restored -ne 19) { throw "expected 19 restored seed files, found $restored" }
           Write-Host 'OK: fresh install seeds + Windows graph wiring, and same-version repair'
+
+          # Prove the cleanup: current + the newest bootable other survive;
+          # older version-shaped trees are removed.
+          $appRoot = Join-Path $install 'app'
+          foreach ($old in @('0.0.1', '0.0.2')) {
+            $d = Join-Path $appRoot $old
+            New-Item -ItemType Directory -Force -Path (Join-Path $d 'scripts'), (Join-Path $d '.venv') | Out-Null
+            Copy-Item (Join-Path $install 'current\scripts\start-demiurgos.ps1') (Join-Path $d 'scripts\start-demiurgos.ps1')
+          }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+          if ($LASTEXITCODE -ne 0) { throw "obsolete-version prune failed (exit $LASTEXITCODE)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $appRoot $version) -PathType Container)) {
+            throw 'current version was pruned'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $appRoot '0.0.2') -PathType Container)) {
+            throw 'previous version was pruned'
+          }
+          if (Test-Path -LiteralPath (Join-Path $appRoot '0.0.1') -PathType Container) {
+            throw 'obsolete version was not pruned'
+          }
+          Write-Host 'OK: obsolete versions pruned; current + previous kept'
 
   publish:
     name: Publish to the public channel

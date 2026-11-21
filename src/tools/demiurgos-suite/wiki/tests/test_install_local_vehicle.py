@@ -122,3 +122,10 @@ def test_dry_run_reports_the_prune_plan_and_removes_nothing(tmp_path: Path) -> N
     # A dry run removes nothing.
     for name in names:
         assert (app / name).is_dir()
+
+
+def test_default_local_build_retention_keeps_two() -> None:
+    """The local vehicle follows the installer's current + previous policy."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "KEEP=2" in text
+    assert "default 2" in text

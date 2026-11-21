@@ -77,6 +77,12 @@ default above; `<version>` is the installed `DEMIURGOS_VERSION` (e.g. `0.9.0`);
    reconciles an existing copy forward, so a missing tree would leave every
    guided flow without its method. A same-version re-run repairs a deleted tree
    best-effort and keeps the documented "nothing to do" / exit 0 contract.
+8. **Obsolete app versions are pruned after a successful install.** The
+   installer keeps `current` and the newest OTHER bootable `app/<version>` —
+   the exact target the launcher's bounded rollback would use — and removes
+   older version-shaped trees. Each version carries its own venv (~323 MB), so
+   retention is what keeps the install root bounded. Cleanup is best-effort and
+   never fails the install; an unknown `current` prunes nothing.
 
 ## 3. Data-root pointer
 

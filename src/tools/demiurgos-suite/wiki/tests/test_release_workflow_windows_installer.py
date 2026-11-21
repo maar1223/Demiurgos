@@ -8,7 +8,9 @@ Windows installer core (``scripts/install-demiurgos.ps1``) against a hermetic
 - a fresh install copies the foundational methodology seeds into the data root;
 - the assistant profile gets the corrected ``demiurgos-graph`` entry and loses
   the legacy ``engram`` server;
-- a same-version re-run restores a deleted seed tree.
+- a same-version re-run restores a deleted seed tree;
+- obsolete app versions are pruned, keeping ``current`` and the previous
+  bootable version.
 
 These are text/YAML scans of a CODE artifact of the checkout: no network, no
 GitHub, no Actions runtime. The real end-to-end proof is the job itself on a
@@ -96,8 +98,9 @@ def test_minisign_binary_is_the_x86_64_build():
 
 def test_job_runs_the_real_installer_and_validates_seeds_and_graph():
     text = _runs(_job())
-    # The real installer core runs twice: fresh install + same-version repair.
-    assert text.count("-File $installer") == 2
+    # The real installer core runs three times: fresh install, same-version
+    # repair, and the obsolete-version prune proof.
+    assert text.count("-File $installer") == 3
     assert "DEMIURGOS_HERMES_SKIP" in text
     assert "data\\methodology\\seeds" in text
     assert "expected 19 seed files" in text
@@ -126,6 +129,14 @@ def test_payload_manifest_ships_exactly_the_19_seed_files():
         if path.startswith("data/methodology/seeds/")
     ]
     assert len(seeds) == 19, len(seeds)
+
+
+def test_job_proves_obsolete_version_pruning():
+    text = _runs(_job())
+    assert "0.0.1" in text and "0.0.2" in text
+    assert "obsolete version was not pruned" in text
+    assert "previous version was pruned" in text
+    assert "current version was pruned" in text
 
 
 def test_job_never_publishes():
