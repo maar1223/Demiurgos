@@ -709,6 +709,9 @@ class TestTurnDirective:
         state = SessionState(
             "legacy", "Vibrantes", "conversation", 4, "auth",
             candidate=candidate, path="fields", pending_question="¿Apodo?",
+            # S6: the store backfills settlement for a pre-change row, so the
+            # derived cursor matches the question that was already served.
+            settled_fields=["nombre"],
             methodology_snapshot=self._snapshot(),
         )
         payload = api_server._guided_public_state(state)

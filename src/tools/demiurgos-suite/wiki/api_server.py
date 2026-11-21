@@ -3524,7 +3524,7 @@ def _guided_public_state(state: SessionState) -> dict:
             else:
                 # Legacy row written before the record existed (M7).
                 from guided_character_body import current_field
-                _, field_progress = current_field(state.candidate, state.skipped_fields)
+                _, field_progress = current_field(state.candidate, state.skipped_fields, state.settled_fields)
                 payload["field_progress"] = field_progress
     if progress is not None:
         payload["detail_progress"] = progress
@@ -4011,12 +4011,12 @@ async def _guided_continue(
         # A "saltar"/"siguiente" turn records the skip and lets the provider ask
         # the next field in the same turn instead of insisting on this one.
         if _is_field_skip_input(author_input):
-            current, _ = current_field(state.candidate, state.skipped_fields)
+            current, _ = current_field(state.candidate, state.skipped_fields, state.settled_fields)
             if current is not None:
                 skipped = _GUIDED_SESSIONS.skip_field(session_id, principal.id, current.key)
                 if skipped is not None:
                     state = skipped
-        _, progress = current_field(state.candidate, state.skipped_fields)
+        _, progress = current_field(state.candidate, state.skipped_fields, state.settled_fields)
         field_context = _field_brief(progress)
         # S2/S4: the directive this turn records and asks the provider to serve.
         field_key = str(progress.get("key") or "")

@@ -274,12 +274,18 @@ def questionnaire_fields(nivel: str) -> tuple[Field, ...]:
 
 def current_field(
     candidate: Any, skipped: tuple[str, ...] | list[str] = (),
+    settled: tuple[str, ...] | list[str] = (),
 ) -> tuple[Field | None, dict[str, Any]]:
-    """Resolve the questionnaire cursor: the first asked field neither covered nor skipped.
+    """Resolve the questionnaire cursor: the first asked field neither settled nor skipped.
 
     Returns ``(field, progress)``. ``progress`` is the public shape used by the
     API/UI: 1-based questionnaire position, total asked fields, the current
-    field brief, and whether every asked field was visited (covered or skipped).
+    field brief, and whether every asked field was visited (settled or skipped).
+
+    Only an explicit settlement counts (the author answered the field at its own
+    turn, or skipped it). A value already present in the candidate is a mention,
+    not an answer: every asked field is still asked at its turn (Owner decision
+    2026-11-21), and the mention is reflected in the field brief instead.
     """
     # Imported lazily: same cycle-avoidance as the renderer.
     from guided_character_domain import _candidate_known_fields, resolve_candidate_nivel
@@ -287,19 +293,52 @@ def current_field(
     nivel = resolve_candidate_nivel(candidate)
     known = _candidate_known_fields(candidate)
     skipped_set = {str(key) for key in skipped}
+    settled_set = {str(key) for key in settled}
     fields = questionnaire_fields(nivel)
     # S7: once the author settled the narrative level, the field that only
     # restates it is not a question — asking it again re-asks a known fact.
     nivel_settled = bool(str(known.get("nivel") or "").strip())
-    covered: list[str] = []
+    covered = [
+        field.key for field in fields
+        if field.key in settled_set or (nivel_settled and field.key == "rol_narrativo")
+    ]
     for index, field in enumerate(fields, start=1):
-        if field_value(field, known) or (nivel_settled and field.key == "rol_narrativo"):
-            covered.append(field.key)
+        if field.key in covered:
             continue
         if field.key in skipped_set:
             continue
         return field, _progress(nivel, index, len(fields), field, covered, skipped_set, complete=False)
     return None, _progress(nivel, 0, len(fields), None, covered, skipped_set, complete=True)
+
+
+def incidental_field_value(candidate: Any, field: Field) -> str:
+    """The mention already stored for *field*, without calling it settled.
+
+    Used by the field brief: the assistant reflects it and asks whether it is
+    the real value or only a complement. Placeholder notes ("aún sin definir")
+    never count, because ``_candidate_known_fields`` filters them.
+    """
+    from guided_character_domain import _candidate_known_fields
+
+    return field_value(field, _candidate_known_fields(candidate))
+
+
+def legacy_settled_fields(candidate: Any) -> list[str]:
+    """Backfill the pre-change coverage rule for a legacy persisted row.
+
+    Before settlement was recorded, a field counted as covered when its value
+    existed anywhere in the candidate. A session written by an older build must
+    resume from that cursor instead of restarting at field 1.
+    """
+    from guided_character_domain import _candidate_known_fields, resolve_candidate_nivel
+
+    nivel = resolve_candidate_nivel(candidate)
+    known = _candidate_known_fields(candidate)
+    nivel_settled = bool(str(known.get("nivel") or "").strip())
+    return [
+        field.key for field in questionnaire_fields(nivel)
+        if field_value(field, known) or (nivel_settled and field.key == "rol_narrativo")
+    ]
 
 
 def _progress(

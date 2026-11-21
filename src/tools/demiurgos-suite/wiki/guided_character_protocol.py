@@ -424,6 +424,10 @@ class SessionState:
     path: str = "explore"
     # Fields the author explicitly skipped in the questionnaire (revisitable).
     skipped_fields: list[str] = field(default_factory=list)
+    # Fields the author actually settled (answered at its own turn). A value
+    # merely mentioned while answering another field is NOT a settlement: every
+    # asked field is still asked at its turn (Owner decision 2026-11-21).
+    settled_fields: list[str] = field(default_factory=list)
     methodology_snapshot: MethodologySnapshot | None = None
     # S2: the decision the last committed question turn made. ``None`` for
     # legacy rows; the public state then falls back to deriving the cursor.
@@ -617,6 +621,7 @@ class GuidedSessionStore:
         request: GuidedRequest,
         response: GuidedResponse,
         decision: "TurnDecision | None" = None,
+        settle: str | None = None,
     ) -> SessionState | None:
         state = self._sessions.get(request.session_id)
         if not state or state.authorization_binding != request.authorization_binding or state.revision != request.base_revision:
@@ -626,6 +631,8 @@ class GuidedSessionStore:
             next_state.reference_context = request.reference_context[:request.context_budget]
             next_state.reference_name = request.reference_name
             next_state.relation_goal = request.relation_goal
+        if settle and next_state.path == "fields" and settle not in next_state.settled_fields:
+            next_state.settled_fields.append(settle)
         if should_record_author_input(next_state, request.author_input):
             next_state.messages.append(TypedMessage(
                 MessageType.AUTHOR_INPUT, {"text": request.author_input},
@@ -782,17 +789,27 @@ def field_question_text(progress: Mapping[str, Any] | None) -> str:
 
 def turn_decision_for(
     request: GuidedRequest, response: GuidedResponse,
+    served_progress: Mapping[str, Any] | None = None,
 ) -> "TurnDecision | None":
-    """The decision a committed question turn records (S2)."""
+    """The decision a committed question turn records (S2).
+
+    ``served_progress`` is the field the committed turn ACTUALLY asks, which is
+    not always the field in the request: a settling delta advances the cursor
+    before the question is composed, so recording the pre-turn field would make
+    the public state lie about what was served.
+    """
     if response.outcome is not Outcome.QUESTION or not response.question:
         return None
     revision = request.base_revision + 1
-    if request.guided_path == "fields" and request.field_key:
-        progress = dict(request.field_progress or {})
+    progress = (
+        dict(served_progress) if served_progress is not None
+        else dict(request.field_progress or {})
+    )
+    if request.guided_path == "fields" and (progress or request.field_key):
         return TurnDecision(
             kind="complete" if progress.get("complete") else "field",
             question=response.question,
-            field_key=request.field_key,
+            field_key=str(progress.get("key") or "") or None,
             field_label=str(progress.get("label") or "") or None,
             field_progress=progress or None,
             source=(
@@ -803,6 +820,32 @@ def turn_decision_for(
     return TurnDecision(
         kind="free", question=response.question, source="provider", revision=revision,
     )
+
+
+def delta_settles_current_field(
+    request: GuidedRequest, response: GuidedResponse, state: SessionState,
+) -> bool:
+    """Whether a delta answers the field this turn actually asked.
+
+    The provider may extract several facts at once; only a key that maps to the
+    current plan field settles it. Everything else is a mention for a later
+    field (or plain context) and must not move the cursor.
+    """
+    if not response.delta:
+        return False
+    from guided_character_body import field_for_probe
+
+    progress = request.field_progress or {}
+    nivel = str(progress.get("nivel") or "")
+    if not nivel:
+        from guided_character_domain import resolve_candidate_nivel
+
+        nivel = resolve_candidate_nivel(state.candidate)
+    for key in response.delta:
+        field = field_for_probe(nivel, str(key))
+        if field is not None and field.key == request.field_key:
+            return True
+    return False
 
 
 async def continue_session(store: GuidedSessionStore, provider: Provider | Callable[..., Awaitable[object]],
@@ -875,29 +918,82 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                 nivel=resolve_candidate_nivel(state.candidate),
             ) or None,
         )
-    if response.outcome is Outcome.DELTA:
-        # Server-authoritative completeness gate: a provider delta is never a
-        # trusted completeness claim. In full guided mode, an incomplete candidate
-        # must not be exposed as a proposal; keep asking exactly one focused
-        # question per turn until the minimum required identity data is present.
-        # Fast mode proceeds with marked assumptions and skips the gate.
+    settle: str | None = None
+    served_progress: Mapping[str, Any] | None = request.field_progress
+    if (
+        request.guided_path == "fields" and request.field_key and request.field_progress
+        and response.outcome is Outcome.DELTA
+    ):
+        # The questionnaire owns the plan: a delta means "this field is
+        # settled", never "propose the sheet". Settle it, advance the cursor and
+        # ask the next uncovered field in the SAME turn. The global minimum gate
+        # only decides whether a completed plan may commit as the proposal.
+        from guided_character_body import current_field
         from guided_character_domain import candidate_minimum_complete, next_required_question
+
         profile = session_flow_profile(state)
-        if not candidate_minimum_complete(
+        if delta_settles_current_field(request, response, state):
+            settle = request.field_key
+        settled_after = list(state.settled_fields)
+        if settle is not None and settle not in settled_after:
+            settled_after.append(settle)
+        next_field, next_progress = current_field(
+            state.candidate, state.skipped_fields, settled_after,
+        )
+        minimum_ok = candidate_minimum_complete(
             state.candidate, delta=response.delta, mode=request.guided_mode,
             groups=profile.minimum_groups if profile is not None else None,
-        ):
-            if request.guided_path == "fields" and request.field_progress:
-                # S3: on the questionnaire the plan owns the next question; the
-                # anchor gate keeps only "can this become a proposal?".
-                question = field_question_text(request.field_progress)
+        )
+        if next_field is None and minimum_ok:
+            # Completed plan + platform minimum: the delta may commit as the
+            # proposal (the existing explicit review action stays available).
+            served_progress = next_progress
+        else:
+            if next_field is not None:
+                question = field_question_text(next_progress)
             else:
+                # Completed plan but the minimum is still missing (e.g. the
+                # author skipped Deseo): ask exactly that missing piece.
                 question = next_required_question(
                     state.candidate, delta=response.delta,
                     groups=profile.minimum_groups if profile is not None else None,
                     question_keys=profile.question_keys if profile is not None else None,
                     ui_copy_key=profile.ui_copy_key if profile is not None else None,
                 )
+            # A demotion must not throw the author's data away: every extracted
+            # fact moves to observations (read back into the next brief and the
+            # gate) and the provider's synthesis stays above the question.
+            preserved = dict(response.observations or {})
+            if response.delta:
+                preserved.update(response.delta)
+            response = GuidedResponse(
+                PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
+                Outcome.QUESTION,
+                provenance=(*response.provenance, "guided:field-fallback"),
+                question=question,
+                provider_run_id=response.provider_run_id,
+                synthesis=response.synthesis,
+                observations=preserved or None,
+            )
+            served_progress = next_progress
+    elif response.outcome is Outcome.DELTA:
+        # Free path: server-authoritative completeness gate. A provider delta is
+        # never a trusted completeness claim. In full guided mode, an incomplete
+        # candidate must not be exposed as a proposal; keep asking exactly one
+        # focused question per turn until the minimum required identity data is
+        # present. Fast mode proceeds with marked assumptions and skips the gate.
+        from guided_character_domain import candidate_minimum_complete, next_required_question
+        profile = session_flow_profile(state)
+        if not candidate_minimum_complete(
+            state.candidate, delta=response.delta, mode=request.guided_mode,
+            groups=profile.minimum_groups if profile is not None else None,
+        ):
+            question = next_required_question(
+                state.candidate, delta=response.delta,
+                groups=profile.minimum_groups if profile is not None else None,
+                question_keys=profile.question_keys if profile is not None else None,
+                ui_copy_key=profile.ui_copy_key if profile is not None else None,
+            )
             # Demoting a delta must not throw the author's data away. The fields
             # move to the internal observations partition (read back into
             # known_state and into the gate, never a public proposal) and the
@@ -909,14 +1005,14 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
             response = GuidedResponse(
                 PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision,
                 Outcome.QUESTION,
-                provenance=(
-                    (*response.provenance, "guided:field-fallback")
-                    if request.guided_path == "fields" and request.field_progress
-                    else response.provenance
-                ),
+                provenance=response.provenance,
                 question=question,
                 provider_run_id=response.provider_run_id,
                 synthesis=response.synthesis,
                 observations=preserved or None,
             )
-    return response, store.commit(request, response, turn_decision_for(request, response))
+    return response, store.commit(
+        request, response,
+        turn_decision_for(request, response, served_progress),
+        settle=settle,
+    )

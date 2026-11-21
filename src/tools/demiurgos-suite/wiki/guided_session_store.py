@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS guided_sessions (
     depth TEXT NOT NULL,
     path TEXT NOT NULL DEFAULT 'explore',
     skipped_fields_json TEXT NOT NULL DEFAULT '[]',
+    settled_fields_json TEXT,
     methodology_snapshot_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -340,6 +341,7 @@ class GuidedSessionStore:
         request: GuidedRequest,
         response: GuidedResponse,
         decision: "TurnDecision | None" = None,
+        settle: str | None = None,
     ) -> SessionState | None:
         with self._lock:
             row = self._read_row(request.session_id, request.authorization_binding)
@@ -349,6 +351,8 @@ class GuidedSessionStore:
             if state.revision != request.base_revision:
                 return None
             next_state = deepcopy(state)
+            if settle and next_state.path == "fields" and settle not in next_state.settled_fields:
+                next_state.settled_fields.append(settle)
             if not next_state.reference_context and request.reference_context:
                 next_state.reference_context = request.reference_context[:request.context_budget]
                 next_state.reference_name = request.reference_name
@@ -509,9 +513,10 @@ class GuidedSessionStore:
                 messages_json, pending_question, candidate_json,
                 reference_context, reference_name, relation_goal,
                 confirmation_input, mode, depth, path, skipped_fields_json,
+                settled_fields_json,
                 methodology_snapshot_json, turn_decision_json,
                 created_at, updated_at, revalidation_required
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 world = excluded.world,
                 phase = excluded.phase,
@@ -528,6 +533,7 @@ class GuidedSessionStore:
                 depth = excluded.depth,
                 path = excluded.path,
                 skipped_fields_json = excluded.skipped_fields_json,
+                settled_fields_json = excluded.settled_fields_json,
                 methodology_snapshot_json = excluded.methodology_snapshot_json,
                 turn_decision_json = excluded.turn_decision_json,
                 updated_at = excluded.updated_at,
@@ -539,6 +545,7 @@ class GuidedSessionStore:
                 candidate_json, state.reference_context, state.reference_name,
                 state.relation_goal, state.confirmation_input, state.mode,
                 state.depth, state.path, json.dumps(state.skipped_fields),
+                json.dumps(state.settled_fields),
                 snapshot_json, decision_json, now, now, flag,
             ),
         )
@@ -589,6 +596,14 @@ class GuidedSessionStore:
         self._add_column(
             columns, "turn_decision_json",
             "ALTER TABLE guided_sessions ADD COLUMN turn_decision_json TEXT NOT NULL DEFAULT ''",
+        )
+        # Additive and reversible: the column is NULLABLE on purpose, so a row
+        # written before settlement existed is distinguishable from a new row's
+        # explicit '[]' and can be backfilled on read. An older build ignores the
+        # unknown column instead of losing data, so SCHEMA_VERSION stays 1.
+        self._add_column(
+            columns, "settled_fields_json",
+            "ALTER TABLE guided_sessions ADD COLUMN settled_fields_json TEXT",
         )
 
     def set_path(
@@ -678,6 +693,16 @@ class GuidedSessionStore:
             for item in json.loads(row["messages_json"])
         ]
         candidate = json.loads(row["candidate_json"])
+        candidate_state = CandidateState(
+            accepted_canon=candidate.get("accepted_canon", {}),
+            proposals=candidate.get("proposals", {}),
+            observations=candidate.get("observations", {}),
+            unknowns=candidate.get("unknowns", []),
+            rumors=candidate.get("rumors", []),
+            conflicts=candidate.get("conflicts", []),
+            unresolved_references=candidate.get("unresolved_references", []),
+            provenance=candidate.get("provenance", []),
+        )
         return SessionState(
             session_id=row["session_id"],
             world=row["world"],
@@ -686,16 +711,7 @@ class GuidedSessionStore:
             authorization_binding=row["owner_binding"],
             messages=messages,
             pending_question=row["pending_question"],
-            candidate=CandidateState(
-                accepted_canon=candidate.get("accepted_canon", {}),
-                proposals=candidate.get("proposals", {}),
-                observations=candidate.get("observations", {}),
-                unknowns=candidate.get("unknowns", []),
-                rumors=candidate.get("rumors", []),
-                conflicts=candidate.get("conflicts", []),
-                unresolved_references=candidate.get("unresolved_references", []),
-                provenance=candidate.get("provenance", []),
-            ),
+            candidate=candidate_state,
             reference_context=row["reference_context"],
             reference_name=row["reference_name"],
             relation_goal=row["relation_goal"],
@@ -704,8 +720,24 @@ class GuidedSessionStore:
             depth=row["depth"],
             path=row["path"],
             skipped_fields=json.loads(row["skipped_fields_json"] or "[]"),
+            settled_fields=self._settled_fields(row, candidate_state),
             methodology_snapshot=self._deserialize_snapshot(row["methodology_snapshot_json"]),
             turn_decision=TurnDecision.from_mapping(
                 json.loads(row["turn_decision_json"] or "{}")
             ),
         )
+
+    def _settled_fields(self, row: sqlite3.Row, candidate: CandidateState) -> list[str]:
+        """Settlement list, backfilled from value coverage for legacy rows.
+
+        ``NULL`` means the row predates the column: it was written when any
+        value in the candidate advanced the cursor, so the previous rule is
+        replayed once and then persisted. ``'[]'`` is a new row that has not
+        settled anything yet.
+        """
+        raw = row["settled_fields_json"]
+        if raw is None:
+            from guided_character_body import legacy_settled_fields
+
+            return legacy_settled_fields(candidate)
+        return [str(key) for key in json.loads(raw or "[]")]

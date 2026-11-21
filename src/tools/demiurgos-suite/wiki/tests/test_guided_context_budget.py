@@ -237,6 +237,9 @@ def test_public_state_exposes_the_fields_path_and_progress() -> None:
         },
     ))
     state.path = "fields"
+    # S1/S3: a value in the candidate is a mention, not an answer; only an
+    # explicit settlement advances the cursor.
+    state.settled_fields = ["nombre"]
     profile = api_server.builtin_profile(api_server.GUIDED_CHARACTER_FLOW)
     state.methodology_snapshot = MethodologySnapshot(
         flow_type="guided-character", profile=profile.as_dict() if profile else None,

@@ -444,6 +444,7 @@ def test_legacy_database_is_migrated_without_losing_sessions(tmp_path: Path) -> 
     assert recovered is not None
     assert recovered.path == "explore"
     assert recovered.skipped_fields == []
+    assert recovered.settled_fields == []
 
 
 def test_legacy_migration_preserves_existing_session_data(tmp_path: Path) -> None:
@@ -481,10 +482,35 @@ def test_legacy_migration_preserves_existing_session_data(tmp_path: Path) -> Non
     recovered = GuidedSessionStore(db_path=db).recover("legacy", "author")
     assert recovered is not None
     assert recovered.path == "explore" and recovered.skipped_fields == []
+    # S6: a row written before the column existed resumes with the previous
+    # value-coverage rule backfilled, so it never restarts from field 1.
+    assert recovered.settled_fields == ["nombre"]
     assert recovered.candidate.accepted_canon["nombre"]["value"] == "Ganic"
     assert recovered.mode == "fast" and recovered.depth == "fundamental"
     assert recovered.reference_name == "Rhyz" and recovered.revision == 3
     assert recovered.messages[0].content["text"] == "hola"
+
+
+def test_settled_fields_survive_a_restart(tmp_path: Path) -> None:
+    """S6: settlement is durable, not a per-process cursor."""
+    db = tmp_path / "guided.sqlite3"
+    store = GuidedSessionStore(db_path=db)
+    store.create("s-settle", "vibrantes", "author", path="fields")
+    state = store.recover("s-settle", "author")
+    assert state is not None and state.settled_fields == []
+    request = GuidedRequest(
+        PROTOCOL_VERSION, "req-1", "s-settle", "vibrantes", state.revision, "author",
+        "Hesia Viltri", guided_path="fields", field_key="nombre",
+    )
+    response = GuidedResponse(
+        PROTOCOL_VERSION, "req-1", "s-settle", state.revision, Outcome.QUESTION,
+        question="Apodo. Un sobrenombre que diga algo.",
+    )
+    committed = store.commit(request, response, settle="nombre")
+    assert committed is not None and committed.settled_fields == ["nombre"]
+
+    restarted = GuidedSessionStore(db_path=db).recover("s-settle", "author")
+    assert restarted is not None and restarted.settled_fields == ["nombre"]
 
 
 def test_migrate_tolerates_a_column_added_by_a_concurrent_process(tmp_path) -> None:

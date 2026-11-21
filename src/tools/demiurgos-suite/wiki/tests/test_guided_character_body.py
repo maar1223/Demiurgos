@@ -15,8 +15,11 @@ if str(_WIKI) not in sys.path:
 from guided_character_body import (  # noqa: E402
     ADDITIVE_LABELS,
     current_field,
+    field_for,
     field_for_probe,
+    incidental_field_value,
     labels_for,
+    legacy_settled_fields,
     plan_for,
     questionnaire_fields,
     render_character_body,
@@ -228,32 +231,53 @@ def test_every_rendered_label_still_exists_in_the_pinned_carrier(nivel: str) -> 
 
 
 def test_current_field_walks_the_plan_and_respects_skips() -> None:
-    """S2/S4: the questionnaire cursor is the first field neither covered nor
-    skipped, in the specimen's order."""
+    """S2/S4: the cursor is the first field neither settled nor skipped, in the
+    specimen's order. A value already in the candidate is only a mention."""
     candidate = CandidateState(proposals={"nombre": {"value": "Ganic"}})
     field, progress = current_field(candidate)
+    assert field is not None and field.key == "nombre"
+    assert progress["index"] == 1
+    assert progress["covered"] == []
+
+    field, progress = current_field(candidate, settled=["nombre"])
     assert field is not None and field.key == "apodo"
     assert progress["index"] == 2
     assert progress["total"] == len(questionnaire_fields("1º"))
     assert progress["complete"] is False
 
-    field, progress = current_field(candidate, skipped=["apodo"])
+    field, progress = current_field(candidate, settled=["nombre"], skipped=["apodo"])
     assert field is not None and field.key == "edad"
     assert progress["index"] == 3
 
-    # A covered field never comes back, even after a skip list is set.
-    field, _ = current_field(_candidate(nombre="Nara", apodo="Dos Llaves"))
+    # A settled field never comes back, even after a skip list is set.
+    field, _ = current_field(
+        _candidate(nombre="Nara", apodo="Dos Llaves"), settled=["nombre", "apodo"],
+    )
     assert field is not None and field.key == "edad"
 
 
-def test_questionnaire_cursor_ignores_placeholder_observations() -> None:
-    """A provider note that says "undefined" must not cover the field.
+def test_incidental_mentions_never_advance_the_questionnaire() -> None:
+    """S1/S3: every field is asked even when an earlier answer mentioned it."""
+    candidate = CandidateState(
+        observations={
+            "nombre": "Nara",
+            "apodo": "Dos Llaves",
+            "edad": "treinta y cuatro",
+        },
+    )
+    field, progress = current_field(candidate)
+    assert field is not None and field.key == "nombre"
+    assert progress["index"] == 1
+    assert progress["covered"] == []
 
-    Live session guided-1a9fb96533c2438e85ad3050aa46ffe6 (2026-11-15) jumped
-    from "Campo 2 de 21" to "Campo 4 de 21" because two placeholder notes
-    (`rol_narrativo: "aún sin definir"`, `deseo: "sin definir; …"`) counted as
-    answers.
-    """
+    field, progress = current_field(candidate, settled=["nombre", "apodo", "edad"])
+    assert field is not None and field.key == "raza"
+    assert progress["index"] == 4
+    assert progress["covered"] == ["nombre", "apodo", "edad"]
+
+
+def test_placeholder_mentions_are_neither_answers_nor_prior_notes() -> None:
+    """A provider note that says "undefined" is not a fact and not a mention."""
     candidate = CandidateState(
         observations={
             "nombre": "Nara",
@@ -262,20 +286,17 @@ def test_questionnaire_cursor_ignores_placeholder_observations() -> None:
         },
     )
     field, progress = current_field(candidate)
-    assert field is not None and field.key == "apodo"
-    assert progress["index"] == 2
-    assert progress["total"] == len(questionnaire_fields("1º"))
+    assert field is not None and field.key == "nombre"
+    assert incidental_field_value(candidate, field_for("1º", "apodo")) == ""
+    assert incidental_field_value(candidate, field_for("1º", "nombre")) == "Nara"
 
-    # A real observation still advances the cursor: the field is answered.
-    field, progress = current_field(CandidateState(
-        observations={
-            "nombre": "Nara",
-            "apodo": "Dos Llaves",
-            "edad": "treinta y cuatro",
-        },
-    ))
-    assert field is not None and field.key == "raza"
-    assert progress["index"] == 4
+
+def test_legacy_settled_fields_backfills_the_previous_value_coverage() -> None:
+    """S6: a pre-change row resumes from where its values had taken it."""
+    candidate = CandidateState(
+        observations={"nombre": "Nara", "apodo": "Dos Llaves"},
+    )
+    assert legacy_settled_fields(candidate) == ["nombre", "apodo"]
 
 
 def test_sheet_body_never_renders_placeholder_observations() -> None:
@@ -293,9 +314,10 @@ def test_current_field_reports_completion_when_everything_is_visited() -> None:
         "nivel": {"value": "3"},
         **{field.key: {"value": f"valor-{field.key}"} for field in plan},
     })
-    field, progress = current_field(candidate)
+    field, progress = current_field(candidate, settled=[field.key for field in plan])
     assert field is None
     assert progress["complete"] is True
+    assert progress["covered"] == [field.key for field in plan]
 
 
 def test_field_for_probe_maps_aliases_to_the_questionnaire_field() -> None:
@@ -363,6 +385,7 @@ def test_settled_level_is_not_asked_again_as_rol_narrativo() -> None:
         accepted_canon={"nivel": {"value": "2º"}},
         observations={"nombre": "Hesia"},
     )
-    field, progress = current_field(candidate)
+    field, progress = current_field(candidate, settled=["nombre"])
     assert field is not None and field.key == "deseo"
     assert progress["index"] == 3
+    assert progress["covered"] == ["nombre", "rol_narrativo"]

@@ -32,6 +32,13 @@ def request(revision: int = 0, auth: str = "author-1") -> GuidedRequest:
     return GuidedRequest(PROTOCOL_VERSION, "req-1", "session-1", "nec", revision, auth, "I need a character")
 
 
+def fields_request(revision: int, field_key: str, progress: dict, text: str = "answer") -> GuidedRequest:
+    return GuidedRequest(
+        PROTOCOL_VERSION, "req-1", "session-1", "nec", revision, "author-1", text,
+        guided_path="fields", field_key=field_key, field_progress=progress,
+    )
+
+
 def capabilities() -> Capabilities:
     return Capabilities(PROTOCOL_VERSION, True, True, True, MAX_DEADLINE_MS)
 
@@ -384,5 +391,181 @@ def test_character_profile_asks_desire_after_a_name_delta() -> None:
         )
         assert response.outcome is Outcome.QUESTION
         assert response.question == "¿Cuál es el deseo que define a este personaje?"
+
+    asyncio.run(scenario())
+
+
+def _fields_store() -> GuidedSessionStore:
+    store = GuidedSessionStore()
+    store.create("session-1", "nec", "author-1", path="fields")
+    return store
+
+
+def _field_cursor(store: GuidedSessionStore) -> tuple[object, dict]:
+    from guided_character_body import current_field
+
+    state = store.recover("session-1", "author-1")
+    assert state is not None
+    return current_field(state.candidate, state.skipped_fields, state.settled_fields)
+
+
+def test_fields_delta_settles_the_current_field_and_asks_the_next_one() -> None:
+    """S4: answer Nombre with a delta -> the same turn asks Apodo, never Nombre."""
+
+    async def scenario() -> None:
+        store = _fields_store()
+        field, progress = _field_cursor(store)
+        assert field is not None and field.key == "nombre"
+
+        async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "delta",
+                "synthesis": "Queda Hesia Viltri.",
+                "delta": {"nombre": "Hesia Viltri"},
+            }
+
+        response, state = await continue_session(
+            store, provider, fields_request(0, "nombre", progress), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert state and state.settled_fields == ["nombre"]
+        assert state.turn_decision is not None
+        served = state.turn_decision.field_progress
+        assert served is not None and served["key"] == "apodo"
+        assert (response.question or "").startswith("Apodo.")
+
+        field, progress = _field_cursor(store)
+        assert field is not None and field.key == "apodo"
+
+        async def second(req: GuidedRequest, _token: CancellationToken) -> dict:
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "delta",
+                "delta": {"apodo": "Viltri"},
+            }
+
+        response, state = await continue_session(
+            store, second, fields_request(1, "apodo", progress), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert state and state.settled_fields == ["nombre", "apodo"]
+        assert (response.question or "").startswith("Edad.")
+
+    asyncio.run(scenario())
+
+
+def test_fields_delta_that_does_not_settle_the_current_field_keeps_asking_it() -> None:
+    """S3: an extraction about another field is context, not this field's answer."""
+
+    async def scenario() -> None:
+        store = _fields_store()
+        _field, progress = _field_cursor(store)
+
+        async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "delta",
+                "delta": {"deseo": "entender a Ganic"},
+            }
+
+        response, state = await continue_session(
+            store, provider, fields_request(0, "nombre", progress), capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert (response.question or "").startswith("Nombre.")
+        assert state and state.settled_fields == []
+        assert state.candidate.observations["deseo"] == "entender a Ganic"
+
+    asyncio.run(scenario())
+
+
+def test_fields_plan_never_turns_an_in_plan_delta_into_a_proposal() -> None:
+    """S5: name+desire present is not the finish line while the plan has fields."""
+
+    async def scenario() -> None:
+        store = _fields_store()
+
+        def delta_provider(payload: dict, observations: dict | None = None):
+            async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+                return {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": req.request_id,
+                    "session_id": req.session_id,
+                    "outcome": "delta",
+                    "delta": dict(payload),
+                    "observations": dict(observations or {}),
+                }
+            return provider
+
+        _field, progress = _field_cursor(store)
+        _response, state = await continue_session(
+            store, delta_provider({"nombre": "Hesia"}, {"deseo": "entender a Ganic"}),
+            fields_request(0, "nombre", progress), capabilities(),
+        )
+        assert state is not None
+
+        field, progress = _field_cursor(store)
+        assert field is not None and field.key == "apodo"
+        _response, state = await continue_session(
+            store, delta_provider({"apodo": "Viltri"}), fields_request(1, "apodo", progress),
+            capabilities(),
+        )
+        assert state is not None
+
+        field, progress = _field_cursor(store)
+        assert field is not None and field.key == "edad"
+        response, state = await continue_session(
+            store, delta_provider({"edad": "24"}), fields_request(2, "edad", progress),
+            capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert (response.question or "").startswith("Raza/Especie.")
+        assert state and state.candidate.proposals == {}
+
+    asyncio.run(scenario())
+
+
+def test_fields_proposal_arrives_only_when_the_plan_is_complete() -> None:
+    """S5: the last settled field may commit the proposal; earlier ones never do."""
+    from guided_character_body import questionnaire_fields
+
+    async def scenario() -> None:
+        store = _fields_store()
+        plan = questionnaire_fields("1º")
+        for index, field in enumerate(plan):
+            _current, progress = _field_cursor(store)
+            assert progress["key"] == field.key
+
+            def provider(payload_key: str = field.key, seed_desire: bool = index == 0):
+                async def invoke(req: GuidedRequest, _token: CancellationToken) -> dict:
+                    return {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": req.request_id,
+                        "session_id": req.session_id,
+                        "outcome": "delta",
+                        "delta": {payload_key: f"valor {payload_key}"},
+                        "observations": {"deseo": "libertad"} if seed_desire else {},
+                    }
+                return invoke
+
+            response, state = await continue_session(
+                store, provider(), fields_request(index, field.key, progress, f"answer {index}"),
+                capabilities(),
+            )
+            assert state is not None
+            assert state.settled_fields[-1] == field.key
+            if index < len(plan) - 1:
+                assert response.outcome is Outcome.QUESTION
+                assert state.candidate.proposals == {}
+
+        assert response.outcome is Outcome.DELTA
+        assert state.candidate.proposals
 
     asyncio.run(scenario())
