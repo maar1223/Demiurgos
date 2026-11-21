@@ -61,7 +61,7 @@ Violating any of these is a defect, not a preference.
 | **I3** | Author data is never resolved code-relatively. `data_root.resolve_data_root()` is the only resolver (env → pointer → loud failure). No `Path(__file__).parents[N]`, no repo-relative `mundos`. |
 | **I4** | `/api/{mundo}/graph/status` is **not** evidence about the assistant. Verification reads the MCP process' `graph_status`. |
 | **I5** | Provisioning is idempotent and never silently overwrites an existing profile. `config.yaml` survives upgrades, so a wrong value written once persists forever. Conversely, a provisioning fix must be able to *correct* a value it owns. |
-| **I6** | The graph MCP must be registered by the **product** (installer/provisioner), not by hand on one machine. POSIX installers register it since 2026-11-18; Windows parity and the boot-time self-check remain open, see §7. |
+| **I6** | The graph MCP must be registered by the **product** (installer/provisioner), not by hand on one machine. POSIX installers register it since 2026-11-18 and the Windows core since 2026-11-20; the boot-time self-check remains open, see §7. |
 | **I7** | A blind graph must be visible, never papered over: the assistant says it cannot read the world and asks for the text, and never asserts world facts from memory. This held during the incident and is the behaviour to preserve. |
 
 ## 3. Incident record — 2026-11-18
@@ -249,13 +249,15 @@ failed even when Levels A and B are green.
 The incident is diagnosed and the machine is repaired; the *class* is closed by
 the following, in order of what landed on 2026-11-18:
 
-1. **Provision the server from the product — DONE (POSIX).**
+1. **Provision the server from the product — DONE (POSIX and Windows).**
    `hermes_profile_config.merge_graph_mcp_server()` registers
-   `mcp_servers.demiurgos-graph` → `mcp_launcher.py`, and both the checkout
-   installer (`install.sh`) and the shipping installer
+   `mcp_servers.demiurgos-graph` → `mcp_launcher.py`, and the checkout
+   installer (`install.sh`), the shipping POSIX installer
    (`scripts/install-demiurgos.sh`, after the Hermes runtime and the app venv
-   exist) call it. It is best-effort and loud: a failure warns that the
-   assistant will not read the world, and never aborts the install.
+   exist) and the shipping Windows core
+   (`scripts/install-demiurgos.ps1`, after `Invoke-HermesProvision`) call it.
+   It is best-effort and loud: a failure warns that the assistant will not read
+   the world, and never aborts the install.
 2. **Correct, don't only create — DONE.** The merge is corrective: a stale entry
    (the incident shape: direct `graph_mcp_server.py` + `--mundos-path` on the
    code tree) is rewritten on the next install run. Sibling servers and every
@@ -266,16 +268,20 @@ the following, in order of what landed on 2026-11-18:
 4. **Regression test — DONE.** `wiki/tests/test_graph_mcp_provisioning.py` pins
    idempotence, correction of the incident shape, preservation of sibling keys,
    the absence of any hardcoded author-data path or world name, that the
-   registered launcher exists and resolves the data root, and that both
+   registered launcher exists and resolves the data root, and that all three
    installers call the merge (in `install.sh` after `prepare_python_env`; in the
-   shipping installer after `provision_hermes_runtime`).
+   POSIX shipping installer after `provision_hermes_runtime`; in the Windows
+   core after `Invoke-HermesProvision`, through the same merge program).
    `wiki/tests/test_assistant_graph_gate.py` pins the gate itself: a relative
    `--mundos-path` resolves against the MCP process' `cwd` and FAILs, the
    launcher entry PASSes, and extra entry keys survive a no-op merge.
 
-**Windows parity — OPEN.** `install.ps1` / `scripts/install-demiurgos.ps1` do not
-wire the graph yet (they do not run the skills merge either); a Windows install
-gets no world-reading tools until that lands.
+**Windows parity — DONE (graph wiring, 2026-11-20).**
+`scripts/install-demiurgos.ps1` now registers the corrected
+`demiurgos-graph` entry after provisioning the runtime and removes the legacy
+Engram server, exactly like the POSIX core. Windows still does not run the
+skills external-dirs merge; that remains open and is separate from
+world-reading.
 
-Until 3 and Windows parity land, every change listed in §4 must run the gate by
-hand, and no release may ship without a green Level A on a real install.
+Until 3 lands, every change listed in §4 must run the gate by hand, and no
+release may ship without a green Level A on a real install.

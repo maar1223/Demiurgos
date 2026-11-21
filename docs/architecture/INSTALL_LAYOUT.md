@@ -70,6 +70,13 @@ default above; `<version>` is the installed `DEMIURGOS_VERSION` (e.g. `0.9.0`);
 6. **`current` is flipped atomically by the installer** after a same-FS staged
    rename; the previous `app/<version>` is retained until the next install
    (rollback boundary — see S6, bounded boot rollback).
+7. **The foundational methodology seeds are bootstrapped into the data root,
+   once.** The installer copies `<current>/data/methodology/seeds` to
+   `<data_root>/data/methodology/seeds` only when that tree is absent. The app
+   reads the data-root copy (`api_server._methodology_library`) and only
+   reconciles an existing copy forward, so a missing tree would leave every
+   guided flow without its method. A same-version re-run repairs a deleted tree
+   best-effort and keeps the documented "nothing to do" / exit 0 contract.
 
 ## 3. Data-root pointer
 
