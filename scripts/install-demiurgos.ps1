@@ -375,7 +375,12 @@ function Invoke-GraphMcpProvision {
 
     # Skipped assistant runtime (DEMIURGOS_HERMES_SKIP=1) or no profile yet:
     # never create a config.yaml the runtime provisioner is supposed to seed.
-    if (-not (Test-Path -LiteralPath $hermesHome -PathType Container)) { return }
+    if (-not (Test-Path -LiteralPath $hermesHome -PathType Container)) {
+        if ($env:DEMIURGOS_HERMES_SKIP -ne "1") {
+            Write-Host "install-demiurgos: WARNING: no assistant profile at $hermesHome; the graph is not wired and the assistant will NOT read the world"
+        }
+        return
+    }
 
     if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $wiki "hermes_profile_config.py") -PathType Leaf)) {
@@ -656,18 +661,27 @@ function Invoke-SeedMethodologyPayload {
     }
 
     $tmp = "$dest.tmp.$PID"
-    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    if (Test-Path -LiteralPath $tmp) {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
     try {
-        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-        Copy-Item -Path (Join-Path $src '*') -Destination $tmp -Recurse -Force
+        # -ErrorAction Stop is MANDATORY here: these cmdlets emit non-terminating
+        # errors by default, so a failed copy would otherwise fall through to
+        # the success line and move a partial tree into the bootstrap-once slot.
+        New-Item -ItemType Directory -Force -Path $tmp -ErrorAction Stop | Out-Null
+        Copy-Item -Path (Join-Path $src '*') -Destination $tmp -Recurse -Force -ErrorAction Stop
         # A concurrent installer may have created the tree while we copied:
         # keep the first copy (bootstrap-once) instead of nesting it.
         if (Test-Path -LiteralPath $dest) {
-            Remove-Item -LiteralPath $tmp -Recurse -Force
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host "install-demiurgos: preserving the existing methodology seeds at $dest"
             return
         }
-        Move-Item -LiteralPath $tmp -Destination $dest
+        Move-Item -LiteralPath $tmp -Destination $dest -ErrorAction Stop
+        # Prove the move actually happened before claiming success.
+        if (-not (Test-Path -LiteralPath $dest -PathType Container)) {
+            throw "the methodology seed tree is missing after Move-Item"
+        }
         Write-Host "install-demiurgos: bootstrapped the methodology seeds at $dest"
     } catch {
         if (Test-Path -LiteralPath $tmp) {
@@ -757,7 +771,7 @@ function Get-PointerValueBestEffort {
     # reader never calls Fail (unlike Get-PointerValue).
     if (-not (Test-Path -LiteralPath $pointerFile -PathType Leaf)) { return "" }
     try {
-        $record = Get-Content -LiteralPath $pointerFile -Raw | ConvertFrom-Json
+        $record = Get-Content -LiteralPath $pointerFile -Raw -ErrorAction Stop | ConvertFrom-Json
         if ($record.data_root) { return [string]$record.data_root }
     } catch {
         # Best-effort repair: an unreadable pointer leaves the re-run as-is.

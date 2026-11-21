@@ -217,6 +217,18 @@ def test_windows_graph_program_matches_the_posix_program():
     assert body(ps_prog) == body(sh_prog)
 
 
+def test_windows_graph_wiring_warns_when_the_profile_is_missing():
+    """A missing profile must be loud unless the runtime was intentionally
+    skipped; a silent return would finish 'successfully' with a blind graph."""
+    installer = (
+        REPO_ROOT / "scripts" / "install-demiurgos.ps1"
+    ).read_text(encoding="utf-8")
+    block = installer[installer.index("function Invoke-GraphMcpProvision") :]
+    block = block[: block.index("\n}\n")]
+    assert "WARNING: no assistant profile" in block
+    assert 'DEMIURGOS_HERMES_SKIP -ne "1"' in block
+
+
 # =============================================================================
 # Engram cutover — corrective removal of the legacy MCP server
 # =============================================================================

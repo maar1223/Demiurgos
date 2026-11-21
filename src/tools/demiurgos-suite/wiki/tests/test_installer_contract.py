@@ -1743,6 +1743,18 @@ class TestWindowsMethodologySeedBootstrap:
         bootstrap = bootstrap[: bootstrap.index("# --- Windows Start Menu entry")]
         assert "Invoke-SeedMethodologyPayload" in bootstrap
 
+    def test_ps1_seed_copy_fails_closed_on_cmdlet_errors(self):
+        """PowerShell cmdlet errors are non-terminating by default: without
+        -ErrorAction Stop a partial copy would report success."""
+        text = _text(PS_INSTALLER)
+        block = text[text.index("function Invoke-SeedMethodologyPayload") :]
+        block = block[: block.index("\n}\n")]
+        assert "-ErrorAction Stop" in block
+        # Success is printed only after the post-move existence check.
+        assert block.index("Test-Path -LiteralPath $dest -PathType Container") < (
+            block.index("bootstrapped the methodology seeds")
+        )
+
     def test_ps1_same_version_rerun_repairs_the_seed_bootstrap(self):
         text = _text(PS_INSTALLER)
         start = text.index("if ($alreadyCurrent) {")
