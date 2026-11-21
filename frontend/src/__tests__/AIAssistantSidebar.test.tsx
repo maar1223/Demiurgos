@@ -2594,7 +2594,7 @@ describe("AIAssistantSidebar per-response turn details", () => {
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
     const toggle = screen.getByRole("button", {
-      name: "Tardó 27 s · Consultó 1 fuente",
+      name: "Tardó 27 s · 1 consulta al grafo",
     });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(
@@ -2608,13 +2608,10 @@ describe("AIAssistantSidebar per-response turn details", () => {
       screen.getByRole("list", { name: tEs("assistant.turn.itemsAria") }),
     ).toBeInTheDocument();
     expect(screen.getByText("Leer del mundo")).toBeInTheDocument();
-
-    // The confirmed paths live behind their own toggle, labelled as what the
-    // model actually read.
-    await user.click(screen.getByRole("button", { name: "Fuentes confirmadas (1)" }));
-    expect(screen.getByText("personajes/rhyz.md")).toBeInTheDocument();
-    // The second entry in `turn.sources` was never confirmed by an item.
-    expect(screen.queryByText("lore/canon.md")).not.toBeInTheDocument();
+    // A tool call never carries a path (Hermes does not expose the result), so
+    // no file is claimed for it — only the mechanism is explained.
+    expect(screen.getByText(tEs("assistant.turn.explain"))).toBeInTheDocument();
+    expect(screen.queryByText("personajes/rhyz.md")).not.toBeInTheDocument();
   });
 
   it("labels injected fichas as world context, not as a tool call", async () => {
@@ -2652,7 +2649,7 @@ describe("AIAssistantSidebar per-response turn details", () => {
 
     const user = userEvent.setup();
     const toggle = screen.getByRole("button", {
-      name: "Tardó 27 s · No consultó fuentes · Contexto: 1 ficha",
+      name: "Tardó 27 s · No consultó el grafo · Contexto: 1 ficha",
     });
     await user.click(toggle);
 
@@ -2687,7 +2684,7 @@ describe("AIAssistantSidebar per-response turn details", () => {
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
     expect(
-      screen.getByRole("button", { name: "Tardó 27 s · No consultó fuentes" }),
+      screen.getByRole("button", { name: "Tardó 27 s · No consultó el grafo" }),
     ).toBeInTheDocument();
   });
 

@@ -126,19 +126,25 @@ interface ConfirmedActivityItem {
  * understates what actually grounded the answer.
  */
 function splitConfirmedSources(items: ConfirmedActivityItem[]): {
-  tools: string[];
+  toolCalls: number;
   context: string[];
 } {
-  const succeeded = (item: ConfirmedActivityItem): boolean =>
-    item.status === "succeeded" &&
-    typeof item.path === "string" &&
-    isSafeEvidencePath(item.path);
   return {
-    tools: items
-      .filter((item) => succeeded(item) && item.operation !== WORLD_CONTEXT_OPERATION)
-      .map((item) => item.path as string),
+    // A tool call never carries a path: Hermes reports the tool name and its
+    // outcome, never the result payload. Counting paths here would always read
+    // as zero, so the honest number is how many calls succeeded.
+    toolCalls: items.filter(
+      (item) =>
+        item.operation !== WORLD_CONTEXT_OPERATION && item.status === "succeeded",
+    ).length,
     context: items
-      .filter((item) => succeeded(item) && item.operation === WORLD_CONTEXT_OPERATION)
+      .filter(
+        (item) =>
+          item.status === "succeeded" &&
+          item.operation === WORLD_CONTEXT_OPERATION &&
+          typeof item.path === "string" &&
+          isSafeEvidencePath(item.path),
+      )
       .map((item) => item.path as string),
   };
 }
@@ -208,11 +214,8 @@ interface ActivityEvidenceProps {
 
 function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidenceProps) {
   const { t } = useAppLanguage();
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
-  const { tools: toolSources, context: contextSources } = splitConfirmedSources(
-    activity.items,
-  );
+  const { context: contextSources } = splitConfirmedSources(activity.items);
   const warnings = Array.from(
     new Set([
       ...evidence.warnings.map(safeActivityWarning),
@@ -259,29 +262,8 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
         </div>
       )}
 
-      {toolSources.length > 0 || contextSources.length > 0 ? (
+      {contextSources.length > 0 ? (
         <div className="mt-2 space-y-1.5 border-t border-edge pt-2">
-          {toolSources.length > 0 && (
-            <div>
-              <button
-                type="button"
-                aria-expanded={sourcesOpen}
-                onClick={() => setSourcesOpen((open) => !open)}
-                className="text-left text-muted hover:text-primary"
-              >
-                {t("assistant.activity.confirmedSources", { count: toolSources.length })}
-              </button>
-              {sourcesOpen && (
-                <ul className="mt-1.5 space-y-1 pl-3 text-muted">
-                  {toolSources.map((source) => (
-                    <li key={source} className="break-words">
-                      {source}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
           {contextSources.length > 0 && (
             <div>
               <button
@@ -329,11 +311,8 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
 function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
   const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
-  const { tools: toolSources, context: contextSources } = splitConfirmedSources(
-    turn.items,
-  );
+  const { toolCalls, context: contextSources } = splitConfirmedSources(turn.items);
   const warnings = Array.from(
     new Set([
       ...turn.warnings.map((warning) => safeActivityWarning(warning)),
@@ -341,14 +320,14 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
     ]),
   ).filter((warning): warning is string => Boolean(warning));
   const seconds = Math.max(1, Math.round(turn.durationMs / 1000));
-  // "Consultó" counts only what the MODEL read through the graph tools; the
-  // fichas the backend injected are reported separately, never as a read.
+  // The number is how many graph calls the MODEL made; the fichas the backend
+  // injected are reported separately, because they are a different mechanism.
   const base =
-    toolSources.length === 0
+    toolCalls === 0
       ? t("assistant.turn.summaryNone", { seconds })
-      : toolSources.length === 1
+      : toolCalls === 1
         ? t("assistant.turn.summaryOne", { seconds })
-        : t("assistant.turn.summaryMany", { seconds, sources: toolSources.length });
+        : t("assistant.turn.summaryMany", { seconds, sources: toolCalls });
   const contextSegment =
     contextSources.length === 0
       ? ""
@@ -396,28 +375,6 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
             </div>
           )}
 
-          {toolSources.length > 0 && (
-            <div>
-              <button
-                type="button"
-                aria-expanded={sourcesOpen}
-                onClick={() => setSourcesOpen((current) => !current)}
-                className="text-left text-muted hover:text-primary"
-              >
-                {t("assistant.activity.confirmedSources", { count: toolSources.length })}
-              </button>
-              {sourcesOpen && (
-                <ul className="mt-1 pl-3 text-muted">
-                  {toolSources.map((source) => (
-                    <li key={source} className="break-words">
-                      {source}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
           {contextSources.length > 0 && (
             <div>
               <button
@@ -440,9 +397,11 @@ function TurnDetails({ turn }: { turn: AssistantTurnMetadata }) {
             </div>
           )}
 
-          {toolSources.length === 0 && contextSources.length === 0 && (
+          {toolCalls === 0 && contextSources.length === 0 && (
             <p className="text-muted">{t("assistant.turn.noSources")}</p>
           )}
+
+          <p className="text-muted">{t("assistant.turn.explain")}</p>
         </div>
       )}
     </div>
