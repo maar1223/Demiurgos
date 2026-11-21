@@ -400,6 +400,155 @@ jobs:
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher stop
           }
 
+  windows-installer-seeds-and-graph:
+    # AUD-17: run the REAL Windows installer core against a hermetic file://
+    # channel built from the packaged payload. Proves a fresh install leaves the
+    # foundational methodology seeds in the data root and wires demiurgos-graph
+    # into the assistant profile, and that a same-version re-run repairs a
+    # deleted seed tree. Runs on master dry runs and tags; it never publishes.
+    name: Windows installer (seeds + graph)
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download the packaged Windows artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: package-windows-amd64
+          path: package
+
+      - name: Enable long paths (the installer floor)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+            -Name LongPathsEnabled -Value 1 -Type DWord
+
+      - name: Build the hermetic channel and the test signing key
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $channel = Join-Path $env:RUNNER_TEMP 'channel'
+          New-Item -ItemType Directory -Force -Path $channel,
+            (Join-Path $channel 'scripts\lib'), (Join-Path $channel 'uv') | Out-Null
+
+          $zip = Get-ChildItem package -Filter 'demiurgos-app-*-windows-amd64.zip' |
+            Select-Object -First 1
+          if (-not $zip) { throw 'no Windows payload archive found' }
+          $recordFile = Get-ChildItem package -Filter 'version-*.json' |
+            Select-Object -First 1
+          if (-not $recordFile) { throw 'no package version record found' }
+          $record = Get-Content $recordFile.FullName -Raw | ConvertFrom-Json
+          $version = [string]$record.version
+          if (-not $version) { throw 'the package record has no version' }
+
+          Copy-Item $zip.FullName (Join-Path $channel $zip.Name)
+          Copy-Item scripts\install-demiurgos.ps1 (Join-Path $channel 'scripts\install-demiurgos.ps1')
+          Copy-Item scripts\provision-hermes.ps1 (Join-Path $channel 'scripts\provision-hermes.ps1')
+          Copy-Item scripts\lib\verify_checksum.ps1 (Join-Path $channel 'scripts\lib\verify_checksum.ps1')
+
+          # Pinned uv archive + the signed checksum table the installer verifies.
+          $uvVersion = $env:UV_VERSION
+          $uvName = "uv-x86_64-pc-windows-msvc-$uvVersion.zip"
+          $uvUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvName"
+          Invoke-WebRequest -Uri $uvUrl -OutFile (Join-Path $channel "uv\$uvName") -UseBasicParsing
+          $uvSha = (Get-FileHash -Algorithm SHA256 (Join-Path $channel "uv\$uvName")).Hash.ToLowerInvariant()
+          "UV_SHA_X86_64_WINDOWS_MSVC=$uvSha" |
+            Set-Content (Join-Path $channel 'uv-shas.env') -Encoding ascii
+
+          # Test signing key: the installer verifies the channel manifest with
+          # minisign; MINISIGN_PUBKEY is the documented seam for hermetic runs.
+          $minisignZip = Join-Path $env:RUNNER_TEMP 'minisign.zip'
+          Invoke-WebRequest -Uri 'https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip' -OutFile $minisignZip -UseBasicParsing
+          $minisignDir = Join-Path $env:RUNNER_TEMP 'minisign'
+          Expand-Archive -LiteralPath $minisignZip -DestinationPath $minisignDir -Force
+          $minisign = Get-ChildItem $minisignDir -Recurse -Filter minisign.exe |
+            Select-Object -First 1
+          if (-not $minisign) { throw 'minisign.exe not found in the release zip' }
+          $key = Join-Path $minisignDir 'test.key'
+          $pub = Join-Path $minisignDir 'test.pub'
+          & $minisign.FullName -G -W -p $pub -s $key
+          if ($LASTEXITCODE -ne 0) { throw 'minisign key generation failed' }
+
+          $channelRoot = (Resolve-Path $channel).Path
+          $lines = Get-ChildItem -LiteralPath $channel -Recurse -File |
+            Where-Object { $_.Name -notin @('SHA256SUMS', 'SHA256SUMS.minisig') } |
+            ForEach-Object {
+              $rel = $_.FullName.Substring($channelRoot.Length + 1).Replace('\', '/')
+              $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $rel"
+            } | Sort-Object
+          $lines | Set-Content (Join-Path $channel 'SHA256SUMS') -Encoding ascii
+          & $minisign.FullName -Sm (Join-Path $channel 'SHA256SUMS') -s $key
+          if ($LASTEXITCODE -ne 0) { throw 'minisign signing failed' }
+          $pubLine = Get-Content $pub | Where-Object { $_ -match '^RW' } |
+            Select-Object -First 1
+          if (-not $pubLine) { throw 'no minisign public key line' }
+
+          "DEMIURGOS_TEST_VERSION=$version" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          "DEMIURGOS_TEST_CHANNEL=$channel" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          "MINISIGN_PUBKEY=$pubLine" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          $minisign.DirectoryName | Out-File $env:GITHUB_PATH -Append -Encoding ascii
+          Write-Host "channel ready: $channel (version $version)"
+
+      - name: Run the real installer (fresh + same-version repair)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $channel = $env:DEMIURGOS_TEST_CHANNEL
+          $version = $env:DEMIURGOS_TEST_VERSION
+          $install = Join-Path $env:RUNNER_TEMP 'install'
+          $data = Join-Path $env:RUNNER_TEMP 'data'
+          $hermes = Join-Path $env:RUNNER_TEMP 'hermes-profile'
+
+          # The graph wiring needs a profile; the heavy runtime is skipped so the
+          # job proves the installer's own seed + merge paths, not Hermes setup.
+          New-Item -ItemType Directory -Force -Path $hermes | Out-Null
+          Set-Content -LiteralPath (Join-Path $hermes 'config.yaml') -Value 'model: {}' -Encoding ascii
+
+          $env:DEMIURGOS_HOME = $install
+          $env:DEMIURGOS_DATA_ROOT = $data
+          $env:DEMIURGOS_HERMES_HOME = $hermes
+          $env:DEMIURGOS_HERMES_SKIP = '1'
+          $env:DEMIURGOS_VERSION = $version
+          $env:DEMIURGOS_URL_BASE = 'file://' + ($channel -replace '\\', '/')
+          $env:DEMIURGOS_NO_BROWSER = '1'
+          $installer = Join-Path $channel 'scripts\install-demiurgos.ps1'
+
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+          if ($LASTEXITCODE -ne 0) { throw "fresh install failed (exit $LASTEXITCODE)" }
+
+          $seeds = Join-Path $data 'data\methodology\seeds'
+          $seedCount = (Get-ChildItem -LiteralPath $seeds -Recurse -File).Count
+          if ($seedCount -ne 19) { throw "expected 19 seed files, found $seedCount" }
+
+          $python = Join-Path $install 'current\.venv\Scripts\python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw "installed venv python missing: $python" }
+          $check = @'
+          import sys
+          import yaml
+
+          config = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+          servers = config.get("mcp_servers") or {}
+          assert "demiurgos-graph" in servers, sorted(servers)
+          assert "engram" not in servers, sorted(servers)
+          args = " ".join(servers["demiurgos-graph"].get("args", []))
+          assert "mcp_launcher.py" in args, args
+          print("graph wiring OK")
+          '@
+          $check | & $python - (Join-Path $hermes 'config.yaml')
+          if ($LASTEXITCODE -ne 0) { throw 'assistant graph assertion failed' }
+
+          Remove-Item -LiteralPath $seeds -Recurse -Force
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+          if ($LASTEXITCODE -ne 0) { throw "same-version repair failed (exit $LASTEXITCODE)" }
+          $restored = (Get-ChildItem -LiteralPath $seeds -Recurse -File).Count
+          if ($restored -ne 19) { throw "expected 19 restored seed files, found $restored" }
+          Write-Host 'OK: fresh install seeds + Windows graph wiring, and same-version repair'
+
   publish:
     name: Publish to the public channel
     needs: package
