@@ -101,10 +101,11 @@ function activityStatusLabel(
 }
 
 function activityOperationLabel(
-  operation: "Search world" | "Read world",
+  operation: "Search world" | "Read world" | "World context",
   t: TFunction,
 ): string {
   if (operation === "Search world") return t("assistant.activity.operation.searchWorld");
+  if (operation === "World context") return t("assistant.activity.operation.worldContext");
   if (operation === "Read world") return t("assistant.activity.operation.readWorld");
   return t("assistant.activity.operation.worldActivity");
 }

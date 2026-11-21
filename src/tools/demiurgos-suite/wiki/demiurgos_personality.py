@@ -102,6 +102,63 @@ _IDENTITY_PROMPTS: dict[str, str] = {
 }
 
 
+def _graph_context_entries(
+    query: str,
+    graph_index: "EntityGraphIndex | None",
+    *,
+    max_hits: int = MAX_GRAPH_HITS,
+) -> list[tuple[str, str]]:
+    """Return ``(path, block)`` per entity the prompt would inject.
+
+    One search feeds both the prompt text and its provenance: the paths are the
+    server's own record of which fichas it put in front of the model, never a
+    provider claim.
+    """
+    if graph_index is None or not query:
+        return []
+
+    try:
+        hits = graph_index.search(query)
+        if not hits:
+            return []
+
+        entries: list[tuple[str, str]] = []
+        for hit in hits[:max_hits]:
+            detail = graph_index.get_entity(hit.path)
+            if detail is None:
+                continue
+            content = detail.content[:MAX_ENTITY_CONTENT_CHARS]
+            entries.append(
+                (hit.path, f"### {detail.title} ({detail.type})\n{content}")
+            )
+        return entries
+    except Exception:
+        _logger.warning(
+            "Entity graph context injection failed — "
+            "continuing without graph context",
+            exc_info=True,
+        )
+        return []
+
+
+def graph_context_with_sources(
+    query: str,
+    graph_index: "EntityGraphIndex | None",
+    *,
+    max_hits: int = MAX_GRAPH_HITS,
+) -> tuple[str, list[str]]:
+    """Return the injected context block AND the ficha paths it came from.
+
+    Returns ``("", [])`` when the graph is unavailable or nothing matches.
+    Never raises.
+    """
+    entries = _graph_context_entries(query, graph_index, max_hits=max_hits)
+    if not entries:
+        return "", []
+    block = "## Entity Graph Context\n" + "\n\n".join(part for _, part in entries)
+    return block, [path for path, _ in entries]
+
+
 def build_graph_context(
     query: str,
     graph_index: "EntityGraphIndex | None",
@@ -114,35 +171,8 @@ def build_graph_context(
     matches are found. Never raises — graph failures are logged and
     treated as "no context available".
     """
-    if graph_index is None or not query:
-        return ""
-
-    try:
-        hits = graph_index.search(query)
-        if not hits:
-            return ""
-
-        parts: list[str] = []
-        for hit in hits[:max_hits]:
-            detail = graph_index.get_entity(hit.path)
-            if detail is None:
-                continue
-            content = detail.content[:MAX_ENTITY_CONTENT_CHARS]
-            parts.append(
-                f"### {detail.title} ({detail.type})\n{content}"
-            )
-
-        if not parts:
-            return ""
-
-        return "## Entity Graph Context\n" + "\n\n".join(parts)
-    except Exception:
-        _logger.warning(
-            "Entity graph context injection failed — "
-            "continuing without graph context",
-            exc_info=True,
-        )
-        return ""
+    block, _ = graph_context_with_sources(query, graph_index, max_hits=max_hits)
+    return block
 
 
 def build_fichas_context(

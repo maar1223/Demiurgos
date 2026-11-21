@@ -15,7 +15,7 @@ const SAFE_WARNINGS = new Set([
   INCOMPLETE_EVIDENCE_WARNING,
   NEUTRAL_EVIDENCE_WARNING,
 ]);
-const SAFE_OPERATIONS = new Set(["Search world", "Read world"]);
+const SAFE_OPERATIONS = new Set(["Search world", "Read world", "World context"]);
 const SAFE_STATUSES = new Set(["running", "succeeded", "failed"]);
 const SAFE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "unknown"]);
 const SAFE_UNAVAILABLE_REASONS = new Set([
@@ -213,7 +213,7 @@ export function parseAssistantActivityEvent(
       kind: "activity",
       request_id: value.request_id,
       item_id: value.item_id,
-      operation: value.operation as "Search world" | "Read world",
+      operation: value.operation as "Search world" | "Read world" | "World context",
       status: value.status as "running" | "succeeded" | "failed",
     };
     if (isSafePath(value.path)) event.path = value.path;

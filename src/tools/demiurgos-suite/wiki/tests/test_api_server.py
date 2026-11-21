@@ -8799,6 +8799,56 @@ class TestAssistantTurnInterruption:
         assert "no answer" in caplog.text
 
 
+    def test_injected_world_context_is_reported_as_a_source(
+        self, client: TestClient, monkeypatch,
+    ):
+        """The ficha the prompt injects is first-party provenance.
+
+        The backend pasted ``lore/ayagar.md`` into the prompt itself, so the
+        stream must report it even though the model never calls a graph tool —
+        otherwise the turn reads "consulted no sources" while citing a ficha.
+
+        S: odd/tasks/assistant-turn-metadata-and-dropdown.md, S7.
+        """
+        world_root = api_server.MUNDOS_DIR / "test_mundo"
+        (world_root / "lore" / "ayagar.md").write_text(
+            "---\ntype: criatura\ntitle: Ayagar\n---\nLeon Celestial, 8 m.\n",
+            encoding="utf-8",
+        )
+
+        class Hit:
+            path = "lore/ayagar.md"
+
+        class Detail:
+            title = "Ayagar"
+            type = "criatura"
+            content = "Leon Celestial, 8 m."
+
+        class Graph:
+            def search(self, _query):
+                return [Hit()]
+
+            def get_entity(self, _path):
+                return Detail()
+
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: Graph())
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(_semantic_payload("allow")))
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", self._answer_adapter())
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "¿Cuál es la forma especial del Ayagar?", "session_id": "ctx-1",
+        })
+
+        operations = [
+            (event.get("operation"), event.get("status"), event.get("path"))
+            for event in _parse_sse(response.text)
+            if event.get("kind") == "activity"
+        ]
+        assert ("World context", "running", None) in operations
+        assert ("World context", "succeeded", "lore/ayagar.md") in operations
+
+
+
 class TestPublishedAdjuntoRoute:
     """PR2: ``GET .../published/{skill}/{version}/adjunto/{path:path}`` serves a
     single pinned carrier as raw ``text/markdown`` (R14/R17; D1-D4)."""

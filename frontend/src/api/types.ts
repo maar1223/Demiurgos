@@ -629,7 +629,7 @@ export type AssistantActivityTerminalStatus = "succeeded" | "failed" | "unknown"
 
 export interface AssistantActivityItem {
   item_id: string;
-  operation: "Search world" | "Read world";
+  operation: "Search world" | "Read world" | "World context";
   status: AssistantActivityItemStatus;
   path?: string;
   warning?: string;

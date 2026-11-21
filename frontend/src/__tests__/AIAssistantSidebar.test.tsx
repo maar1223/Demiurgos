@@ -2611,6 +2611,51 @@ describe("AIAssistantSidebar per-response turn details", () => {
     expect(screen.getByText("personajes/rhyz.md")).toBeInTheDocument();
   });
 
+  it("labels injected fichas as world context, not as a tool call", () => {
+    useSessionsMock.mockReturnValue(
+      withTurn({
+        activeSession: {
+          id: "session-42",
+          title: "¿Cuándo nació Rhyz?",
+          messages: [
+            { role: "user", content: "¿Cuándo nació Rhyz?" },
+            {
+              role: "assistant",
+              content: "Rhyz nació en 1400.",
+              turn: {
+                durationMs: 27_400,
+                items: [
+                  {
+                    item_id: "context-1",
+                    operation: "World context" as const,
+                    status: "succeeded" as const,
+                    path: "lore/ayagar.md",
+                  },
+                ],
+                sources: ["lore/ayagar.md"],
+                warnings: [],
+              },
+            },
+          ],
+          createdAt: 1,
+        },
+      }),
+    );
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: "Tardó 27 s · Consultó 1 fuente" }),
+    ).toBeInTheDocument();
+    return userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Tardó 27 s/ }))
+      .then(() => {
+        expect(screen.getByText("Contexto del mundo")).toBeInTheDocument();
+        expect(screen.getByText("lore/ayagar.md")).toBeInTheDocument();
+      });
+  });
+
   it("says so when the turn consulted no sources", () => {
     useSessionsMock.mockReturnValue(
       withTurn({

@@ -596,6 +596,7 @@ export const messages = {
     "assistant.activity.operation.searchWorld": "Buscar en el mundo",
     "assistant.activity.operation.readWorld": "Leer del mundo",
     "assistant.activity.operation.worldActivity": "Actividad del mundo",
+    "assistant.activity.operation.worldContext": "Contexto del mundo",
     "assistant.activity.confirmedSources": "Fuentes confirmadas ({count})",
     "assistant.activity.unavailableContract":
       "Hermes no expone un contrato verificable de archivos consultados; no se muestran fuentes sin evidencia.",
@@ -2976,6 +2977,7 @@ export const messages = {
     "assistant.activity.operation.searchWorld": "Search world",
     "assistant.activity.operation.readWorld": "Read world",
     "assistant.activity.operation.worldActivity": "World activity",
+    "assistant.activity.operation.worldContext": "World context",
     "assistant.activity.confirmedSources": "Confirmed sources ({count})",
     "assistant.activity.unavailableContract":
       "Hermes does not expose a verifiable contract of consulted files; no sources are shown without evidence.",

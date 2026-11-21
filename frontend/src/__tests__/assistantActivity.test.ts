@@ -136,6 +136,29 @@ describe("assistant activity transport", () => {
     )).toEqual({ kind: "terminal", request_id: "request-1", status: "failed" });
   });
 
+  it("accepts the backend's injected world-context provenance", () => {
+    // The prompt builder pasted the ficha itself: first-party provenance, not
+    // a provider tool call. Odd/tasks/assistant-turn-metadata-and-dropdown.md S7.
+    expect(parseAssistantActivityEvent(
+      {
+        kind: "activity",
+        request_id: "request-1",
+        item_id: "context-1",
+        operation: "World context",
+        status: "succeeded",
+        path: "lore/ayagar.md",
+      },
+      "request-1",
+    )).toEqual({
+      kind: "activity",
+      request_id: "request-1",
+      item_id: "context-1",
+      operation: "World context",
+      status: "succeeded",
+      path: "lore/ayagar.md",
+    });
+  });
+
   it("streams the authoritative semantic decision before compatible events", async () => {
     const onEvent = vi.fn();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(

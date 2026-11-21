@@ -48,12 +48,15 @@ from error_codes import problem, register_error_handlers
 from PIL import Image
 
 from assistant_activity import (
+    ActivityEvent,
     ActivityTranslator,
     AnswerEvent,
     HermesActivityRequest,
     HermesRunsActivityAdapter,
     SemanticDecisionEvent,
     TerminalEvent,
+    WORLD_CONTEXT_LABEL,
+    validate_structured_world_path,
 )
 from chat_attachments import (
     ATTACHMENTS,
@@ -11471,8 +11474,12 @@ def _build_ai_ask_prompt(
     skill_contract: str | None = None,
     attachments: list | None = None,
     memory_context: str | None = None,
+    context_sources: list[str] | None = None,
 ) -> str:
-    from demiurgos_personality import build_identity_prompt, build_graph_context
+    from demiurgos_personality import (
+        build_identity_prompt,
+        graph_context_with_sources,
+    )
 
     global_context = mundo == GLOBAL_ASSISTANT_CONTEXT
     conversation_language = _resolve_language("conversation")
@@ -11506,9 +11513,13 @@ def _build_ai_ask_prompt(
 
         # Entity graph context (search for entities matching the prompt)
         graph_index = _get_graph(mundo) if mundo else None
-        graph_ctx = build_graph_context(body.prompt, graph_index)
+        graph_ctx, graph_sources = graph_context_with_sources(body.prompt, graph_index)
         if graph_ctx:
             parts.append(graph_ctx)
+            # The prompt now carries these fichas: report them as the server's
+            # own provenance, not as a tool call the model never made.
+            if context_sources is not None:
+                context_sources.extend(graph_sources)
 
     # Response guidance moved to the END of the prompt (see
     # ``_RESPONSE_STYLE_GUIDANCE`` below): a style rule placed before the
@@ -11878,6 +11889,10 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         )
     # Skill routing is fire-and-forget: it never blocks the response and its
     # skill_id is persisted at stream close.
+    # Fichas the prompt builder injects. First-party provenance: the server
+    # read these files itself, so they are reported even when the model never
+    # calls a graph tool.
+    context_sources: list[str] = []
     try:
         activity_request = HermesActivityRequest(
             request_id=request_id,
@@ -11889,6 +11904,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 memory_context=_memory_context(
                     mundo, body.prompt + attachment_metadata_note(attachments),
                 ),
+                context_sources=context_sources,
             ),
             session_id=_channel_session_id(body.session_id),
         )
@@ -11933,6 +11949,24 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             return _sse_event(event.as_dict())
 
         yield _sse_event(_semantic_decision_event(result).as_dict())
+        # Injected-context provenance, before the run: one item per ficha the
+        # backend itself put in the prompt. ``running`` then ``succeeded``
+        # keeps the client reducer's ordering contract intact.
+        for index, raw_path in enumerate(context_sources, start=1):
+            path = validate_structured_world_path(world_root, raw_path)
+            if path is None:
+                continue
+            item_id = f"context-{index}"
+            yield _sse_event(
+                ActivityEvent(
+                    request_id, item_id, WORLD_CONTEXT_LABEL, "running",
+                ).as_dict()
+            )
+            yield _sse_event(
+                ActivityEvent(
+                    request_id, item_id, WORLD_CONTEXT_LABEL, "succeeded", path,
+                ).as_dict()
+            )
         completed = False
         disconnected = False
         # Skill routing: reuse the awaited early task when one was started

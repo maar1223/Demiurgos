@@ -21,6 +21,9 @@ INCOMPLETE_EVIDENCE_WARNING = "Evidence incomplete."
 NEUTRAL_EVIDENCE_WARNING = "No confirmed world evidence."
 SEARCH_WORLD_LABEL = "Search world"
 READ_WORLD_LABEL = "Read world"
+#: The backend injected this ficha into the prompt itself. First-party
+#: provenance: the server read the file, the model never called a tool.
+WORLD_CONTEXT_LABEL = "World context"
 ACTIVITY_UNAVAILABLE_REASON = "file_evidence_contract_unverified"
 PROVIDER_ACTIVITY_FAILURE_REASON = "provider_activity_unavailable"
 
