@@ -30,7 +30,10 @@
 #                            pointer) or, without it, bootstrap-once the
 #                            default <documents>\Demiurgos + .env seed; the
 #                            DEMIURGOS_DATA_ROOT override never writes the
-#                            pointer but always seeds .env (S0-A, step 4)
+#                            pointer but always seeds .env (S0-A, step 4).
+#                            The payload's foundational methodology seeds are
+#                            copied once into the data root (the app reads
+#                            them there, never from the code tree).
 #
 # The core NEVER runs a package manager other than the verified uv, NEVER
 # executes files from the payload (only the launcher the user starts runs),
@@ -354,6 +357,56 @@ function Invoke-HermesProvision {
     }
 }
 
+# --- assistant world-reading wiring (contract) -------------------------------
+# docs/architecture/ASSISTANT_WORLD_READING.md: the assistant reads the author's
+# world through the demiurgos-graph MCP server. Windows parity with the POSIX
+# core: register it after the runtime and the staged venv exist, idempotently
+# and correctively. Best-effort by design: a failure warns loudly and never
+# aborts an otherwise valid install.
+function Invoke-GraphMcpProvision {
+    $hermesHome = if ($env:DEMIURGOS_HERMES_HOME) {
+        $env:DEMIURGOS_HERMES_HOME
+    } else {
+        Join-Path $installRoot "hermes"
+    }
+    $python = Join-Path $installRoot "current\.venv\Scripts\python.exe"
+    $wiki = Join-Path $installRoot "current\src\tools\demiurgos-suite\wiki"
+    $config = Join-Path $hermesHome "config.yaml"
+
+    # Skipped assistant runtime (DEMIURGOS_HERMES_SKIP=1) or no profile yet:
+    # never create a config.yaml the runtime provisioner is supposed to seed.
+    if (-not (Test-Path -LiteralPath $hermesHome -PathType Container)) { return }
+
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $wiki "hermes_profile_config.py") -PathType Leaf)) {
+        Write-Host "install-demiurgos: cannot wire the assistant graph (python or merge module missing); the assistant will NOT read the world"
+        return
+    }
+
+    $program = @'
+import sys
+from pathlib import Path
+
+# Registers mcp_servers.demiurgos-graph -> mcp_launcher.py, which resolves the
+# data root and the world at runtime. Never a hardcoded --mundos-path.
+sys.path.insert(0, sys.argv[1])
+from hermes_profile_config import merge_graph_mcp_server, remove_engram_mcp_server
+
+config = Path(sys.argv[2])
+merge_graph_mcp_server(config)
+# The product keeps its own assistant memory; drop the legacy Engram server
+# from profiles written by older installers (idempotent, preserves siblings).
+remove_engram_mcp_server(config)
+'@
+    try {
+        $program | & $python - $wiki $config
+        if ($LASTEXITCODE -ne 0) { throw "python exit $LASTEXITCODE" }
+        Write-Host "install-demiurgos: assistant graph wired at $config"
+    } catch {
+        Write-Host "install-demiurgos: WARNING: the assistant graph could not be wired; it will NOT read the world - see docs/architecture/ASSISTANT_WORLD_READING.md"
+    }
+}
+
 # --- uv provisioning (5.3) ---------------------------------------------------
 
 function Import-UvChecksums {
@@ -585,6 +638,45 @@ function New-ContentDirs {
         (Join-Path $script:dataRoot "data"), (Join-Path $script:dataRoot "config") | Out-Null
 }
 
+function Invoke-SeedMethodologyPayload {
+    # The payload ships the authoritative foundational seeds, and the app reads
+    # them from the DATA root while only upgrading an existing copy forward
+    # (methodology_seed.reconcile_seed_root). Bootstrapping a missing copy is
+    # the installer's job: copy it once and never overwrite an existing tree.
+    $src = Join-Path $installRoot "current\data\methodology\seeds"
+    $dest = Join-Path $script:dataRoot "data\methodology\seeds"
+
+    if (Test-Path -LiteralPath $dest) {
+        Write-Host "install-demiurgos: preserving the existing methodology seeds at $dest"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $src -PathType Container)) {
+        Warn "no methodology seeds in the installed payload ($src); the foundational methods stay unavailable"
+        return
+    }
+
+    $tmp = "$dest.tmp.$PID"
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    try {
+        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        Copy-Item -Path (Join-Path $src '*') -Destination $tmp -Recurse -Force
+        # A concurrent installer may have created the tree while we copied:
+        # keep the first copy (bootstrap-once) instead of nesting it.
+        if (Test-Path -LiteralPath $dest) {
+            Remove-Item -LiteralPath $tmp -Recurse -Force
+            Write-Host "install-demiurgos: preserving the existing methodology seeds at $dest"
+            return
+        }
+        Move-Item -LiteralPath $tmp -Destination $dest
+        Write-Host "install-demiurgos: bootstrapped the methodology seeds at $dest"
+    } catch {
+        if (Test-Path -LiteralPath $tmp) {
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Warn "could not bootstrap the methodology seeds at $dest; the foundational methods stay unavailable"
+    }
+}
+
 function Write-PointerRecord {
     # Byte-compatible with data_root.py write_pointer (schema_version 1,
     # json.dumps indent 2, trailing newline) so read_pointer reads it back.
@@ -629,6 +721,7 @@ function Invoke-DataRootBootstrap {
         Write-Host "install-demiurgos: the author content lives in $script:dataRoot"
         Write-Host "install-demiurgos: recorded in $pointerFile; change it with -DataRoot or from the app"
         Invoke-SeedEnvFile
+        Invoke-SeedMethodologyPayload
         return
     }
     # 2. Environment override for this install only: never touches the pointer.
@@ -638,6 +731,7 @@ function Invoke-DataRootBootstrap {
         Write-Host "install-demiurgos: using DEMIURGOS_DATA_ROOT=$script:dataRoot (override; the choice is NOT recorded)"
         Write-Host "install-demiurgos: pass -DataRoot to record $script:dataRoot for every later start"
         Invoke-SeedEnvFile
+        Invoke-SeedMethodologyPayload
         return
     }
     # 3. An existing pointer is preserved byte-for-byte.
@@ -645,6 +739,7 @@ function Invoke-DataRootBootstrap {
     if ($pointed) {
         $script:dataRoot = $pointed
         Write-Host "install-demiurgos: preserving existing data-root pointer -> $script:dataRoot"
+        Invoke-SeedMethodologyPayload
         return
     }
     # 4. Bootstrap-once the default <documents>\Demiurgos.
@@ -654,6 +749,7 @@ function Invoke-DataRootBootstrap {
     Write-Host "install-demiurgos: the author content lives in $script:dataRoot"
     Write-Host "install-demiurgos: change it with -DataRoot or from the app"
     Invoke-SeedEnvFile
+    Invoke-SeedMethodologyPayload
 }
 
 # --- Windows Start Menu entry ----------------------------------------------
@@ -749,6 +845,11 @@ try {
         # the installer without reinstalling the app.
         Install-StartMenuShortcut
         Invoke-HermesProvision
+        Invoke-GraphMcpProvision
+        # Repair the data root too: a user whose content folder was deleted (or
+        # an install that predates the seed bootstrap) gets the pointer, .env
+        # and the foundational seeds back without reinstalling the app.
+        Invoke-DataRootBootstrap
         if ($env:DEMIURGOS_RESTART_AFTER_INSTALL -eq "1") {
             Restart-StackAfterInstall
         }
@@ -762,6 +863,7 @@ try {
     Invoke-CommitStaging
     Write-ChannelConfig
     Invoke-HermesProvision
+    Invoke-GraphMcpProvision
     Invoke-DataRootBootstrap
     Install-StartMenuShortcut
 

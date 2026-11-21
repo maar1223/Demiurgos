@@ -176,6 +176,28 @@ def test_shipped_installer_wires_the_graph_after_provisioning_the_runtime():
     assert runtime < graph
 
 
+def test_windows_core_wires_the_graph_after_provisioning_the_runtime():
+    """Windows parity: the shipped .ps1 core must wire the graph server too.
+
+    The POSIX core registers ``demiurgos-graph`` after provisioning Hermes; the
+    Windows core did not, so a fresh Windows install left the assistant blind
+    to the world while every other surface looked healthy.
+    """
+    installer = (
+        REPO_ROOT / "scripts" / "install-demiurgos.ps1"
+    ).read_text(encoding="utf-8")
+    assert "function Invoke-GraphMcpProvision" in installer
+    assert "merge_graph_mcp_server" in installer
+    assert "remove_engram_mcp_server" in installer
+    assert "current\\.venv\\Scripts\\python.exe" in installer
+    assert "hermes_profile_config" in installer
+
+    main_flow = installer[installer.index("# --- main"):]
+    assert main_flow.index("Invoke-HermesProvision") < main_flow.index(
+        "Invoke-GraphMcpProvision"
+    )
+
+
 # =============================================================================
 # Engram cutover — corrective removal of the legacy MCP server
 # =============================================================================

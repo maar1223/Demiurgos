@@ -50,6 +50,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -1538,6 +1539,125 @@ class TestDataRootFlag:
         assert "usage" in (result.stderr + result.stdout).lower()
         pointer_dir = Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
         assert list(pointer_dir.rglob("data-root.json")) == []
+
+
+@POSIX_RUNNER
+class TestMethodologySeedBootstrap:
+    """A fresh install must leave the foundational methodology usable.
+
+    The payload ships ``data/methodology/seeds``; the app reads them from the
+    DATA root and only upgrades an existing copy forward
+    (``methodology_seed.reconcile_seed_root``). Bootstrapping a missing copy is
+    the installer's job, so the data-root bootstrap must copy the payload seeds
+    once, without ever overwriting an existing tree.
+    """
+
+    @staticmethod
+    def _stage_payload_seeds(install_root: Path) -> Path:
+        dest = install_root / "current" / "data" / "methodology" / "seeds"
+        shutil.copytree(_REPO_ROOT / "data" / "methodology" / "seeds", dest)
+        return dest
+
+    def test_fresh_data_root_receives_the_shipped_seeds(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        self._stage_payload_seeds(Path(env["DEMIURGOS_HOME"]))
+
+        result = _run_seed_only(env)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        data_root = Path(env["HOME"]) / "Documents" / "Demiurgos"
+        copied = data_root / "data" / "methodology" / "seeds"
+        assert (copied / "narrative-character-creation" / "manifest.yaml").is_file()
+        assert len([p for p in copied.rglob("*") if p.is_file()]) == 19
+
+    def test_the_fresh_data_root_publishes_the_foundational_skills(
+        self, tmp_path: Path
+    ):
+        env = _seed_env(tmp_path)
+        self._stage_payload_seeds(Path(env["DEMIURGOS_HOME"]))
+        assert _run_seed_only(env).returncode == 0
+        data_root = Path(env["HOME"]) / "Documents" / "Demiurgos"
+        code = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(_WIKI)!r})\n"
+            "import api_server\n"
+            "lib = api_server._methodology_library()\n"
+            "print(len({p.skill_id for p in lib.list_published()}))\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HOME": env["HOME"],
+                "DEMIURGOS_DATA_ROOT": str(data_root),
+                "XDG_CONFIG_HOME": env["XDG_CONFIG_HOME"],
+                "HERMES_HOME": str(tmp_path / "hermes"),
+                "DEMIURGOS_NO_BROWSER": "1",
+            },
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert proc.stdout.strip().splitlines()[-1] == "4"
+
+    def test_a_same_version_rerun_repairs_the_seed_bootstrap(self):
+        text = _text(INSTALLER)
+        start = text.index("# Idempotent re-run")
+        end = text.index("\nfi\n", start) + len("\nfi\n")
+        early_exit = text[start:end]
+        assert "bootstrap_data_root" in early_exit
+
+    def test_an_existing_seed_tree_is_preserved_byte_for_byte(self, tmp_path: Path):
+        env = _seed_env(tmp_path)
+        self._stage_payload_seeds(Path(env["DEMIURGOS_HOME"]))
+        data_root = Path(env["HOME"]) / "Documents" / "Demiurgos"
+        existing = (
+            data_root
+            / "data"
+            / "methodology"
+            / "seeds"
+            / "narrative-character-creation"
+        )
+        existing.mkdir(parents=True)
+        marker = existing / "manifest.yaml"
+        marker.write_text("version: 9.9\n", encoding="utf-8")
+        before = marker.read_bytes()
+
+        result = _run_seed_only(env)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert marker.read_bytes() == before
+        assert not (
+            data_root
+            / "data"
+            / "methodology"
+            / "seeds"
+            / "narrative-system-creation"
+        ).exists()
+
+
+class TestWindowsMethodologySeedBootstrap:
+    """Windows parity: the data-root bootstrap copies the shipped seeds once."""
+
+    def test_ps1_bootstraps_the_methodology_seeds_from_the_payload(self):
+        text = _text(PS_INSTALLER)
+        assert "function Invoke-SeedMethodologyPayload" in text
+        assert 'Join-Path $installRoot "current\\data\\methodology\\seeds"' in text
+        assert 'Join-Path $script:dataRoot "data\\methodology\\seeds"' in text
+        assert "Test-Path -LiteralPath $dest" in text
+        bootstrap = text[text.index("function Invoke-DataRootBootstrap") :]
+        bootstrap = bootstrap[: bootstrap.index("# --- Windows Start Menu entry")]
+        assert "Invoke-SeedMethodologyPayload" in bootstrap
+
+    def test_ps1_same_version_rerun_repairs_the_seed_bootstrap(self):
+        text = _text(PS_INSTALLER)
+        start = text.index("if ($alreadyCurrent) {")
+        end = text.index("\n    }\n", start)
+        early_exit = text[start:end]
+        assert "Invoke-DataRootBootstrap" in early_exit
+        assert "Invoke-GraphMcpProvision" in early_exit
 
 
 class TestWindowsDataRootDocumentsDefault:
