@@ -19,7 +19,7 @@ REPO_ROOT = _WIKI.parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "install-local.sh"
 
 VERSION_RE = re.compile(
-    r"(\d+\.\d+\.\d+\+local\.\d{8}\.\d{6}\.[0-9a-f]+(?:\.dirty)?)"
+    r"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\+local\.\d{8}\.\d{6}\.[0-9a-f]+(?:\.dirty)?)"
 )
 
 
@@ -96,7 +96,7 @@ def test_version_override_must_stay_semver_build_metadata(tmp_path: Path) -> Non
     result = _run(install_root, tmp_path, "--dry-run", "--version", "9.9.9")
 
     assert result.returncode == 1
-    assert "not <X.Y.Z>+local.<YYYYMMDD>.<HHMMSS>.<sha>" in result.stderr
+    assert "not <X.Y.Z[-pre]>+local.<YYYYMMDD>.<HHMMSS>.<sha>" in result.stderr
 
 
 def test_dry_run_reports_the_prune_plan_and_removes_nothing(tmp_path: Path) -> None:

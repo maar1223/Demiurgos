@@ -10,9 +10,10 @@
 #   - The payload shape is the release payload shape: payload_manifest.json
 #     (default-deny allow-list) + the explicit extras the workflow ships +
 #     frontend/dist + requirements.lock. What you test locally is what ships.
-#   - The version is SemVer build metadata: <base>+local.<sha>[.dirty]. Build
-#     metadata never affects precedence, so the updater compares it EQUAL to
-#     the same released version and never nags with a bogus "update available".
+#   - The version is SemVer build metadata: <base>+local.<sha>[.dirty], where
+#     <base> is the latest tag and may carry a prerelease (v0.14.0-beta.1).
+#     Build metadata never affects precedence, so the updater compares it EQUAL
+#     to the same released version and never nags with a bogus update.
 #   - The venv is created per version with the pinned uv and the hash-locked
 #     requirements (the uv cache makes repeats fast). Nothing is shared, so a
 #     version dir stays self-contained and rollback keeps working.
@@ -48,7 +49,10 @@ Options:
 
 The default label is <base>+local.<YYYYMMDD>.<HHMMSS>.<sha>[.dirty]: SemVer
 build metadata, so the updater compares it equal to the same released version
-and never nags, while the timestamp tells one local build from another.
+and never nags, while the timestamp tells one local build from another. A
+prerelease tag keeps its prerelease in <base> (v0.14.0-beta.1 ->
+0.14.0-beta.1+local...), so a local build of a beta is not mislabeled as the
+stable release.
 EOF
 }
 
@@ -119,8 +123,8 @@ else
 fi
 
 if ! printf '%s' "$VERSION" \
-    | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\+local\.[0-9]{8}\.[0-9]{6}\.[0-9a-f]+(\.dirty)?$'; then
-    fail "the local version '$VERSION' is not <X.Y.Z>+local.<YYYYMMDD>.<HHMMSS>.<sha>[.dirty]; the updater would misread it"
+    | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\+local\.[0-9]{8}\.[0-9]{6}\.[0-9a-f]+(\.dirty)?$'; then
+    fail "the local version '$VERSION' is not <X.Y.Z[-pre]>+local.<YYYYMMDD>.<HHMMSS>.<sha>[.dirty]; the updater would misread it"
 fi
 
 APP_DIR="$INSTALL_ROOT/app/$VERSION"
