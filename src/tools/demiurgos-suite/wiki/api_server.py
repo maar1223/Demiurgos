@@ -11197,6 +11197,57 @@ GUIDED_LORE_BUDGET = 3_000
 GUIDED_MEMORY_BUDGET = 1_000
 
 
+def _guided_entity_name(state: SessionState | None) -> str:
+    """The reference this guided session is about, when it is known.
+
+    ``reference_name`` is empty for an unresolved graph reference, so the seed
+    author turn is the second source ("vamos a crear la ficha de Hesia"), and the
+    provider's own mention note is the last. A stable name lets cross-session
+    memory retrieval keep its subject even when the current turn says "ella".
+    """
+    if state is None:
+        return ""
+    name = str(state.reference_name or "").strip()
+    if name:
+        return name
+    for message in state.messages:
+        if message.message_type.value == "author_input":
+            text = str((message.content or {}).get("text") or "")
+            candidate = named_reference_name(text)
+            if candidate:
+                return candidate
+    raw = str((state.candidate.observations or {}).get("mencion_previa_nombre") or "").strip()
+    return raw.split(" (", 1)[0].strip()
+
+
+def _guided_entity_memory(mundo: str, state: SessionState | None) -> str:
+    """Deterministic 'Known about <reference>' block for the guided prompt.
+
+    The generic FTS memory block ranks a full name below the many other facts
+    about the same character; this lookup surfaces the accepted entity rows in
+    deterministic order (fuller entity name first), so an earlier session's
+    "Hesia Viltri" reaches the model when the author asks for it.
+    """
+    entity = _guided_entity_name(state)
+    if not entity:
+        return ""
+    try:
+        entries = _ASSISTANT_MEMORY.entity_profile(
+            entity, world=_memory_world(mundo), limit=4,
+        )
+    except Exception:
+        logger.warning("guided entity memory lookup failed safely", exc_info=True)
+        return ""
+    if not entries:
+        return ""
+    lines = [f"- ({entry.kind}) {entry.statement}" for entry in entries]
+    return (
+        f"[Known about {entity} from earlier sessions "
+        "(confirm with the author; never assume):\n"
+        + "\n".join(lines) + "\n]"
+    )
+
+
 def _guided_world_context(
     mundo: str, state: SessionState | None, author_input: str,
 ) -> str:
@@ -11210,7 +11261,13 @@ def _guided_world_context(
     lore = _world_lore_context(
         mundo, _guided_lore_query(state, author_input), budget=GUIDED_LORE_BUDGET,
     )
-    memory = _memory_context(mundo, author_input)[:GUIDED_MEMORY_BUDGET]
+    entity = _guided_entity_name(state)
+    query = _guided_lore_query(state, author_input)
+    if entity:
+        query = f"{entity} {query}"
+    entity_memory = _guided_entity_memory(mundo, state)
+    memory = _memory_context(mundo, query)[:GUIDED_MEMORY_BUDGET]
+    memory = "\n\n".join(part for part in (entity_memory, memory) if part)[:GUIDED_MEMORY_BUDGET]
     if memory:
         lore = f"{lore}\n\n{memory}" if lore else memory
     return lore[:GUIDED_CONTEXT_BUDGET]

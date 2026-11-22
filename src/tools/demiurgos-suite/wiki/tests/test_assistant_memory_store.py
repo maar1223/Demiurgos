@@ -168,3 +168,33 @@ def test_schema_survives_reopen(tmp_path: Path) -> None:
         "world/vibrantes/ganic"
     ]
     restarted.close()
+
+
+def test_entity_profile_prefers_the_full_known_name(tmp_path: Path) -> None:
+    """A reference known as "Hesia" still surfaces the earlier "Hesia Viltri"."""
+    store = AssistantMemoryStore(tmp_path / "memory.sqlite3")
+    _save(
+        store, topic="world/vibrantes/entity/hesia", entity="Hesia",
+        kind="entity", statement="Hesia es una mujer fuerte pero compasiva.",
+    )
+    _save(
+        store, topic="world/vibrantes/entity/hesia-viltri", entity="Hesia Viltri",
+        kind="entity", importance=1,
+        statement="Hesia Viltri pertenece a una familia bastante adinerada.",
+    )
+    _save(
+        store, topic="world/vibrantes/entity/hesia-proposal", entity="Hesia Viltri",
+        statement="Hesia Viltri fue propuesta en un turno anterior.", status="proposal",
+    )
+    _save(
+        store, world="Atherr", topic="world/atherr/hesia", entity="Hesia Viltri",
+        statement="Hesia Viltri vive en Atherr.",
+    )
+
+    hits = store.entity_profile("Hesia", world="Vibrantes")
+    assert [entry.entity for entry in hits][:2] == ["Hesia Viltri", "Hesia"]
+    assert hits[0].statement.startswith("Hesia Viltri")
+    assert all(entry.status != "proposal" and entry.world == "Vibrantes" for entry in hits)
+    assert store.entity_profile("", world="Vibrantes") == []
+    assert store.entity_profile("Hesia", world="Atherr")[0].world == "Atherr"
+    store.close()

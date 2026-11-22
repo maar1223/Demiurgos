@@ -398,6 +398,49 @@ class AssistantMemoryStore:
                 rows = self._conn.execute(sql, [*params, limit]).fetchall()
         return [self._entry_from(row) for row in rows]
 
+    def entity_profile(
+        self,
+        entity: str,
+        *,
+        world: str = "",
+        limit: int = 5,
+        now: datetime | None = None,
+    ) -> list[MemoryEntry]:
+        """Live accepted entries whose entity is *entity* or a fuller form of it.
+
+        A session may know the reference only by its given name ("Hesia") while
+        an earlier session recorded the full name ("Hesia Viltri"). A longer
+        entity name is the better identity fact, so it is listed first; this is
+        deterministic and does not depend on FTS ranking, which routinely
+        buries the full name under many other facts about the same character.
+        """
+        name = str(entity or "").strip()
+        if not name or limit <= 0:
+            return []
+        world = str(world or "").strip()
+        now_iso = _iso(now)
+        filters = [
+            "e.deleted_at IS NULL",
+            "(e.expires_at IS NULL OR e.expires_at > ?)",
+            "(e.scope = 'global' OR e.world = ?)",
+            "e.status != 'proposal'",
+        ]
+        prefix_length = len(name) + 1
+        sql = (
+            "SELECT e.* FROM memory_entries e WHERE " + " AND ".join(filters) +
+            " AND (lower(e.entity) = lower(?) "
+            "OR lower(substr(e.entity, 1, ?)) = lower(?) || ' ') "
+            "ORDER BY length(e.entity) DESC, "
+            "CASE WHEN e.kind = 'entity' THEN 0 ELSE 1 END, "
+            "e.importance DESC, e.updated_at DESC LIMIT ?"
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                sql,
+                [now_iso, world, name, prefix_length, name, max(0, int(limit))],
+            ).fetchall()
+        return [self._entry_from(row) for row in rows]
+
     def list(
         self,
         *,

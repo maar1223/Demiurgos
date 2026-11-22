@@ -23,8 +23,10 @@ from guided_character_protocol import (  # noqa: E402
     PROTOCOL_VERSION,
     CandidateState,
     GuidedRequest,
+    MessageType,
     MethodologySnapshot,
     SessionState,
+    TypedMessage,
 )
 
 
@@ -333,3 +335,63 @@ def test_guided_field_brief_has_no_prior_block_without_a_mention() -> None:
     _field, progress = current_field(state.candidate, (), ())
     brief = api_server._guided_field_brief(state, progress)
     assert "Earlier mention" not in brief
+
+
+def test_guided_entity_memory_surfaces_the_full_name_from_an_earlier_session(
+    monkeypatch,
+) -> None:
+    """A surname stored by an earlier session must reach the guided prompt."""
+
+    class Entry:
+        kind = "entity"
+        statement = "Hesia Viltri pertenece a una familia bastante adinerada."
+
+    class Memory:
+        def entity_profile(self, entity: str, *, world: str = "", limit: int = 5):
+            assert entity == "Hesia" and world == "Vibrantes"
+            return [Entry()]
+
+    monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", Memory())
+    state = SessionState("s-entity", "Vibrantes", "conversation", 1, "author")
+    state.messages = [
+        TypedMessage(MessageType.AUTHOR_INPUT, {"text": "vamos a crear la ficha de Hesia"}, 0),
+    ]
+
+    block = api_server._guided_entity_memory("Vibrantes", state)
+    assert "Known about Hesia" in block
+    assert "Hesia Viltri" in block
+    assert len(block) < 1_000
+
+
+def test_guided_world_context_injects_the_entity_memory_and_keeps_the_subject(
+    monkeypatch,
+) -> None:
+    class Entry:
+        kind = "entity"
+        statement = "Hesia Viltri pertenece a una familia bastante adinerada."
+
+    class Memory:
+        def entity_profile(self, entity: str, *, world: str = "", limit: int = 5):
+            return [Entry()] if entity == "Hesia" else []
+
+    captured: dict[str, str] = {}
+
+    def fake_memory_context(mundo: str, query: str, *, limit: int = 5) -> str:
+        captured["query"] = query
+        return ""
+
+    monkeypatch.setattr(api_server, "_ASSISTANT_MEMORY", Memory())
+    monkeypatch.setattr(api_server, "_world_lore_context", lambda *args, **kwargs: "")
+    monkeypatch.setattr(api_server, "_memory_context", fake_memory_context)
+    state = SessionState("s-entity", "Vibrantes", "conversation", 3, "author")
+    state.messages = [
+        TypedMessage(MessageType.AUTHOR_INPUT, {"text": "vamos a crear la ficha de Hesia"}, 0),
+        TypedMessage(MessageType.AUTHOR_INPUT, {"text": "en una conversacion pasada dejé el apellido de ella"}, 3),
+    ]
+
+    context = api_server._guided_world_context(
+        "Vibrantes", state, "en una conversacion pasada dejé el apellido de ella",
+    )
+    assert "Known about Hesia" in context
+    assert "Hesia Viltri" in context
+    assert "Hesia" in captured["query"]

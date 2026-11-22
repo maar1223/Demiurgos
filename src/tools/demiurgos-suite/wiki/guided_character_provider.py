@@ -199,6 +199,10 @@ class HermesGuidedProvider:
             "for this field or only something that complements it, offering to "
             "enrich it. That mention is NOT a settled answer and does not move "
             "the plan. "
+            "If the supplied context already carries this reference's value for "
+            "the current field (for example a full name recorded in an earlier "
+            "session, under 'Known about'), reflect it and ask whether to keep "
+            "it; never ask for it cold. "
             "Keep the synthesis-first contract. "
             if fields_path and request.field_context else ""
         )

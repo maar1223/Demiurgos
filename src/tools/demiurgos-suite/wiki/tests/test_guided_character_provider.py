@@ -926,6 +926,7 @@ def test_fields_prompt_reflects_an_earlier_mention_instead_of_skipping_it() -> N
         assert "Earlier mention from the author (NOT settled" in prompt
         assert "entender a Ganic" in prompt
         assert "That mention is NOT a settled answer" in prompt
+        assert "never ask for it cold" in prompt
         assert "Known so far (settled facts and earlier mentions" in prompt
         assert "Known so far (never ask these again)" not in prompt
 
