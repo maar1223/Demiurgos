@@ -238,6 +238,9 @@ def test_config_endpoint_includes_nonempty_app_version(client: TestClient, monke
     response = client.get("/api/config")
     assert response.status_code == 200
     assert response.json()["app_version"] == "9.9.9"
+    # The installed version must never be served from a cache: the updater
+    # restarts the stack under an open page (2026-11-21).
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.fixture()

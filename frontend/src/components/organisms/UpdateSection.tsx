@@ -111,25 +111,44 @@ export function UpdateSection() {
     };
   }, []);
 
-  // Render-time version: one read of the app's own metadata on mount (spec
-  // "Read-only frontend update panel" renders the current version). It never
-  // polls and never triggers the advisory update check.
-  useEffect(() => {
-    let active = true;
-    // Async IIFE so a synchronous throw from the client is caught too — the
-    // panel must never crash a host page just because app metadata is missing.
-    void (async () => {
-      try {
-        const config = await getAppConfig();
-        if (active) setAppVersion(config.app_version);
-      } catch {
-        if (active) setAppVersion(null);
-      }
-    })();
-    return () => {
-      active = false;
-    };
+  // Render-time version: the live app metadata. This is the authoritative
+  // RUNNING version (the server reads it from the running process), so it is
+  // re-read whenever the panel becomes visible again: the updater restarts the
+  // stack underneath an open page, and a version captured once at mount would
+  // keep showing the previous install after that restart.
+  const refreshAppVersion = useCallback(async () => {
+    try {
+      const config = await getAppConfig();
+      setAppVersion(config.app_version);
+    } catch {
+      // Keep the last known value: a metadata hiccup must never crash the panel
+      // nor invent a version.
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshAppVersion();
+  }, [refreshAppVersion]);
+
+  useEffect(() => {
+    // Recovering focus/visibility (including a bfcache restore) revalidates the
+    // installed version. This is metadata, not the advisory update check: the
+    // check stays manual-only.
+    const revalidate = () => {
+      if (document.visibilityState === "visible") void refreshAppVersion();
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void refreshAppVersion();
+    };
+    document.addEventListener("visibilitychange", revalidate);
+    window.addEventListener("focus", revalidate);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", revalidate);
+      window.removeEventListener("focus", revalidate);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [refreshAppVersion]);
 
   const check = useCallback(() => {
     setChecking(true);
@@ -220,6 +239,9 @@ export function UpdateSection() {
       attempts += 1;
       try {
         const config = await getAppConfig();
+        // Reflect the served version even if this wrapper cannot reload: the
+        // panel must never claim the previous install is still running.
+        setAppVersion(config.app_version);
         const baseline = applyBaselineRef.current;
         // Reload only when the served version changed. The backend stays up
         // during the install (same version) and restarts at the end; a reload
@@ -263,8 +285,8 @@ export function UpdateSection() {
             {t("profile.updates.currentVersion")}
           </dt>
           <dd className="font-medium text-primary" data-testid="update-current-version">
-            {status?.current_version ??
-              appVersion ??
+            {appVersion ??
+              status?.current_version ??
               t("profile.updates.versionUnknown")}
           </dd>
         </div>

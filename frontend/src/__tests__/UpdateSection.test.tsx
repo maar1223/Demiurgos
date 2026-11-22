@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UpdateSection } from "@/components/organisms/UpdateSection";
 import {
@@ -132,16 +132,90 @@ describe("UpdateSection — Perfil → Actualizaciones", () => {
       screen.getByRole("button", { name: "Buscar actualizaciones" }),
     );
 
+    // The check updates the channel, but the INSTALLED version stays on the
+    // live app metadata: the advisory check can be older than a stack restart
+    // underneath the page (2026-11-21: panel showed 0.13.1 with 0.14.0-beta.1
+    // installed and running).
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "Anticipado" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      ),
+    );
+    expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+      "0.1.1",
+    );
+    expect(getUpdateStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets a stale check status override the live installed version", async () => {
+    (getAppConfig as Mock).mockResolvedValue({
+      language: "es",
+      app_version: "0.2.0",
+    });
+    (getUpdateStatus as Mock).mockResolvedValue(baseStatus);
+    const user = userEvent.setup();
+    render(<UpdateSection />);
     await waitFor(() =>
       expect(screen.getByTestId("update-current-version")).toHaveTextContent(
         "0.2.0",
       ),
     );
-    expect(screen.getByRole("radio", { name: "Anticipado" })).toHaveAttribute(
-      "aria-checked",
-      "true",
+
+    // A check that still reports the old running version must not win over the
+    // live metadata.
+    (getUpdateStatus as Mock).mockResolvedValue({
+      ...baseStatus,
+      current_version: "0.1.1",
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Buscar actualizaciones" }),
     );
-    expect(getUpdateStatus).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getUpdateStatus).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+      "0.2.0",
+    );
+  });
+
+  it("revalidates the installed version when the window regains focus", async () => {
+    const { unmount } = render(<UpdateSection />);
+    await waitFor(() =>
+      expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+        "0.1.1",
+      ),
+    );
+
+    // The updater restarted the stack underneath the open page: the same mount
+    // must pick up the new version without a full reload.
+    (getAppConfig as Mock).mockResolvedValue({
+      language: "es",
+      app_version: "0.2.0",
+    });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+        "0.2.0",
+      ),
+    );
+    unmount();
+  });
+
+  it("falls back to the check status when app metadata is unavailable", async () => {
+    (getAppConfig as Mock).mockRejectedValue(new Error("metadata down"));
+    (getUpdateStatus as Mock).mockResolvedValue(baseStatus);
+    const user = userEvent.setup();
+    render(<UpdateSection />);
+    await user.click(
+      screen.getByRole("button", { name: "Buscar actualizaciones" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("update-current-version")).toHaveTextContent(
+        "0.2.0",
+      ),
+    );
   });
 
   it("names the channel once, with its own selector label", () => {

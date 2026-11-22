@@ -872,13 +872,19 @@ def _app_version() -> str:
 
 
 @app.get("/api/config")
-def get_app_config():
+def get_app_config(response: Response):
     """Non-sensitive global runtime metadata for the frontend.
 
     Exposes only the normalized UI language, persisted-first (the selected
     locale) with the project ``.env``/environment as fallback, plus the
     resolved runtime ``app_version``; never secrets or paths.
+
+    ``no-store``: the frontend renders the INSTALLED version from this route.
+    A cached copy would show the previous install after the updater restarts
+    the stack underneath an open page (2026-11-21: panel said 0.13.1 while
+    0.14.0-beta.1 was running).
     """
+    response.headers["Cache-Control"] = "no-store"
     return {"language": _configured_language(), "app_version": _app_version()}
 
 
