@@ -24,8 +24,13 @@ Runners: `./.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `
 ## Tasks
 
 - [x] T1 Cursor + `settled_fields` state + store migration/backfill + settlement on commit (S3, S4, S6, S7). Route: inline. Commit `3c19eb2`. Tests: body cursor (mention never advances, settlement does, completion, legacy backfill), session settle/advance and no-early-proposal, store migration/backfill + restart. Evidence: `-k guided` 447 passed.
-- [ ] T2 Prior-mention brief + provider prompt + served turn decision (S2, S4, S5). Route: inline. Tests: brief, prompt, served progress, no early proposal, completion proposal.
-- [ ] T3 Docs §10.9 + full backend/frontend verification (S8). Route: inline + independent verifier (Risk item 1).
+- [x] T2 Prior-mention brief + provider prompt + served turn decision (S2, S4, S5). Route: inline. Commit `5045d95`. Evidence: prompt free-path byte-identical (verifier sha `c6028a3d…`); 85 focused tests passed.
+- [x] T3 Docs §10.9 + full backend/frontend verification (S8). Route: inline + independent verifier (Risk item 1). Commit `d6678a5` (verifier correction batch). Evidence: full backend 5074 passed / 11 skipped (CI-ignored e2e/installer/launcher files excluded); frontend 1830 passed. Verifier: S1-S4/S6-S8 met; S5 blocker (skip completing the plan left the minimum unasked) fixed and rechecked; S3 placeholder-delta advisory fixed and rechecked; no regressions.
+
+## Post-verification follow-ups (non-blocking)
+
+- The completed-plan minimum guard checks `delta` but not the same turn's `observations`. A provider QUESTION that carries the missing minimum only in observations would still ask it once more; then the observation is stored and the next turn is complete. Defensible under S2 (a mention is never settled); UX-only.
+- Assistant-memory capture records each demoted questionnaire turn as a `proposal` fact (`api_server.py` memory capture). Non-canon and pre-existing; volume only.
 
 ## Log
 
@@ -34,3 +39,4 @@ Runners: `./.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/`; `
 - **L3 (deeper analysis):** the fields path and the free-path gate are two authorities; `delta` was overloaded ("field settled" vs "premature proposal"). With name+desire present, the same gate would emit a PROPOSAL at Deseo (field 27/36), abandoning the questionnaire (no completion guard).
 - **L4 (Owner decision, verbatim):** "si, me gusta como lo planteas"
 - **L5 (Owner decision, verbatim):** "lo que creo que es en la formulario guiado todas las preguntas deberian hacerse, sin embargo si en una respuesta anterior se dió una idea parcial de ese campo entonces el asistente te tiene que decir algo tipo: Ahora venimos con el Deseo; en una respuesta anterior me dijiste que... por tanto crees que ese es su Deseo real? o es algo que lo complementa unicamente? si quieres podemos enriquecerlo. O algo por el estilo"
+- **L6 (independent verifier, 2026-11-21):** first pass: S1-S4/S6-S8 met, S5 NOT met (skipping the last plan field completed the plan with the minimum missing and a QUESTION response left it unasked), plus an S3 advisory (empty/placeholder/`null` deltas settled). Correction batch `d6678a5`: post-branch guard asks `next_required_question` when the plan is complete on a QUESTION turn, and `_delta_value_settles` rejects `None`/blank/non-answer placeholders. Recheck: blocker fixed (QUESTION and DELTA shapes), advisory fixed, no regressions; discriminator probe at `5045d95` reproduced both as RED.
