@@ -18,6 +18,7 @@ from guided_character_protocol import (  # noqa: E402
     DEFAULT_DEADLINE_MS,
     ErrorCode,
     GuidedRequest,
+    GuidedResponse,
     GuidedSessionStore,
     Outcome,
     PROTOCOL_VERSION,
@@ -567,5 +568,89 @@ def test_fields_proposal_arrives_only_when_the_plan_is_complete() -> None:
 
         assert response.outcome is Outcome.DELTA
         assert state.candidate.proposals
+
+    asyncio.run(scenario())
+
+
+def test_completed_plan_missing_minimum_asks_it_even_on_a_question_turn() -> None:
+    """S5: skipping the last field must still ask a missing platform minimum."""
+
+    async def scenario() -> None:
+        from guided_character_body import current_field, questionnaire_fields
+
+        store = _fields_store()
+        plan = questionnaire_fields("1º")
+        for field in plan:
+            if field.key in {"deseo", plan[-1].key}:
+                continue
+            state = store.recover("session-1", "author-1")
+            assert state is not None
+            request = GuidedRequest(
+                PROTOCOL_VERSION, "seed", "session-1", "nec", state.revision,
+                "author-1", "valor", guided_path="fields", field_key=field.key,
+            )
+            response = GuidedResponse(
+                PROTOCOL_VERSION, "seed", "session-1", state.revision, Outcome.QUESTION,
+                question="siguiente",
+                observations={"nombre": "Hesia"} if field.key == "nombre" else None,
+            )
+            assert store.commit(request, response, settle=field.key) is not None
+        assert store.skip_field("session-1", "author-1", "deseo") is not None
+        assert store.skip_field("session-1", "author-1", plan[-1].key) is not None
+
+        state = store.recover("session-1", "author-1")
+        assert state is not None
+        current, progress = current_field(
+            state.candidate, state.skipped_fields, state.settled_fields,
+        )
+        assert current is None and progress["complete"] is True
+
+        async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+            return {
+                "protocol_version": PROTOCOL_VERSION,
+                "request_id": req.request_id,
+                "session_id": req.session_id,
+                "outcome": "question",
+                "question": "¿Revisamos la ficha?",
+            }
+
+        response, _state = await continue_session(
+            store, provider,
+            GuidedRequest(
+                PROTOCOL_VERSION, "req-1", "session-1", "nec", state.revision,
+                "author-1", "saltar", guided_path="fields", field_key="",
+                field_progress=progress,
+            ),
+            capabilities(),
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert "deseo" in (response.question or "").casefold()
+
+    asyncio.run(scenario())
+
+
+def test_a_placeholder_delta_does_not_settle_the_field() -> None:
+    """S3: an empty or 'undefined' delta is not an answer; the field stays."""
+
+    async def scenario() -> None:
+        for placeholder in ("", "aún sin definir", None):
+            store = _fields_store()
+            _field, progress = _field_cursor(store)
+
+            async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+                return {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": req.request_id,
+                    "session_id": req.session_id,
+                    "outcome": "delta",
+                    "delta": {"nombre": placeholder},
+                }
+
+            response, state = await continue_session(
+                store, provider, fields_request(0, "nombre", progress), capabilities(),
+            )
+            assert response.outcome is Outcome.QUESTION
+            assert (response.question or "").startswith("Nombre.")
+            assert state and state.settled_fields == []
 
     asyncio.run(scenario())

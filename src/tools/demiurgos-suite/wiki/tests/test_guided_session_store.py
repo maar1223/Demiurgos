@@ -621,3 +621,31 @@ def test_reopening_a_current_database_keeps_its_version(tmp_path) -> None:
     store = GuidedSessionStore(db)
     version = int(store._conn.execute("PRAGMA user_version").fetchone()[0])
     assert version == guided_session_store.SCHEMA_VERSION
+
+
+def test_a_new_row_with_only_a_mention_is_not_backfilled_after_restart(tmp_path: Path) -> None:
+    """S6: '[]' marks a new row; only NULL (legacy) rows are backfilled."""
+    from guided_character_body import current_field
+
+    db = tmp_path / "mention-only.sqlite3"
+    store = GuidedSessionStore(db_path=db)
+    store.create("s-mention-only", "vibrantes", "author", path="fields")
+    state = store.recover("s-mention-only", "author")
+    assert state is not None
+    request = GuidedRequest(
+        PROTOCOL_VERSION, "req-1", "s-mention-only", "vibrantes", state.revision,
+        "author", "menciono el apodo", guided_path="fields", field_key="nombre",
+    )
+    response = GuidedResponse(
+        PROTOCOL_VERSION, "req-1", "s-mention-only", state.revision, Outcome.QUESTION,
+        question="Nombre. ¿Cómo se llama?", observations={"apodo": "Dos Llaves"},
+    )
+    committed = store.commit(request, response)
+    assert committed is not None and committed.settled_fields == []
+
+    restarted = GuidedSessionStore(db_path=db).recover("s-mention-only", "author")
+    assert restarted is not None and restarted.settled_fields == []
+    field, progress = current_field(
+        restarted.candidate, restarted.skipped_fields, restarted.settled_fields,
+    )
+    assert field is not None and field.key == "nombre" and progress["index"] == 1

@@ -822,14 +822,28 @@ def turn_decision_for(
     )
 
 
+def _delta_value_settles(value: object) -> bool:
+    """True when a delta value is a real answer, not a placeholder/empty note."""
+    if value is None:
+        return False
+    if isinstance(value, Mapping) and "value" in value:
+        return _delta_value_settles(value["value"])
+    if isinstance(value, str):
+        from guided_character_domain import text_is_non_answer
+
+        return not text_is_non_answer(value)
+    return True
+
+
 def delta_settles_current_field(
     request: GuidedRequest, response: GuidedResponse, state: SessionState,
 ) -> bool:
     """Whether a delta answers the field this turn actually asked.
 
     The provider may extract several facts at once; only a key that maps to the
-    current plan field settles it. Everything else is a mention for a later
-    field (or plain context) and must not move the cursor.
+    current plan field settles it, and only with a real value. Everything else
+    is a mention for a later field (or plain context) and must not move the
+    cursor.
     """
     if not response.delta:
         return False
@@ -841,9 +855,9 @@ def delta_settles_current_field(
         from guided_character_domain import resolve_candidate_nivel
 
         nivel = resolve_candidate_nivel(state.candidate)
-    for key in response.delta:
+    for key, value in response.delta.items():
         field = field_for_probe(nivel, str(key))
-        if field is not None and field.key == request.field_key:
+        if field is not None and field.key == request.field_key and _delta_value_settles(value):
             return True
     return False
 
@@ -1011,6 +1025,48 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
                 synthesis=response.synthesis,
                 observations=preserved or None,
             )
+    if (
+        request.guided_path == "fields" and response.outcome is Outcome.QUESTION
+        and response.intent != EXPLORE_INTENT
+    ):
+        # S5: a QUESTION can also close the plan without a delta — e.g. the
+        # author skips the last field and the provider just offers the review.
+        # A completed plan with the platform minimum missing must ask exactly
+        # that missing piece, never leave it unasked.
+        from guided_character_body import current_field
+        from guided_character_domain import candidate_minimum_complete, next_required_question
+
+        profile = session_flow_profile(state)
+        settled_after = list(state.settled_fields)
+        if settle is not None and settle not in settled_after:
+            settled_after.append(settle)
+        next_field, next_progress = current_field(
+            state.candidate, state.skipped_fields, settled_after,
+        )
+        if next_field is None and not candidate_minimum_complete(
+            state.candidate, delta=response.delta, mode=request.guided_mode,
+            groups=profile.minimum_groups if profile is not None else None,
+        ):
+            question = next_required_question(
+                state.candidate, delta=response.delta,
+                groups=profile.minimum_groups if profile is not None else None,
+                question_keys=profile.question_keys if profile is not None else None,
+                ui_copy_key=profile.ui_copy_key if profile is not None else None,
+            )
+            if question != response.question:
+                response = GuidedResponse(
+                    PROTOCOL_VERSION, request.request_id, request.session_id,
+                    request.base_revision,
+                    Outcome.QUESTION,
+                    provenance=(*response.provenance, "guided:field-fallback"),
+                    question=question,
+                    provider_run_id=response.provider_run_id,
+                    synthesis=response.synthesis,
+                    answer=response.answer,
+                    intent=response.intent,
+                    observations=response.observations,
+                )
+            served_progress = next_progress
     return response, store.commit(
         request, response,
         turn_decision_for(request, response, served_progress),
