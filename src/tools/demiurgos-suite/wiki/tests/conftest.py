@@ -150,6 +150,21 @@ def quiet_assistant_memory(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
+@pytest.fixture(autouse=True)
+def quiet_skill_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests hermetic: the skill router's LLM classifier must never reach
+    the operator's running gateway.
+
+    Live incident 2026-11-22: a full suite run added 23 ``POST /v1/runs`` with a
+    fixture key to the real gateway (stack: ``_route_skill`` →
+    ``skill_router._classify_llm``). Routing is a side effect; tests that
+    exercise it wire their own router explicitly.
+    """
+    api_server = sys.modules.get("api_server")
+    if api_server is not None:
+        monkeypatch.setattr(api_server, "_SKILL_ROUTER", None, raising=False)
+
+
 def _reset_state_bound_caches() -> None:
     """Drop every cached object that captured the PREVIOUS test's state path.
 
