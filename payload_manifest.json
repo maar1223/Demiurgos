@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "62b423b",
+  "source_commit": "21a73da",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -42,6 +42,7 @@
     "src/tools/demiurgos-suite/wiki/assistant_activity.py",
     "src/tools/demiurgos-suite/wiki/assistant_memory_store.py",
     "src/tools/demiurgos-suite/wiki/assistant_provider_adapters.py",
+    "src/tools/demiurgos-suite/wiki/assistant_recovery.py",
     "src/tools/demiurgos-suite/wiki/assistant_settings.py",
     "src/tools/demiurgos-suite/wiki/backup/__init__.py",
     "src/tools/demiurgos-suite/wiki/backup/engine.py",
@@ -86,6 +87,7 @@
     "src/tools/demiurgos-suite/wiki/emergency_key.py",
     "src/tools/demiurgos-suite/wiki/error_codes.py",
     "src/tools/demiurgos-suite/wiki/folder_dialog.py",
+    "src/tools/demiurgos-suite/wiki/gateway_supervisor.py",
     "src/tools/demiurgos-suite/wiki/graph_indexer.py",
     "src/tools/demiurgos-suite/wiki/graph_mcp_server.py",
     "src/tools/demiurgos-suite/wiki/graph_models.py",
@@ -335,7 +337,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1642
+        "line": 1685
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
