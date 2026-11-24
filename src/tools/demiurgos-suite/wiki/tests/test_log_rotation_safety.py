@@ -9,6 +9,7 @@ the independent verifier and kept as part of the unit.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ _WIKI = _HERE.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
+import log_rotation  # noqa: E402
 from log_rotation import (  # noqa: E402
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_MAX_BYTES,
@@ -61,19 +63,24 @@ def test_append_writer_keeps_writing_to_the_live_path_after_rotation(tmp_path):
 )
 def test_shell_append_redirection_survives_rotation(tmp_path):
     # S5/T1.1: same property through a real shell ``>>`` fd in another process.
+    # The child cannot write the second block until the sentinel exists, so the
+    # rotation is deterministically inside the window between the two writes.
     log = tmp_path / "demiurgos-gateway.log"
+    release = tmp_path / "release"
     script = (
         r'''exec 3>>"$1"; printf '%0.sA' {1..100} >&3; '''
-        r'''sleep 1; printf '%0.sB' {1..30} >&3'''
+        r'''while [ ! -f "$2" ]; do sleep 0.02; done; '''
+        r'''printf '%0.sB' {1..30} >&3'''
     )
-    child = subprocess.Popen(["bash", "-c", script, "_", str(log)])
+    child = subprocess.Popen(["bash", "-c", script, "_", str(log), str(release)])
     try:
-        for _ in range(300):
+        for _ in range(500):
             if log.exists() and log.stat().st_size >= 100:
                 break
             time.sleep(0.01)
         created = rotate_if_needed(log, max_bytes=100, keep=1)
-        child.wait(timeout=10)
+        release.write_text("go", encoding="utf-8")
+        child.wait(timeout=15)
     finally:
         if child.poll() is None:
             child.kill()
@@ -125,6 +132,53 @@ def test_the_archive_keeps_the_live_file_permissions(tmp_path):
     rotate_if_needed(log, max_bytes=128, keep=1)
 
     assert (tmp_path / "demiurgos-api.log.1").stat().st_mode & 0o777 == 0o600
+
+
+def test_a_failed_copy_never_evicts_or_shifts_existing_archives(tmp_path):
+    # S5/T1.1 (review R4-shift-before-copy): copying first and evicting later
+    # means a full disk cannot destroy history on every retry.
+    log = _write(tmp_path / "demiurgos-api.log", 256)
+    (tmp_path / "demiurgos-api.log.1").write_bytes(b"a" * 64)
+    (tmp_path / "demiurgos-api.log.2").write_bytes(b"b" * 64)
+    (tmp_path / "demiurgos-api.log.rotating").mkdir()
+
+    assert rotate_if_needed(log, max_bytes=256, keep=2) == []
+    assert log.read_bytes() == b"x" * 256
+    assert (tmp_path / "demiurgos-api.log.1").read_bytes() == b"a" * 64
+    assert (tmp_path / "demiurgos-api.log.2").read_bytes() == b"b" * 64
+
+
+def test_a_failed_rotation_is_logged(tmp_path, caplog):
+    # S5/T1.1 (review R4-silent-rotation-failure): a dead rotation must not hide
+    # behind an unbounded live log with no operator-visible signal.
+    log = _write(tmp_path / "demiurgos-api.log", 256)
+    (tmp_path / "demiurgos-api.log.rotating").mkdir()
+
+    with caplog.at_level(logging.WARNING, logger="log_rotation"):
+        rotate_if_needed(log, max_bytes=256, keep=1)
+
+    assert any("log rotation copy failed" in record.getMessage() for record in caplog.records)
+
+
+def test_the_archive_is_staged_privately_before_any_eviction(tmp_path, monkeypatch):
+    # S5/T1.1 (review R1-toc-mode): the staged copy is created with a private
+    # mode, so a hardened log is never briefly world-readable mid-rotation.
+    log = _write(tmp_path / "demiurgos-api.log", 128)
+    log.chmod(0o600)
+    seen = {}
+
+    real_stage = log_rotation._stage_copy
+
+    def spy(source, staged):
+        real_stage(source, staged)
+        seen["mode"] = staged.stat().st_mode & 0o777
+        seen["exists"] = staged.exists()
+
+    monkeypatch.setattr(log_rotation, "_stage_copy", spy)
+
+    rotate_if_needed(log, max_bytes=128, keep=1)
+
+    assert seen == {"mode": 0o600, "exists": True}
 
 
 def test_garbage_kill_switch_value_keeps_rotation_enabled():

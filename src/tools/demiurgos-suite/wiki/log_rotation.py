@@ -25,6 +25,10 @@ Deliberate limits:
   footprint is about ``(keep + 1) * max_bytes`` per file. It is a target, not a
   hard bound: a file that grows past the cap between two checks is archived
   whole, so what is guaranteed is the number of archives, never their size.
+- **Copy first, evict later.** The new generation is staged beside the live log
+  with a private mode, and only a complete copy evicts the oldest archive and
+  shifts the rest. A copy that fails on a full disk therefore leaves every
+  retained generation intact instead of destroying history on each retry.
 - **Archives are named ``<log>.N``** so the existing ``*.log`` glob in
   :mod:`bug_report` keeps reading exactly the live files and never counts the
   same bytes twice. Phase 1's tail assembly reads the archives explicitly.
@@ -37,12 +41,15 @@ Deliberate limits:
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_KEEP = 3
@@ -127,6 +134,24 @@ def resolve_log_dir(
     return root / "logs"
 
 
+def _stage_copy(source: Path, staged: Path) -> None:
+    """Copy ``source`` next to it under a private mode and a staging name.
+
+    Raising (never silently succeeding on a partial copy) is what lets the
+    caller keep every retained generation when the volume is full.
+    """
+    handle = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(handle, "wb") as destination, open(source, "rb") as origin:
+        shutil.copyfileobj(origin, destination)
+
+
+def _discard(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def rotate_if_needed(
     path: Path,
     *,
@@ -136,8 +161,9 @@ def rotate_if_needed(
     """Rotate ``path`` when it reached ``max_bytes``; return the archives touched.
 
     Returns an empty list when the file is missing, is not a regular file, is a
-    symlink, or is still below the cap. Never raises: a filesystem error leaves
-    the live log untouched.
+    symlink, is still below the cap, or a filesystem error aborted the rotation.
+    Never raises: a failure leaves the live log untouched and is logged, so a
+    silently dead rotation cannot hide behind an unbounded live log.
     """
     path = Path(path)
     try:
@@ -145,7 +171,20 @@ def rotate_if_needed(
             return []
         if path.stat().st_size < max_bytes:
             return []
-        bound = max(1, keep)
+    except OSError:
+        return []
+    bound = max(1, keep)
+    first = path.with_name(f"{path.name}.1")
+    staged = path.with_name(f"{path.name}.rotating")
+    # Stage the copy before touching the archive set: a copy that fails on a
+    # full disk must not evict a real generation or reshuffle the rest.
+    try:
+        _stage_copy(path, staged)
+    except OSError as exc:
+        logger.warning("log rotation copy failed for %s: %s", path.name, exc)
+        _discard(staged)
+        return []
+    try:
         # Drop the oldest generation first, then shift every archive one slot
         # down. Only archives move: the live file keeps its path and its open
         # append handles.
@@ -156,18 +195,22 @@ def rotate_if_needed(
             source = path.with_name(f"{path.name}.{index}")
             if source.exists():
                 source.replace(path.with_name(f"{path.name}.{index + 1}"))
-        first = path.with_name(f"{path.name}.1")
-        shutil.copyfile(path, first)
-        # The archive is as private as the live file was (a hardened 0600 log
-        # must not become world-readable through rotation).
-        try:
-            shutil.copymode(path, first)
-        except OSError:
-            pass
+        os.replace(staged, first)
+    except OSError as exc:
+        logger.warning("log rotation shift failed for %s: %s", path.name, exc)
+        _discard(staged)
+        return []
+    # The staged copy was created private; mirror the live file exactly (a
+    # hardened 0600 log must never become world-readable through rotation).
+    try:
+        shutil.copymode(path, first)
+    except OSError:
+        pass
+    try:
         # Truncate instead of unlink so the running writers keep the live path.
         os.truncate(path, 0)
-    except OSError:
-        return []
+    except OSError as exc:
+        logger.warning("log rotation truncate failed for %s: %s", path.name, exc)
     return [first.name]
 
 
