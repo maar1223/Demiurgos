@@ -22,10 +22,16 @@ export const messages = {
     "assistant.health.notConfigured":
       "El asistente no está configurado. Configúralo en Perfil para poder conversar.",
     "assistant.health.gatewayDown":
-      "El servicio del asistente no está en marcha. Reintenta o vuelve a iniciar Demiurgos.",
+      "El servicio del asistente no está en marcha. Reinícialo para volver a conversar.",
     "assistant.health.pendingReload":
-      "La configuración del asistente cambió. Reinicia Demiurgos para activarla.",
+      "La configuración del asistente cambió. Reinicia el asistente para activarla.",
     "assistant.health.retry": "Reintentar",
+    "assistant.health.restart": "Reiniciar asistente",
+    "assistant.health.restarting": "Reiniciando el asistente…",
+    "assistant.health.restartFailed":
+      "No se pudo reiniciar el asistente. Revisa Perfil o reinicia Demiurgos.",
+    "assistant.health.configInvalid":
+      "La configuración del asistente no es válida. Revísala en Perfil.",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
     "assistant.failure.timeout":
@@ -2412,10 +2418,16 @@ export const messages = {
     "assistant.health.notConfigured":
       "The assistant is not configured. Set it up in Profile to start chatting.",
     "assistant.health.gatewayDown":
-      "The assistant service is not running. Retry or start Demiurgos again.",
+      "The assistant service is not running. Restart it to keep chatting.",
     "assistant.health.pendingReload":
-      "The assistant configuration changed. Restart Demiurgos to activate it.",
+      "The assistant configuration changed. Restart the assistant to activate it.",
     "assistant.health.retry": "Retry",
+    "assistant.health.restart": "Restart assistant",
+    "assistant.health.restarting": "Restarting the assistant…",
+    "assistant.health.restartFailed":
+      "The assistant could not be restarted. Check Profile or restart Demiurgos.",
+    "assistant.health.configInvalid":
+      "The assistant configuration is not valid. Check it in Profile.",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
     "assistant.failure.timeout":

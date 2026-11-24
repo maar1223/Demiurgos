@@ -582,6 +582,34 @@ export interface AssistantSettingsStatus {
   gateway_running?: boolean;
 }
 
+/** Recovery read model for the assistant runtime (S11). */
+export type AssistantRecoveryState =
+  | "starting"
+  | "running"
+  | "restarting"
+  | "failed"
+  | "stopped";
+
+/** Closed cause vocabulary the server may report; never raw log text. */
+export type AssistantRecoveryCause = "not_started" | "exited" | "config_invalid";
+
+export interface AssistantRecoveryStatus {
+  gateway_running: boolean;
+  state: AssistantRecoveryState;
+  cause: AssistantRecoveryCause | null;
+  attempts: number;
+  can_restart: boolean;
+  updated_at: string | null;
+}
+
+/** Dispatch result of the assistant-only restart action. */
+export interface AssistantRestartResponse {
+  action: string;
+  accepted: boolean;
+  coalesced?: boolean;
+  error?: string;
+}
+
 export interface AssistantConnectionInput {
   provider: string;
   base_url?: string;
