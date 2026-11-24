@@ -1,0 +1,318 @@
+# Assistant runtime runbook
+
+Operational reference for the product-owned Hermes runtime that Demiurgos ships:
+the pin policy that keeps it frozen, where every moving part lives, and the
+repair procedures for the four failures the assistant can present today (gateway
+down, pin mismatch, broken provisioning, unusable configuration), plus how to
+read a report bundle.
+
+Scope: an installed Demiurgos (`$HOME/.demiurgos` by default) and a development
+checkout. All procedures are read-only until a step explicitly says otherwise.
+Nothing here touches the author's personal `~/.hermes` or world data.
+
+Related: `odd/tasks/hermes-core-runtime.md` (why the fork exists),
+`odd/tasks/assistant-runtime-evolution.md` (S8, S11),
+`docs/architecture/ASSISTANT_WORLD_READING.md` (what "the assistant works"
+means), `docs/install/ONE_SCREEN_GUIDE.md` (user-facing install).
+
+---
+
+## 1. What "the runtime" is
+
+Demiurgos does not run upstream Hermes. It runs a **pinned fork** installed under
+its own product root, so an upstream release can never change the product
+silently:
+
+| Fact | Value |
+|---|---|
+| Fork | `https://github.com/maar1223/hermes-agent-demiurgos.git` |
+| Pin | `d046ff9905b8470c4a0cfd5e9da566986056b438` |
+| Patch carried by the fork | `tool_choice: "none"` support (empty toolset), used by one-shot calls |
+| Verified at install time | the pinned **tree** contains `no_tools` in `gateway/platforms/api_server.py`, not merely the branch history |
+| Provisioner | `scripts/provision-hermes.sh` (idempotent, `--check` for read-only diagnosis) |
+
+Layout under the install root (`$DEMIURGOS_HOME`, default `$HOME/.demiurgos`):
+
+| Path | What it is |
+|---|---|
+| `<root>/current` | symlink to the active app version |
+| `<root>/app/<version>` | installed application payloads |
+| `<root>/hermes-agent` | the pinned git checkout of the runtime |
+| `<root>/hermes-agent/.hermes/bin/hermes` | the runtime entry point the launcher invokes |
+| `<root>/hermes` | `HERMES_HOME`: dedicated profile (skills, tools store) |
+| `<root>/hermes/config.yaml` | the assistant provider/model configuration |
+| `<root>/hermes/.env` | the runtime environment (`API_SERVER_ENABLED=true`, provider keys) |
+| `<root>/hermes/tools` | `HERMES_RUNTIME_DIR` (tool store) |
+| `<root>/logs` | `launcher.log`, `demiurgos-api.log`, `demiurgos-gateway.log` |
+| `<root>/bin/demiurgos` | installed launcher wrapper (`start`, `restart`, `stop`, `install`) |
+
+The runtime checkout is rebuilt from the pin by the provisioner. **Never edit
+`<root>/hermes-agent` in place**: the next provisioning replaces it, and a
+locally drifted checkout is not reproducible on another machine.
+
+---
+
+## 2. Pin policy (fork freeze, S8)
+
+1. **The pin does not move because upstream moved.** A release, a refactor, or a
+   new feature upstream is not a reason. It stays until a Demiurgos feature
+   genuinely requires a commit that does not exist in the pinned tree.
+2. **One reason per move.** The commit that bumps the pin names the product
+   feature that needs it, and records expected-vs-found in that feature's ODD
+   document.
+3. **The bump is verified, not trusted.** A pin bump must: fetch the new commit
+   into a staging directory, prove the `no_tools` patch is still in the tree,
+   update `HERMES_PIN` in `scripts/provision-hermes.sh` (and any test that pins
+   it), keep the launcher contract tests green, and pass the assistant wiring
+   gate (§8).
+4. **Rollback is the previous pin.** Bumping the pin backwards to the last
+   provisioned commit is always allowed; the provisioner moves the previous
+   checkout aside as `<root>/hermes-agent.previous-<timestamp>` instead of
+   deleting it.
+
+Rationale (verified evidence, `odd/tasks/hermes-core-runtime.md`): the fork
+exists for exactly one patch. Past pin moves produced (a) a merge conflict in
+`gateway/platforms/api_server.py`, the same file that carries the patch, and (b)
+a new upstream trust check on bare `custom` base URLs that can reject the
+provider base URL the assistant settings write. Both classes of breakage arrive
+with an upstream bump and with nothing changing in Demiurgos.
+
+Environment overrides exist only as test seams and for hermetic installers:
+`DEMIURGOS_HERMES_FORK_URL`, `DEMIURGOS_HERMES_PIN`,
+`DEMIURGOS_HERMES_SKIP=1`. An override that differs from the shipped pin makes
+the install non-reproducible; treat it as temporary.
+
+---
+
+## 3. Health checks (read-only, do these first)
+
+Run these before any repair step; they separate "the app is down" from "the
+assistant is down".
+
+```bash
+# 1. The API: Demiurgos itself is alive.
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/health
+
+# 2. The runtime pin: exit 0 means provisioned at the pin with a usable launcher.
+<root>/current/scripts/provision-hermes.sh --check
+
+# 3. The pin actually checked out.
+git -C <root>/hermes-agent rev-parse HEAD
+
+# 4. The gateway process and its port (default 8642).
+python3 -c "import socket;s=socket.create_connection(('127.0.0.1',8642),2);print('open')"
+
+# 5. The app's own view: Perfil -> Asistente reports gateway_running, and the
+#    assistant sidebar shows the localized health banner when it is false.
+```
+
+Launcher state (pid files) lives outside the install root, in the per-user
+runtime dir: `${XDG_RUNTIME_DIR:-${TMPDIR:-$HOME/.cache}/demiurgos/runtime}/demiurgos-launcher`
+(default `~/.cache/demiurgos/runtime/demiurgos-launcher`). Ports are overridable
+with `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`.
+
+---
+
+## 4. Repair procedures
+
+### 4.1 Gateway down
+
+**Symptom.** The assistant answers "unavailable", the assistant sidebar shows its
+health banner, or the gateway port is closed while `GET /health` still answers
+200. The app itself works.
+
+**Diagnose.**
+
+```bash
+tail -n 100 <root>/logs/demiurgos-gateway.log
+tail -n 50  <root>/logs/launcher.log
+```
+
+Classify with the closed vocabulary the app uses, never with raw log text:
+
+| Cause | What you will see |
+|---|---|
+| `not_started` | no gateway log activity since boot; launcher never spawned it |
+| `exited` | the process started and then stopped |
+| `provider_rejected` | upstream 401/402/403/404 in the gateway log (key, balance, plan) |
+| `timeout` | the run or the provider exceeded its budget |
+| `pin_mismatch` | `provision-hermes.sh --check` fails (§4.2) |
+| `config_invalid` | the runtime rejects `config.yaml` / `.env` on boot (§4.4) |
+
+**Repair.**
+
+- If the cause is `provider_rejected` or `config_invalid`, **restarting will not
+  help**. Fix the credential, balance, or configuration first (§4.4); a restart
+  loop on those causes is a defect, not a remedy.
+- If the process simply died (`exited`, `not_started`), the runtime must be
+  started again. Today the only supported action restarts the **whole platform**
+  (`<root>/bin/demiurgos restart`, which stops API and gateway and starts both);
+  no in-flight work survives that restart. Phase 0.5
+  (`odd/tasks/assistant-runtime-evolution.md`) adds an assistant-only restart
+  that leaves the API and the user's work untouched, and a supervisor that
+  restarts the gateway automatically with a bounded backoff (3 attempts at
+  5 s / 15 s / 45 s) before surfacing the cause.
+
+**Exit:** the gateway port is open, and one assistant turn answers.
+
+### 4.2 Pin mismatch
+
+**Symptom.** The provisioner reports expected-vs-found, e.g.
+
+```
+provision-hermes: expected pin d046ff... at <root>/hermes-agent, found <other>; re-run the installer or this script.
+```
+
+or the launcher refuses to start the runtime, or the assistant is unavailable
+right after an update.
+
+**Diagnose.**
+
+```bash
+<root>/current/scripts/provision-hermes.sh --check   # prints expected vs found
+git -C <root>/hermes-agent rev-parse HEAD            # what is actually there
+git -C <root>/hermes-agent status --short            # local drift? (should be empty)
+```
+
+**Repair.** Re-run provisioning (§4.3). Local changes inside the checkout are
+discarded on purpose: the pin is the contract. If the pin itself is wrong, fix
+it in the source you installed from (§2), not by hand-editing the checkout.
+
+**Exit:** `--check` exits 0.
+
+### 4.3 Re-provision the runtime
+
+Safe and idempotent. It returns immediately when the checkout is already at the
+pin with a usable launcher; otherwise it fetches the pinned commit into a
+staging directory and only then replaces the checkout, moving the previous one
+to `<root>/hermes-agent.previous-<timestamp>`.
+
+```bash
+# Installed layout
+<root>/current/scripts/provision-hermes.sh
+
+# Explicit root (parallel installs, tests)
+<root>/current/scripts/provision-hermes.sh --install-root /path/to/root
+```
+
+`setup-hermes.sh` runs with a scratch `HOME`/XDG directories inside the install
+root that are deleted afterwards, so it never writes the user's `~/.local/bin`
+or shell rc files. The first run can take 1–5 minutes; the profile seeding
+(`config.yaml`, `.env`, `API_SERVER_ENABLED=true`) also runs on an already
+provisioned checkout, so a missing profile file is repaired without a re-fetch.
+A Hermes already installed on the machine (on `PATH`, or a personal
+`~/.hermes`) is reported and left untouched.
+
+**Exit:** the provisioner ends with `runtime ready at <root>/hermes-agent (pin …)`.
+
+### 4.4 Unusable configuration or missing credentials
+
+**Symptom.** The runtime starts and immediately refuses, or every turn fails with
+an auth/quota copy, or the assistant settings panel shows the key as missing or
+the configuration as saved-but-not-active.
+
+**Diagnose (read-only).**
+
+```bash
+sed -n '1,60p' <root>/hermes/config.yaml     # model.provider / model.base_url / model.default
+grep -c 'API_SERVER_ENABLED=true' <root>/hermes/.env
+```
+
+Do not print key values; `AssistantSettingsStatus` reports only
+`key_configured`. The authoritative fix path is the app: **Perfil → Asistente**,
+which reads and writes the same `config.yaml`/`.env` through
+`assistant_settings.py`.
+
+**Repair.** Save the configuration in the app (or fix the profile directly and
+restart). A configuration change requires the runtime to load it again: the
+settings report `pending-reload` until the runtime restarts. Phase 0.5 makes the
+existing health banner's action restart the assistant in that state instead of
+telling the user to restart the platform.
+
+**Exit:** the settings report `active`, the key is configured, one assistant
+turn answers.
+
+---
+
+## 5. Log locations
+
+| File | Written by | Content |
+|---|---|---|
+| `<root>/logs/launcher.log` | `start-demiurgos.sh` | boot, adopted processes, component start/stop, health polling |
+| `<root>/logs/demiurgos-api.log` | the API child (`uvicorn api_server:app`) | every API request and background job |
+| `<root>/logs/demiurgos-gateway.log` | the gateway child (`hermes gateway run`) | provider calls, run lifecycle, upstream refusals |
+
+Today there is **no rotation** and the bug-report path drops the logs entirely
+once the redacted text exceeds 64 KB (`bug_report.py`, `_LOGS_MAX_BYTES`).
+Phase 1 of `odd/tasks/assistant-runtime-evolution.md` adds size-based rotation,
+a most-recent tail budget instead of an all-or-nothing drop, and a structured
+`diagnostics.json`. Until then, a long-lived install can produce a report with
+logs marked `included: false`; use `scripts/collect-diagnostics.sh` (§6) when
+you need the files themselves.
+
+---
+
+## 6. Reading a report bundle
+
+There are two bundles; know which one you have.
+
+### 6.1 In-app report (Perfil → Reporte de errores)
+
+The app posts a JSON bundle to the relay; the relay publishes it to the owner's
+inbox. Payload keys (relay schema in `bug_report.py`):
+
+```
+{ schema, app_version, platform{os, os_version, arch, python_version},
+  description, contact, context{...}, logs{included, text, reason, redacted_lines} }
+```
+
+- `logs` is default-on but **secret-redacted** with `content_scan.redact_secrets`;
+  a matching line becomes `[redacted: <rule>]` and the raw value is never sent.
+  Redaction covers secrets, **not** world content.
+- `included: false` with a `reason` means the source was unreadable or the
+  redacted text exceeded the 64 KB cap. It is a known limitation, not a silent
+  success (Phase 1 replaces the cap behavior).
+- `context` carries allow-listed platform facts only. There is no structured
+  per-turn record yet (run id, tools, evidence, gate decision): that is Phase 1.
+- The relay implementation lives outside this repository; schema changes need
+  its owner.
+
+### 6.2 Manual bundle (`scripts/collect-diagnostics.sh`)
+
+```bash
+<root>/current/scripts/collect-diagnostics.sh [output.tar.gz]
+```
+
+Read-only: it never uploads, restarts, or touches world data. The tarball
+contains `system.txt` (collected_at, install_root, uname, `current_target`,
+installed versions) and a copy of `<root>/logs`. It prints a privacy warning
+because the logs may contain local paths and hostnames; review before sharing.
+
+### 6.3 How to read either bundle
+
+1. `app_version` + `current_target`: confirm the report came from the version
+   the user thinks is running. A mismatch invalidates the rest of the analysis.
+2. `logs.included` / `logs.reason`: if logs were dropped, ask for
+   `collect-diagnostics.sh` instead of guessing.
+3. Search the gateway log for upstream status codes (401/402/403) before reading
+   anything else; those explain most "assistant does not answer" reports.
+4. Search the API log for the request id / run id of the failing turn. Without
+   a structured record (Phase 1) this is the only correlation available.
+5. Never copy provider keys, bearer tokens, or world text out of a bundle into
+   an issue.
+
+---
+
+## 7. The wiring gate
+
+The runtime answering is not proof that the assistant can read the world. For
+any change touching the install layout, the launcher environment, the profile
+writer, the graph indexer, or the MCP adapter, run the gate from
+`docs/architecture/ASSISTANT_WORLD_READING.md` §5:
+
+```bash
+python3 scripts/check_assistant_graph.py     # exit 0 = wiring is sound
+```
+
+A green `GET /api/<world>/graph/status` is **not** evidence: the API and the MCP
+server build independent indexes.
