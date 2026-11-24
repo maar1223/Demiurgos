@@ -60,13 +60,13 @@ Acceptance: (a) a dead gateway is restarted automatically with bounded backoff a
 |---|---|---|---|---|---|
 | T0.1 | Record the fork-freeze policy and pin rationale in the runtime runbook | S8 | inline | done | 4f98d6d |
 | T0.2 | Write the repair runbook (gateway down, pin mismatch, re-provision, log locations) | S8 | inline | done | 4f98d6d |
-| T0.5.1 | Gateway supervisor: detect exit, bounded backoff restart, attempt cap | S11 | inline | pending | — |
-| T0.5.2 | Supervisor status file plus API read model | S11 | inline | pending | — |
-| T0.5.3 | Localized cause vocabulary and mapping (no raw text) | S11 | inline | pending | — |
-| T0.5.4 | `POST /api/system/assistant/restart` (authenticated, idempotent, gateway-only) | S11 | inline | pending | — |
-| T0.5.5 | UI recovery card/dialog with one restart action | S11 | inline | pending | — |
-| T0.5.7 | Repurpose the existing health banner action and copy (state-dependent, non-modal) | S11 | inline | pending | — |
-| T0.5.6 | Tests: auto-recovery, attempt cap, no-loop on refusals, gateway-only restart | S11 | inline | pending | — |
+| T0.5.1 | Gateway supervisor: detect exit, bounded backoff restart, attempt cap | S11 | inline | done | 0742955 |
+| T0.5.2 | Supervisor status file plus API read model | S11 | inline | done | 0742955 |
+| T0.5.3 | Localized cause vocabulary and mapping (no raw text) | S11 | inline | done | 0742955 |
+| T0.5.4 | `POST /api/system/assistant/restart` (authenticated, idempotent, gateway-only) | S11 | inline | done | 0742955 |
+| T0.5.5 | UI recovery card/dialog with one restart action | S11 | inline | dropped (D9: the banner is the surface) | — |
+| T0.5.7 | Repurpose the existing health banner action and copy (state-dependent, non-modal) | S11 | inline | done | 02294d9 |
+| T0.5.6 | Tests: auto-recovery, attempt cap, no-loop on refusals, gateway-only restart | S11 | inline | done | 0742955, 02294d9, 68ab9db |
 | T1.1 | Size-based rotation for `demiurgos-api.log`, `demiurgos-gateway.log`, `launcher.log` | S5 | inline | pending | — |
 | T1.2 | Replace all-or-nothing log assembly with a most-recent tail budget | S5 | inline | pending | — |
 | T1.3 | Persist an operations ring buffer (endpoint, world, status, duration, error code, run_id) | S5 | inline | pending | — |
@@ -286,3 +286,14 @@ Frozen contract for the implementation:
 - Launcher action `restart-assistant`: `stop_component gateway`, wait for the gateway port to be free, then `start_services` (which re-exports the runtime env, re-verifies the pin and re-seeds the key) without touching the API.
 - i18n keys: `assistant.health.restart`, `assistant.health.restarting`, `assistant.health.restartFailed`, `assistant.health.configInvalid` (es/en).
 - Tests: supervisor (cap, no-loop on `config_invalid`, kill switch, attempts reset, status schema), reader/view mapping (each cause and `can_restart`), endpoint (auth, idempotent window, gateway-only action, convergence hook), frontend banner (restart on gatewayDown/pendingReload, cause copy, failure copy), and one existing-behavior test per touched surface (system restart/shutdown unchanged; banner notConfigured unchanged).
+
+
+**L12 (Phase 0.5 implementation + independent verification, 2026-11-23):** Phase 0.5 core is implemented on `feat/assistant-runtime-evolution` and its two candidate-caused blockers were fixed in `68ab9db`.
+
+- Worktree setup: `demiurgos-worktrees/assistant-runtime-evolution`, own `.venv` (requirements.txt + pytest) and own `.codegraph` index; `frontend/node_modules` is a local symlink to the main checkout and `frontend/dist` was built (`index-gO4a79yV.js`). `.venv` and `node_modules` are untracked local artifacts, never committed.
+- Commits: `4f98d6d` runbook, `8f6a19e`/`106d3fe` plan+contract docs, `0742955` backend, `02294d9` frontend, `21a73da` cherry-picked test-hermeticity guard (b97f892 from `feat/methodology-field-rules`; without it a full suite run hits the operator's live gateway — live incident 2026-11-22), `4ab928b` payload manifest, `68ab9db` verification fixes.
+- Tests authored before implementation in each unit; the first full execution happened after it, so no RED is claimed. The frontend tests were mutation-checked (`canRestartAssistant = false` made both new action tests fail) to prove they bite.
+- Independent verifier (`gentle-ai-verify`, read-only) found B1 (high) and B2 (medium), plus F1-F7. Fixed: B1 (supervisor 3 s escalation inside the launcher's 6 s window + the launcher kills the recorded gateway pid, with two regression tests), B2 (restart action gated on `key_configured` and `can_restart`, plus the `unavailable` remedy copy), F2 (failed dispatch returns one fixed string, never launcher stderr), F3 (cmdline match narrowed to `-m gateway_supervisor`), F4 (20 s coalescing window covers a real restart), F7/S8 (runbook now documents the supervisor, `gateway-supervisor.json`, the closed supervisor vocabulary and `restart-assistant`). Deferred with rationale: F5 (a pin mismatch surfaces as `not_started`; the launcher rejects it at boot and the runbook names the remedy), F6 (`restart-assistant` may *start* a down API through `start_services`; it can never stop it).
+- Full backend suite with the guard and no live-E2E opt-in: **5358 passed, 37 skipped, 0 failed** (baseline `master` + the guard: 11 environmental failures). Frontend: **1837 passed** (139 files) before the last two banner tests, **95 passed** in the sidebar file after them; `npm run typecheck` clean; `npm run build` clean. Assistant wiring gate: `python3 scripts/check_assistant_graph.py` → `VERDICT: PASS (2 warnings)`.
+- Payload: `scripts/derive_payload_manifest.py --check` is fresh (192 files) after adding the two new modules.
+- Not exercised end-to-end: a real kill of the live gateway (would touch the operator's running install). The supervisor behavior is covered by process tests with a fake child; the Owner's live check (kill the gateway → it returns; force past the cap → the cause appears and the button fixes it) remains the Phase 0.5 exit gate.
