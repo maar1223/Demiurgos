@@ -872,6 +872,9 @@ start_services() {
     export DEMIURGOS_DATA_ROOT="$DATA_ROOT"
     export DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist"
     export DEMIURGOS_ROOT="$APP_ROOT"
+    # Log location for the API's bounded rotation (Phase 1, S5): the launcher
+    # stays the sole owner of WHERE the logs live; the API only maintains them.
+    export DEMIURGOS_LOG_DIR="$LOG_DIR"
     # Runtime version identity (install layout): <install_root>/current -> app/<version>.
     # The launcher is the SOLE exporter, set only when the `current` layout
     # exists; a dev checkout has no layout and must never export an empty value.

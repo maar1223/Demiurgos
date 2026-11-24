@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "21a73da",
+  "source_commit": "cb8c815",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -124,6 +124,7 @@
     "src/tools/demiurgos-suite/wiki/import_vision.py",
     "src/tools/demiurgos-suite/wiki/inter_doc_relationships.py",
     "src/tools/demiurgos-suite/wiki/local_state.py",
+    "src/tools/demiurgos-suite/wiki/log_rotation.py",
     "src/tools/demiurgos-suite/wiki/markdown_heading.py",
     "src/tools/demiurgos-suite/wiki/mcp_adapter.py",
     "src/tools/demiurgos-suite/wiki/mcp_launcher.py",
@@ -337,7 +338,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1685
+        "line": 1702
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

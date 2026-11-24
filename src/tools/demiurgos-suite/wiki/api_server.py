@@ -408,6 +408,12 @@ async def _lifespan(app: FastAPI):
         ).start()
     except Exception:  # noqa: BLE001 — never block startup
         logger.warning("assistant graph warmup could not start")
+    # Bound the launcher logs (Phase 1, S5): rotation is best-effort maintenance,
+    # so a failure here is logged and never blocks startup.
+    try:
+        _start_log_rotation()
+    except Exception:  # noqa: BLE001 — never block startup
+        logger.warning("log rotation could not start")
     try:
         yield
     finally:
@@ -823,6 +829,17 @@ def _install_root() -> Path | None:
     if _CODE_ROOT.parent.name == "app":
         return _CODE_ROOT.parent.parent
     return None
+
+
+def _start_log_rotation() -> threading.Thread | None:
+    """Start the bounded launcher-log rotation (Phase 1, S5), or None when off.
+
+    The import is late on purpose: it keeps the rotation module's lifecycle seam
+    patchable in tests, and the rotation code is only needed once per boot.
+    """
+    from log_rotation import start_rotation
+
+    return start_rotation(install_root=_install_root(), code_root=_CODE_ROOT)
 
 
 def _app_version() -> str:
