@@ -96,6 +96,64 @@ _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 #: Logs are dropped (``included=false``) once the redacted text exceeds this cap.
 _LOGS_MAX_BYTES = 65536
 
+#: Per-file ceiling for the diagnostic window: no single log file (live or
+#: rotated) contributes more than this many bytes, so the newest window always
+#: spans several sources instead of being filled by the first one.
+_LOG_SOURCE_MAX_BYTES = 16384
+
+
+def _tail_window(text: str, limit: int) -> str:
+    """The newest ``limit`` bytes of ``text``, aligned to a line start.
+
+    Cutting mid-line would ship a half record that reads like corruption, so a
+    trimmed window drops its partial first line. A single unterminated line
+    longer than the budget is returned as-is: it is the newest information the
+    log has.
+    """
+    if limit <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    tail = encoded[len(encoded) - limit :]
+    newline = tail.find(b"\n")
+    if newline != -1:
+        tail = tail[newline + 1 :]
+    return tail.decode("utf-8", errors="replace")
+
+
+def _read_tail(path: Path, limit: int) -> str:
+    """Read at most the newest ``limit`` bytes of a log file (never raises)."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            start = size - limit if size > limit else 0
+            handle.seek(start)
+            data = handle.read(size - start)
+    except OSError:
+        return ""
+    if start > 0:
+        newline = data.find(b"\n")
+        if newline != -1:
+            data = data[newline + 1 :]
+    return data.decode("utf-8", errors="replace")
+
+
+def _archives_of(logs_dir: Path, live_name: str) -> List[Path]:
+    """``<live>.N`` rotation archives in numeric order (``.1`` is the newest)."""
+    found: List[Tuple[int, Path]] = []
+    for candidate in logs_dir.glob(f"{live_name}.*"):
+        suffix = candidate.name[len(live_name) + 1 :]
+        if not suffix.isdigit():
+            continue
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        found.append((int(suffix), candidate))
+    return [path for _index, path in sorted(found)]
+
 def _utf16_units(text: str) -> int:
     """Length in UTF-16 code units — the unit the relay (JavaScript) enforces.
 
@@ -543,10 +601,14 @@ def create_bug_report_router(
         return "\n".join(lines)
 
     def _default_log_source() -> List[Tuple[str, str]]:
-        """Read every ``*.log`` under ``install_root/logs`` — the ONLY source.
+        """Read the launcher logs under ``install_root/logs`` — the ONLY source.
 
-        Never touches the world-data root, ``.env`` or any user identity file.
-        A missing install root or log directory yields no logs.
+        Newest first and bounded: each live ``*.log`` contributes at most
+        :data:`_LOG_SOURCE_MAX_BYTES` of its newest bytes, immediately followed
+        by its rotated ``<log>.N`` archives in numeric order (``.1`` is the
+        newest archive). Never touches the world-data root, ``.env`` or any
+        user identity file. A missing install root or log directory yields no
+        logs.
         """
         if install_root is None:
             return []
@@ -554,21 +616,27 @@ def create_bug_report_router(
         if not logs_dir.is_dir():
             return []
         pairs: List[Tuple[str, str]] = []
-        for path in sorted(logs_dir.glob("*.log")):
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            pairs.append((path.name, text))
+        for live in sorted(logs_dir.glob("*.log")):
+            text = _read_tail(live, _LOG_SOURCE_MAX_BYTES)
+            if text:
+                pairs.append((live.name, text))
+            for archive in _archives_of(logs_dir, live.name):
+                archived = _read_tail(archive, _LOG_SOURCE_MAX_BYTES)
+                if archived:
+                    pairs.append((archive.name, archived))
         return pairs
 
     def _assemble_logs() -> Dict[str, Any]:
-        """Redact-and-count logs, dropping them with a non-secret reason.
+        """Assemble the newest diagnostic window inside a fixed byte budget.
 
-        Logs are default-on. Each source line is scanned; a matching line is
-        replaced by ``[redacted: <rule>]`` (the raw value is never read). If the
-        source is unavailable or the redacted text exceeds the cap, logs are
-        dropped and ``included`` is ``False`` with a non-secret ``reason``.
+        Sources are walked newest first, each capped at
+        :data:`_LOG_SOURCE_MAX_BYTES`, and the joined payload never exceeds
+        :data:`_LOGS_MAX_BYTES`: an install that has logged for weeks still
+        carries a readable window instead of losing every log at once. Each
+        line is scanned; a matching line is replaced by ``[redacted: <rule>]``
+        (the raw value never survives). An unavailable source or an empty log
+        set reports ``included`` ``False`` with a non-secret ``reason`` — never
+        a silent empty payload.
         """
         source = log_source if log_source is not None else _default_log_source
         try:
@@ -590,20 +658,34 @@ def create_bug_report_router(
         redacted_total = 0
         chunks: List[str] = []
         for _name, text in pairs:
-            redacted_text, hits = content_scan.redact_secrets(text or "")
+            window = _tail_window(text or "", _LOG_SOURCE_MAX_BYTES)
+            if not window:
+                continue
+            redacted_text, hits = content_scan.redact_secrets(window)
             redacted_total += hits
-            chunks.append(redacted_text)
-        content = "\n".join(chunks)
-        if len(content.encode("utf-8")) > _LOGS_MAX_BYTES:
+            candidate = "\n".join(chunks + [redacted_text])
+            if len(candidate.encode("utf-8")) <= _LOGS_MAX_BYTES:
+                chunks.append(redacted_text)
+                continue
+            # This source overflows the remaining room: keep its newest bytes
+            # and stop, so the payload is a suffix of the newest history.
+            room = _LOGS_MAX_BYTES - len("\n".join(chunks).encode("utf-8"))
+            if chunks:
+                room -= 1  # the newline that joins the two chunks
+            piece = _tail_window(redacted_text, room)
+            if piece:
+                chunks.append(piece)
+            break
+        if not chunks:
             return {
                 "included": False,
                 "content": "",
                 "redacted_lines": redacted_total,
-                "reason": "logs exceed the size cap",
+                "reason": "no logs available",
             }
         return {
             "included": True,
-            "content": content,
+            "content": "\n".join(chunks),
             "redacted_lines": redacted_total,
             "reason": "",
         }
