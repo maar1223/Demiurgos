@@ -161,6 +161,33 @@ def test_restart_runs_the_convergence_hook(monkeypatch, launcher_path: Path) -> 
     assert hooks == [1]
 
 
+def test_failed_dispatch_never_leaks_launcher_stderr(
+    monkeypatch, launcher_path: Path
+) -> None:
+    calls = []
+
+    def fake_popen(argv, **kwargs):
+        calls.append(argv)
+        # An instantly failing launcher: the dispatch returns its stderr excerpt.
+        (launcher_path.parent / "demiurgos-launcher.log").write_text(
+            "Traceback: provider key sk-live-abc at gateway run line 42\n",
+            encoding="utf-8",
+        )
+        return _FakeProc(poll_result=1)
+
+    monkeypatch.setattr(system_control.subprocess, "Popen", fake_popen)
+    app = _make_app(launcher_path=launcher_path)
+
+    resp = TestClient(app).post("/api/system/assistant/restart")
+
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["accepted"] is False
+    assert body["error"] == "launcher dispatch failed"
+    assert "sk-live-abc" not in resp.text
+    assert "Traceback" not in resp.text
+
+
 def test_failed_spawn_does_not_run_the_convergence_hook(
     monkeypatch, launcher_path: Path
 ) -> None:
@@ -211,7 +238,7 @@ def test_restart_is_idempotent_inside_the_window(
     first = client.post("/api/system/assistant/restart")
     clock.advance(1.0)
     second = client.post("/api/system/assistant/restart")
-    clock.advance(10.0)
+    clock.advance(21.0)
     third = client.post("/api/system/assistant/restart")
 
     assert first.status_code == 200

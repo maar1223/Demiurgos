@@ -2636,6 +2636,51 @@ describe("AIAssistantSidebar assistant health", () => {
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
   });
 
+  it("sends an unconfigured assistant to Profile instead of restarting", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      key_configured: false,
+      gateway_running: false,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    expect(banner).toHaveTextContent("El asistente no está configurado");
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar asistente" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+    expect(restartAssistantMock).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a restart the server says cannot help", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+    getAssistantRecoveryStatusMock.mockResolvedValueOnce({
+      gateway_running: false,
+      state: "failed",
+      cause: "not_started",
+      attempts: 0,
+      can_restart: false,
+      updated_at: null,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    await waitFor(() =>
+      expect(banner).toHaveTextContent(
+        "El asistente no está disponible en esta instalación",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar asistente" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a failure line when the restart dispatch is rejected", async () => {
     getAssistantSettingsMock.mockResolvedValue({
       ...healthy,

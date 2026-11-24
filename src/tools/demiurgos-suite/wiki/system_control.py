@@ -63,9 +63,10 @@ _LAUNCHER_LOG = Path(tempfile.gettempdir()) / "demiurgos-launcher.log"
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
 #: A second assistant-restart request inside this window is coalesced into the
-#: first one: the launcher needs seconds to stop and start the gateway, and two
-#: concurrent restarts could leave the port in a half-stopped state.
-_ASSISTANT_RESTART_COALESCE_SECONDS = 5.0
+#: first one. A real stop+start takes ~15 s, so the window must cover it: two
+#: overlapping launcher processes could otherwise race the pid file and leave an
+#: untracked second supervisor.
+_ASSISTANT_RESTART_COALESCE_SECONDS = 20.0
 
 logger = logging.getLogger(__name__)
 
@@ -249,10 +250,16 @@ def create_system_control_router(
             last_assistant_restart = dispatched_at
         response = _dispatch(api_action="assistant-restart", launcher_arg="restart-assistant")
         if response.status_code != 200:
-            # A failed dispatch must not suppress the next real attempt.
+            # A failed dispatch must not suppress the next real attempt, and the
+            # launcher's stderr excerpt must never cross this boundary (S11c):
+            # report one fixed, localized safe string instead.
             with restart_lock:
                 last_assistant_restart = None
-            return response
+            return JSONResponse(status_code=response.status_code, content={
+                "action": "assistant-restart",
+                "accepted": False,
+                "error": "launcher dispatch failed",
+            })
         if on_assistant_restart is not None:
             try:
                 on_assistant_restart()

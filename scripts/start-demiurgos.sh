@@ -356,8 +356,9 @@ is_gateway_cmdline() {
     case "$1" in
         *"hermes gateway run"*) return 0 ;;
         # Product launch path since S11: the launcher spawns the supervisor in
-        # place of the runtime, so the pid-file owner is the supervisor.
-        *"gateway_supervisor"*) return 0 ;;
+        # place of the runtime, so the pid-file owner is the supervisor. Match
+        # the module invocation, not any stray argument carrying the name.
+        *"-m gateway_supervisor"*) return 0 ;;
         *"gateway run"*)
             case "$1" in
                 *"hermes_cli"*|*"hermes-agent"*) return 0 ;;
@@ -609,12 +610,47 @@ _kill_process() {
     done
 }
 
+# The gateway pid file holds the SUPERVISOR (S11). A child that ignores TERM
+# outlives the launcher's stop window once the supervisor is gone, so read the
+# recorded child pid and kill it too — only when its cmdline is still ours.
+_kill_supervised_gateway_child() {
+    local supervisor_pid="$1" status_file child
+    # The wrapper may already be a zombie (its /proc entry has no cmdline), so
+    # ownership was established by the caller's pid-file gate; the CHILD cmdline
+    # below is what protects a reused pid.
+    status_file="$STATE_DIR/gateway-supervisor.json"
+    [ -r "$status_file" ] || return 0
+    child="$(sed -n 's/.*"gateway_pid": *\([0-9][0-9]*\).*/\1/p' "$status_file" 2>/dev/null | sed -n '1p')"
+    [ -n "$child" ] || return 0
+    [ "$child" = "$supervisor_pid" ] && return 0
+    kill -0 "$child" 2>/dev/null || return 0
+    _validate_cmdline_for_name gateway "$child" || return 0
+    _kill_process "$child"
+}
+
+# Parent of *pid* when it is a gateway supervisor wrapper (port-fallback path).
+_gateway_supervisor_of() {
+    local pid="$1" parent
+    parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    case "$parent" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$parent" = "1" ] && return 1
+    case "$(command_of_pid "$parent")" in
+        *"-m gateway_supervisor"*) printf '%s' "$parent" ;;
+        *) return 1 ;;
+    esac
+}
+
 stop_component() {
-    local name="$1" pid file port
+    local name="$1" pid file port supervisor_pid
     file="$(pid_file "$name")"
     if owned_pid "$name"; then
         read -r pid < "$file"
         _kill_process "$pid"
+        if [ "$name" = "gateway" ]; then
+            _kill_supervised_gateway_child "$pid"
+        fi
         printf 'Stopped %s (pid %s)\n' "$name" "$pid"
         remove_pid_file "$name"
         return 0
@@ -640,8 +676,19 @@ stop_component() {
         remove_pid_file "$name"
         return 1
     fi
-    _kill_process "$pid"
-    printf 'Stopped %s (pid %s)\n' "$name" "$pid"
+    # Without a pid file the port owner may be the supervised child; stop its
+    # wrapper instead so it cannot respawn what we just killed.
+    supervisor_pid=""
+    if [ "$name" = "gateway" ]; then
+        supervisor_pid="$(_gateway_supervisor_of "$pid" || true)"
+    fi
+    if [ -n "$supervisor_pid" ]; then
+        _kill_process "$supervisor_pid"
+        printf 'Stopped %s (pid %s via supervisor %s)\n' "$name" "$pid" "$supervisor_pid"
+    else
+        _kill_process "$pid"
+        printf 'Stopped %s (pid %s)\n' "$name" "$pid"
+    fi
     remove_pid_file "$name"
 }
 

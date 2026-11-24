@@ -587,12 +587,15 @@ function ChatScreen({
 
   const { language: appLanguage, t } = useAppLanguage();
 
-  // A refusal a restart cannot fix (unusable configuration) reports its
-  // remedy instead of offering the restart action (S11d).
+  // A refusal a restart cannot fix reports its remedy instead of offering the
+  // restart action (S11d): an unusable configuration, a runtime the server says
+  // cannot be restarted, or no configured credentials (the Profile remedy).
+  const missingCredentials = health?.key_configured === false;
   const restartBlockedByCause =
-    gatewayDown && recovery?.can_restart === false && recovery.cause === "config_invalid";
+    gatewayDown && recovery !== null && recovery.can_restart === false;
   const canRestartAssistant =
-    needsActivation || (gatewayDown && !restartBlockedByCause);
+    !missingCredentials &&
+    (needsActivation || (gatewayDown && !restartBlockedByCause));
   const healthWarning =
     !healthChecked || health === null
       ? null
@@ -600,7 +603,9 @@ function ChatScreen({
         ? t("assistant.health.notConfigured")
         : gatewayDown
           ? restartBlockedByCause
-            ? t("assistant.health.configInvalid")
+            ? recovery?.cause === "config_invalid"
+              ? t("assistant.health.configInvalid")
+              : t("assistant.health.unavailable")
             : t("assistant.health.gatewayDown")
           : needsActivation
             ? t("assistant.health.pendingReload")

@@ -50,7 +50,11 @@ DEFAULT_BACKOFF = (5.0, 15.0, 45.0)
 DEFAULT_RESET_AFTER_SECONDS = 60.0
 _KILL_SWITCH_VALUES = frozenset({"0", "false", "no", "off"})
 _POLL_SECONDS = 0.2
-_TERMINATE_GRACE_SECONDS = 10.0
+#: Must stay BELOW the launcher's own stop window (``_kill_process`` waits ~6 s
+#: before SIGKILL). A gateway that ignores SIGTERM would otherwise outlive the
+#: supervisor: the launcher would kill the supervisor first and reparent the
+#: child, leaving an orphan holding the port (live-verify B1).
+_TERMINATE_GRACE_SECONDS = 3.0
 
 
 def _iso_now() -> str:

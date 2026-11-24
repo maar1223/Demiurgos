@@ -44,7 +44,8 @@ Layout under the install root (`$DEMIURGOS_HOME`, default `$HOME/.demiurgos`):
 | `<root>/hermes/.env` | the runtime environment (`API_SERVER_ENABLED=true`, provider keys) |
 | `<root>/hermes/tools` | `HERMES_RUNTIME_DIR` (tool store) |
 | `<root>/logs` | `launcher.log`, `demiurgos-api.log`, `demiurgos-gateway.log` |
-| `<root>/bin/demiurgos` | installed launcher wrapper (`start`, `restart`, `stop`, `install`) |
+| `<root>/bin/demiurgos` | installed launcher wrapper (`start`, `restart`, `stop`, `restart-assistant`, `install`) |
+| runtime state dir (`$XDG_RUNTIME_DIR` / `$TMPDIR` / `~/.cache/demiurgos/runtime` + `/demiurgos-launcher`) | launcher pid files and `gateway-supervisor.json` |
 
 The runtime checkout is rebuilt from the pin by the provisioner. **Never edit
 `<root>/hermes-agent` in place**: the next provisioning replaces it, and a
@@ -106,10 +107,25 @@ python3 -c "import socket;s=socket.create_connection(('127.0.0.1',8642),2);print
 #    assistant sidebar shows the localized health banner when it is false.
 ```
 
-Launcher state (pid files) lives outside the install root, in the per-user
-runtime dir: `${XDG_RUNTIME_DIR:-${TMPDIR:-$HOME/.cache}/demiurgos/runtime}/demiurgos-launcher`
+Launcher state (pid files plus the gateway supervisor snapshot) lives outside
+the install root, in the per-user runtime dir:
+`${XDG_RUNTIME_DIR:-${TMPDIR:-${XDG_CACHE_HOME:-$HOME/.cache}/demiurgos/runtime}}/demiurgos-launcher`
 (default `~/.cache/demiurgos/runtime/demiurgos-launcher`). Ports are overridable
 with `DEMIURGOS_API_PORT` / `DEMIURGOS_GATEWAY_PORT`.
+
+The gateway child is wrapped by the product supervisor
+(`gateway_supervisor.py`), so `gateway.pid` holds the supervisor, not the
+runtime. The supervisor keeps `gateway-supervisor.json` next to it:
+
+```json
+{"schema":"demiurgos.gateway-supervisor/v1","state":"running|starting|restarting|failed|stopped",
+ "cause":null|"not_started"|"exited"|"config_invalid","attempts":0,"max_attempts":3,
+ "last_exit_code":null,"last_restart_at":null,"updated_at":"...","supervisor_pid":0,"gateway_pid":0}
+```
+
+A missing or unparsable file is "no status" (the app reports `not_started`), never
+a guessed cause. The app exposes the same snapshot as
+`GET /api/system/assistant` with the closed cause vocabulary.
 
 ---
 
@@ -128,30 +144,47 @@ tail -n 100 <root>/logs/demiurgos-gateway.log
 tail -n 50  <root>/logs/launcher.log
 ```
 
-Classify with the closed vocabulary the app uses, never with raw log text:
+Classify with the supervisor snapshot, never with raw log text. The supervisor
+emits only what it can observe without parsing logs:
 
 | Cause | What you will see |
 |---|---|
-| `not_started` | no gateway log activity since boot; launcher never spawned it |
-| `exited` | the process started and then stopped |
-| `provider_rejected` | upstream 401/402/403/404 in the gateway log (key, balance, plan) |
-| `timeout` | the run or the provider exceeded its budget |
-| `pin_mismatch` | `provision-hermes.sh --check` fails (§4.2) |
-| `config_invalid` | the runtime rejects `config.yaml` / `.env` on boot (§4.4) |
+| `not_started` | no gateway process was ever spawned (runtime rejected at boot, CLI missing) |
+| `exited` | the supervisor saw the child exit; it restarted it until the attempt cap |
+| `config_invalid` | `config.yaml` is unparsable; the supervisor refuses to spawn and never retries |
+
+Provider refusals (401/402/403) and timeouts are **per-turn** causes classified by
+the assistant failure taxonomy (`assistant-failure-recovery.md` S3/S4); they show
+up in the gateway log and in the turn's localized copy, not in the supervisor's
+cause field. A pin mismatch never reaches the supervisor: the launcher rejects it
+at boot (§4.2) and the state reads `not_started`.
+
+**Automatic recovery.** A child that exits on its own is restarted by the
+supervisor with a bounded backoff (3 attempts at 5 s / 15 s / 45 s by default;
+attempts reset after a run that stays up past the reset window). When the cap is
+reached the supervisor stops and records `failed/exited`, and the app surfaces
+the cause. `DEMIURGOS_GATEWAY_SUPERVISOR=0` disables the wrapper (rollback: one
+spawn, no retries); `DEMIURGOS_GATEWAY_BACKOFF` and
+`DEMIURGOS_GATEWAY_MAX_ATTEMPTS` tune it.
 
 **Repair.**
 
-- If the cause is `provider_rejected` or `config_invalid`, **restarting will not
-  help**. Fix the credential, balance, or configuration first (§4.4); a restart
-  loop on those causes is a defect, not a remedy.
-- If the process simply died (`exited`, `not_started`), the runtime must be
-  started again. Today the only supported action restarts the **whole platform**
-  (`<root>/bin/demiurgos restart`, which stops API and gateway and starts both);
-  no in-flight work survives that restart. Phase 0.5
-  (`odd/tasks/assistant-runtime-evolution.md`) adds an assistant-only restart
-  that leaves the API and the user's work untouched, and a supervisor that
-  restarts the gateway automatically with a bounded backoff (3 attempts at
-  5 s / 15 s / 45 s) before surfacing the cause.
+- If the cause is `config_invalid` or credentials are missing, **restarting will
+  not help**. Fix the configuration or the credential first (§4.4); the app
+  shows the remedy and withholds the restart action.
+- If the cause is `exited` (or no status exists), restart **only the assistant**:
+
+  ```bash
+  <root>/bin/demiurgos restart-assistant
+  ```
+
+  It stops the supervised gateway, waits for its port, and starts the runtime
+  again (re-exporting the environment, re-verifying the pin and re-seeding the
+  gateway key). The API and the user's in-flight work are untouched. From the
+  app, the health banner's "Restart assistant" calls the same action through
+  `POST /api/system/assistant/restart` (authenticated, coalesced for 20 s).
+- Use the platform restart (`<root>/bin/demiurgos restart`) only when the API
+  itself is unwell; it stops and starts both components.
 
 **Exit:** the gateway port is open, and one assistant turn answers.
 

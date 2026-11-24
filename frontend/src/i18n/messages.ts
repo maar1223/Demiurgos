@@ -32,6 +32,8 @@ export const messages = {
       "No se pudo reiniciar el asistente. Revisa Perfil o reinicia Demiurgos.",
     "assistant.health.configInvalid":
       "La configuración del asistente no es válida. Revísala en Perfil.",
+    "assistant.health.unavailable":
+      "El asistente no está disponible en esta instalación. Revisa Perfil o reinstala Demiurgos.",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
     "assistant.failure.timeout":
@@ -2428,6 +2430,8 @@ export const messages = {
       "The assistant could not be restarted. Check Profile or restart Demiurgos.",
     "assistant.health.configInvalid":
       "The assistant configuration is not valid. Check it in Profile.",
+    "assistant.health.unavailable":
+      "The assistant is not available in this installation. Check Profile or reinstall Demiurgos.",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
     "assistant.failure.timeout":
