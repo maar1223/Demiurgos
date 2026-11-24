@@ -278,6 +278,7 @@ import world_recycle_bin  # flat sibling module (world-level recycle bin)
 from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
+from operations_ring import OperationRecorderMiddleware  # operations ring (S5)
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
 from backup.state import backup_state  # backup card dedicated contract (WU-14)
 from content_move_service import read_last_move  # the move record (step 5)
@@ -461,6 +462,12 @@ app.add_middleware(
 # with zero per-route work. The same middleware is the quiesce gate that answers
 # mutating ``/api/*`` with 503 while a restore owns the data root (REQ-RS-3).
 app.add_middleware(DataChangeNotifierMiddleware)
+
+# Operations ring (Phase 1, S5): one append-only, bounded JSONL of what the API
+# was asked to do and where it failed, so a bug report can carry it. Failures
+# and mutating requests only — the UI's polling GETs would otherwise evict every
+# real operation. Recording is best effort and never touches the response.
+app.add_middleware(OperationRecorderMiddleware)
 
 # UI-bound errors carry stable codes + params (AD-4/AD-5): routes raise
 # ``problem("import.job_not_found")`` and this handler renders
