@@ -33,9 +33,12 @@ the request leaves the browser.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import tempfile
+import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
@@ -58,6 +61,13 @@ _STDERR_EXCERPT_LIMIT = 2048
 _LAUNCHER_LOG = Path(tempfile.gettempdir()) / "demiurgos-launcher.log"
 
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
+
+#: A second assistant-restart request inside this window is coalesced into the
+#: first one: the launcher needs seconds to stop and start the gateway, and two
+#: concurrent restarts could leave the port in a half-stopped state.
+_ASSISTANT_RESTART_COALESCE_SECONDS = 5.0
+
+logger = logging.getLogger(__name__)
 
 
 def _stderr_excerpt(log_path: Path | None, exit_code: int) -> str:
@@ -87,6 +97,10 @@ def create_system_control_router(
     launcher_path: Path | Callable[[], Path],
     launcher_log: Path | None = None,
     launcher_available: bool | None = None,
+    assistant_status: Callable[[], Mapping[str, Any]] | None = None,
+    on_assistant_restart: Callable[[], None] | None = None,
+    coalesce_seconds: float = _ASSISTANT_RESTART_COALESCE_SECONDS,
+    clock: Callable[[], float] | None = None,
 ) -> APIRouter:
     """Build the /api/system router.
 
@@ -111,9 +125,19 @@ def create_system_control_router(
     ``launcher_path`` (S2-7). When it is False, dispatch is refused with a
     clear error instead of spawning a stale path; ``None`` keeps the legacy
     behavior (spawn, and let a spawn failure surface).
+
+    ``assistant_status``, when injected, backs ``GET /api/system/assistant``
+    with the recovery read model (closed cause vocabulary, no raw text).
+    ``on_assistant_restart`` runs after a SUCCESSFUL assistant-restart dispatch
+    so the host can re-run its bounded acceptance convergence; a coalesced or
+    failed dispatch never runs it. ``clock`` makes the coalescing window
+    deterministic in tests.
     """
     router = APIRouter(prefix="/api/system", tags=["system-control"])
     log_path = Path(launcher_log) if launcher_log is not None else _LAUNCHER_LOG
+    now = clock or time.monotonic
+    restart_lock = threading.Lock()
+    last_assistant_restart: float | None = None
 
     def _guard(request: Request) -> None:
         if require_principal(request) is None:
@@ -190,6 +214,51 @@ def create_system_control_router(
         """
         _guard(request)
         return _dispatch(api_action="restart", launcher_arg="restart")
+
+    @router.get("/assistant")
+    def assistant_recovery(request: Request) -> JSONResponse:
+        """Read the assistant recovery view (S11); fail closed when unwired."""
+        _guard(request)
+        if assistant_status is None:
+            return JSONResponse(status_code=503, content={
+                "detail": "assistant recovery status unavailable",
+            })
+        return JSONResponse(status_code=200, content=dict(assistant_status()))
+
+    @router.post("/assistant/restart")
+    def assistant_restart(request: Request) -> JSONResponse:
+        """Restart ONLY the assistant runtime (launcher ``restart-assistant``).
+
+        Authenticated and idempotent: a request inside the coalescing window is
+        reported as accepted without a second dispatch. The platform restart is
+        never used here, so the API and the user's in-flight work survive.
+        """
+        nonlocal last_assistant_restart
+        _guard(request)
+        dispatched_at = now()
+        with restart_lock:
+            if (
+                last_assistant_restart is not None
+                and dispatched_at - last_assistant_restart < coalesce_seconds
+            ):
+                return JSONResponse(status_code=200, content={
+                    "action": "assistant-restart",
+                    "accepted": True,
+                    "coalesced": True,
+                })
+            last_assistant_restart = dispatched_at
+        response = _dispatch(api_action="assistant-restart", launcher_arg="restart-assistant")
+        if response.status_code != 200:
+            # A failed dispatch must not suppress the next real attempt.
+            with restart_lock:
+                last_assistant_restart = None
+            return response
+        if on_assistant_restart is not None:
+            try:
+                on_assistant_restart()
+            except Exception:  # noqa: BLE001 — recovery must never 500 the request
+                logger.warning("assistant acceptance convergence could not be scheduled", exc_info=True)
+        return response
 
     @router.post("/shutdown")
     def shutdown(request: Request) -> JSONResponse:

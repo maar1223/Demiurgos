@@ -355,6 +355,9 @@ command_of_pid() {
 is_gateway_cmdline() {
     case "$1" in
         *"hermes gateway run"*) return 0 ;;
+        # Product launch path since S11: the launcher spawns the supervisor in
+        # place of the runtime, so the pid-file owner is the supervisor.
+        *"gateway_supervisor"*) return 0 ;;
         *"gateway run"*)
             case "$1" in
                 *"hermes_cli"*|*"hermes-agent"*) return 0 ;;
@@ -657,6 +660,19 @@ stop_all() {
     done
 }
 
+restart_assistant() {
+    # Gateway-only recovery (S11b): the API and the user's in-flight work are
+    # never touched. start_services re-exports the runtime environment, verifies
+    # the pin and re-seeds the gateway key before starting the component; the
+    # API component is already owned, so it is reported and left alone.
+    stop_component gateway || true
+    if ! wait_for_port_free "$GATEWAY_PORT"; then
+        printf 'Gateway port %s still busy; starting anyway\n' "$GATEWAY_PORT" >&2
+    fi
+    start_services
+    show_status
+}
+
 start_component() {
     local name="$1" pid port
     if owned_pid "$name"; then
@@ -685,19 +701,28 @@ start_component() {
             (cd "$API_DIR" && exec nohup "$PYTHON_BIN" -m uvicorn api_server:app \
                 --host 127.0.0.1 --port "$API_PORT" >>"$API_LOG" 2>&1) & ;;
         gateway)
-            # CWD = app root so Path.cwd()/.hermes/plugins resolves to the
-            # project plugins; HERMES_ENABLE_PROJECT_PLUGINS=1 opts them in
-            # (plugins.enabled in the Hermes profile gates which load).
-            # The current runtime reads API_SERVER_HOST/PORT; the legacy
-            # HERMES_GATEWAY_* names stay for older builds on the same port.
-            (cd "$APP_ROOT" && exec nohup env \
+            # The gateway is spawned through the product supervisor (S11): it
+            # owns the child, restarts it with a bounded backoff when it exits
+            # on its own, and writes the status file the API reads. The
+            # supervisor runs from the wiki dir so `-m gateway_supervisor`
+            # resolves, and it spawns the runtime with CWD = app root so
+            # Path.cwd()/.hermes/plugins resolves to the project plugins;
+            # HERMES_ENABLE_PROJECT_PLUGINS=1 opts them in (plugins.enabled in
+            # the Hermes profile gates which load). DEMIURGOS_GATEWAY_SUPERVISOR=0
+            # rolls back to the plain single spawn. The current runtime reads
+            # API_SERVER_HOST/PORT; the legacy HERMES_GATEWAY_* names stay for
+            # older builds on the same port.
+            (cd "$API_DIR" && exec nohup env \
                 DEMIURGOS_ROOT="$APP_ROOT" \
                 HERMES_ENABLE_PROJECT_PLUGINS=1 \
                 API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$GATEWAY_PORT" \
                 API_SERVER_ENABLED="${API_SERVER_ENABLED:-}" \
                 API_SERVER_KEY="${API_SERVER_KEY:-}" \
                 HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT" \
-                "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
+                "$PYTHON_BIN" -m gateway_supervisor \
+                    --state-dir "$STATE_DIR" \
+                    --child-cwd "$APP_ROOT" \
+                    -- "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
         *) return 1 ;;
     esac
     pid=$!
@@ -965,7 +990,7 @@ install_desktop() {
 }
 
 usage() {
-    printf 'Usage: %s [--build-if-stale] {start|restart|stop} | install [--desktop]\n' "$0"
+    printf 'Usage: %s [--build-if-stale] {start|restart|stop|restart-assistant} | install [--desktop]\n' "$0"
 }
 
 BUILD_IF_STALE=0
@@ -977,7 +1002,7 @@ main() {
         case "$arg" in
             --build-if-stale) BUILD_IF_STALE=1 ;;
             --desktop) WITH_DESKTOP_ICON=1 ;;
-            start|restart|stop|install) action="$arg" ;;
+            start|restart|stop|install|restart-assistant) action="$arg" ;;
             *) usage >&2; return 2 ;;
         esac
     done
@@ -993,6 +1018,9 @@ main() {
         # opening a new tab would double-enter the app.
         restart) stop_all; start_services; show_status ;;
         stop) stop_all ;;
+        # Assistant-only restart: the UI recovery action and the supervisor's
+        # manual escape hatch. Never stops the API (S11b).
+        restart-assistant) restart_assistant ;;
         install) install_desktop "$WITH_DESKTOP_ICON" ;;
     esac
 }

@@ -1212,6 +1212,49 @@ def _resolve_assistant_runtime_state(revision: int) -> str:
     return "pending-reload"
 
 
+def _assistant_recovery_status() -> dict[str, Any]:
+    """Assistant recovery read model (S11): liveness plus the supervisor cause.
+
+    The view carries the closed cause vocabulary only; raw log or provider text
+    never crosses this boundary. A missing or corrupt status file is "no
+    status", which the view reports as ``not_started`` (restart available).
+    """
+    try:
+        return recovery_view(
+            _assistant_gateway_probe().is_running(),
+            read_supervisor_status(),
+        )
+    except Exception:  # noqa: BLE001 — recovery must never 500 the status read
+        logger.warning("assistant recovery status read failed", exc_info=True)
+        return recovery_view(False, None)
+
+
+_ASSISTANT_CONVERGENCE_THREAD: threading.Thread | None = None
+_ASSISTANT_CONVERGENCE_LOCK = threading.Lock()
+
+
+def _schedule_assistant_convergence() -> None:
+    """Re-run the bounded acceptance convergence after an assistant restart.
+
+    A gateway-only restart loads the new ``config.yaml``, but the runtime state
+    only becomes ``active`` when the current revision has recorded acceptance
+    evidence. Without this, ``pendingReload`` could only clear with a full
+    platform restart. One convergence run at a time; the wait and ceiling are
+    the same bounded values used at boot.
+    """
+    global _ASSISTANT_CONVERGENCE_THREAD
+    with _ASSISTANT_CONVERGENCE_LOCK:
+        if _ASSISTANT_CONVERGENCE_THREAD is not None and _ASSISTANT_CONVERGENCE_THREAD.is_alive():
+            return
+        thread = threading.Thread(
+            target=_converge_assistant_acceptance,
+            name="assistant-acceptance-after-restart",
+            daemon=True,
+        )
+        _ASSISTANT_CONVERGENCE_THREAD = thread
+        thread.start()
+
+
 # ---------------------------------------------------------------------------
 # World recycle bin (REQ-001..007) — world delete, trash list, restore, purge
 #
@@ -12560,6 +12603,7 @@ from hermes_run_probe import HermesRunProbe  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
+from assistant_recovery import read_supervisor_status, recovery_view  # noqa: E402
 from updater import create_update_router  # noqa: E402
 from bug_report import DEFAULT_ISSUE_URL, create_bug_report_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
@@ -13288,6 +13332,11 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         launcher_path=_SYSTEM_LAUNCHER,
         launcher_available=None,
+        # S11: assistant-only recovery. The read model exposes the supervisor's
+        # closed cause vocabulary; the restart action dispatches the launcher's
+        # `restart-assistant` and then re-runs the bounded acceptance convergence.
+        assistant_status=_assistant_recovery_status,
+        on_assistant_restart=_schedule_assistant_convergence,
     ),
 )
 
