@@ -11621,6 +11621,32 @@ _GLOBAL_ASSISTANT_GUIDANCE: dict[str, str] = {
 #: ``_build_ai_ask_prompt`` so it applies over every routed skill method: the
 #: skill owns the content, the platform owns how the assistant converses.
 #: S1-S3 of ``odd/tasks/assistant-response-style.md``.
+# Citations (assistant-citation S1-S4): a world-grounded answer ends with a
+# `Fuentes:` / `Sources:` line naming the ficha paths the assistant actually
+# read. It goes AFTER the style block so it is the last instruction and is not
+# overridden by a routed skill. The world-agnostic `ideas-global` context has
+# no graph and never receives this clause.
+_CITATION_GUIDANCE: dict[str, str] = {
+    "es": (
+        "[Citas — obligatorio para datos del mundo: cuando afirmes un dato tomado "
+        "de una ficha, terminá la respuesta con una sola línea que empiece con "
+        "\"Fuentes:\" y liste los paths exactos de las fichas que realmente leíste "
+        "(los valores que devolvió graph_search/graph_read), separados por comas y "
+        "entre acentos graves; por ejemplo: Fuentes: `lore/regiones/x.md`. Listá "
+        "solo fichas que leíste; nunca inventes un path. Si no usaste ninguna ficha, "
+        "omití la línea.]"
+    ),
+    "en": (
+        "[Citations — required for world data: when you state a fact taken from a "
+        "sheet, end the answer with a single line starting with \"Sources:\" that "
+        "lists the exact paths of the sheets you actually read (the values returned "
+        "by graph_search/graph_read), comma-separated and backticked; for example: "
+        "Sources: `lore/regions/x.md`. Only list sheets you read; never invent a "
+        "path. Omit the line when you used no sheet.]"
+    ),
+}
+
+
 _RESPONSE_STYLE_GUIDANCE = (
     "[Response style (applies over every skill method): answer in 3-6 sentences "
     "(~120 words); expand only when the author asks to explain, compare, "
@@ -11751,6 +11777,13 @@ def _build_ai_ask_prompt(
     # skill owns the method's content. See S1-S3 in
     # odd/tasks/assistant-response-style.md.
     parts.append(_RESPONSE_STYLE_GUIDANCE)
+    # Citations come after the style block so they are the final rule: a
+    # world-grounded answer must end with a `Fuentes:`/`Sources:` line. The
+    # world-agnostic global context has no graph and gets no citation clause.
+    if not global_context and mundo:
+        parts.append(
+            _CITATION_GUIDANCE.get(conversation_language, _CITATION_GUIDANCE["es"])
+        )
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
