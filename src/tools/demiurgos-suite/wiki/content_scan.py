@@ -22,6 +22,12 @@ neutral placeholder while preserving the surrounding reproduction structure.
 :func:`scrub_all` extends that placeholder substitution to BOTH rule sets for
 the fallback copy-paste issue body, so a shared-rule secret can never survive
 into a public issue body.
+
+A third, separate concern lives here too: the CONTENT POLICY of a diagnostic
+bundle (S6). ``redact_content_previews`` removes the author content the app's
+own log writers declare with a ``preview=`` field (the assistant prompt/answer
+tails) while keeping the metadata on the same record, so a bundle is metadata
+by default and content only when the reporter opts in.
 """
 
 from __future__ import annotations
@@ -208,3 +214,67 @@ def scrub_all(text: str) -> Tuple[str, int]:
         )
         count += replaced
     return scrubbed, count
+
+
+# ---------------------------------------------------------------------------
+# Content policy (S6) — the app's own content-bearing log fields.
+#
+# The only writers that put author text into a log line are the assistant
+# gateway records in ``api_server.py``::
+#
+#     Hermes GW START len=97 session=- preview='…prompt tail…'
+#     Hermes GW DONE 3.4s len=240 preview='…answer tail…'
+#
+# Both declare the payload with ``preview=``, so everything after that field up
+# to the end of the line is author content by construction, while ``len=``,
+# ``session=`` and the timing before it are metadata and stay readable. No other
+# writer emits author text: the gateway HTTP-error record carries a bounded
+# provider error body (already covered by the secret rules), not the author's
+# content. Scrubbing by declared field keeps the rule honest and deterministic
+# instead of guessing which words look like prose.
+# ---------------------------------------------------------------------------
+
+#: What replaces a content payload removed from a log record.
+CONTENT_PREVIEW_PLACEHOLDER = "[content omitted]"
+
+#: The field a content-bearing writer declares; the payload runs to end of line.
+_CONTENT_PREVIEW_FIELD = re.compile(r"\bpreview=(?P<value>[^\n]*)")
+
+
+def count_content_previews(text: str) -> int:
+    """Number of live ``preview=`` payloads in ``text`` (placeholders excluded).
+
+    Used to label a bundle that opted in: it says whether there is any content
+    to include, so the shipped window can be marked (and not be marked when
+    there is nothing to show).
+    """
+    if not text:
+        return 0
+    return sum(
+        1
+        for match in _CONTENT_PREVIEW_FIELD.finditer(text)
+        if match.group("value").strip() != CONTENT_PREVIEW_PLACEHOLDER
+    )
+
+
+def redact_content_previews(text: str) -> Tuple[str, int]:
+    """Replace every ``preview=`` payload with :data:`CONTENT_PREVIEW_PLACEHOLDER`.
+
+    Returns ``(scrubbed_text, replaced_count)``. The field name and the rest of
+    the record survive, so the bundle still says which turn ran, how long its
+    prompt was and how it ended — it just never says what the author or the
+    assistant wrote. Idempotent: an already-placeholdered payload is neither
+    rewritten nor counted again.
+    """
+    if not text:
+        return text, 0
+    replaced = 0
+
+    def _drop(match: "re.Match[str]") -> str:
+        nonlocal replaced
+        if match.group("value").strip() == CONTENT_PREVIEW_PLACEHOLDER:
+            return match.group(0)
+        replaced += 1
+        return "preview=" + CONTENT_PREVIEW_PLACEHOLDER
+
+    return _CONTENT_PREVIEW_FIELD.sub(_drop, text), replaced

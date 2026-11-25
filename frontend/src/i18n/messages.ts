@@ -298,6 +298,13 @@ export const messages = {
       "Incluir un identificador anónimo de esta instalación",
     "profile.bugreport.pseudonymHint":
       "Opcional. Permite reconocer tus informes y ver cuántos fallos encontraste, sin saber quién eres: no lleva tu nombre, tu cuenta ni tu contacto. Si lo desactivas, el informe se envía igual.",
+    "profile.bugreport.contentOptInLabel": "Incluir fragmentos de contenido",
+    "profile.bugreport.contentOptInHint":
+      "Por defecto el informe lleva solo metadatos: qué turno corrió, cuánto duró, qué herramientas usó y dónde falló. Si lo activas, se añaden fragmentos de tus mensajes y de las respuestas del asistente, marcados dentro de los registros. El contenido se ensambla en el servidor solo cuando lo pides.",
+    "profile.bugreport.contentOmittedLines":
+      "Fragmentos de contenido omitidos: {count}",
+    "profile.bugreport.contentIncludedLabel":
+      "Fragmentos de contenido incluidos (marcados en los registros)",
     "profile.bugreport.addScreenshot": "Añadir captura",
     "profile.bugreport.removeScreenshot": "Quitar captura",
     "profile.bugreport.attachmentLimit": "Puedes adjuntar como máximo 2 capturas.",
@@ -2693,6 +2700,13 @@ export const messages = {
       "Include an anonymous identifier for this install",
     "profile.bugreport.pseudonymHint":
       "Optional. It lets your reports be recognised and shows how many bugs you found, without knowing who you are: no name, no account, no contact. Turning it off changes nothing about delivery.",
+    "profile.bugreport.contentOptInLabel": "Include content snippets",
+    "profile.bugreport.contentOptInHint":
+      "By default the report carries metadata only: which turn ran, how long it took, which tools it used and where it failed. Turning this on adds snippets of your messages and the assistant's answers, marked inside the logs. The server assembles that content only when you ask for it.",
+    "profile.bugreport.contentOmittedLines":
+      "Content snippets omitted: {count}",
+    "profile.bugreport.contentIncludedLabel":
+      "Content snippets included (marked inside the logs)",
     "profile.bugreport.addScreenshot": "Add screenshot",
     "profile.bugreport.removeScreenshot": "Remove screenshot",
     "profile.bugreport.attachmentLimit": "You can attach at most 2 screenshots.",

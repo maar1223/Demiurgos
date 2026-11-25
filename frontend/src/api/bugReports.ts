@@ -26,10 +26,15 @@ import type {
 
 /** GET /api/bugreport/assemble — the default report bundle. Principal-gated
  *  (401 when unauthenticated); world data, `.env` and the account username
- *  are excluded server-side by construction. */
-export function assembleBugReport(): Promise<BugReportBundle> {
+ *  are excluded server-side by construction.
+ *
+ *  `content` is the S6 opt-in: false (the default) ships metadata only, with
+ *  every author/assistant content payload replaced by `[content omitted]`. It
+ *  travels as a header, out of band, so the relay contract gains no field. */
+export function assembleBugReport(content = false): Promise<BugReportBundle> {
   return apiFetch<BugReportBundle>(`${API_BASE_URL}/api/bugreport/assemble`, {
     credentials: "same-origin",
+    headers: { "x-bugreport-content": content ? "1" : "0" },
     timeout: 10_000,
   });
 }
@@ -50,6 +55,7 @@ export function submitBugReport(
   payload: BugReportSubmitPayload,
   attachments: File[] = [],
   pseudonym = true,
+  content = false,
 ): Promise<BugReportSubmitResult> {
   const body =
     attachments.length === 0
@@ -69,8 +75,13 @@ export function submitBugReport(
       credentials: "same-origin",
       body,
       // Stated explicitly so the backend never has to guess: the anonymous
-      // install pseudonym is optional (S20) and off means no header at all.
-      headers: { "x-bugreport-pseudonym": pseudonym ? "1" : "0" },
+      // install pseudonym is optional (S20) and off means no header at all;
+      // content is off unless the reporter opted in (S6), and the server
+      // enforces the same policy on its side.
+      headers: {
+        "x-bugreport-pseudonym": pseudonym ? "1" : "0",
+        "x-bugreport-content": content ? "1" : "0",
+      },
       timeout: 30_000,
     },
   );
@@ -78,14 +89,19 @@ export function submitBugReport(
 
 /** POST /api/bugreport/fallback — server-scrubbed copy-paste issue body plus
  *  the `maar1223/Demiurgos` issue-form link. Strict fallback: offered only
- *  when relay delivery is unavailable or failed. */
+ *  when relay delivery is unavailable or failed.
+ *
+ *  The same S6 opt-in travels with it: a public issue body is the last place
+ *  author content should appear unannounced. */
 export function fallbackBody(
   payload: BugReportSubmitPayload,
+  content = false,
 ): Promise<BugReportFallback> {
   return apiFetch<BugReportFallback>(`${API_BASE_URL}/api/bugreport/fallback`, {
     method: "POST",
     credentials: "same-origin",
     body: JSON.stringify(payload),
+    headers: { "x-bugreport-content": content ? "1" : "0" },
     timeout: 10_000,
   });
 }

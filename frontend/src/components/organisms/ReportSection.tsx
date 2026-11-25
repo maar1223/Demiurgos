@@ -118,6 +118,12 @@ export function ReportSection() {
   const [assembling, setAssembling] = useState(true);
   const [assembleError, setAssembleError] = useState<string | null>(null);
 
+  // S6 content opt-in: OFF by default and deliberately not persisted, so every
+  // new report starts from metadata only. Turning it on re-assembles the bundle
+  // server-side (content never reaches the browser unless it was asked for).
+  const [contentOptIn, setContentOptIn] = useState(false);
+  const [refreshingContent, setRefreshingContent] = useState(false);
+
   // Editable review state (spec: preview and edit are mandatory before submit).
   const [description, setDescription] = useState("");
   const [contact, setContact] = useState("");
@@ -149,26 +155,36 @@ export function ReportSection() {
   const [fallbackError, setFallbackError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // One read-only assemble on mount (spec: assembly is a server step). The
-  // guard flag keeps a slow response from setting state on an unmounted panel.
+  // One read-only assemble on mount (spec: assembly is a server step), and one
+  // more whenever the content opt-in changes. The guard flag keeps a slow
+  // response from setting state on an unmounted panel.
   useEffect(() => {
     let active = true;
     void (async () => {
       try {
-        const next = await assembleBugReport();
-        if (active) setBundle(next);
-      } catch (cause: unknown) {
+        const next = await assembleBugReport(contentOptIn);
         if (active) {
-          setAssembleError(describeError(cause, t("profile.bugreport.loadError")));
+          setBundle(next);
+          setAssembleError(null);
         }
+      } catch (cause: unknown) {
+        if (!active) return;
+        setAssembleError(describeError(cause, t("profile.bugreport.loadError")));
+        // A failed opt-in fetch must not leave the panel claiming that content
+        // was requested: drop back to the metadata-only bundle once. The retry
+        // runs with `contentOptIn` already false, so it cannot loop.
+        if (contentOptIn) setContentOptIn(false);
       } finally {
-        if (active) setAssembling(false);
+        if (active) {
+          setAssembling(false);
+          setRefreshingContent(false);
+        }
       }
     })();
     return () => {
       active = false;
     };
-  }, [t]);
+  }, [t, contentOptIn]);
 
   const logsIncluded = Boolean(bundle?.logs.included) && includeLogs;
 
@@ -193,6 +209,17 @@ export function ReportSection() {
 
   /** Any review edit invalidates the preview — the exact-shown guarantee. */
   const markEdited = useCallback(() => setPreviewed(false), []);
+
+  /** Flip the S6 opt-in: the bundle is rebuilt server-side, and the gate
+   *  re-locks because the payload the user saw is no longer the payload. */
+  const toggleContent = useCallback(
+    (on: boolean) => {
+      setContentOptIn(on);
+      setRefreshingContent(true);
+      markEdited();
+    },
+    [markEdited],
+  );
 
   const addAttachments = useCallback(
     (chosen: FileList | null) => {
@@ -242,7 +269,12 @@ export function ReportSection() {
     setFallbackError(null);
     setCopied(false);
     try {
-      const result = await submitBugReport(payload, attachments, pseudonym);
+      const result = await submitBugReport(
+        payload,
+        attachments,
+        pseudonym,
+        contentOptIn,
+      );
       // Keep the id locally: a later release is matched against it (S12).
       rememberSubmittedReport({
         id: result.delivery_id,
@@ -255,7 +287,7 @@ export function ReportSection() {
       // STRICT fallback: prepared ONLY after a failed delivery, never in
       // parallel with a success.
       try {
-        const next = await fallbackBody(payload);
+        const next = await fallbackBody(payload, contentOptIn);
         setFallback(next);
       } catch (fallbackCause: unknown) {
         setFallbackError(
@@ -265,7 +297,16 @@ export function ReportSection() {
     } finally {
       setSubmitting(false);
     }
-  }, [attachments, buildPayload, bundle, previewed, pseudonym, submitting, t]);
+  }, [
+    attachments,
+    buildPayload,
+    bundle,
+    contentOptIn,
+    previewed,
+    pseudonym,
+    submitting,
+    t,
+  ]);
 
   const copyFallback = useCallback(async () => {
     if (!fallback || !navigator.clipboard) {
@@ -497,8 +538,46 @@ export function ReportSection() {
             </p>
           </div>
 
+          {bundle.logs.included && (
+            <div
+              className="mt-4 rounded-lg border border-edge bg-surface p-3"
+              data-testid="bugreport-content-policy"
+            >
+              <label className="flex items-start gap-2 text-small text-primary">
+                <input
+                  type="checkbox"
+                  checked={contentOptIn}
+                  onChange={(event) => toggleContent(event.target.checked)}
+                  className="mt-1"
+                  data-testid="bugreport-content-toggle"
+                />
+                {t("profile.bugreport.contentOptInLabel")}
+              </label>
+              <p className="mt-1 text-small text-muted">
+                {t("profile.bugreport.contentOptInHint")}
+              </p>
+              {(bundle.content_policy.included ||
+                bundle.content_policy.scrubbed_lines > 0) && (
+                <p
+                  className="mt-1 text-small text-muted"
+                  data-testid="bugreport-content-status"
+                >
+                  {bundle.content_policy.included
+                    ? t("profile.bugreport.contentIncludedLabel")
+                    : t("profile.bugreport.contentOmittedLines", {
+                        count: bundle.content_policy.scrubbed_lines,
+                      })}
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => setPreviewed(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setPreviewed(true)}
+              disabled={refreshingContent}
+            >
               {t("profile.bugreport.preview")}
             </Button>
             <Button

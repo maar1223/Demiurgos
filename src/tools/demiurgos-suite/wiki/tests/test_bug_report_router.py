@@ -77,6 +77,7 @@ _TOP_LEVEL_KEYS = {
     "logs",
     "allow_list",
     "contact_slot",
+    "content_policy",
     "diagnostics",
 }
 
@@ -1838,3 +1839,272 @@ def test_client_supplied_diagnostics_is_rejected() -> None:
     assert resp.status_code == 400
     assert resp.json()["code"] == "bugreport.not_allowlisted"
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Content policy (S6) — metadata by default, content opt-in, visibly labelled
+#
+# The assistant gateway writes the prompt and the answer tail into its log
+# record with ``preview=``. That payload is author content, so a bundle carries
+# the metadata (``len=``, status, timing) by default and the payload ONLY when
+# the reporter opts in through the ``x-bugreport-content: 1`` header. The
+# server enforces it on both delivery paths, so an older or hand-made client
+# cannot smuggle the payload past the panel.
+# ---------------------------------------------------------------------------
+
+CONTENT_HEADER = {"x-bugreport-content": "1"}
+CONTENT_MARKER = "== content snippets included at the reporter's request =="
+AUTHOR_TEXT = "Aldric cruza el puente de Ceniza"
+PREVIEW_LINE = (
+    "2026-01-01 12:00:00 INFO Hermes GW START len=%d session=- preview=%r"
+    % (len(AUTHOR_TEXT), AUTHOR_TEXT)
+)
+
+
+def _preview_source() -> list:
+    return [("demiurgos-api.log", "boot\n" + PREVIEW_LINE + "\nready")]
+
+
+def _relay_recorder(calls: list):
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        return 200, {"ok": True, "delivery_id": "d1"}
+
+    return _relay
+
+
+def test_assemble_scrubs_content_previews_by_default() -> None:
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert AUTHOR_TEXT not in body["logs"]["content"]
+    assert "[content omitted]" in body["logs"]["content"]
+    # The record stays diagnosable: the prefix and its length are metadata.
+    assert "Hermes GW START" in body["logs"]["content"]
+    assert "len=%d" % len(AUTHOR_TEXT) in body["logs"]["content"]
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 1}
+    # The useful structure around it survives.
+    assert "boot" in body["logs"]["content"]
+    assert "ready" in body["logs"]["content"]
+
+
+def test_assemble_includes_content_only_when_opted_in() -> None:
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    content = body["logs"]["content"]
+    assert AUTHOR_TEXT in content
+    # Visibly labelled: the shipped window says the content is there.
+    assert content.splitlines()[0] == CONTENT_MARKER
+    assert body["content_policy"] == {"included": True, "scrubbed_lines": 0}
+
+
+def test_assemble_opt_in_without_content_lines_adds_no_marker() -> None:
+    app = _make_app(
+        install_root=Path("/nonexistent"),
+        log_source=lambda: [("demiurgos-api.log", "server started")],
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["logs"]["content"] == "server started"
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_assemble_keeps_the_marker_inside_the_log_byte_budget() -> None:
+    """The label is part of the payload, so it counts against the same cap."""
+
+    def _huge_source() -> list:
+        # The preview is the NEWEST record, so it survives the tail window.
+        return [("demiurgos-api.log", ("x" * 90000) + "\n" + PREVIEW_LINE)]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_huge_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    content = body["logs"]["content"]
+    assert len(content.encode("utf-8")) <= 65536
+    assert content.splitlines()[0] == CONTENT_MARKER
+    assert AUTHOR_TEXT in content
+    assert body["content_policy"] == {"included": True, "scrubbed_lines": 0}
+
+
+def test_assemble_never_labels_content_the_budget_trimmed_away() -> None:
+    """An opted-in bundle whose newest bytes carry no preview says so honestly."""
+
+    def _old_preview_source() -> list:
+        # The preview is the OLDEST record: the tail window keeps only the x run.
+        return [("demiurgos-api.log", PREVIEW_LINE + "\n" + ("x" * 90000))]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_old_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert CONTENT_MARKER not in body["logs"]["content"]
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_submit_scrubs_client_supplied_content_by_default() -> None:
+    """The server, not the panel, is what enforces the policy on delivery."""
+    calls: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay_recorder(calls))
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    sent = calls[0]["logs"]
+    assert AUTHOR_TEXT not in sent
+    assert "[content omitted]" in sent
+    assert "len=%d" % len(AUTHOR_TEXT) in sent
+
+
+def test_submit_keeps_opted_in_content() -> None:
+    calls: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay_recorder(calls))
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        headers=CONTENT_HEADER,
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    sent = calls[0]["logs"]
+    assert AUTHOR_TEXT in sent
+    assert "[content omitted]" not in sent
+
+
+def test_assemble_opt_in_never_disables_secret_redaction() -> None:
+    """The two policies compose: opting into content is not opting out of S1a."""
+
+    def _leaky_preview_source() -> list:
+        return [
+            (
+                "demiurgos-api.log",
+                PREVIEW_LINE + "\nleaked token %s\nready" % BOT_TOKEN,
+            )
+        ]
+
+    app = _make_app(
+        install_root=Path("/nonexistent"), log_source=_leaky_preview_source
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    content = resp.json()["logs"]["content"]
+    assert AUTHOR_TEXT in content
+    assert BOT_TOKEN not in content
+    assert "[redacted:" in content
+    assert resp.json()["logs"]["redacted_lines"] == 1
+
+
+def test_fallback_scrubs_content_previews_by_default() -> None:
+    app = _make_app(install_root=Path("/nonexistent"))
+    resp = TestClient(app).post(
+        "/api/bugreport/fallback",
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert AUTHOR_TEXT not in resp.json()["body"]
+    assert "[content omitted]" in resp.json()["body"]
+
+
+def test_fallback_keeps_opted_in_content() -> None:
+    app = _make_app(install_root=Path("/nonexistent"))
+    resp = TestClient(app).post(
+        "/api/bugreport/fallback",
+        headers=CONTENT_HEADER,
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert AUTHOR_TEXT in resp.json()["body"]
+
+def test_marker_never_claims_content_the_marker_budget_trimmed_away() -> None:
+    """Regression (T1.6 verifier B1): paying for the label must not orphan it."""
+    prompt = (
+        "Dame el resumen del capitulo donde Aldric cruza el puente de Ceniza y "
+        "explica por que la casa Valen lo traiciono al final del invierno "
+    )
+    preview_line = (
+        "2026-01-01 12:00:00 INFO Hermes GW START len=%d session=- preview=%r"
+        % (len(prompt), prompt[:120])
+    )
+
+    def _source() -> list:
+        return [
+            ("demiurgos-api.log.3", "a" * 16384),
+            ("demiurgos-api.log.2", "a" * 16384),
+            ("demiurgos-api.log.1", "a" * 16384),
+            ("demiurgos-api.log", preview_line + "\n" + ("x" * 16135)),
+        ]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_source)
+    body = TestClient(app).get(
+        "/api/bugreport/assemble", headers=CONTENT_HEADER
+    ).json()
+    content = body["logs"]["content"]
+    assert len(content.encode("utf-8")) <= 65536
+    # The label and the content are one decision, never two.
+    assert (CONTENT_MARKER in content) == body["content_policy"]["included"]
+    if body["content_policy"]["included"]:
+        assert preview_line.split("preview=")[1].strip("'") in content
+
+
+def test_scrubbed_lines_counts_only_the_placeholders_that_shipped() -> None:
+    """Regression (T1.6 verifier A1): the count describes the shipped text."""
+    preview_line = (
+        "2026-01-01 12:00:00 INFO Hermes GW START len=4 session=- preview='hola'"
+    )
+
+    def _source() -> list:
+        return [
+            ("demiurgos-api.log.3", "a" * 16384),
+            ("demiurgos-api.log.2", "a" * 16384),
+            ("demiurgos-api.log.1", "a" * 16384),
+            ("demiurgos-api.log", preview_line + "\n" + ("x" * 16309)),
+        ]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_source)
+    body = TestClient(app).get("/api/bugreport/assemble").json()
+    assert body["content_policy"]["scrubbed_lines"] == body["logs"]["content"].count(
+        "[content omitted]"
+    )
+
+# ---------------------------------------------------------------------------
+# T1.7 — never 500 on a bad source (Phase 1 exit gate)
+# ---------------------------------------------------------------------------
+
+
+def test_a_raising_log_source_degrades_to_an_honest_empty_result() -> None:
+    """The diagnostic path is isolated: a broken log source never breaks a report."""
+
+    def _boom() -> list:
+        raise OSError("disk full")
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_boom)
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    logs = resp.json()["logs"]
+    assert logs["included"] is False
+    assert logs["reason"] == "log source unavailable"
+    assert logs["content"] == ""
+    assert resp.json()["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_a_raising_diagnostics_builder_degrades_too(monkeypatch) -> None:
+    """``diagnostics`` is additive: if it cannot be built, the bundle still ships."""
+
+    def _boom() -> dict:
+        raise RuntimeError("journal unreadable")
+
+    monkeypatch.setattr(diagnostics, "build_diagnostics", _boom)
+    app = _make_app(
+        install_root=Path("/nonexistent"),
+        log_source=lambda: [("demiurgos-api.log", "server started")],
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    document = resp.json()["diagnostics"]
+    assert document["unavailable"] is True
+    assert document["reason"] == "diagnostics unavailable"
+

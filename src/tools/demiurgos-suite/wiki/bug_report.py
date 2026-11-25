@@ -42,6 +42,19 @@ disallowed-field payload through, so the endpoint reads the raw JSON body and
 rejects any key outside the allow-list with ``bugreport.not_allowlisted``.
 The fallback endpoint re-validates the same way.
 
+Content policy (S6)
+-------------------
+A bundle is **metadata by default**. The assistant gateway records the prompt
+and answer tails in its log line as ``preview=``; :func:`assemble` replaces that
+payload with ``[content omitted]`` and keeps the record's metadata (``len=``,
+session, timing, outcome). Content travels only when the reporter opts in with
+the ``x-bugreport-content: 1`` header, and then the shipped window starts with
+the visible :data:`_CONTENT_MARKER` line. The policy is enforced server-side on
+``/submit`` and ``/fallback`` too — the panel is not the enforcement point, so a
+hand-made request cannot smuggle a payload past it. Opting into content never
+disables redaction: secrets keep their own path (``assemble`` replaces a
+matching line whole, and the public fallback body is scrubbed afterwards).
+
 Privacy notes on the fallback body
 ----------------------------------
 :func:`content_scan.scrub_all` applies BOTH rule sets to the rendered body:
@@ -107,6 +120,12 @@ _LOG_SOURCE_MAX_BYTES = 16384
 #: counts these in the SHIPPED text, so a placeholder that the byte budget
 #: trimmed away is never reported as if it had travelled.
 _REDACTED_PLACEHOLDER = re.compile(r"\[redacted: [^\]]*\]")
+
+#: First line of a log window whose content the reporter opted into. It travels
+#: inside ``logs`` (no relay field is added), so the recipient can see at a
+#: glance that the payload was deliberate, and it counts against the same byte
+#: budget as everything else.
+_CONTENT_MARKER = "== content snippets included at the reporter's request =="
 
 
 def _tail_window(text: str, limit: int) -> str:
@@ -391,7 +410,33 @@ def create_bug_report_router(
             raise problem("bugreport.rate_limited")
         bucket.append(now)
 
-    def _validate_and_cap(body: Any) -> Dict[str, Any]:
+    def _apply_content_policy(
+        logs: str | None, *, content_included: bool
+    ) -> str | None:
+        """Enforce the S6 content policy on whatever ``logs`` arrived.
+
+        The ``preview=`` payloads survive only when the reporter opted in;
+        otherwise they become ``[content omitted]`` while the record stays
+        diagnosable. This runs on submit AND fallback because the panel is not a
+        trust boundary: an older install or a hand-made request can post any
+        string here.
+
+        Secrets keep their own path and are NOT re-scrubbed here, so this policy
+        composes instead of overriding: ``assemble`` already replaces a matching
+        log line whole (:func:`content_scan.redact_secrets`) and the public
+        fallback body goes through the structure-preserving
+        :func:`content_scan.scrub_all` afterwards.
+        """
+        if logs is None:
+            return None
+        if content_included:
+            return logs
+        scrubbed, _count = content_scan.redact_content_previews(logs)
+        return scrubbed
+
+    def _validate_and_cap(
+        body: Any, *, content_included: bool = False
+    ) -> Dict[str, Any]:
         """Raw-dict re-validation against the allow-list, then the size caps.
 
         Returns the normalized bundle. ``body`` must be a JSON object whose keys
@@ -399,7 +444,9 @@ def create_bug_report_router(
         present) is a JSON object with keys within
         :data:`ALLOWED_PLATFORM_KEYS`; anything else maps to
         ``bugreport.not_allowlisted``. Per-field and total caps map to
-        ``bugreport.too_large``.
+        ``bugreport.too_large``. The caps are measured on the payload as sent;
+        the content policy is applied afterwards, so scrubbing can never turn an
+        oversized payload into an accepted one.
         """
         if not isinstance(body, dict):
             raise problem("bugreport.not_allowlisted")
@@ -453,7 +500,9 @@ def create_bug_report_router(
             "platform": {key: str(value) for key, value in platform.items()},
             "description": description,
             "contact": contact or None,
-            "logs": logs or None,
+            "logs": _apply_content_policy(
+                logs or None, content_included=content_included
+            ),
             "context": context,
         }
 
@@ -524,6 +573,16 @@ def create_bug_report_router(
 
     def _wants_pseudonym(request: Request) -> bool:
         value = (request.headers.get("x-bugreport-pseudonym") or "").strip()
+        return value == "1"
+
+    def _wants_content(request: Request) -> bool:
+        """Whether the reporter opted into the content-bearing payloads (S6).
+
+        Out of band on purpose: a header keeps the relay contract untouched (it
+        validates an exact key set, and adding a boolean field would need a
+        schema bump on a service this repository does not deploy).
+        """
+        value = (request.headers.get("x-bugreport-content") or "").strip()
         return value == "1"
 
     def _raise_link_failure(status: int, data: Dict[str, Any]) -> None:
@@ -690,7 +749,7 @@ def create_bug_report_router(
                     pairs.append((archive.name, archived))
         return pairs
 
-    def _assemble_logs() -> Dict[str, Any]:
+    def _assemble_logs(content_included: bool) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Assemble the newest diagnostic window inside a fixed byte budget.
 
         Sources are walked newest first, each capped at
@@ -698,59 +757,86 @@ def create_bug_report_router(
         :data:`_LOGS_MAX_BYTES`: an install that has logged for weeks still
         carries a readable window instead of losing every log at once. Each
         line is scanned; a matching line is replaced by ``[redacted: <rule>]``
-        (the raw value never survives). An unavailable source or an empty log
-        set reports ``included`` ``False`` with a non-secret ``reason`` — never
-        a silent empty payload.
+        (the raw value never survives).
+
+        Content policy (S6): the ``preview=`` payloads of the assistant records
+        are replaced by ``[content omitted]`` unless ``content_included``. When
+        they are included, the window starts with :data:`_CONTENT_MARKER` and
+        that label is charged to the same byte budget, so it can never push the
+        payload over the cap. Returns ``(logs, content_policy)``; an unavailable
+        source or an empty log set reports ``included`` ``False`` with a
+        non-secret ``reason`` — never a silent empty payload.
         """
+        empty_logs = {
+            "included": False,
+            "content": "",
+            "redacted_lines": 0,
+            "reason": "",
+        }
+        empty_policy = {"included": False, "scrubbed_lines": 0}
         source = log_source if log_source is not None else _default_log_source
         try:
             pairs = source()
         except Exception:  # noqa: BLE001 - a bad source drops logs, never 500s
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": 0,
-                "reason": "log source unavailable",
-            }
+            return {**empty_logs, "reason": "log source unavailable"}, dict(empty_policy)
         if not pairs:
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": 0,
-                "reason": "no logs available",
-            }
-        chunks: List[str] = []
-        for _name, text in pairs:
-            window = _tail_window(text or "", _LOG_SOURCE_MAX_BYTES)
-            if not window:
-                continue
-            redacted_text, _hits = content_scan.redact_secrets(window)
-            candidate = "\n".join(chunks + [redacted_text])
-            if len(candidate.encode("utf-8")) <= _LOGS_MAX_BYTES:
-                chunks.append(redacted_text)
-                continue
-            # This source overflows the remaining room: keep its newest bytes
-            # and stop, so the payload is a suffix of the newest history.
-            room = _LOGS_MAX_BYTES - len("\n".join(chunks).encode("utf-8"))
-            if chunks:
-                room -= 1  # the newline that joins the two chunks
-            piece = _tail_window(redacted_text, room)
-            if piece:
-                chunks.append(piece)
-            break
-        if not chunks:
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": 0,
-                "reason": "no logs available",
-            }
-        content = "\n".join(chunks)
+            return {**empty_logs, "reason": "no logs available"}, dict(empty_policy)
+
+        def _build(budget: int, include_content: bool) -> str:
+            """Fill ``budget`` bytes newest-first; returns the shipped content."""
+            chunks: List[str] = []
+            for _name, text in pairs:
+                window = _tail_window(text or "", _LOG_SOURCE_MAX_BYTES)
+                if not window:
+                    continue
+                redacted_text, _hits = content_scan.redact_secrets(window)
+                if not include_content:
+                    redacted_text, _scrubbed = content_scan.redact_content_previews(
+                        redacted_text
+                    )
+                candidate = "\n".join(chunks + [redacted_text])
+                if len(candidate.encode("utf-8")) <= budget:
+                    chunks.append(redacted_text)
+                    continue
+                # This source overflows the remaining room: keep its newest bytes
+                # and stop, so the payload is a suffix of the newest history.
+                room = budget - len("\n".join(chunks).encode("utf-8"))
+                if chunks:
+                    room -= 1  # the newline that joins the two chunks
+                piece = _tail_window(redacted_text, room)
+                if piece:
+                    chunks.append(piece)
+                break
+            return "\n".join(chunks)
+
+        content = _build(_LOGS_MAX_BYTES, content_included)
+        if not content:
+            return {**empty_logs, "reason": "no logs available"}, dict(empty_policy)
+        # The label is decided on what ACTUALLY shipped, never on what the
+        # sources contained: a payload trimmed away by the byte budget must not
+        # make the window claim content it does not carry. And content must
+        # never ship WITHOUT its label, so if paying for the label would trim
+        # the last payload away, the window ships metadata-only instead.
+        included = False
+        if content_included and content_scan.count_content_previews(content):
+            marker = _CONTENT_MARKER + "\n"
+            trimmed = _tail_window(content, _LOGS_MAX_BYTES - len(marker.encode("utf-8")))
+            if content_scan.count_content_previews(trimmed):
+                content = marker + trimmed
+                included = True
+            else:
+                content = _build(_LOGS_MAX_BYTES, False)
         return {
             "included": True,
             "content": content,
             "redacted_lines": len(_REDACTED_PLACEHOLDER.findall(content)),
             "reason": "",
+        }, {
+            "included": included,
+            # Counted on the SHIPPED text, so a placeholder the budget trimmed
+            # away is never reported as if it had travelled (same rule as
+            # ``redacted_lines``).
+            "scrubbed_lines": content.count(content_scan.CONTENT_PREVIEW_PLACEHOLDER),
         }
 
     def _diagnostics_document() -> Dict[str, Any]:
@@ -775,14 +861,17 @@ def create_bug_report_router(
         """Assemble the default, allow-listed, content-scanned report bundle.
 
         Returns exactly :data:`ALLOWED_FIELDS`-bounded content plus the
-        server-built ``diagnostics`` document. World data, ``.env`` and the
-        account username are absent by construction.
+        server-built ``diagnostics`` document and the ``content_policy``
+        summary. World data, ``.env`` and the account username are absent by
+        construction; author content travels only on an explicit opt-in.
         """
         _guard(request)
+        logs, policy = _assemble_logs(_wants_content(request))
         return {
             "app_version": app_version(),
             "platform": _platform_facts(),
-            "logs": _assemble_logs(),
+            "logs": logs,
+            "content_policy": policy,
             "diagnostics": _diagnostics_document(),
             "allow_list": sorted(ALLOWED_FIELDS),
             "contact_slot": True,
@@ -822,7 +911,7 @@ def create_bug_report_router(
                 body = await request.json()
             except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
                 raise problem("bugreport.not_allowlisted")
-        bundle = _validate_and_cap(body)
+        bundle = _validate_and_cap(body, content_included=_wants_content(request))
         return _deliver(
             bundle,
             attachments,
@@ -1028,7 +1117,7 @@ def create_bug_report_router(
             body = await request.json()
         except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
             raise problem("bugreport.not_allowlisted")
-        bundle = _validate_and_cap(body)
+        bundle = _validate_and_cap(body, content_included=_wants_content(request))
         scrubbed, findings = content_scan.scrub_all(_render_fallback_body(bundle))
         contact = bundle["contact"]
         if contact:

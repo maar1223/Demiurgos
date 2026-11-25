@@ -10,6 +10,8 @@ Covers:
   truth — the shell script is never edited by this slice);
 * (e) COVERAGE: every ``REPORT_RULE_NAMES`` entry has a pattern and a positive
   fixture that the rule (and ``scan_secret_lines``) actually hits.
+* (f) CONTENT POLICY: the app's content-bearing log fields (``preview=``) are
+  replaced by a placeholder while the surrounding metadata survives (S6).
 """
 
 from __future__ import annotations
@@ -28,10 +30,13 @@ for _p in (str(_WIKI),):
         sys.path.insert(0, _p)
 
 from content_scan import (  # noqa: E402
+    CONTENT_PREVIEW_PLACEHOLDER,
     REPORT_RULE_NAMES,
     REPORT_RULE_PATTERNS,
     SECRET_RULE_NAMES,
     SECRET_RULE_PATTERNS,
+    count_content_previews,
+    redact_content_previews,
     redact_secrets,
     scan_secret_lines,
     scrub_all,
@@ -220,3 +225,80 @@ def test_every_report_rule_has_pattern_and_positive_fixture(name: str) -> None:
     assert name in REPORT_FIXTURES, f"{name} has no positive fixture"
     assert re.search(REPORT_RULE_PATTERNS[name], REPORT_FIXTURES[name])
     assert (1, name) in scan_secret_lines(REPORT_FIXTURES[name])
+
+
+# ---------------------------------------------------------------------------
+# (f) Content policy — the app's own content-bearing log fields (S6).
+#
+# The ONLY writers that put author content into a log line are the assistant
+# gateway records, and both declare the payload with ``preview=``:
+#
+#   Hermes GW START len=97 session=- preview='Aldric cruza el puente de Ceniza'
+#   Hermes GW DONE 3.4s len=240 preview='...'
+#
+# ``len=`` is metadata and must survive; the payload is content.
+# ---------------------------------------------------------------------------
+
+_AUTHOR_TEXT = "Aldric cruza el puente de Ceniza"
+_START_LINE = (
+    "2026-01-01 12:00:00 INFO Hermes GW START len=%d session=- preview=%r"
+    % (len(_AUTHOR_TEXT), _AUTHOR_TEXT)
+)
+_DONE_LINE = (
+    "2026-01-01 12:00:03 INFO Hermes GW DONE 3.4s len=%d preview=%r"
+    % (len(_AUTHOR_TEXT), _AUTHOR_TEXT)
+)
+
+
+def test_redact_content_previews_removes_the_payload() -> None:
+    scrubbed, count = redact_content_previews(_START_LINE)
+    assert count == 1
+    assert _AUTHOR_TEXT not in scrubbed
+    assert CONTENT_PREVIEW_PLACEHOLDER in scrubbed
+    # The metadata that makes the record diagnosable survives.
+    assert "Hermes GW START" in scrubbed
+    assert "len=%d" % len(_AUTHOR_TEXT) in scrubbed
+
+
+def test_redact_content_previews_covers_both_gateway_records() -> None:
+    scrubbed, count = redact_content_previews(_START_LINE + "\n" + _DONE_LINE)
+    assert count == 2
+    assert _AUTHOR_TEXT not in scrubbed
+    assert scrubbed.count(CONTENT_PREVIEW_PLACEHOLDER) == 2
+    assert "Hermes GW DONE" in scrubbed
+
+
+def test_redact_content_previews_leaves_metadata_lines_alone() -> None:
+    text = "server started\nlistening on http://localhost:8001\ngateway ready"
+    scrubbed, count = redact_content_previews(text)
+    assert count == 0
+    assert scrubbed == text
+
+
+def test_redact_content_previews_ignores_a_plain_preview_variable() -> None:
+    """``preview = obs.get(...)`` (source, space before ``=``) is not a field."""
+    text = 'preview = obs.get("preview", obs.get("content", ""))'
+    scrubbed, count = redact_content_previews(text)
+    assert count == 0
+    assert scrubbed == text
+
+
+def test_redact_content_previews_is_idempotent() -> None:
+    once, first = redact_content_previews(_START_LINE)
+    twice, second = redact_content_previews(once)
+    assert first == 1
+    assert second == 0
+    assert twice == once
+
+
+def test_redact_content_previews_handles_empty_input() -> None:
+    assert redact_content_previews("") == ("", 0)
+
+
+def test_count_content_previews_sees_what_would_be_removed() -> None:
+    text = _START_LINE + "\nserver started\n" + _DONE_LINE
+    assert count_content_previews(text) == 2
+    assert count_content_previews("server started") == 0
+    assert count_content_previews("") == 0
+    # Counting an already-scrubbed payload finds nothing left to include.
+    assert count_content_previews(redact_content_previews(text)[0]) == 0

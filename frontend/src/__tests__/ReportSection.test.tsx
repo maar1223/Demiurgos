@@ -31,6 +31,7 @@ const baseBundle: BugReportBundle = {
     redacted_lines: 0,
     reason: "no logs available",
   },
+  content_policy: { included: false, scrubbed_lines: 0 },
   allow_list: ["app_version", "contact", "description", "logs", "platform"],
   contact_slot: true,
 };
@@ -44,6 +45,31 @@ const logsBundle: BugReportBundle = {
     redacted_lines: 0,
     reason: "",
   },
+};
+
+/** Logs whose author content was withheld: what the default bundle really is. */
+const scrubbedContentBundle: BugReportBundle = {
+  ...logsBundle,
+  logs: {
+    included: true,
+    content: "Hermes GW START len=42 session=- preview=[content omitted]",
+    redacted_lines: 0,
+    reason: "",
+  },
+  content_policy: { included: false, scrubbed_lines: 1 },
+};
+
+/** The same logs after the reporter opted in. */
+const includedContentBundle: BugReportBundle = {
+  ...logsBundle,
+  logs: {
+    included: true,
+    content:
+      "== content snippets included at the reporter's request ==\nHermes GW START len=42 session=- preview='Aldric cruza el puente'",
+    redacted_lines: 0,
+    reason: "",
+  },
+  content_policy: { included: true, scrubbed_lines: 0 },
 };
 
 describe("submitBugReport — attachments travel as multipart", () => {
@@ -694,5 +720,133 @@ describe("ProfilePage — bug-report section entry (7th, after Actualizaciones)"
     ).toBeInTheDocument();
     // Mounting the entry assembles the bundle once.
     await waitFor(() => expect(assembleBugReport).toHaveBeenCalledTimes(1));
+  });
+});
+
+// S6 — content policy: metadata by default, content only on an explicit opt-in
+// that the server honours (assembled on request, enforced again on delivery).
+describe("ReportSection — content policy opt-in (S6)", () => {
+  beforeEach(() => {
+    (assembleBugReport as Mock).mockReset();
+    (submitBugReport as Mock).mockReset();
+    (fallbackBody as Mock).mockReset();
+  });
+
+  it("assembles metadata-only by default and labels the omitted snippets", async () => {
+    (assembleBugReport as Mock).mockResolvedValue(scrubbedContentBundle);
+    render(<ReportSection />);
+
+    await screen.findByTestId("bugreport-app-version");
+    // The default request states the opt-in explicitly as off.
+    expect(assembleBugReport).toHaveBeenCalledWith(false);
+    expect(screen.getByTestId("bugreport-content-status")).toHaveTextContent(
+      tEs("profile.bugreport.contentOmittedLines", { count: 1 }),
+    );
+    expect(
+      screen.getByTestId("bugreport-content-toggle"),
+    ).not.toBeChecked();
+  });
+
+  it("re-assembles with the opt-in and says the snippets are included", async () => {
+    const user = userEvent.setup();
+    (assembleBugReport as Mock)
+      .mockResolvedValueOnce(scrubbedContentBundle)
+      .mockResolvedValueOnce(includedContentBundle);
+    render(<ReportSection />);
+    await screen.findByTestId("bugreport-app-version");
+
+    await user.click(screen.getByTestId("bugreport-content-toggle"));
+
+    await waitFor(() =>
+      expect(assembleBugReport).toHaveBeenLastCalledWith(true),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("bugreport-content-status")).toHaveTextContent(
+        tEs("profile.bugreport.contentIncludedLabel"),
+      ),
+    );
+  });
+
+  it("sends the opt-in with the delivery and the fallback", async () => {
+    const user = userEvent.setup();
+    (assembleBugReport as Mock).mockResolvedValue(includedContentBundle);
+    (submitBugReport as Mock).mockRejectedValue(new ApiError(502, "boom"));
+    (fallbackBody as Mock).mockResolvedValue({
+      body: "# issue",
+      issue_url: "https://example.test/new",
+      findings: 0,
+    });
+    render(<ReportSection />);
+    await screen.findByTestId("bugreport-app-version");
+
+    await user.click(screen.getByTestId("bugreport-content-toggle"));
+    await waitFor(() =>
+      expect(screen.getByTestId("bugreport-content-status")).toHaveTextContent(
+        tEs("profile.bugreport.contentIncludedLabel"),
+      ),
+    );
+    await user.click(screen.getByRole("button", {
+      name: tEs("profile.bugreport.preview"),
+    }));
+    await user.click(screen.getByRole("button", {
+      name: tEs("profile.bugreport.submit"),
+    }));
+
+    await waitFor(() => expect(submitBugReport).toHaveBeenCalled());
+    // The payload, the attachments, the pseudonym and the content flag, in order.
+    expect((submitBugReport as Mock).mock.calls[0][3]).toBe(true);
+    await waitFor(() => expect(fallbackBody).toHaveBeenCalled());
+    expect((fallbackBody as Mock).mock.calls[0][1]).toBe(true);
+  });
+
+  it("falls back to the metadata-only bundle when the opt-in fetch fails", async () => {
+    const user = userEvent.setup();
+    (assembleBugReport as Mock)
+      .mockResolvedValueOnce(scrubbedContentBundle)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(scrubbedContentBundle);
+    render(<ReportSection />);
+    await screen.findByTestId("bugreport-app-version");
+
+    await user.click(screen.getByTestId("bugreport-content-toggle"));
+
+    // The failed opt-in is retried once WITHOUT it, so the panel never claims
+    // content it does not have.
+    await waitFor(() =>
+      expect(assembleBugReport).toHaveBeenLastCalledWith(false),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("bugreport-content-toggle")).not.toBeChecked(),
+    );
+  });
+});
+
+describe("bug-report client — the content opt-in is a header, never a field", () => {
+  async function headerOf(call: () => Promise<unknown>) {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({}),
+      headers: new Headers(),
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    try {
+      await call();
+      return (fetchMock.mock.calls[0][1] as RequestInit)
+        .headers as Record<string, string>;
+    } finally {
+      globalThis.fetch = original;
+    }
+  }
+
+  it("assembleBugReport sends 0 by default and 1 when opted in", async () => {
+    const { assembleBugReport: realAssemble } = await vi.importActual<
+      typeof import("@/api/bugReports")
+    >("@/api/bugReports");
+    expect((await headerOf(() => realAssemble()))["x-bugreport-content"]).toBe("0");
+    expect((await headerOf(() => realAssemble(true)))["x-bugreport-content"]).toBe(
+      "1",
+    );
   });
 });
