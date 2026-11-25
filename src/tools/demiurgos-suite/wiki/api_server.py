@@ -279,6 +279,11 @@ from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
 from operations_ring import OperationRecorderMiddleware  # operations ring (S5)
+from assistant_turns import (  # assistant turn record (S5)
+    build_turn as _build_assistant_turn,
+    read_model_name as _read_profile_model_name,
+    record_turn as record_assistant_turn,
+)
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
 from backup.state import backup_state  # backup card dedicated contract (WU-14)
 from content_move_service import read_last_move  # the move record (step 5)
@@ -1429,6 +1434,16 @@ def _dedicated_profile_config_path() -> Path:
         return _resolve_profile_paths().config
     except Exception:
         return Path("/") / "demiurgos-nonexistent-profile" / "config.yaml"
+
+
+def _assistant_model_name() -> str | None:
+    """The active profile's ``model.default``, or None when unreadable.
+
+    The turn record names the model that answered (S5); the profile is the only
+    owner of that value. A missing or broken profile yields None instead of a
+    guess, and the read is one small file per turn.
+    """
+    return _read_profile_model_name(_dedicated_profile_config_path())
 
 
 def _marker_signature(path: Path) -> tuple[int, int, str]:
@@ -11887,6 +11902,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         logger.info("ai_ask_activity: 503 context unknown")
         return _activity_unavailable()
     attachments = _resolve_chat_attachments(body.attachment_ids)
+    # The turn record's clock starts before the semantic gate so ``gate_ms``
+    # covers the whole admission wait, not just the provider call.
+    turn_started_at = time.monotonic()
 
     # Mandatory Hermes semantic interpretation FIRST with bounded authorized
     # context. No classifier, action, session, proposal, or write precedes the
@@ -11930,6 +11948,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         _abandon_route_task(early_route_task)
         raise
     decision = result.decision
+    gate_ms = int(round((time.monotonic() - turn_started_at) * 1000))
     # The S4 truth table decides the transition; no row reads the utterance.
     # "open" and "offer" both hand off to /ai/ask (the offer carries no
     # profile), "answer" streams the gate's answer like a plain turn, and
@@ -12091,8 +12110,30 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         # is the only diagnostic for a turn that produced no answer.
         close_reason = "stream_ended"
 
+        # Tool evidence for the turn record: one entry per activity item, with
+        # the duration measured between its first sighting and its terminal
+        # status. Bounded by the module's own cap; no prompt or answer text.
+        tools_seen: list[dict[str, Any]] = []
+        tool_started: dict[str, float] = {}
+
+        def note_activity(event) -> None:
+            if not isinstance(event, ActivityEvent):
+                return
+            now = time.monotonic()
+            started = tool_started.setdefault(event.item_id, now)
+            if event.status not in {"succeeded", "failed"}:
+                return
+            tools_seen.append(
+                {
+                    "name": event.operation,
+                    "ok": event.status == "succeeded",
+                    "duration_ms": int(round((now - started) * 1000)),
+                }
+            )
+
         def emit(event) -> str:
             nonlocal assistant_answer, close_reason
+            note_activity(event)
             if isinstance(event, AnswerEvent):
                 assistant_answer = event.response
             elif isinstance(event, TerminalEvent) and close_reason == "stream_ended":
@@ -12215,6 +12256,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     yield emit(event)
         finally:
             answered = bool(assistant_answer)
+            turn_run_ms = int(round((time.monotonic() - started_at) * 1000))
             if not completed:
                 # The only record of WHY a turn produced no answer. Without it
                 # the incident was undiagnosable from the API log: the run was
@@ -12271,6 +12313,28 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     assistant_text=assistant_answer,
                     skill_hints=[skill_id] if skill_id else None,
                 )
+            # The bounded turn record a bug report carries (S5/T1.4): metadata
+            # only, and recording can never break the response.
+            try:
+                record_assistant_turn(
+                    _build_assistant_turn(
+                        request_id=request_id,
+                        run_id=run_id,
+                        world=mundo,
+                        model=_assistant_model_name(),
+                        semantic_state=decision.state,
+                        semantic_action=getattr(decision, "action", None),
+                        completed=completed,
+                        disconnected=disconnected,
+                        tools=tools_seen,
+                        context_count=len(context_sources),
+                        gate_ms=gate_ms,
+                        run_ms=turn_run_ms,
+                        close_reason=close_reason,
+                    )
+                )
+            except Exception:  # noqa: BLE001 — observability never breaks a turn
+                logger.warning("assistant turn record failed (request=%s)", request_id)
 
     return StreamingResponse(
         stream(),

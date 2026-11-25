@@ -57,7 +57,7 @@ _lock = threading.Lock()
 _counts: dict[str, int] = {}
 
 
-def _iso_now() -> str:
+def iso_now() -> str:
     return (
         datetime.now(timezone.utc)
         .replace(microsecond=0)
@@ -108,7 +108,7 @@ def _normalize(entry: Mapping[str, Any]) -> dict[str, Any] | None:
     if not isinstance(world_hash, str) or not world_hash:
         world_hash = hash_world(entry.get("world"))
     return {
-        "ts": _clip(entry.get("ts")) or _iso_now(),
+        "ts": _clip(entry.get("ts")) or iso_now(),
         "run_id": _clip(entry.get("run_id")) or "",
         "method": (str(entry.get("method") or "")).upper()[:16],
         "endpoint": _clip(entry.get("endpoint")),
@@ -158,23 +158,21 @@ def _compact(path: Path, *, max_entries: int, max_bytes: int) -> None:
             pass
 
 
-def record_operation(
-    entry: Mapping[str, Any],
+def append_bounded_record(
+    path: Path,
+    record: Mapping[str, Any],
     *,
-    path: Path | None = None,
-    max_entries: int = MAX_ENTRIES,
-    max_bytes: int = MAX_BYTES,
+    max_entries: int,
+    max_bytes: int,
 ) -> bool:
-    """Append one bounded record; ``False`` when storage refused it.
+    """Append one record to a bounded JSONL; ``False`` when storage refused it.
 
-    Never raises: an unwritable state dir or a full disk leaves the ring as it
-    was and the request that produced the entry untouched.
+    Shared by every bounded journal in the product (the operations ring today,
+    the assistant-turn record next): one line per ``write``, atomic rewrite when
+    either bound is crossed, and no exception ever escapes.
     """
-    normalized = _normalize(entry)
-    if normalized is None:
-        return False
-    target = Path(path) if path is not None else default_ring_path()
-    line = (json.dumps(normalized, sort_keys=True, ensure_ascii=False) + "\n").encode(
+    target = Path(path)
+    line = (json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n").encode(
         "utf-8"
     )
     key = str(target)
@@ -197,16 +195,37 @@ def record_operation(
     return True
 
 
-def recent_operations(
+def record_operation(
+    entry: Mapping[str, Any],
     *,
-    limit: int = 50,
     path: Path | None = None,
+    max_entries: int = MAX_ENTRIES,
     max_bytes: int = MAX_BYTES,
+) -> bool:
+    """Append one bounded operation record; ``False`` when storage refused it.
+
+    Never raises: an unwritable state dir or a full disk leaves the ring as it
+    was and the request that produced the entry untouched.
+    """
+    normalized = _normalize(entry)
+    if normalized is None:
+        return False
+    target = Path(path) if path is not None else default_ring_path()
+    return append_bounded_record(
+        target, normalized, max_entries=max_entries, max_bytes=max_bytes
+    )
+
+
+def read_recent_records(
+    path: Path,
+    *,
+    limit: int,
+    max_bytes: int,
 ) -> list[dict[str, Any]]:
-    """The newest records first, skipping a torn line; never raises."""
+    """The newest records of a bounded JSONL first; never raises."""
     if limit <= 0:
         return []
-    target = Path(path) if path is not None else default_ring_path()
+    target = Path(path)
     try:
         size = target.stat().st_size
         with target.open("rb") as handle:
@@ -233,6 +252,17 @@ def recent_operations(
         if len(entries) >= limit:
             break
     return entries
+
+
+def recent_operations(
+    *,
+    limit: int = 50,
+    path: Path | None = None,
+    max_bytes: int = MAX_BYTES,
+) -> list[dict[str, Any]]:
+    """The newest operation records first, skipping a torn line; never raises."""
+    target = Path(path) if path is not None else default_ring_path()
+    return read_recent_records(target, limit=limit, max_bytes=max_bytes)
 
 
 def _error_code(body: bytes) -> str | None:

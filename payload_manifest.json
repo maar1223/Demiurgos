@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "506539a",
+  "source_commit": "21e568d",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -44,6 +44,7 @@
     "src/tools/demiurgos-suite/wiki/assistant_provider_adapters.py",
     "src/tools/demiurgos-suite/wiki/assistant_recovery.py",
     "src/tools/demiurgos-suite/wiki/assistant_settings.py",
+    "src/tools/demiurgos-suite/wiki/assistant_turns.py",
     "src/tools/demiurgos-suite/wiki/backup/__init__.py",
     "src/tools/demiurgos-suite/wiki/backup/engine.py",
     "src/tools/demiurgos-suite/wiki/backup/inventory.py",
@@ -339,7 +340,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1709
+        "line": 1724
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
