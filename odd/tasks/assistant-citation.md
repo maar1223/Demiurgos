@@ -1,6 +1,6 @@
 # Assistant citations (Fuentes footer)
 
-Branch: `feat/assistant-runtime-evolution` (worktree `demiurgos-worktrees/assistant-runtime-evolution`). Delivery: work-unit commits; push/PR/merge stay the Owner's. Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q`; golden set: `python3 scripts/eval_assistant.py --gateway http://127.0.0.1:8642/v1 --corpus odd/evidence/assistant-golden/.local/worlds --world vibrantes`.
+Branch: `feat/assistant-runtime-evolution` (worktree `demiurgos-worktrees/assistant-runtime-evolution`). Delivery: work-unit commits; push/PR/merge stay the Owner's. Runners: `.venv/bin/python -m pytest src/tools/demiurgos-suite/wiki/tests/ -q`; golden set: `python3 scripts/eval_assistant.py --api http://127.0.0.1:8000 --mundo Vibrantes --corpus odd/evidence/assistant-golden/.local/worlds --world vibrantes`.
 
 ## Specs
 
@@ -47,3 +47,6 @@ Branch: `feat/assistant-runtime-evolution` (worktree `demiurgos-worktrees/assist
 - The reviewed boundary does not advance; it stays at `ab29b87`. No receipt; delivery remains ordinary repository policy.
 
 **L6 (runner hardening + case refine, 2026-11-25):** `ask_product` now catches `TimeoutError` (→ `timeout`) and `URLError`/`OSError` (→ `transport_error`), returning typed statuses like `http_503` instead of letting the deadline exception escape (addresses the escalated `R3-timeout-abort`). Tests: 22 passed (added `timeout` + `transport_error`). Refined `vibrantes-02-atherr-cuevas` (dropped the over-specified `Lumnar` fact; local digest `0f337afc0e8fc91a`). T2.4 closed: the golden-set command is in `docs/RELEASING.md`.
+
+**L7 (native review approved, 2026-11-25):** lineage `review-ae6905a6a42c2775`, target `sha256:646e9896…`, range `ab29b87..f85c77c` (8 paths / 579 lines), lenses `review-risk` + `review-reliability`. Both admitted; `review-risk` found nothing; `review-reliability` found three non-blocking advisories. State **approved**; receipt acknowledged and authority burned (`gentle-ai.review-acknowledged/v1`, `authority: burned`).
+- Advisories (later work, never a reason to re-run this candidate): R3-doc-stale-gateway-flag (WARNING — the runner command in this file still said `--gateway`; fixed above), R3-iter-sse-deadline-untested (WARNING — no test drives `iter_sse` past its per-line deadline; the timeout test raises from the fake opener), R3-open-local-session-untested (SUGGESTION — the auth bootstrap is untested and a 200 without a session is misdiagnosed as unreachable).
