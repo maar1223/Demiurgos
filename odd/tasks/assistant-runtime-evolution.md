@@ -407,3 +407,5 @@ Frozen contract for the implementation:
 | the bounded diagnostics document | `test_diagnostics.py` (13): schema keys, redaction, trimming, unknown-key denial, the CLI budget |
 
 Phase 1 exit gate: **met** — a report produced after more than 64 KB of logs carries the last window, the operations ring and the failing turn, every clause above is pinned by a test, and the report path cannot 500 on a bad source. The relay still has to deploy schema 3 (open question 1); until then each report pays one rejected probe before the downgrade.
+
+**L24 (RDD assessment of `0017017..b87e773`, 2026-11-25):** `gentle-ai review assess --base-ref 0017017 --committed-only` (untracked `.venv/` and `frontend/node_modules` declared `--untracked-scope=exclude`) → `risk: medium`, 11 changed paths / 1033 lines, reason `executable_change` on the runbook's bash block, `review_due: false`, `review_due_reason: under_budget`. No native review was started; the reviewed boundary stays at `0017017` until a later commit reaches the budget or the Owner asks for a review.
