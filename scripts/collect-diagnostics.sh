@@ -33,6 +33,23 @@ if [ -d "$LOG_DIR" ]; then
     cp -a "$LOG_DIR/." "$WORK/logs/" 2>/dev/null || true
 fi
 
+# Structured diagnostics (S5): the same document the bug report ships. Best
+# effort only - a missing or broken app Python must never abort the bundle.
+WIKI_DIR="$INSTALL_ROOT/current/src/tools/demiurgos-suite/wiki"
+DIAG_PY="$INSTALL_ROOT/current/.venv/bin/python"
+if [ ! -x "$DIAG_PY" ]; then
+    DIAG_PY="$INSTALL_ROOT/.venv/bin/python"
+fi
+if [ -x "$DIAG_PY" ] && [ -d "$WIKI_DIR" ]; then
+    if PYTHONPATH="$WIKI_DIR" "$DIAG_PY" -m diagnostics --out "$WORK/diagnostics.json" 2>/dev/null; then
+        :
+    else
+        printf 'diagnostics.json skipped: the app Python could not produce it\n'
+    fi
+else
+    printf 'diagnostics.json skipped: the app Python is not available\n'
+fi
+
 tar -czf "$OUT" -C "$WORK" .
 printf 'diagnostics written to %s\n' "$OUT"
 printf 'review it before sharing: it may contain local paths and log contents.\n'

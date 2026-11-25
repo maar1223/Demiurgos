@@ -70,6 +70,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import bugreport_identity
 import content_scan
+import diagnostics
 from error_codes import problem
 from local_state import LocalState
 
@@ -193,13 +194,26 @@ _PAYLOAD_MAX_BYTES = 98304
 _RATE_LIMIT_MAX = 5
 _RATE_LIMIT_WINDOW_SECONDS = 600.0
 
-#: Vendor-neutral relay contract version that carries ``context``.
-_RELAY_SCHEMA = 2
+#: Vendor-neutral relay contract version that carries ``context`` and the
+#: server-assembled ``diagnostics`` document.
+_RELAY_SCHEMA = 3
 
-#: The version a client without context still speaks, so a relay that predates
-#: schema 2 keeps delivering instead of rejecting the whole report. A dropped
-#: report is worse than a report without context.
-_LEGACY_RELAY_SCHEMA = 1
+#: The version a relay that predates diagnostics still speaks, so a 4xx
+#: contract rejection on schema 3 downgrades to the last context-carrying
+#: shape instead of dropping the report.
+_LEGACY_RELAY_SCHEMA = 2
+
+#: The contextless legacy shape: a client without context speaks this so a
+#: relay that predates schema 2 keeps delivering. A dropped report is worse
+#: than a report without context.
+_CONTEXTLESS_RELAY_SCHEMA = 1
+
+#: Relay statuses that mean "this payload is invalid for this contract
+#: version": the only ones worth one downgraded retry. 401/403 (auth), 404
+#: (route), 409 (conflict) and 429 (rate limit) are not contract rejections —
+#: retrying 429 would spend the caller's budget and hammer a relay that said
+#: "slow down".
+_RELAY_CONTRACT_REJECTIONS = frozenset({400, 413, 415, 422})
 
 #: Production relay timeout (seconds).
 _RELAY_TIMEOUT_SECONDS = 10.0
@@ -525,30 +539,41 @@ def create_bug_report_router(
     ) -> Dict[str, Any]:
         """Forward the validated bundle to the relay; fail closed on any failure.
 
-        The contract is vendor-neutral: ``{schema, app_version, platform,
-        description, contact, logs}``. A success maps to ``{ok: True,
-        delivery_id}``; an unreachable/misconfigured relay maps to
-        ``bugreport.relay_unavailable``; a relay-reported failure maps to
-        ``bugreport.delivery_failed``. No credential or traceback is ever
-        included in a response.
+        Contract ladder (the relay is deployed separately, so an older relay
+        must not lose a report):
+
+        1. First attempt: ``schema: 3`` with the server-built ``diagnostics``
+           document, and ``context`` only when the bundle carries it.
+        2. A **contract-rejection 4xx** (400, 413, 415, 422) means the relay
+           does not know this shape: retry ONCE with the pre-diagnostics shape — ``schema: 2`` plus ``context`` when present,
+           otherwise ``schema: 1`` with no ``context``. ``diagnostics`` is
+           absent from both retry shapes. The retry shares the request, so it
+           never consumes a second rate-limit token.
+        3. A 5xx, a timeout, a transport error or a 2xx whose body is not
+           ``{"ok": true}`` is NOT retried: a second delivery could duplicate a
+           report. Those keep the existing failure mapping.
+
+        A success maps to ``{ok: True, delivery_id, diagnostics}`` where the
+        additive ``diagnostics`` field is ``"included"`` for the first attempt
+        and ``"dropped"`` for the downgraded retry. An
+        unreachable/misconfigured relay maps to ``bugreport.relay_unavailable``;
+        a relay-reported failure maps to ``bugreport.delivery_failed``. No
+        credential or traceback is ever included in a response.
         """
         if not relay_url:
             raise problem("bugreport.relay_unavailable")
-        payload = {
-            "schema": _RELAY_SCHEMA,
+        base = {
             "app_version": bundle["app_version"],
             "platform": bundle["platform"],
             "description": bundle["description"],
             "contact": bundle["contact"],
             "logs": bundle["logs"],
-            "context": bundle["context"],
         }
-        if not bundle["context"]:
-            # A relay that predates schema 2 rejects the unknown key, so a
-            # contextless client keeps speaking the older contract until the
-            # relay is rolled out. A dropped report is worse than no context.
-            payload["schema"] = _LEGACY_RELAY_SCHEMA
-            payload.pop("context")
+        payload: Dict[str, Any] = {"schema": _RELAY_SCHEMA, **base}
+        if bundle["context"]:
+            payload["context"] = bundle["context"]
+        payload["diagnostics"] = _diagnostics_document()
+
         headers: Dict[str, str] = {}
         token = _current_install_token()
         if token:
@@ -557,14 +582,47 @@ def create_bug_report_router(
             install = _install_id()
             if install is not None:
                 headers["x-install-id"] = install
-        try:
-            status, data = _relay_sender()(relay_url, payload, headers, attachments or [])
-        except Exception:  # noqa: BLE001 - network/config failure fails closed
-            raise problem("bugreport.relay_unavailable")
-        if not isinstance(data, dict):
-            data = {}
-        if 200 <= int(status) < 300 and data.get("ok") is True:
-            return {"ok": True, "delivery_id": str(data.get("delivery_id") or "")}
+
+        sender = _relay_sender()
+
+        def _attempt(candidate: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+            try:
+                status, data = sender(
+                    relay_url, candidate, headers, attachments or []
+                )
+            except Exception:  # noqa: BLE001 - network/config failure fails closed
+                raise problem("bugreport.relay_unavailable")
+            return int(status), data if isinstance(data, dict) else {}
+
+        status, data = _attempt(payload)
+        if status in _RELAY_CONTRACT_REJECTIONS:
+            # Older relay: downgrade once to the shape it understood before
+            # diagnostics existed. A dropped report is worse than no
+            # diagnostics, but a duplicate report is worse than either.
+            retry: Dict[str, Any] = {
+                "schema": (
+                    _LEGACY_RELAY_SCHEMA
+                    if bundle["context"]
+                    else _CONTEXTLESS_RELAY_SCHEMA
+                ),
+                **base,
+            }
+            if bundle["context"]:
+                retry["context"] = bundle["context"]
+            status, data = _attempt(retry)
+            if 200 <= status < 300 and data.get("ok") is True:
+                return {
+                    "ok": True,
+                    "delivery_id": str(data.get("delivery_id") or ""),
+                    "diagnostics": "dropped",
+                }
+            raise problem("bugreport.delivery_failed")
+        if 200 <= status < 300 and data.get("ok") is True:
+            return {
+                "ok": True,
+                "delivery_id": str(data.get("delivery_id") or ""),
+                "diagnostics": "included",
+            }
         raise problem("bugreport.delivery_failed")
 
     def _render_fallback_body(bundle: Dict[str, Any]) -> str:
@@ -690,18 +748,37 @@ def create_bug_report_router(
             "reason": "",
         }
 
+    def _diagnostics_document() -> Dict[str, Any]:
+        """The server-built diagnostics document; never raises, never 500s.
+
+        The submit payload is assembled HERE, never taken from the client: a
+        client-supplied ``diagnostics`` field stays outside
+        :data:`ALLOWED_FIELDS` and is rejected. On any failure the endpoint
+        still answers with a safe, non-secret shape.
+        """
+        try:
+            return diagnostics.build_diagnostics()
+        except Exception:  # noqa: BLE001 - diagnostics never break a report
+            return {
+                "schema": diagnostics.SCHEMA,
+                "unavailable": True,
+                "reason": "diagnostics unavailable",
+            }
+
     @router.get("/assemble")
     def assemble(request: Request) -> Dict[str, Any]:
         """Assemble the default, allow-listed, content-scanned report bundle.
 
-        Returns exactly :data:`ALLOWED_FIELDS`-bounded content. World data,
-        ``.env`` and the account username are absent by construction.
+        Returns exactly :data:`ALLOWED_FIELDS`-bounded content plus the
+        server-built ``diagnostics`` document. World data, ``.env`` and the
+        account username are absent by construction.
         """
         _guard(request)
         return {
             "app_version": app_version(),
             "platform": _platform_facts(),
             "logs": _assemble_logs(),
+            "diagnostics": _diagnostics_document(),
             "allow_list": sorted(ALLOWED_FIELDS),
             "contact_slot": True,
         }
