@@ -20,7 +20,7 @@ Branch: `feat/assistant-runtime-evolution` (worktree `demiurgos-worktrees/assist
 |---|---|---|---|---|---|
 | T1 | Add the per-language citation clause as the last instruction for real worlds | S1-S4 | inline | done | see L3 |
 | T2 | Tests: es/en clause present for real worlds, absent for global, last before the author prompt | S2-S4 | inline | done | see L3 |
-| T3 | Re-run the golden set live and record the citation rate vs 5/16 | S5 | inline | blocked: runner bypasses the API (see L3) | — |
+| T3 | Re-run the golden set live and record the citation rate vs 5/16 | S5 | inline | done (product-path baseline 15/16, citation 16/16; see L4) | — |
 
 ## Log
 
@@ -32,3 +32,10 @@ Branch: `feat/assistant-runtime-evolution` (worktree `demiurgos-worktrees/assist
 
 - **Product-path probe (the real proof):** with a loopback local-dev session, `POST /api/Vibrantes/ai/ask/activity` for the Chaart-zones question answered correctly and ended with `Fuentes: `lore/politica-distribucion-y-territorios/chaart.md`` — format A, exact path, and it named the world. So the clause works on the path the Owner actually uses.
 - **Discovery — the golden-set runner measures the wrong path:** `scripts/eval_assistant.py` talks to the gateway `/v1/runs` with the raw question, so it never runs `_build_ai_ask_prompt` (identity, tool guidance, graph context, style, citations). The T2.3 baseline (5/16) therefore measured the gateway's *default agent*, not the product assistant. Re-measuring the product-path citation rate requires pointing the runner at `/api/{mundo}/ai/ask/activity` (local-dev session + parse the SSE `answer` events) — a runner fix that is its own reviewed unit. T3 is blocked on that.
+
+**L4 (T3 done — product-path baseline, 2026-11-25):** the golden-set runner now measures the product, not the raw gateway.
+
+- `scripts/eval_assistant.py`: removed the gateway transport; added `open_local_session` (loopback `POST /api/auth/local-dev/session` cookie), `ask_product` (`POST /api/{mundo}/ai/ask/activity`), `consume_api_events` (cumulative `answer` → last; `activity.operation`/`path`; `terminal`), and a per-line deadline in `iter_sse` (also closes advisory R3-001). CLI: `--api` (default `http://127.0.0.1:8000`) and `--mundo` (exact app world name, default the slug); `--gateway`/`--key` removed.
+- Tests updated: `test_eval_assistant.py` 20 passed (API event folding, cumulative answer, a fake-opener `ask_product` stream, and an HTTP 503 recorded as `http_503`, not a crash).
+- **Product-path baseline: 15/16 pass, citation 16/16** (vs the raw-gateway 5/16). Every answer cited its ficha path. The one failure (`vibrantes-02-atherr-cuevas`) is a corpus-authoring issue: the question asks where the water Stal are, the answer named the Cuevas de Cristal and cited the ficha, but the case also required `Lumnar` (the Bosques) — over-specified; refine that case before the next baseline.
+- Report kept local: `odd/evidence/assistant-golden/.local/report-2026-11-25-7d0b517-product.md` (gitignored: world canon).

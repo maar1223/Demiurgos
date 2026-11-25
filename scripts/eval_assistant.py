@@ -36,14 +36,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.cookiejar
 import json
-import os
 import re
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,13 +88,6 @@ MUST_NOT_CODES = (
 # Codes the runner cannot decide by substring/citation; the report asks a human
 # (or a later judge pass) to look at the answer.
 JUDGED_CODES = frozenset({"invented_canon", "claimed_authority", "blind_answer", "wrong_tone"})
-_REQUIRED_FEATURES = (
-    "run_submission",
-    "run_status",
-    "run_events_sse",
-    "run_stop",
-    "tool_progress_events",
-)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _LANG_RE = re.compile(r"^[a-z]{2}(-[A-Za-z0-9]+)?$")
 _ES_MARKERS = frozenset(
@@ -223,49 +218,6 @@ def evaluate_case(
         tools=[dict(t) for t in tools],
         answer_chars=len(answer),
     )
-
-
-def _canonical_tool(name: object) -> str | None:
-    if not isinstance(name, str) or not name.strip():
-        return None
-    if name.startswith("mcp__") and "__" in name:
-        parts = name.split("__", 2)
-        if len(parts) == 3:
-            return parts[2]
-    return name
-
-
-def consume_events(
-    events: Iterable[Mapping[str, Any]], *, run_id: str | None = None
-) -> tuple[str, list[dict[str, Any]], str]:
-    """Fold a Hermes run event stream into (answer, tools, status)."""
-    parts: list[str] = []
-    tools: list[dict[str, Any]] = []
-    status = "unknown"
-    for event in events:
-        if not isinstance(event, Mapping):
-            continue
-        if run_id is not None and event.get("run_id") != run_id:
-            continue
-        kind = event.get("event")
-        if kind == "message.delta":
-            delta = event.get("delta")
-            if isinstance(delta, str) and delta:
-                parts.append(delta)
-        elif kind == "tool.completed":
-            canonical = _canonical_tool(event.get("tool"))
-            error = event.get("error")
-            if canonical and isinstance(error, bool):
-                tools.append({"name": canonical, "ok": not error})
-        elif kind == "run.completed":
-            if not parts:
-                output = event.get("output")
-                if isinstance(output, str) and output:
-                    parts.append(output)
-            status = "succeeded"
-        elif kind in ("run.failed", "run.cancelled"):
-            status = "failed"
-    return "".join(parts), tools, status
 
 
 # ---------------------------------------------------------------------------
@@ -428,101 +380,152 @@ def discover_worlds(worlds_dir: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# Live transport (documented Hermes API server contract)
+# Live transport — the PRODUCT assistant path (/api/{mundo}/ai/ask/activity)
 # ---------------------------------------------------------------------------
+#
+# The golden set must measure the assistant the Owner actually uses. That is the
+# API endpoint, which builds `_build_ai_ask_prompt` (identity, tool guidance,
+# graph context, style, citations) and streams the built prompt to the engine.
+# Calling the gateway directly bypasses that prompt and measures the raw engine
+# instead — the wrong thing.
+
+DEFAULT_API = "http://127.0.0.1:8000"
 
 
-def resolve_base(value: str | None) -> str:
-    url = (value or os.getenv("HERMES_GATEWAY_URL") or "http://127.0.0.1:8642").rstrip("/")
-    suffix = "/v1/chat/completions"
-    if url.endswith(suffix):
-        url = url[: -len(suffix)]
-    return url
-
-
-def resolve_key(value: str | None) -> str:
-    return value or os.getenv("HERMES_GATEWAY_KEY") or os.getenv("API_SERVER_KEY") or ""
-
-
-def _headers(key: str, *, accept: str = "application/json") -> dict[str, str]:
-    headers = {"Accept": accept, "Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    return headers
-
-
-def probe(base: str, key: str, *, timeout: float = 10.0) -> None:
-    request = urllib.request.Request(f"{base}/capabilities", headers=_headers(key))
+def _json_request(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    *,
+    method: str = "GET",
+    payload: Any = None,
+    timeout: float = 30.0,
+) -> Any:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with opener.open(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise SystemExit(
-            f"gateway unreachable at {base}/capabilities ({exc}); start Demiurgos first"
+        return json.loads(body) if body else {}
+    except ValueError:
+        return {}
+
+
+def open_local_session(api: str, *, timeout: float = 10.0) -> urllib.request.OpenerDirector:
+    """Return an opener authenticated with a loopback local-dev session.
+
+    The app runs on the author's machine; the local-dev session is the
+    loopback-only auth the app itself uses in development. If the API is up but
+    local-dev auth is disabled, the operator must start Demiurgos differently.
+    """
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    try:
+        _json_request(
+            opener, f"{api.rstrip('/')}/api/auth/local-dev/session", method="POST", timeout=timeout
         )
-    features = body.get("features") if isinstance(body, dict) else None
-    enabled = (
-        {name for name, on in features.items() if on is True}
-        if isinstance(features, dict)
-        else set()
-    )
-    missing = [f for f in _REQUIRED_FEATURES if f not in enabled]
-    if missing:
-        raise SystemExit(f"gateway capabilities missing {missing}; cannot run the eval")
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise SystemExit(f"API unreachable at {api} ({exc}); start Demiurgos first")
+    return opener
 
 
-def start_run(base: str, key: str, prompt: str, *, timeout: float = 30.0) -> str:
-    body = json.dumps({"input": prompt}).encode("utf-8")
-    request = urllib.request.Request(
-        f"{base}/runs", data=body, headers=_headers(key), method="POST"
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    run_id = payload.get("run_id") if isinstance(payload, dict) else None
-    if not isinstance(run_id, str) or not run_id:
-        raise RuntimeError("gateway returned an invalid run submission")
-    return run_id
+def _try_json(text: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
-def iter_sse(url: str, key: str, *, timeout: float) -> Iterator[dict[str, Any]]:
-    request = urllib.request.Request(url, headers=_headers(key, accept="text/event-stream"))
+def iter_sse(response: Iterable[bytes], *, timeout: float) -> Iterator[dict[str, Any]]:
+    """Yield the JSON payload of each SSE event in ``response``.
+
+    The per-case deadline is checked on every line, not only when an event is
+    yielded, so a stream that keeps trickling comments/heartbeats cannot outlive
+    ``timeout``.
+    """
+    deadline = time.monotonic() + timeout
     data_lines: list[str] = []
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        for raw in response:
-            line = raw.decode("utf-8", "replace").rstrip("\r\n")
-            if line == "":
-                if data_lines:
-                    try:
-                        payload = json.loads("\n".join(data_lines))
-                    except ValueError:
-                        payload = None
-                    if isinstance(payload, dict):
-                        yield payload
-                data_lines = []
-            elif line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
+    for raw in response:
+        if time.monotonic() > deadline:
+            raise TimeoutError("assistant stream exceeded the per-case budget")
+        line = raw.decode("utf-8", "replace").rstrip("\r\n")
+        if line == "":
+            if data_lines:
+                payload = _try_json("\n".join(data_lines))
+                if payload is not None:
+                    yield payload
+            data_lines = []
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
     if data_lines:
-        try:
-            payload = json.loads("\n".join(data_lines))
-        except ValueError:
-            payload = None
-        if isinstance(payload, dict):
+        payload = _try_json("\n".join(data_lines))
+        if payload is not None:
             yield payload
 
 
-def answer_assistant(base: str, key: str, prompt: str, *, timeout: float = 300.0) -> tuple[str, list[dict[str, Any]], str]:
-    run_id = start_run(base, key, prompt)
-    events = iter_sse(f"{base}/runs/{run_id}/events", key, timeout=timeout)
-    bounded = _bounded(events, timeout)
-    return consume_events(bounded, run_id=run_id)
+def consume_api_events(
+    events: Iterable[Mapping[str, Any]],
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Fold the product endpoint's SSE events into (answer, tools, status).
 
-
-def _bounded(events: Iterator[dict[str, Any]], budget: float) -> Iterator[dict[str, Any]]:
-    deadline = time.monotonic() + budget
+    ``answer`` events carry the cumulative answer so far (the last one wins);
+    ``activity`` events carry the world-tool steps; ``terminal`` carries the
+    outcome. The ``semantic_decision`` event is informational, not answer text.
+    """
+    answer = ""
+    tools: list[dict[str, Any]] = []
+    status = "unknown"
     for event in events:
-        if time.monotonic() > deadline:
-            return
-        yield event
+        if not isinstance(event, Mapping):
+            continue
+        kind = event.get("kind")
+        if kind == "answer":
+            response = event.get("response")
+            if isinstance(response, str):
+                answer = response
+        elif kind == "activity":
+            operation = event.get("operation")
+            step = event.get("status")
+            if isinstance(operation, str) and operation:
+                tools.append(
+                    {"name": operation, "ok": step != "failed", "path": event.get("path")}
+                )
+        elif kind == "terminal":
+            outcome = event.get("status")
+            if isinstance(outcome, str):
+                status = outcome
+    return answer, tools, status
+
+
+def ask_product(
+    opener: urllib.request.OpenerDirector,
+    api: str,
+    mundo: str,
+    question: str,
+    *,
+    timeout: float = 300.0,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Ask one question through the product endpoint; fold its SSE events."""
+    url = f"{api.rstrip('/')}/api/{urllib.parse.quote(mundo, safe='')}/ai/ask/activity"
+    payload = {"prompt": question, "session_id": f"golden-{uuid.uuid4().hex[:12]}"}
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        method="POST",
+    )
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return consume_api_events(iter_sse(response, timeout=timeout))
+    except urllib.error.HTTPError as exc:
+        # 503 = the semantic gate routed to a guided flow (not a level-C answer);
+        # 401 = a rejected session. Recorded per case, never raised: one
+        # unroutable question must not abort the whole run.
+        return "", [], f"http_{exc.code}"
 
 
 # ---------------------------------------------------------------------------
@@ -666,8 +669,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Level-C golden-set runner for the assistant")
     parser.add_argument("--corpus", default=str(DEFAULT_CORPUS), help="corpus worlds directory")
     parser.add_argument("--world", action="append", default=[], help="only this world slug (repeatable)")
-    parser.add_argument("--gateway", default=None, help="gateway base URL (default HERMES_GATEWAY_URL)")
-    parser.add_argument("--key", default=None, help="gateway key (default HERMES_GATEWAY_KEY/API_SERVER_KEY)")
+    parser.add_argument("--api", default=DEFAULT_API, help="Demiurgos API base URL (default http://127.0.0.1:8000)")
+    parser.add_argument("--mundo", default=None, help="exact app world name for the API path (default: the world slug)")
     parser.add_argument("--out", default=None, help="report path (default odd/evidence/assistant-golden/<date>-<sha>.md)")
     parser.add_argument("--timeout", type=float, default=300.0, help="per-case stream budget in seconds")
     parser.add_argument("--validate-only", action="store_true", help="validate the corpus; no network")
@@ -688,9 +691,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"no worlds to run under {corpus}", file=sys.stderr)
         return 2
 
-    base = resolve_base(args.gateway)
-    key = resolve_key(args.key)
-    probe(base, key)
+    opener = open_local_session(args.api)
 
     selected: list[tuple[str, list[dict[str, Any]]]] = []
     skipped: list[str] = []
@@ -699,9 +700,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if world["descriptor"].get("source") != "data-root" and not args.allow_fixture_live:
             skipped.append(world["slug"])
             continue
+        mundo = args.mundo or world["slug"]
         results = evaluate_world(
             world,
-            lambda prompt: answer_assistant(base, key, prompt, timeout=args.timeout),
+            lambda prompt, _mundo=mundo: ask_product(
+                opener, args.api, _mundo, prompt, timeout=args.timeout
+            ),
             keep_answers=args.include_answers,
         )
         selected.append((world["slug"], results))
@@ -711,7 +715,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if skipped:
         print(
-            "skipped fixture world(s) not indexed by the live gateway: "
+            "skipped non-data-root world(s): "
             + ", ".join(skipped)
             + " (use --allow-fixture-live to override)"
         )
@@ -722,7 +726,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     meta = {
         "Generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "Backend": _sha(),
-        "Gateway": base,
+        "API": args.api,
         "Corpus digest": corpus_digest(corpus),
         "Corpus": str(corpus),
     }

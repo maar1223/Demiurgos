@@ -190,29 +190,97 @@ def test_validate_world_rejects_bad_level(tmp_path):
     assert any("level" in e for e in errors), errors
 
 
-def test_consume_events_accumulates_deltas_and_tools():
+def test_consume_api_events_last_answer_activities_and_terminal():
     m = _load_runner()
     events = [
-        {"run_id": "r1", "event": "tool.started", "tool": "mcp__x__graph_read"},
-        {"run_id": "r1", "event": "tool.completed", "tool": "mcp__x__graph_read", "error": False},
-        {"run_id": "r1", "event": "message.delta", "delta": "En Chaart "},
-        {"run_id": "r1", "event": "message.delta", "delta": "el clima es frío."},
-        {"run_id": "r1", "event": "run.completed", "output": "En Chaart el clima es frío."},
+        {"kind": "semantic_decision", "state": "answer", "action": "answer"},
+        {"kind": "activity", "operation": "Search world", "status": "succeeded"},
+        {"kind": "activity", "operation": "Read world", "status": "succeeded",
+         "path": "lore/regiones/chaart.md"},
+        {"kind": "answer", "response": "En Chaart el clima es frío."},
+        {"kind": "terminal", "status": "succeeded"},
     ]
-    answer, tools, status = m.consume_events(events)
+    answer, tools, status = m.consume_api_events(events)
     assert answer == "En Chaart el clima es frío."
-    assert tools == [{"name": "graph_read", "ok": True}]
+    assert tools == [
+        {"name": "Search world", "ok": True, "path": None},
+        {"name": "Read world", "ok": True, "path": "lore/regiones/chaart.md"},
+    ]
     assert status == "succeeded"
 
 
-def test_consume_events_uses_terminal_output_when_no_deltas():
+def test_consume_api_events_keeps_the_last_cumulative_answer():
     m = _load_runner()
     events = [
-        {"run_id": "r1", "event": "run.completed", "output": "Only terminal text."},
+        {"kind": "answer", "response": "En Chaart"},
+        {"kind": "answer", "response": "En Chaart el clima es frío."},
+        {"kind": "terminal", "status": "succeeded"},
     ]
-    answer, tools, status = m.consume_events(events)
-    assert answer == "Only terminal text."
+    answer, _, _ = m.consume_api_events(events)
+    assert answer == "En Chaart el clima es frío."
+
+
+class _FakeResp:
+    def __init__(self, lines):
+        self._lines = lines
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+class _FakeOpener:
+    def __init__(self, lines=None, error=None):
+        self._lines = lines or []
+        self._error = error
+
+    def open(self, request, timeout=None):
+        if self._error is not None:
+            raise self._error
+        return _FakeResp(self._lines)
+
+
+def _sse(*payloads):
+    out = []
+    for payload in payloads:
+        out.append(("data: " + json.dumps(payload) + "\n").encode("utf-8"))
+        out.append(b"\n")
+    return out
+
+
+def test_ask_product_folds_the_product_sse_stream():
+    m = _load_runner()
+    opener = _FakeOpener(
+        _sse(
+            {"kind": "answer", "response": "El clima es frío."},
+            {
+                "kind": "answer",
+                "response": "El clima es frío. Fuentes: `lore/regiones/chaart.md`",
+            },
+            {"kind": "terminal", "status": "succeeded"},
+        )
+    )
+    answer, tools, status = m.ask_product(opener, "http://api.test", "Vibrantes", "¿Clima?")
+    assert answer.endswith("Fuentes: `lore/regiones/chaart.md`")
     assert status == "succeeded"
+
+
+def test_ask_product_records_an_http_error_as_a_failed_case():
+    import urllib.error
+
+    m = _load_runner()
+    err = urllib.error.HTTPError("http://api.test", 503, "guided", {}, None)
+    answer, tools, status = m.ask_product(
+        _FakeOpener(error=err), "http://api.test", "Vibrantes", "q"
+    )
+    assert answer == ""
+    assert tools == []
+    assert status == "http_503"
 
 
 def test_evaluate_world_end_to_end_with_fake_answers():
