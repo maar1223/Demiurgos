@@ -8,6 +8,10 @@ import { translate } from "@/i18n/messages";
 import { tEs } from "@/__tests__/i18nTestUtils";
 import { getGuidedMethods } from "@/api/methodologies";
 import { getAssistantSettings } from "@/api/assistantSettings";
+import {
+  getAssistantRecoveryStatus,
+  restartAssistant,
+} from "@/api/assistantRecovery";
 import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
@@ -23,6 +27,21 @@ vi.mock("@/api/methodologies", () => ({
   getGuidedMethods: vi.fn(() =>
     Promise.resolve({ methods: [], default: null }),
   ),
+}));
+
+vi.mock("@/api/assistantRecovery", () => ({
+  getAssistantRecoveryStatus: vi.fn(async () => ({
+    gateway_running: false,
+    state: "failed",
+    cause: "exited",
+    attempts: 3,
+    can_restart: true,
+    updated_at: null,
+  })),
+  restartAssistant: vi.fn(async () => ({
+    action: "assistant-restart",
+    accepted: true,
+  })),
 }));
 
 vi.mock("@/api/assistantSettings", () => ({
@@ -58,6 +77,8 @@ vi.mock("@/hooks/useWhisper", () => ({
 
 const useSessionsMock = vi.mocked(useAIAssistantSessions);
 const getAssistantSettingsMock = vi.mocked(getAssistantSettings);
+const getAssistantRecoveryStatusMock = vi.mocked(getAssistantRecoveryStatus);
+const restartAssistantMock = vi.mocked(restartAssistant);
 const getGuidedMethodsMock = vi.mocked(getGuidedMethods);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
@@ -2438,7 +2459,10 @@ describe("AIAssistantSidebar assistant health", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());
     useAppLanguageMock.mockReturnValue(lang("es"));
+    getAssistantSettingsMock.mockReset();
     getAssistantSettingsMock.mockResolvedValue(healthy);
+    getAssistantRecoveryStatusMock.mockClear();
+    restartAssistantMock.mockClear();
   });
 
   it("warns before the turn when the assistant service is not running", async () => {
@@ -2551,6 +2575,129 @@ describe("AIAssistantSidebar assistant health", () => {
 
     await screen.findByRole("textbox");
     expect(screen.queryByTestId("assistant-health-banner")).not.toBeInTheDocument();
+  });
+
+  it("restarts only the assistant from the banner", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const button = await screen.findByRole("button", {
+      name: "Reiniciar asistente",
+    });
+    await userEvent.click(button);
+
+    expect(restartAssistantMock).toHaveBeenCalledTimes(1);
+    expect(getAssistantRecoveryStatusMock).toHaveBeenCalled();
+  });
+
+  it("offers the assistant restart for a saved configuration awaiting activation", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      runtime_state: "pending-reload",
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const button = await screen.findByRole("button", {
+      name: "Reiniciar asistente",
+    });
+    await userEvent.click(button);
+
+    expect(restartAssistantMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an invalid configuration with its remedy and no restart action", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+    getAssistantRecoveryStatusMock.mockResolvedValueOnce({
+      gateway_running: false,
+      state: "failed",
+      cause: "config_invalid",
+      attempts: 1,
+      can_restart: false,
+      updated_at: null,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    await waitFor(() =>
+      expect(banner).toHaveTextContent("La configuración del asistente no es válida"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar asistente" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+  });
+
+  it("sends an unconfigured assistant to Profile instead of restarting", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      key_configured: false,
+      gateway_running: false,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    expect(banner).toHaveTextContent("El asistente no está configurado");
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar asistente" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+    expect(restartAssistantMock).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a restart the server says cannot help", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+    getAssistantRecoveryStatusMock.mockResolvedValueOnce({
+      gateway_running: false,
+      state: "failed",
+      cause: "not_started",
+      attempts: 0,
+      can_restart: false,
+      updated_at: null,
+    });
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const banner = await screen.findByTestId("assistant-health-banner");
+    await waitFor(() =>
+      expect(banner).toHaveTextContent(
+        "El asistente no está disponible en esta instalación",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar asistente" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a failure line when the restart dispatch is rejected", async () => {
+    getAssistantSettingsMock.mockResolvedValue({
+      ...healthy,
+      gateway_running: false,
+    });
+    restartAssistantMock.mockRejectedValueOnce(new Error("launcher failed"));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    const button = await screen.findByRole("button", {
+      name: "Reiniciar asistente",
+    });
+    await userEvent.click(button);
+
+    expect(
+      await screen.findByTestId("assistant-health-restart-failed"),
+    ).toHaveTextContent("No se pudo reiniciar el asistente");
   });
 });
 

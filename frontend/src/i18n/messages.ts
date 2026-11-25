@@ -22,10 +22,18 @@ export const messages = {
     "assistant.health.notConfigured":
       "El asistente no está configurado. Configúralo en Perfil para poder conversar.",
     "assistant.health.gatewayDown":
-      "El servicio del asistente no está en marcha. Reintenta o vuelve a iniciar Demiurgos.",
+      "El servicio del asistente no está en marcha. Reinícialo para volver a conversar.",
     "assistant.health.pendingReload":
-      "La configuración del asistente cambió. Reinicia Demiurgos para activarla.",
+      "La configuración del asistente cambió. Reinicia el asistente para activarla.",
     "assistant.health.retry": "Reintentar",
+    "assistant.health.restart": "Reiniciar asistente",
+    "assistant.health.restarting": "Reiniciando el asistente…",
+    "assistant.health.restartFailed":
+      "No se pudo reiniciar el asistente. Revisa Perfil o reinicia Demiurgos.",
+    "assistant.health.configInvalid":
+      "La configuración del asistente no es válida. Revísala en Perfil.",
+    "assistant.health.unavailable":
+      "El asistente no está disponible en esta instalación. Revisa Perfil o reinstala Demiurgos.",
     "assistant.blocked":
       "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
     "assistant.failure.timeout":
@@ -290,6 +298,13 @@ export const messages = {
       "Incluir un identificador anónimo de esta instalación",
     "profile.bugreport.pseudonymHint":
       "Opcional. Permite reconocer tus informes y ver cuántos fallos encontraste, sin saber quién eres: no lleva tu nombre, tu cuenta ni tu contacto. Si lo desactivas, el informe se envía igual.",
+    "profile.bugreport.contentOptInLabel": "Incluir fragmentos de contenido",
+    "profile.bugreport.contentOptInHint":
+      "Por defecto el informe lleva solo metadatos: qué turno corrió, cuánto duró, qué herramientas usó y dónde falló. Si lo activas, se añaden fragmentos de tus mensajes y de las respuestas del asistente, marcados dentro de los registros. El contenido se ensambla en el servidor solo cuando lo pides.",
+    "profile.bugreport.contentOmittedLines":
+      "Fragmentos de contenido omitidos: {count}",
+    "profile.bugreport.contentIncludedLabel":
+      "Fragmentos de contenido incluidos (marcados en los registros)",
     "profile.bugreport.addScreenshot": "Añadir captura",
     "profile.bugreport.removeScreenshot": "Quitar captura",
     "profile.bugreport.attachmentLimit": "Puedes adjuntar como máximo 2 capturas.",
@@ -2412,10 +2427,18 @@ export const messages = {
     "assistant.health.notConfigured":
       "The assistant is not configured. Set it up in Profile to start chatting.",
     "assistant.health.gatewayDown":
-      "The assistant service is not running. Retry or start Demiurgos again.",
+      "The assistant service is not running. Restart it to keep chatting.",
     "assistant.health.pendingReload":
-      "The assistant configuration changed. Restart Demiurgos to activate it.",
+      "The assistant configuration changed. Restart the assistant to activate it.",
     "assistant.health.retry": "Retry",
+    "assistant.health.restart": "Restart assistant",
+    "assistant.health.restarting": "Restarting the assistant…",
+    "assistant.health.restartFailed":
+      "The assistant could not be restarted. Check Profile or restart Demiurgos.",
+    "assistant.health.configInvalid":
+      "The assistant configuration is not valid. Check it in Profile.",
+    "assistant.health.unavailable":
+      "The assistant is not available in this installation. Check Profile or reinstall Demiurgos.",
     "assistant.blocked":
       "The AI Assistant could not complete the request right now. No action or write was made.",
     "assistant.failure.timeout":
@@ -2677,6 +2700,13 @@ export const messages = {
       "Include an anonymous identifier for this install",
     "profile.bugreport.pseudonymHint":
       "Optional. It lets your reports be recognised and shows how many bugs you found, without knowing who you are: no name, no account, no contact. Turning it off changes nothing about delivery.",
+    "profile.bugreport.contentOptInLabel": "Include content snippets",
+    "profile.bugreport.contentOptInHint":
+      "By default the report carries metadata only: which turn ran, how long it took, which tools it used and where it failed. Turning this on adds snippets of your messages and the assistant's answers, marked inside the logs. The server assembles that content only when you ask for it.",
+    "profile.bugreport.contentOmittedLines":
+      "Content snippets omitted: {count}",
+    "profile.bugreport.contentIncludedLabel":
+      "Content snippets included (marked inside the logs)",
     "profile.bugreport.addScreenshot": "Add screenshot",
     "profile.bugreport.removeScreenshot": "Remove screenshot",
     "profile.bugreport.attachmentLimit": "You can attach at most 2 screenshots.",

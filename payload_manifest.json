@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_by": "scripts/derive_payload_manifest.py",
-  "source_commit": "62b423b",
+  "source_commit": "1133a9a",
   "entrypoints": [
     "src/tools/demiurgos-suite/wiki/api_server.py",
     "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",
@@ -42,7 +42,9 @@
     "src/tools/demiurgos-suite/wiki/assistant_activity.py",
     "src/tools/demiurgos-suite/wiki/assistant_memory_store.py",
     "src/tools/demiurgos-suite/wiki/assistant_provider_adapters.py",
+    "src/tools/demiurgos-suite/wiki/assistant_recovery.py",
     "src/tools/demiurgos-suite/wiki/assistant_settings.py",
+    "src/tools/demiurgos-suite/wiki/assistant_turns.py",
     "src/tools/demiurgos-suite/wiki/backup/__init__.py",
     "src/tools/demiurgos-suite/wiki/backup/engine.py",
     "src/tools/demiurgos-suite/wiki/backup/inventory.py",
@@ -82,10 +84,12 @@
     "src/tools/demiurgos-suite/wiki/data_root.py",
     "src/tools/demiurgos-suite/wiki/demiurgos_language.py",
     "src/tools/demiurgos-suite/wiki/demiurgos_personality.py",
+    "src/tools/demiurgos-suite/wiki/diagnostics.py",
     "src/tools/demiurgos-suite/wiki/docx_export.py",
     "src/tools/demiurgos-suite/wiki/emergency_key.py",
     "src/tools/demiurgos-suite/wiki/error_codes.py",
     "src/tools/demiurgos-suite/wiki/folder_dialog.py",
+    "src/tools/demiurgos-suite/wiki/gateway_supervisor.py",
     "src/tools/demiurgos-suite/wiki/graph_indexer.py",
     "src/tools/demiurgos-suite/wiki/graph_mcp_server.py",
     "src/tools/demiurgos-suite/wiki/graph_models.py",
@@ -122,6 +126,7 @@
     "src/tools/demiurgos-suite/wiki/import_vision.py",
     "src/tools/demiurgos-suite/wiki/inter_doc_relationships.py",
     "src/tools/demiurgos-suite/wiki/local_state.py",
+    "src/tools/demiurgos-suite/wiki/log_rotation.py",
     "src/tools/demiurgos-suite/wiki/markdown_heading.py",
     "src/tools/demiurgos-suite/wiki/mcp_adapter.py",
     "src/tools/demiurgos-suite/wiki/mcp_launcher.py",
@@ -135,6 +140,7 @@
     "src/tools/demiurgos-suite/wiki/narrative_utils.py",
     "src/tools/demiurgos-suite/wiki/okf_contract.py",
     "src/tools/demiurgos-suite/wiki/onboarding.py",
+    "src/tools/demiurgos-suite/wiki/operations_ring.py",
     "src/tools/demiurgos-suite/wiki/order_manifest.py",
     "src/tools/demiurgos-suite/wiki/readiness.py",
     "src/tools/demiurgos-suite/wiki/relation_candidates.py",
@@ -335,7 +341,7 @@
     "idea_capture": [
       {
         "file": "src/tools/demiurgos-suite/wiki/api_server.py",
-        "line": 1642
+        "line": 1724
       },
       {
         "file": "src/tools/demiurgos-suite/wiki/idea_capture_ui.py",

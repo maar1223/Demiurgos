@@ -1,0 +1,9 @@
+# Synthetic world used only to specify the golden-set format and to smoke-test
+# the runner. source: fixture => the fichas under this directory are indexed as
+# a self-contained world (deterministic, CI-safe). It is not an author's world.
+name: example-chaart
+description: >-
+  A minimal OKF world with one region ficha and one character ficha holding
+  facts a model cannot know from training. It proves the format end to end.
+source: fixture
+language: es

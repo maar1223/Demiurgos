@@ -1,0 +1,34 @@
+world: example-chaart
+cases:
+  - id: example-chaart-01-clima
+    level: C
+    question: "¿Qué clima hace en Chaart?"
+    language: es
+    source_paths:
+      - lore/regiones/chaart.md
+    expected_facts:
+      - name: climate
+        any_of: ["frío", "fría", "helado", "bajas temperaturas"]
+    must_not:
+      codes: [invented_canon, claimed_authority, uncited_source]
+      strings: ["tropical", "desértico", "selva"]
+    notes: >-
+      The region ficha says the air is permanently cold. A tropical or desert
+      answer, or a reply with no cited path, fails the case.
+
+  - id: example-chaart-02-fundadora
+    level: C
+    question: "¿Quién fundó Chaart y en qué año?"
+    source_paths:
+      - lore/regiones/chaart.md
+    expected_facts:
+      - name: founder
+        any_of: ["Maelis", "Maelis Vorn"]
+      - name: year
+        any_of: ["312", "año 312"]
+    must_not:
+      codes: [invented_canon, claimed_authority, uncited_source]
+      strings: []
+    notes: >-
+      Two fact groups must both match. The year is a world fact; a plausible
+      guess is invented canon.

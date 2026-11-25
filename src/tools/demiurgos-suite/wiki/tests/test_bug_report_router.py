@@ -51,6 +51,8 @@ from bug_report import (  # noqa: E402
 )
 from error_codes import register_error_handlers  # noqa: E402
 
+import diagnostics  # noqa: E402
+
 AUTH_REQUIRED = {"detail": "Autenticación requerida"}
 
 # Matches the shared ``bot-token`` rule (``[0-9]{8,10}:[A-Za-z0-9_-]{35}``).
@@ -69,7 +71,15 @@ SHARED_SECRET_FIXTURES = {
     "author-path": "spreadsheet" + "Id",
 }
 
-_TOP_LEVEL_KEYS = {"app_version", "platform", "logs", "allow_list", "contact_slot"}
+_TOP_LEVEL_KEYS = {
+    "app_version",
+    "platform",
+    "logs",
+    "allow_list",
+    "contact_slot",
+    "content_policy",
+    "diagnostics",
+}
 
 # Repo root: tests/ -> wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> <root>.
 _REPO_ROOT = _HERE.parents[4]
@@ -551,13 +561,18 @@ def test_submit_success_stores_nothing(tmp_path: Path) -> None:
     )
     resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"ok": True, "delivery_id": "delivery-42"}
+    assert resp.json() == {
+        "ok": True,
+        "delivery_id": "delivery-42",
+        "diagnostics": "included",
+    }
 
     # Nothing about the report is persisted server-side (stateless submit).
     after = sorted(p.relative_to(install_root) for p in install_root.rglob("*"))
     assert after == before
 
-    # The relay received the fixed, vendor-neutral contract.
+    # The relay received the fixed, vendor-neutral contract plus the
+    # server-assembled diagnostics document (schema 3).
     assert captured["url"] == "http://relay.test"
     assert set(captured["payload"].keys()) == {
         "schema",
@@ -566,8 +581,10 @@ def test_submit_success_stores_nothing(tmp_path: Path) -> None:
         "description",
         "contact",
         "logs",
+        "diagnostics",
     }
-    assert captured["payload"]["schema"] == 1
+    assert captured["payload"]["schema"] == 3
+    assert isinstance(captured["payload"]["diagnostics"], dict)
     assert captured["payload"]["description"] == _valid_payload()["description"]
 
 
@@ -726,7 +743,7 @@ def _capture(captured: list) -> Callable:
     return _send
 
 
-def test_submit_forwards_context_as_schema_two() -> None:
+def test_submit_forwards_context_as_schema_three() -> None:
     captured: list = []
     app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
     context = {
@@ -742,11 +759,12 @@ def test_submit_forwards_context_as_schema_two() -> None:
 
     assert resp.status_code == 200, resp.text
     sent = captured[0]["payload"]
-    assert sent["schema"] == 2
+    assert sent["schema"] == 3
     assert sent["context"] == context
+    assert sent["diagnostics"]["schema"] == diagnostics.SCHEMA
 
 
-def test_submit_without_context_keeps_the_legacy_contract() -> None:
+def test_submit_without_context_uses_schema_three_without_context() -> None:
     captured: list = []
     app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
 
@@ -754,9 +772,9 @@ def test_submit_without_context_keeps_the_legacy_contract() -> None:
 
     assert resp.status_code == 200, resp.text
     sent = captured[0]["payload"]
-    # A relay that predates schema 2 must keep accepting the report.
-    assert sent["schema"] == 1
+    assert sent["schema"] == 3
     assert "context" not in sent
+    assert sent["diagnostics"]["schema"] == diagnostics.SCHEMA
 
 
 def test_context_rejects_a_key_outside_the_allow_list() -> None:
@@ -1561,3 +1579,532 @@ def test_releases_fail_closed_without_a_relay_url() -> None:
 
     assert resp.status_code == 502
     assert resp.json()["code"] == "bugreport.relay_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Schema 3 — the server-assembled diagnostics document (S5, S6)
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_includes_the_diagnostics_document() -> None:
+    """``/assemble`` ships the structured diagnostics alongside the logs."""
+    app = _make_app()
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    document = resp.json()["diagnostics"]
+    assert document["schema"] == diagnostics.SCHEMA
+    assert set(document) >= {
+        "schema",
+        "generated_at",
+        "truncated",
+        "operations",
+        "assistant_turns",
+    }
+
+
+def test_submit_posts_schema_three_with_diagnostics() -> None:
+    """The relay receives schema 3 and the server-built diagnostics object."""
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    sent = captured[0]["payload"]
+    assert sent["schema"] == 3
+    assert isinstance(sent["diagnostics"], dict)
+    assert sent["diagnostics"]["schema"] == diagnostics.SCHEMA
+    assert resp.json()["diagnostics"] == "included"
+
+
+def test_contract_rejection_downgrades_once_and_drops_diagnostics() -> None:
+    """A 4xx contract rejection retries once with the pre-diagnostics shape."""
+    calls: list = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        if len(calls) == 1:
+            return 400, {"ok": False, "code": "bugreport.contract_rejected"}
+        return 200, {"ok": True, "delivery_id": "delivery-retry"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+    context = {"route": "/perfil", "view": "perfil", "ui_area": "reportes"}
+
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context=context)
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["diagnostics"] == "dropped"
+    assert len(calls) == 2
+    first, retry = calls
+    assert first["schema"] == 3 and "diagnostics" in first
+    assert retry["schema"] == 2
+    assert retry["context"] == context
+    assert "diagnostics" not in retry
+
+
+def test_contextless_contract_rejection_retries_as_schema_one() -> None:
+    """The retry without context falls back to the oldest relay shape."""
+    calls: list = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        if len(calls) == 1:
+            return 400, {"ok": False, "code": "bugreport.contract_rejected"}
+        return 200, {"ok": True, "delivery_id": "delivery-retry"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["diagnostics"] == "dropped"
+    assert len(calls) == 2
+    retry = calls[1]
+    assert retry["schema"] == 1
+    assert "context" not in retry
+    assert "diagnostics" not in retry
+
+
+def test_a_server_error_never_retries() -> None:
+    """A 5xx must not trigger a second delivery (it could duplicate a report)."""
+    calls: list = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        return 500, {"ok": False, "code": "relay.internal_error"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 502, resp.text
+    assert resp.json()["code"] == "bugreport.delivery_failed"
+    assert len(calls) == 1
+
+
+def test_a_rate_limit_answer_never_retries() -> None:
+    """429 is not a contract rejection: retrying would spend the caller's budget."""
+    calls: list = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        return 429, {"ok": False, "code": "relay.rate_limited"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 502, resp.text
+    assert resp.json()["code"] == "bugreport.delivery_failed"
+    assert len(calls) == 1
+
+
+def test_delivered_diagnostics_fit_the_byte_budget() -> None:
+    """The document in the delivered payload never exceeds its own budget."""
+    captured: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_capture(captured))
+
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+
+    assert resp.status_code == 200, resp.text
+    document = captured[0]["payload"]["diagnostics"]
+    encoded = json.dumps(document, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    assert len(encoded) <= diagnostics.MAX_BYTES
+
+
+# ---------------------------------------------------------------------------
+# Relay ladder invariants (verifier probes for T1.5)
+# ---------------------------------------------------------------------------
+
+
+def _sequenced_relay(statuses):
+    calls = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        status = statuses[min(len(calls) - 1, len(statuses) - 1)]
+        if isinstance(status, BaseException):
+            raise status
+        return status, {"ok": status == 200, "delivery_id": "d%d" % len(calls)}
+
+    return _relay, calls
+
+
+def test_only_contract_rejections_retry_once() -> None:
+    for status in (400, 413, 415, 422):
+        relay, calls = _sequenced_relay([status, 200])
+        app = _make_app(relay_url="http://relay.test", relay_post=relay)
+        resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+        assert resp.status_code == 200, (status, resp.text)
+        assert len(calls) == 2, status
+        assert resp.json()["diagnostics"] == "dropped", status
+
+
+def test_other_4xx_and_5xx_never_retry() -> None:
+    for status in (401, 403, 404, 409, 429, 500, 502, 503):
+        relay, calls = _sequenced_relay([status, 200])
+        app = _make_app(relay_url="http://relay.test", relay_post=relay)
+        resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+        assert len(calls) == 1, status
+        assert resp.status_code == 502, (status, resp.text)
+        assert resp.json()["code"] == "bugreport.delivery_failed", status
+
+
+def test_transport_error_and_non_ok_2xx_never_retry() -> None:
+    relay, calls = _sequenced_relay([RuntimeError("boom"), 200])
+    app = _make_app(relay_url="http://relay.test", relay_post=relay)
+    resp = TestClient(app).post("/api/bugreport/submit", json=_valid_payload())
+    assert len(calls) == 1
+    assert resp.status_code == 502
+    assert resp.json()["code"] == "bugreport.relay_unavailable"
+
+    calls2 = []
+
+    def _ok_false(url, payload, headers=None, attachments=None):
+        calls2.append(payload)
+        return 200, {"ok": False}
+
+    app2 = _make_app(relay_url="http://relay.test", relay_post=_ok_false)
+    resp2 = TestClient(app2).post("/api/bugreport/submit", json=_valid_payload())
+    assert len(calls2) == 1
+    assert resp2.status_code == 502
+    assert resp2.json()["code"] == "bugreport.delivery_failed"
+
+
+def test_retry_shapes_drop_diagnostics_and_context_follows_the_bundle() -> None:
+    relay, calls = _sequenced_relay([422, 200])
+    app = _make_app(relay_url="http://relay.test", relay_post=relay)
+    context = {"route": "/perfil", "view": "perfil", "ui_area": "reportes"}
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(context=context)
+    )
+    assert resp.status_code == 200, resp.text
+    first, retry = calls
+    assert first["schema"] == 3
+    assert "diagnostics" in first
+    assert first["context"] == context
+    assert retry["schema"] == 2
+    assert retry["context"] == context
+    assert "diagnostics" not in retry
+
+    relay2, calls2 = _sequenced_relay([422, 200])
+    app2 = _make_app(relay_url="http://relay.test", relay_post=relay2)
+    resp2 = TestClient(app2).post("/api/bugreport/submit", json=_valid_payload())
+    assert resp2.status_code == 200, resp2.text
+    assert calls2[1]["schema"] == 1
+    assert "context" not in calls2[1]
+    assert "diagnostics" not in calls2[1]
+
+
+def test_retry_shares_the_rate_limit_token() -> None:
+    calls = []
+
+    def _alternate(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        first_attempt = len(calls) % 2 == 1
+        if first_attempt:
+            return 400, {"ok": False, "code": "bugreport.contract_rejected"}
+        return 200, {"ok": True, "delivery_id": "d"}
+
+    app = _make_app(
+        relay_url="http://relay.test",
+        relay_post=_alternate,
+        clock=lambda: 1000.0,
+    )
+    client = TestClient(app)
+    for _ in range(5):
+        resp = client.post("/api/bugreport/submit", json=_valid_payload())
+        assert resp.status_code == 200, resp.text
+    blocked = client.post("/api/bugreport/submit", json=_valid_payload())
+    assert blocked.status_code == 429
+    assert blocked.json()["code"] == "bugreport.rate_limited"
+    # Five submits, each rejected once then accepted: ten relay calls. A retry
+    # that spent a second token would have rate-limited the third submit.
+    assert len(calls) == 10
+
+
+def test_client_supplied_diagnostics_is_rejected() -> None:
+    calls = []
+
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        return 200, {"ok": True, "delivery_id": "d1"}
+
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay)
+    resp = TestClient(app).post(
+        "/api/bugreport/submit", json=_valid_payload(diagnostics={"x": 1})
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "bugreport.not_allowlisted"
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Content policy (S6) — metadata by default, content opt-in, visibly labelled
+#
+# The assistant gateway writes the prompt and the answer tail into its log
+# record with ``preview=``. That payload is author content, so a bundle carries
+# the metadata (``len=``, status, timing) by default and the payload ONLY when
+# the reporter opts in through the ``x-bugreport-content: 1`` header. The
+# server enforces it on both delivery paths, so an older or hand-made client
+# cannot smuggle the payload past the panel.
+# ---------------------------------------------------------------------------
+
+CONTENT_HEADER = {"x-bugreport-content": "1"}
+CONTENT_MARKER = "== content snippets included at the reporter's request =="
+AUTHOR_TEXT = "Aldric cruza el puente de Ceniza"
+PREVIEW_LINE = (
+    "2026-01-01 12:00:00 INFO Hermes GW START len=%d session=- preview=%r"
+    % (len(AUTHOR_TEXT), AUTHOR_TEXT)
+)
+
+
+def _preview_source() -> list:
+    return [("demiurgos-api.log", "boot\n" + PREVIEW_LINE + "\nready")]
+
+
+def _relay_recorder(calls: list):
+    def _relay(url, payload, headers=None, attachments=None):
+        calls.append(payload)
+        return 200, {"ok": True, "delivery_id": "d1"}
+
+    return _relay
+
+
+def test_assemble_scrubs_content_previews_by_default() -> None:
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert AUTHOR_TEXT not in body["logs"]["content"]
+    assert "[content omitted]" in body["logs"]["content"]
+    # The record stays diagnosable: the prefix and its length are metadata.
+    assert "Hermes GW START" in body["logs"]["content"]
+    assert "len=%d" % len(AUTHOR_TEXT) in body["logs"]["content"]
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 1}
+    # The useful structure around it survives.
+    assert "boot" in body["logs"]["content"]
+    assert "ready" in body["logs"]["content"]
+
+
+def test_assemble_includes_content_only_when_opted_in() -> None:
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    content = body["logs"]["content"]
+    assert AUTHOR_TEXT in content
+    # Visibly labelled: the shipped window says the content is there.
+    assert content.splitlines()[0] == CONTENT_MARKER
+    assert body["content_policy"] == {"included": True, "scrubbed_lines": 0}
+
+
+def test_assemble_opt_in_without_content_lines_adds_no_marker() -> None:
+    app = _make_app(
+        install_root=Path("/nonexistent"),
+        log_source=lambda: [("demiurgos-api.log", "server started")],
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["logs"]["content"] == "server started"
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_assemble_keeps_the_marker_inside_the_log_byte_budget() -> None:
+    """The label is part of the payload, so it counts against the same cap."""
+
+    def _huge_source() -> list:
+        # The preview is the NEWEST record, so it survives the tail window.
+        return [("demiurgos-api.log", ("x" * 90000) + "\n" + PREVIEW_LINE)]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_huge_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    content = body["logs"]["content"]
+    assert len(content.encode("utf-8")) <= 65536
+    assert content.splitlines()[0] == CONTENT_MARKER
+    assert AUTHOR_TEXT in content
+    assert body["content_policy"] == {"included": True, "scrubbed_lines": 0}
+
+
+def test_assemble_never_labels_content_the_budget_trimmed_away() -> None:
+    """An opted-in bundle whose newest bytes carry no preview says so honestly."""
+
+    def _old_preview_source() -> list:
+        # The preview is the OLDEST record: the tail window keeps only the x run.
+        return [("demiurgos-api.log", PREVIEW_LINE + "\n" + ("x" * 90000))]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_old_preview_source)
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert CONTENT_MARKER not in body["logs"]["content"]
+    assert body["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_submit_scrubs_client_supplied_content_by_default() -> None:
+    """The server, not the panel, is what enforces the policy on delivery."""
+    calls: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay_recorder(calls))
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    sent = calls[0]["logs"]
+    assert AUTHOR_TEXT not in sent
+    assert "[content omitted]" in sent
+    assert "len=%d" % len(AUTHOR_TEXT) in sent
+
+
+def test_submit_keeps_opted_in_content() -> None:
+    calls: list = []
+    app = _make_app(relay_url="http://relay.test", relay_post=_relay_recorder(calls))
+    resp = TestClient(app).post(
+        "/api/bugreport/submit",
+        headers=CONTENT_HEADER,
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    sent = calls[0]["logs"]
+    assert AUTHOR_TEXT in sent
+    assert "[content omitted]" not in sent
+
+
+def test_assemble_opt_in_never_disables_secret_redaction() -> None:
+    """The two policies compose: opting into content is not opting out of S1a."""
+
+    def _leaky_preview_source() -> list:
+        return [
+            (
+                "demiurgos-api.log",
+                PREVIEW_LINE + "\nleaked token %s\nready" % BOT_TOKEN,
+            )
+        ]
+
+    app = _make_app(
+        install_root=Path("/nonexistent"), log_source=_leaky_preview_source
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble", headers=CONTENT_HEADER)
+    assert resp.status_code == 200, resp.text
+    content = resp.json()["logs"]["content"]
+    assert AUTHOR_TEXT in content
+    assert BOT_TOKEN not in content
+    assert "[redacted:" in content
+    assert resp.json()["logs"]["redacted_lines"] == 1
+
+
+def test_fallback_scrubs_content_previews_by_default() -> None:
+    app = _make_app(install_root=Path("/nonexistent"))
+    resp = TestClient(app).post(
+        "/api/bugreport/fallback",
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert AUTHOR_TEXT not in resp.json()["body"]
+    assert "[content omitted]" in resp.json()["body"]
+
+
+def test_fallback_keeps_opted_in_content() -> None:
+    app = _make_app(install_root=Path("/nonexistent"))
+    resp = TestClient(app).post(
+        "/api/bugreport/fallback",
+        headers=CONTENT_HEADER,
+        json=_valid_payload(logs="boot\n" + PREVIEW_LINE + "\nready"),
+    )
+    assert resp.status_code == 200, resp.text
+    assert AUTHOR_TEXT in resp.json()["body"]
+
+def test_marker_never_claims_content_the_marker_budget_trimmed_away() -> None:
+    """Regression (T1.6 verifier B1): paying for the label must not orphan it."""
+    prompt = (
+        "Dame el resumen del capitulo donde Aldric cruza el puente de Ceniza y "
+        "explica por que la casa Valen lo traiciono al final del invierno "
+    )
+    preview_line = (
+        "2026-01-01 12:00:00 INFO Hermes GW START len=%d session=- preview=%r"
+        % (len(prompt), prompt[:120])
+    )
+
+    def _source() -> list:
+        return [
+            ("demiurgos-api.log.3", "a" * 16384),
+            ("demiurgos-api.log.2", "a" * 16384),
+            ("demiurgos-api.log.1", "a" * 16384),
+            ("demiurgos-api.log", preview_line + "\n" + ("x" * 16135)),
+        ]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_source)
+    body = TestClient(app).get(
+        "/api/bugreport/assemble", headers=CONTENT_HEADER
+    ).json()
+    content = body["logs"]["content"]
+    assert len(content.encode("utf-8")) <= 65536
+    # The label and the content are one decision, never two.
+    assert (CONTENT_MARKER in content) == body["content_policy"]["included"]
+    if body["content_policy"]["included"]:
+        assert preview_line.split("preview=")[1].strip("'") in content
+
+
+def test_scrubbed_lines_counts_only_the_placeholders_that_shipped() -> None:
+    """Regression (T1.6 verifier A1): the count describes the shipped text."""
+    preview_line = (
+        "2026-01-01 12:00:00 INFO Hermes GW START len=4 session=- preview='hola'"
+    )
+
+    def _source() -> list:
+        return [
+            ("demiurgos-api.log.3", "a" * 16384),
+            ("demiurgos-api.log.2", "a" * 16384),
+            ("demiurgos-api.log.1", "a" * 16384),
+            ("demiurgos-api.log", preview_line + "\n" + ("x" * 16309)),
+        ]
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_source)
+    body = TestClient(app).get("/api/bugreport/assemble").json()
+    assert body["content_policy"]["scrubbed_lines"] == body["logs"]["content"].count(
+        "[content omitted]"
+    )
+
+# ---------------------------------------------------------------------------
+# T1.7 — never 500 on a bad source (Phase 1 exit gate)
+# ---------------------------------------------------------------------------
+
+
+def test_a_raising_log_source_degrades_to_an_honest_empty_result() -> None:
+    """The diagnostic path is isolated: a broken log source never breaks a report."""
+
+    def _boom() -> list:
+        raise OSError("disk full")
+
+    app = _make_app(install_root=Path("/nonexistent"), log_source=_boom)
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    logs = resp.json()["logs"]
+    assert logs["included"] is False
+    assert logs["reason"] == "log source unavailable"
+    assert logs["content"] == ""
+    assert resp.json()["content_policy"] == {"included": False, "scrubbed_lines": 0}
+
+
+def test_a_raising_diagnostics_builder_degrades_too(monkeypatch) -> None:
+    """``diagnostics`` is additive: if it cannot be built, the bundle still ships."""
+
+    def _boom() -> dict:
+        raise RuntimeError("journal unreadable")
+
+    monkeypatch.setattr(diagnostics, "build_diagnostics", _boom)
+    app = _make_app(
+        install_root=Path("/nonexistent"),
+        log_source=lambda: [("demiurgos-api.log", "server started")],
+    )
+    resp = TestClient(app).get("/api/bugreport/assemble")
+    assert resp.status_code == 200, resp.text
+    document = resp.json()["diagnostics"]
+    assert document["unavailable"] is True
+    assert document["reason"] == "diagnostics unavailable"
+

@@ -229,16 +229,30 @@ export interface BugReportLogs {
 }
 
 /**
+ * S6 content policy summary of the assembled bundle.
+ *
+ * `scrubbed_lines` counts the `preview=` payloads replaced by `[content
+ * omitted]`; `included` is true only when the reporter opted in AND the window
+ * actually carried content, so the panel can label what really travels.
+ */
+export interface BugReportContentPolicy {
+  included: boolean;
+  scrubbed_lines: number;
+}
+
+/**
  * GET /api/bugreport/assemble — the default, allow-listed report bundle.
  * Server-provided: app version, platform facts, default-on content-scanned
- * logs, the allow-list itself and the optional-contact slot flag. World data,
- * `.env` and the local account username are excluded server-side by
- * construction and never appear here.
+ * logs, the content-policy summary, the allow-list itself and the
+ * optional-contact slot flag. World data, `.env` and the local account username
+ * are excluded server-side by construction and never appear here; author
+ * content travels only with an explicit opt-in.
  */
 export interface BugReportBundle {
   app_version: string;
   platform: BugReportPlatform;
   logs: BugReportLogs;
+  content_policy: BugReportContentPolicy;
   allow_list: string[];
   contact_slot: boolean;
 }
@@ -580,6 +594,34 @@ export interface AssistantSettingsStatus {
    * `HermesGatewayProbe.is_running()`; absent on older backends.
    */
   gateway_running?: boolean;
+}
+
+/** Recovery read model for the assistant runtime (S11). */
+export type AssistantRecoveryState =
+  | "starting"
+  | "running"
+  | "restarting"
+  | "failed"
+  | "stopped";
+
+/** Closed cause vocabulary the server may report; never raw log text. */
+export type AssistantRecoveryCause = "not_started" | "exited" | "config_invalid";
+
+export interface AssistantRecoveryStatus {
+  gateway_running: boolean;
+  state: AssistantRecoveryState;
+  cause: AssistantRecoveryCause | null;
+  attempts: number;
+  can_restart: boolean;
+  updated_at: string | null;
+}
+
+/** Dispatch result of the assistant-only restart action. */
+export interface AssistantRestartResponse {
+  action: string;
+  accepted: boolean;
+  coalesced?: boolean;
+  error?: string;
 }
 
 export interface AssistantConnectionInput {

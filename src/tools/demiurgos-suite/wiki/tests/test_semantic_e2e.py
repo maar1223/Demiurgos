@@ -13,7 +13,11 @@ guards run before the gate but are NOT intent classifiers: they never decide
 intent and never consume a provider run. Single-run continuation asserts
 exactly one semantic run per turn (no second Hermes run).
 
-Part B — Bounded real Hermes gateway E2E (skipped when the gateway is down).
+Part B — Bounded real Hermes gateway E2E. OPT-IN: skipped unless
+``DEMIURGOS_E2E_LIVE=1``. A running app is the operator's gateway; a normal
+suite run must never hit it (live incident 2026-11-22: a full suite run sent
+23 POST /v1/runs with a fixture key to the operator's gateway and the app
+surfaced only "the assistant failed inside the server").
 
 One safe request per essential surface as feasible against the real gateway,
 asserting semantic decision ordering, the localized fail-closed blocked
@@ -51,6 +55,8 @@ GATEWAY_PID_FILE = Path("/tmp/demiurgos-launcher/gateway.pid")
 GATEWAY_LOG = Path("/tmp/demiurgos-gateway.log")
 PROJECT_ROOT = _WIKI.parents[3]
 STOP_GATEWAY = os.getenv("DEMIURGOS_E2E_STOP_GATEWAY") == "1"
+#: Live E2E is OPT-IN: the gateway at 8642 may be the operator's running app.
+LIVE_E2E = os.getenv("DEMIURGOS_E2E_LIVE") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +83,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
+    # The guided provider is the OTHER real-gateway seam: an ai/ask decision
+    # that opens a flow reached it and sent /v1/runs with a temp-root key to
+    # the operator's gateway (live incident 2026-11-22). Fail closed by
+    # default; the guided tests wire their own provider explicitly.
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", None)
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
     with api_server._local_session_lock:
@@ -630,6 +641,11 @@ def _requires_gateway():
     return True
 
 
+@pytest.mark.skipif(
+    not LIVE_E2E,
+    reason="live Hermes gateway E2E is opt-in (DEMIURGOS_E2E_LIVE=1); "
+    "never touch the operator's running gateway by default",
+)
 class TestLiveHermesFirstE2E:
     """Task 5.1/5.2 live proof against the real Hermes gateway (bounded: one
     safe request per essential surface as feasible). Skips when the gateway is

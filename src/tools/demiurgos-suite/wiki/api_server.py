@@ -278,6 +278,12 @@ import world_recycle_bin  # flat sibling module (world-level recycle bin)
 from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
+from operations_ring import OperationRecorderMiddleware  # operations ring (S5)
+from assistant_turns import (  # assistant turn record (S5)
+    build_turn as _build_assistant_turn,
+    read_model_name as _read_profile_model_name,
+    record_turn as record_assistant_turn,
+)
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
 from backup.state import backup_state  # backup card dedicated contract (WU-14)
 from content_move_service import read_last_move  # the move record (step 5)
@@ -408,6 +414,12 @@ async def _lifespan(app: FastAPI):
         ).start()
     except Exception:  # noqa: BLE001 — never block startup
         logger.warning("assistant graph warmup could not start")
+    # Bound the launcher logs (Phase 1, S5): rotation is best-effort maintenance,
+    # so a failure here is logged and never blocks startup.
+    try:
+        _start_log_rotation()
+    except Exception:  # noqa: BLE001 — never block startup
+        logger.warning("log rotation could not start")
     try:
         yield
     finally:
@@ -455,6 +467,12 @@ app.add_middleware(
 # with zero per-route work. The same middleware is the quiesce gate that answers
 # mutating ``/api/*`` with 503 while a restore owns the data root (REQ-RS-3).
 app.add_middleware(DataChangeNotifierMiddleware)
+
+# Operations ring (Phase 1, S5): one append-only, bounded JSONL of what the API
+# was asked to do and where it failed, so a bug report can carry it. Failures
+# and mutating requests only — the UI's polling GETs would otherwise evict every
+# real operation. Recording is best effort and never touches the response.
+app.add_middleware(OperationRecorderMiddleware)
 
 # UI-bound errors carry stable codes + params (AD-4/AD-5): routes raise
 # ``problem("import.job_not_found")`` and this handler renders
@@ -823,6 +841,17 @@ def _install_root() -> Path | None:
     if _CODE_ROOT.parent.name == "app":
         return _CODE_ROOT.parent.parent
     return None
+
+
+def _start_log_rotation() -> threading.Thread | None:
+    """Start the bounded launcher-log rotation (Phase 1, S5), or None when off.
+
+    The import is late on purpose: it keeps the rotation module's lifecycle seam
+    patchable in tests, and the rotation code is only needed once per boot.
+    """
+    from log_rotation import start_rotation
+
+    return start_rotation(install_root=_install_root(), code_root=_CODE_ROOT)
 
 
 def _app_version() -> str:
@@ -1212,6 +1241,49 @@ def _resolve_assistant_runtime_state(revision: int) -> str:
     return "pending-reload"
 
 
+def _assistant_recovery_status() -> dict[str, Any]:
+    """Assistant recovery read model (S11): liveness plus the supervisor cause.
+
+    The view carries the closed cause vocabulary only; raw log or provider text
+    never crosses this boundary. A missing or corrupt status file is "no
+    status", which the view reports as ``not_started`` (restart available).
+    """
+    try:
+        return recovery_view(
+            _assistant_gateway_probe().is_running(),
+            read_supervisor_status(),
+        )
+    except Exception:  # noqa: BLE001 — recovery must never 500 the status read
+        logger.warning("assistant recovery status read failed", exc_info=True)
+        return recovery_view(False, None)
+
+
+_ASSISTANT_CONVERGENCE_THREAD: threading.Thread | None = None
+_ASSISTANT_CONVERGENCE_LOCK = threading.Lock()
+
+
+def _schedule_assistant_convergence() -> None:
+    """Re-run the bounded acceptance convergence after an assistant restart.
+
+    A gateway-only restart loads the new ``config.yaml``, but the runtime state
+    only becomes ``active`` when the current revision has recorded acceptance
+    evidence. Without this, ``pendingReload`` could only clear with a full
+    platform restart. One convergence run at a time; the wait and ceiling are
+    the same bounded values used at boot.
+    """
+    global _ASSISTANT_CONVERGENCE_THREAD
+    with _ASSISTANT_CONVERGENCE_LOCK:
+        if _ASSISTANT_CONVERGENCE_THREAD is not None and _ASSISTANT_CONVERGENCE_THREAD.is_alive():
+            return
+        thread = threading.Thread(
+            target=_converge_assistant_acceptance,
+            name="assistant-acceptance-after-restart",
+            daemon=True,
+        )
+        _ASSISTANT_CONVERGENCE_THREAD = thread
+        thread.start()
+
+
 # ---------------------------------------------------------------------------
 # World recycle bin (REQ-001..007) — world delete, trash list, restore, purge
 #
@@ -1362,6 +1434,16 @@ def _dedicated_profile_config_path() -> Path:
         return _resolve_profile_paths().config
     except Exception:
         return Path("/") / "demiurgos-nonexistent-profile" / "config.yaml"
+
+
+def _assistant_model_name() -> str | None:
+    """The active profile's ``model.default``, or None when unreadable.
+
+    The turn record names the model that answered (S5); the profile is the only
+    owner of that value. A missing or broken profile yields None instead of a
+    guess, and the read is one small file per turn.
+    """
+    return _read_profile_model_name(_dedicated_profile_config_path())
 
 
 def _marker_signature(path: Path) -> tuple[int, int, str]:
@@ -11539,6 +11621,32 @@ _GLOBAL_ASSISTANT_GUIDANCE: dict[str, str] = {
 #: ``_build_ai_ask_prompt`` so it applies over every routed skill method: the
 #: skill owns the content, the platform owns how the assistant converses.
 #: S1-S3 of ``odd/tasks/assistant-response-style.md``.
+# Citations (assistant-citation S1-S4): a world-grounded answer ends with a
+# `Fuentes:` / `Sources:` line naming the ficha paths the assistant actually
+# read. It goes AFTER the style block so it is the last instruction and is not
+# overridden by a routed skill. The world-agnostic `ideas-global` context has
+# no graph and never receives this clause.
+_CITATION_GUIDANCE: dict[str, str] = {
+    "es": (
+        "[Citas — obligatorio para datos del mundo: cuando afirmes un dato tomado "
+        "de una ficha, terminá la respuesta con una sola línea que empiece con "
+        "\"Fuentes:\" y liste los paths exactos de las fichas que realmente leíste "
+        "(los valores que devolvió graph_search/graph_read), separados por comas y "
+        "entre acentos graves; por ejemplo: Fuentes: `lore/regiones/x.md`. Listá "
+        "solo fichas que leíste; nunca inventes un path. Si no usaste ninguna ficha, "
+        "omití la línea.]"
+    ),
+    "en": (
+        "[Citations — required for world data: when you state a fact taken from a "
+        "sheet, end the answer with a single line starting with \"Sources:\" that "
+        "lists the exact paths of the sheets you actually read (the values returned "
+        "by graph_search/graph_read), comma-separated and backticked; for example: "
+        "Sources: `lore/regions/x.md`. Only list sheets you read; never invent a "
+        "path. Omit the line when you used no sheet.]"
+    ),
+}
+
+
 _RESPONSE_STYLE_GUIDANCE = (
     "[Response style (applies over every skill method): answer in 3-6 sentences "
     "(~120 words); expand only when the author asks to explain, compare, "
@@ -11669,6 +11777,13 @@ def _build_ai_ask_prompt(
     # skill owns the method's content. See S1-S3 in
     # odd/tasks/assistant-response-style.md.
     parts.append(_RESPONSE_STYLE_GUIDANCE)
+    # Citations come after the style block so they are the final rule: a
+    # world-grounded answer must end with a `Fuentes:`/`Sources:` line. The
+    # world-agnostic global context has no graph and gets no citation clause.
+    if not global_context and mundo:
+        parts.append(
+            _CITATION_GUIDANCE.get(conversation_language, _CITATION_GUIDANCE["es"])
+        )
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
@@ -11820,6 +11935,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         logger.info("ai_ask_activity: 503 context unknown")
         return _activity_unavailable()
     attachments = _resolve_chat_attachments(body.attachment_ids)
+    # The turn record's clock starts before the semantic gate so ``gate_ms``
+    # covers the whole admission wait, not just the provider call.
+    turn_started_at = time.monotonic()
 
     # Mandatory Hermes semantic interpretation FIRST with bounded authorized
     # context. No classifier, action, session, proposal, or write precedes the
@@ -11863,6 +11981,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         _abandon_route_task(early_route_task)
         raise
     decision = result.decision
+    gate_ms = int(round((time.monotonic() - turn_started_at) * 1000))
     # The S4 truth table decides the transition; no row reads the utterance.
     # "open" and "offer" both hand off to /ai/ask (the offer carries no
     # profile), "answer" streams the gate's answer like a plain turn, and
@@ -12024,8 +12143,30 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         # is the only diagnostic for a turn that produced no answer.
         close_reason = "stream_ended"
 
+        # Tool evidence for the turn record: one entry per activity item, with
+        # the duration measured between its first sighting and its terminal
+        # status. Bounded by the module's own cap; no prompt or answer text.
+        tools_seen: list[dict[str, Any]] = []
+        tool_started: dict[str, float] = {}
+
+        def note_activity(event) -> None:
+            if not isinstance(event, ActivityEvent):
+                return
+            now = time.monotonic()
+            started = tool_started.setdefault(event.item_id, now)
+            if event.status not in {"succeeded", "failed"}:
+                return
+            tools_seen.append(
+                {
+                    "name": event.operation,
+                    "ok": event.status == "succeeded",
+                    "duration_ms": int(round((now - started) * 1000)),
+                }
+            )
+
         def emit(event) -> str:
             nonlocal assistant_answer, close_reason
+            note_activity(event)
             if isinstance(event, AnswerEvent):
                 assistant_answer = event.response
             elif isinstance(event, TerminalEvent) and close_reason == "stream_ended":
@@ -12148,6 +12289,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     yield emit(event)
         finally:
             answered = bool(assistant_answer)
+            turn_run_ms = int(round((time.monotonic() - started_at) * 1000))
             if not completed:
                 # The only record of WHY a turn produced no answer. Without it
                 # the incident was undiagnosable from the API log: the run was
@@ -12204,6 +12346,28 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     assistant_text=assistant_answer,
                     skill_hints=[skill_id] if skill_id else None,
                 )
+            # The bounded turn record a bug report carries (S5/T1.4): metadata
+            # only, and recording can never break the response.
+            try:
+                record_assistant_turn(
+                    _build_assistant_turn(
+                        request_id=request_id,
+                        run_id=run_id,
+                        world=mundo,
+                        model=_assistant_model_name(),
+                        semantic_state=decision.state,
+                        semantic_action=getattr(decision, "action", None),
+                        completed=completed,
+                        disconnected=disconnected,
+                        tools=tools_seen,
+                        context_count=len(context_sources),
+                        gate_ms=gate_ms,
+                        run_ms=turn_run_ms,
+                        close_reason=close_reason,
+                    )
+                )
+            except Exception:  # noqa: BLE001 — observability never breaks a turn
+                logger.warning("assistant turn record failed (request=%s)", request_id)
 
     return StreamingResponse(
         stream(),
@@ -12560,6 +12724,7 @@ from hermes_run_probe import HermesRunProbe  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
+from assistant_recovery import read_supervisor_status, recovery_view  # noqa: E402
 from updater import create_update_router  # noqa: E402
 from bug_report import DEFAULT_ISSUE_URL, create_bug_report_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
@@ -13288,6 +13453,11 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         launcher_path=_SYSTEM_LAUNCHER,
         launcher_available=None,
+        # S11: assistant-only recovery. The read model exposes the supervisor's
+        # closed cause vocabulary; the restart action dispatches the launcher's
+        # `restart-assistant` and then re-runs the bounded acceptance convergence.
+        assistant_status=_assistant_recovery_status,
+        on_assistant_restart=_schedule_assistant_convergence,
     ),
 )
 

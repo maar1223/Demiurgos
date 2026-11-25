@@ -1121,7 +1121,16 @@ def test_guided_canon_safety_holds_when_semantic_provider_is_wired(monkeypatch, 
     assert unavailable.status_code == 503
     assert unavailable.json()["code"] == "capability_unavailable"
     assert semantic_runs.starts == 0
-    assert list(tmp_path.rglob("*")) == [tmp_path / "vibrantes"]
+    # The guarded paths write nothing into the world tree and touch no state
+    # beyond the bounded operations ring, which records exactly these failed
+    # requests on purpose (Phase 1, S5/T1.3).
+    assert list((tmp_path / "vibrantes").rglob("*")) == []
+    state_files = {
+        path.name
+        for path in (tmp_path / "state-root").rglob("*")
+        if path.is_file()
+    }
+    assert state_files <= {"operations-ring.jsonl"}
 
 
 def test_semantic_single_run_continuation_uses_guarded_machinery_and_handoff(monkeypatch, tmp_path) -> None:

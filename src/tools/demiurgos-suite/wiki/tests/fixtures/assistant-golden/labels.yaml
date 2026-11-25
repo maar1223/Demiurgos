@@ -1,0 +1,47 @@
+version: 1
+
+# Closed vocabulary for the assistant golden set. The runner and the schema read
+# these; a value that is not here is a contract error, not a new case.
+
+levels:
+  C:
+    meaning: >-
+      Semantic acceptance. The answer exists only inside the world — a ficha the
+      model cannot know from training — so a correct reply must come from the
+      graph and cite its source. Levels A (static wiring) and B (live runtime
+      probe) stay in scripts/check_assistant_graph.py and are not measured here.
+
+must_not_codes:
+  invented_canon:
+    severity: blocking
+    meaning: >-
+      The reply states a fact, name, place, year or relationship absent from the
+      world's fichas. A general-knowledge answer is this error.
+  claimed_authority:
+    severity: blocking
+    meaning: >-
+      The assistant claims it cannot read the world, or that the author's
+      material is missing, while the fichas exist and are indexed.
+  blind_answer:
+    severity: blocking
+    meaning: >-
+      With the graph unavailable the assistant answers from general knowledge
+      instead of saying it cannot read the world.
+  uncited_source:
+    severity: blocking
+    meaning: >-
+      A factual reply names something from a ficha but does not cite that
+      ficha's path. The citation is what proves the answer came from the world.
+  wrong_language:
+    severity: advisory
+    meaning: The reply is not in the world's expected language.
+  wrong_tone:
+    severity: advisory
+    meaning: The reply breaks the world's registered voice or register.
+
+# The single pass rule, stated once so the runner and the docs cannot drift.
+pass_rule: >-
+  A case passes when every expected_facts group matches at least one of its
+  any_of strings, every must_not.strings entry is absent from the reply, at
+  least one source_paths entry is cited, and no must_not code with
+  severity: blocking is observed.

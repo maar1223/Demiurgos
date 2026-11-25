@@ -42,6 +42,19 @@ disallowed-field payload through, so the endpoint reads the raw JSON body and
 rejects any key outside the allow-list with ``bugreport.not_allowlisted``.
 The fallback endpoint re-validates the same way.
 
+Content policy (S6)
+-------------------
+A bundle is **metadata by default**. The assistant gateway records the prompt
+and answer tails in its log line as ``preview=``; :func:`assemble` replaces that
+payload with ``[content omitted]`` and keeps the record's metadata (``len=``,
+session, timing, outcome). Content travels only when the reporter opts in with
+the ``x-bugreport-content: 1`` header, and then the shipped window starts with
+the visible :data:`_CONTENT_MARKER` line. The policy is enforced server-side on
+``/submit`` and ``/fallback`` too — the panel is not the enforcement point, so a
+hand-made request cannot smuggle a payload past it. Opting into content never
+disables redaction: secrets keep their own path (``assemble`` replaces a
+matching line whole, and the public fallback body is scrubbed afterwards).
+
 Privacy notes on the fallback body
 ----------------------------------
 :func:`content_scan.scrub_all` applies BOTH rule sets to the rendered body:
@@ -60,6 +73,7 @@ from __future__ import annotations
 
 import json
 import platform as _platform
+import re
 import time
 import unicodedata
 from collections import deque
@@ -70,6 +84,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import bugreport_identity
 import content_scan
+import diagnostics
 from error_codes import problem
 from local_state import LocalState
 
@@ -95,6 +110,75 @@ _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
 #: Logs are dropped (``included=false``) once the redacted text exceeds this cap.
 _LOGS_MAX_BYTES = 65536
+
+#: Per-file ceiling for the diagnostic window: no single log file (live or
+#: rotated) contributes more than this many bytes, so the newest window always
+#: spans several sources instead of being filled by the first one.
+_LOG_SOURCE_MAX_BYTES = 16384
+
+#: One redaction placeholder as ``content_scan`` writes it. ``redacted_lines``
+#: counts these in the SHIPPED text, so a placeholder that the byte budget
+#: trimmed away is never reported as if it had travelled.
+_REDACTED_PLACEHOLDER = re.compile(r"\[redacted: [^\]]*\]")
+
+#: First line of a log window whose content the reporter opted into. It travels
+#: inside ``logs`` (no relay field is added), so the recipient can see at a
+#: glance that the payload was deliberate, and it counts against the same byte
+#: budget as everything else.
+_CONTENT_MARKER = "== content snippets included at the reporter's request =="
+
+
+def _tail_window(text: str, limit: int) -> str:
+    """The newest ``limit`` bytes of ``text``, aligned to a line start.
+
+    Cutting mid-line would ship a half record that reads like corruption, so a
+    trimmed window drops its partial first line. A single unterminated line
+    longer than the budget is returned as-is: it is the newest information the
+    log has.
+    """
+    if limit <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    tail = encoded[len(encoded) - limit :]
+    newline = tail.find(b"\n")
+    if newline != -1:
+        tail = tail[newline + 1 :]
+    return tail.decode("utf-8", errors="replace")
+
+
+def _read_tail(path: Path, limit: int) -> str:
+    """Read at most the newest ``limit`` bytes of a log file (never raises)."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            start = size - limit if size > limit else 0
+            handle.seek(start)
+            data = handle.read(size - start)
+    except OSError:
+        return ""
+    if start > 0:
+        newline = data.find(b"\n")
+        if newline != -1:
+            data = data[newline + 1 :]
+    return data.decode("utf-8", errors="replace")
+
+
+def _archives_of(logs_dir: Path, live_name: str) -> List[Path]:
+    """``<live>.N`` rotation archives in numeric order (``.1`` is the newest)."""
+    found: List[Tuple[int, Path]] = []
+    for candidate in logs_dir.glob(f"{live_name}.*"):
+        suffix = candidate.name[len(live_name) + 1 :]
+        if not suffix.isdigit():
+            continue
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        found.append((int(suffix), candidate))
+    return [path for _index, path in sorted(found)]
 
 def _utf16_units(text: str) -> int:
     """Length in UTF-16 code units — the unit the relay (JavaScript) enforces.
@@ -135,13 +219,26 @@ _PAYLOAD_MAX_BYTES = 98304
 _RATE_LIMIT_MAX = 5
 _RATE_LIMIT_WINDOW_SECONDS = 600.0
 
-#: Vendor-neutral relay contract version that carries ``context``.
-_RELAY_SCHEMA = 2
+#: Vendor-neutral relay contract version that carries ``context`` and the
+#: server-assembled ``diagnostics`` document.
+_RELAY_SCHEMA = 3
 
-#: The version a client without context still speaks, so a relay that predates
-#: schema 2 keeps delivering instead of rejecting the whole report. A dropped
-#: report is worse than a report without context.
-_LEGACY_RELAY_SCHEMA = 1
+#: The version a relay that predates diagnostics still speaks, so a 4xx
+#: contract rejection on schema 3 downgrades to the last context-carrying
+#: shape instead of dropping the report.
+_LEGACY_RELAY_SCHEMA = 2
+
+#: The contextless legacy shape: a client without context speaks this so a
+#: relay that predates schema 2 keeps delivering. A dropped report is worse
+#: than a report without context.
+_CONTEXTLESS_RELAY_SCHEMA = 1
+
+#: Relay statuses that mean "this payload is invalid for this contract
+#: version": the only ones worth one downgraded retry. 401/403 (auth), 404
+#: (route), 409 (conflict) and 429 (rate limit) are not contract rejections —
+#: retrying 429 would spend the caller's budget and hammer a relay that said
+#: "slow down".
+_RELAY_CONTRACT_REJECTIONS = frozenset({400, 413, 415, 422})
 
 #: Production relay timeout (seconds).
 _RELAY_TIMEOUT_SECONDS = 10.0
@@ -313,7 +410,33 @@ def create_bug_report_router(
             raise problem("bugreport.rate_limited")
         bucket.append(now)
 
-    def _validate_and_cap(body: Any) -> Dict[str, Any]:
+    def _apply_content_policy(
+        logs: str | None, *, content_included: bool
+    ) -> str | None:
+        """Enforce the S6 content policy on whatever ``logs`` arrived.
+
+        The ``preview=`` payloads survive only when the reporter opted in;
+        otherwise they become ``[content omitted]`` while the record stays
+        diagnosable. This runs on submit AND fallback because the panel is not a
+        trust boundary: an older install or a hand-made request can post any
+        string here.
+
+        Secrets keep their own path and are NOT re-scrubbed here, so this policy
+        composes instead of overriding: ``assemble`` already replaces a matching
+        log line whole (:func:`content_scan.redact_secrets`) and the public
+        fallback body goes through the structure-preserving
+        :func:`content_scan.scrub_all` afterwards.
+        """
+        if logs is None:
+            return None
+        if content_included:
+            return logs
+        scrubbed, _count = content_scan.redact_content_previews(logs)
+        return scrubbed
+
+    def _validate_and_cap(
+        body: Any, *, content_included: bool = False
+    ) -> Dict[str, Any]:
         """Raw-dict re-validation against the allow-list, then the size caps.
 
         Returns the normalized bundle. ``body`` must be a JSON object whose keys
@@ -321,7 +444,9 @@ def create_bug_report_router(
         present) is a JSON object with keys within
         :data:`ALLOWED_PLATFORM_KEYS`; anything else maps to
         ``bugreport.not_allowlisted``. Per-field and total caps map to
-        ``bugreport.too_large``.
+        ``bugreport.too_large``. The caps are measured on the payload as sent;
+        the content policy is applied afterwards, so scrubbing can never turn an
+        oversized payload into an accepted one.
         """
         if not isinstance(body, dict):
             raise problem("bugreport.not_allowlisted")
@@ -375,7 +500,9 @@ def create_bug_report_router(
             "platform": {key: str(value) for key, value in platform.items()},
             "description": description,
             "contact": contact or None,
-            "logs": logs or None,
+            "logs": _apply_content_policy(
+                logs or None, content_included=content_included
+            ),
             "context": context,
         }
 
@@ -448,6 +575,16 @@ def create_bug_report_router(
         value = (request.headers.get("x-bugreport-pseudonym") or "").strip()
         return value == "1"
 
+    def _wants_content(request: Request) -> bool:
+        """Whether the reporter opted into the content-bearing payloads (S6).
+
+        Out of band on purpose: a header keeps the relay contract untouched (it
+        validates an exact key set, and adding a boolean field would need a
+        schema bump on a service this repository does not deploy).
+        """
+        value = (request.headers.get("x-bugreport-content") or "").strip()
+        return value == "1"
+
     def _raise_link_failure(status: int, data: Dict[str, Any]) -> None:
         """Map a relay identity failure onto a stable backend code."""
         if status == 429:
@@ -467,30 +604,41 @@ def create_bug_report_router(
     ) -> Dict[str, Any]:
         """Forward the validated bundle to the relay; fail closed on any failure.
 
-        The contract is vendor-neutral: ``{schema, app_version, platform,
-        description, contact, logs}``. A success maps to ``{ok: True,
-        delivery_id}``; an unreachable/misconfigured relay maps to
-        ``bugreport.relay_unavailable``; a relay-reported failure maps to
-        ``bugreport.delivery_failed``. No credential or traceback is ever
-        included in a response.
+        Contract ladder (the relay is deployed separately, so an older relay
+        must not lose a report):
+
+        1. First attempt: ``schema: 3`` with the server-built ``diagnostics``
+           document, and ``context`` only when the bundle carries it.
+        2. A **contract-rejection 4xx** (400, 413, 415, 422) means the relay
+           does not know this shape: retry ONCE with the pre-diagnostics shape — ``schema: 2`` plus ``context`` when present,
+           otherwise ``schema: 1`` with no ``context``. ``diagnostics`` is
+           absent from both retry shapes. The retry shares the request, so it
+           never consumes a second rate-limit token.
+        3. A 5xx, a timeout, a transport error or a 2xx whose body is not
+           ``{"ok": true}`` is NOT retried: a second delivery could duplicate a
+           report. Those keep the existing failure mapping.
+
+        A success maps to ``{ok: True, delivery_id, diagnostics}`` where the
+        additive ``diagnostics`` field is ``"included"`` for the first attempt
+        and ``"dropped"`` for the downgraded retry. An
+        unreachable/misconfigured relay maps to ``bugreport.relay_unavailable``;
+        a relay-reported failure maps to ``bugreport.delivery_failed``. No
+        credential or traceback is ever included in a response.
         """
         if not relay_url:
             raise problem("bugreport.relay_unavailable")
-        payload = {
-            "schema": _RELAY_SCHEMA,
+        base = {
             "app_version": bundle["app_version"],
             "platform": bundle["platform"],
             "description": bundle["description"],
             "contact": bundle["contact"],
             "logs": bundle["logs"],
-            "context": bundle["context"],
         }
-        if not bundle["context"]:
-            # A relay that predates schema 2 rejects the unknown key, so a
-            # contextless client keeps speaking the older contract until the
-            # relay is rolled out. A dropped report is worse than no context.
-            payload["schema"] = _LEGACY_RELAY_SCHEMA
-            payload.pop("context")
+        payload: Dict[str, Any] = {"schema": _RELAY_SCHEMA, **base}
+        if bundle["context"]:
+            payload["context"] = bundle["context"]
+        payload["diagnostics"] = _diagnostics_document()
+
         headers: Dict[str, str] = {}
         token = _current_install_token()
         if token:
@@ -499,14 +647,47 @@ def create_bug_report_router(
             install = _install_id()
             if install is not None:
                 headers["x-install-id"] = install
-        try:
-            status, data = _relay_sender()(relay_url, payload, headers, attachments or [])
-        except Exception:  # noqa: BLE001 - network/config failure fails closed
-            raise problem("bugreport.relay_unavailable")
-        if not isinstance(data, dict):
-            data = {}
-        if 200 <= int(status) < 300 and data.get("ok") is True:
-            return {"ok": True, "delivery_id": str(data.get("delivery_id") or "")}
+
+        sender = _relay_sender()
+
+        def _attempt(candidate: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+            try:
+                status, data = sender(
+                    relay_url, candidate, headers, attachments or []
+                )
+            except Exception:  # noqa: BLE001 - network/config failure fails closed
+                raise problem("bugreport.relay_unavailable")
+            return int(status), data if isinstance(data, dict) else {}
+
+        status, data = _attempt(payload)
+        if status in _RELAY_CONTRACT_REJECTIONS:
+            # Older relay: downgrade once to the shape it understood before
+            # diagnostics existed. A dropped report is worse than no
+            # diagnostics, but a duplicate report is worse than either.
+            retry: Dict[str, Any] = {
+                "schema": (
+                    _LEGACY_RELAY_SCHEMA
+                    if bundle["context"]
+                    else _CONTEXTLESS_RELAY_SCHEMA
+                ),
+                **base,
+            }
+            if bundle["context"]:
+                retry["context"] = bundle["context"]
+            status, data = _attempt(retry)
+            if 200 <= status < 300 and data.get("ok") is True:
+                return {
+                    "ok": True,
+                    "delivery_id": str(data.get("delivery_id") or ""),
+                    "diagnostics": "dropped",
+                }
+            raise problem("bugreport.delivery_failed")
+        if 200 <= status < 300 and data.get("ok") is True:
+            return {
+                "ok": True,
+                "delivery_id": str(data.get("delivery_id") or ""),
+                "diagnostics": "included",
+            }
         raise problem("bugreport.delivery_failed")
 
     def _render_fallback_body(bundle: Dict[str, Any]) -> str:
@@ -543,10 +724,14 @@ def create_bug_report_router(
         return "\n".join(lines)
 
     def _default_log_source() -> List[Tuple[str, str]]:
-        """Read every ``*.log`` under ``install_root/logs`` — the ONLY source.
+        """Read the launcher logs under ``install_root/logs`` — the ONLY source.
 
-        Never touches the world-data root, ``.env`` or any user identity file.
-        A missing install root or log directory yields no logs.
+        Newest first and bounded: each live ``*.log`` contributes at most
+        :data:`_LOG_SOURCE_MAX_BYTES` of its newest bytes, immediately followed
+        by its rotated ``<log>.N`` archives in numeric order (``.1`` is the
+        newest archive). Never touches the world-data root, ``.env`` or any
+        user identity file. A missing install root or log directory yields no
+        logs.
         """
         if install_root is None:
             return []
@@ -554,72 +739,140 @@ def create_bug_report_router(
         if not logs_dir.is_dir():
             return []
         pairs: List[Tuple[str, str]] = []
-        for path in sorted(logs_dir.glob("*.log")):
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            pairs.append((path.name, text))
+        for live in sorted(logs_dir.glob("*.log")):
+            text = _read_tail(live, _LOG_SOURCE_MAX_BYTES)
+            if text:
+                pairs.append((live.name, text))
+            for archive in _archives_of(logs_dir, live.name):
+                archived = _read_tail(archive, _LOG_SOURCE_MAX_BYTES)
+                if archived:
+                    pairs.append((archive.name, archived))
         return pairs
 
-    def _assemble_logs() -> Dict[str, Any]:
-        """Redact-and-count logs, dropping them with a non-secret reason.
+    def _assemble_logs(content_included: bool) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Assemble the newest diagnostic window inside a fixed byte budget.
 
-        Logs are default-on. Each source line is scanned; a matching line is
-        replaced by ``[redacted: <rule>]`` (the raw value is never read). If the
-        source is unavailable or the redacted text exceeds the cap, logs are
-        dropped and ``included`` is ``False`` with a non-secret ``reason``.
+        Sources are walked newest first, each capped at
+        :data:`_LOG_SOURCE_MAX_BYTES`, and the joined payload never exceeds
+        :data:`_LOGS_MAX_BYTES`: an install that has logged for weeks still
+        carries a readable window instead of losing every log at once. Each
+        line is scanned; a matching line is replaced by ``[redacted: <rule>]``
+        (the raw value never survives).
+
+        Content policy (S6): the ``preview=`` payloads of the assistant records
+        are replaced by ``[content omitted]`` unless ``content_included``. When
+        they are included, the window starts with :data:`_CONTENT_MARKER` and
+        that label is charged to the same byte budget, so it can never push the
+        payload over the cap. Returns ``(logs, content_policy)``; an unavailable
+        source or an empty log set reports ``included`` ``False`` with a
+        non-secret ``reason`` — never a silent empty payload.
         """
+        empty_logs = {
+            "included": False,
+            "content": "",
+            "redacted_lines": 0,
+            "reason": "",
+        }
+        empty_policy = {"included": False, "scrubbed_lines": 0}
         source = log_source if log_source is not None else _default_log_source
         try:
             pairs = source()
         except Exception:  # noqa: BLE001 - a bad source drops logs, never 500s
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": 0,
-                "reason": "log source unavailable",
-            }
+            return {**empty_logs, "reason": "log source unavailable"}, dict(empty_policy)
         if not pairs:
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": 0,
-                "reason": "no logs available",
-            }
-        redacted_total = 0
-        chunks: List[str] = []
-        for _name, text in pairs:
-            redacted_text, hits = content_scan.redact_secrets(text or "")
-            redacted_total += hits
-            chunks.append(redacted_text)
-        content = "\n".join(chunks)
-        if len(content.encode("utf-8")) > _LOGS_MAX_BYTES:
-            return {
-                "included": False,
-                "content": "",
-                "redacted_lines": redacted_total,
-                "reason": "logs exceed the size cap",
-            }
+            return {**empty_logs, "reason": "no logs available"}, dict(empty_policy)
+
+        def _build(budget: int, include_content: bool) -> str:
+            """Fill ``budget`` bytes newest-first; returns the shipped content."""
+            chunks: List[str] = []
+            for _name, text in pairs:
+                window = _tail_window(text or "", _LOG_SOURCE_MAX_BYTES)
+                if not window:
+                    continue
+                redacted_text, _hits = content_scan.redact_secrets(window)
+                if not include_content:
+                    redacted_text, _scrubbed = content_scan.redact_content_previews(
+                        redacted_text
+                    )
+                candidate = "\n".join(chunks + [redacted_text])
+                if len(candidate.encode("utf-8")) <= budget:
+                    chunks.append(redacted_text)
+                    continue
+                # This source overflows the remaining room: keep its newest bytes
+                # and stop, so the payload is a suffix of the newest history.
+                room = budget - len("\n".join(chunks).encode("utf-8"))
+                if chunks:
+                    room -= 1  # the newline that joins the two chunks
+                piece = _tail_window(redacted_text, room)
+                if piece:
+                    chunks.append(piece)
+                break
+            return "\n".join(chunks)
+
+        content = _build(_LOGS_MAX_BYTES, content_included)
+        if not content:
+            return {**empty_logs, "reason": "no logs available"}, dict(empty_policy)
+        # The label is decided on what ACTUALLY shipped, never on what the
+        # sources contained: a payload trimmed away by the byte budget must not
+        # make the window claim content it does not carry. And content must
+        # never ship WITHOUT its label, so if paying for the label would trim
+        # the last payload away, the window ships metadata-only instead.
+        included = False
+        if content_included and content_scan.count_content_previews(content):
+            marker = _CONTENT_MARKER + "\n"
+            trimmed = _tail_window(content, _LOGS_MAX_BYTES - len(marker.encode("utf-8")))
+            if content_scan.count_content_previews(trimmed):
+                content = marker + trimmed
+                included = True
+            else:
+                content = _build(_LOGS_MAX_BYTES, False)
         return {
             "included": True,
             "content": content,
-            "redacted_lines": redacted_total,
+            "redacted_lines": len(_REDACTED_PLACEHOLDER.findall(content)),
             "reason": "",
+        }, {
+            "included": included,
+            # Counted on the SHIPPED text, so a placeholder the budget trimmed
+            # away is never reported as if it had travelled (same rule as
+            # ``redacted_lines``).
+            "scrubbed_lines": content.count(content_scan.CONTENT_PREVIEW_PLACEHOLDER),
         }
+
+    def _diagnostics_document() -> Dict[str, Any]:
+        """The server-built diagnostics document; never raises, never 500s.
+
+        The submit payload is assembled HERE, never taken from the client: a
+        client-supplied ``diagnostics`` field stays outside
+        :data:`ALLOWED_FIELDS` and is rejected. On any failure the endpoint
+        still answers with a safe, non-secret shape.
+        """
+        try:
+            return diagnostics.build_diagnostics()
+        except Exception:  # noqa: BLE001 - diagnostics never break a report
+            return {
+                "schema": diagnostics.SCHEMA,
+                "unavailable": True,
+                "reason": "diagnostics unavailable",
+            }
 
     @router.get("/assemble")
     def assemble(request: Request) -> Dict[str, Any]:
         """Assemble the default, allow-listed, content-scanned report bundle.
 
-        Returns exactly :data:`ALLOWED_FIELDS`-bounded content. World data,
-        ``.env`` and the account username are absent by construction.
+        Returns exactly :data:`ALLOWED_FIELDS`-bounded content plus the
+        server-built ``diagnostics`` document and the ``content_policy``
+        summary. World data, ``.env`` and the account username are absent by
+        construction; author content travels only on an explicit opt-in.
         """
         _guard(request)
+        logs, policy = _assemble_logs(_wants_content(request))
         return {
             "app_version": app_version(),
             "platform": _platform_facts(),
-            "logs": _assemble_logs(),
+            "logs": logs,
+            "content_policy": policy,
+            "diagnostics": _diagnostics_document(),
             "allow_list": sorted(ALLOWED_FIELDS),
             "contact_slot": True,
         }
@@ -658,7 +911,7 @@ def create_bug_report_router(
                 body = await request.json()
             except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
                 raise problem("bugreport.not_allowlisted")
-        bundle = _validate_and_cap(body)
+        bundle = _validate_and_cap(body, content_included=_wants_content(request))
         return _deliver(
             bundle,
             attachments,
@@ -864,7 +1117,7 @@ def create_bug_report_router(
             body = await request.json()
         except Exception:  # noqa: BLE001 - unparsable body is not allow-listed
             raise problem("bugreport.not_allowlisted")
-        bundle = _validate_and_cap(body)
+        bundle = _validate_and_cap(body, content_included=_wants_content(request))
         scrubbed, findings = content_scan.scrub_all(_render_fallback_body(bundle))
         contact = bundle["contact"]
         if contact:

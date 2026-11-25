@@ -22,12 +22,17 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
 import type {
+  AssistantRecoveryStatus,
   AssistantSettingsStatus,
   EditProposal,
   GuidedFlowEcho,
   GuidedMethodOption,
 } from "@/api/types";
 import { getAssistantSettings } from "@/api/assistantSettings";
+import {
+  getAssistantRecoveryStatus,
+  restartAssistant,
+} from "@/api/assistantRecovery";
 import type { GuidedMethodChoice } from "@/api/guidedCharacter";
 import { getGuidedMethods } from "@/api/methodologies";
 import { useWhisper } from "@/hooks/useWhisper";
@@ -457,12 +462,28 @@ function ChatScreen({
   // banner for an auth or network error).
   const [health, setHealth] = useState<AssistantSettingsStatus | null>(null);
   const [healthChecked, setHealthChecked] = useState(false);
+  // S11 recovery: the server-owned cause for a down gateway plus the
+  // assistant-only restart action. Fetched only while degraded.
+  const [recovery, setRecovery] = useState<AssistantRecoveryStatus | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const [restartFailed, setRestartFailed] = useState(false);
 
   const checkHealth = useCallback(async () => {
     try {
-      setHealth(await getAssistantSettings());
+      const status = await getAssistantSettings();
+      setHealth(status);
+      if (status.gateway_running === false) {
+        try {
+          setRecovery(await getAssistantRecoveryStatus());
+        } catch {
+          setRecovery(null);
+        }
+      } else {
+        setRecovery(null);
+      }
     } catch {
       setHealth(null);
+      setRecovery(null);
     } finally {
       setHealthChecked(true);
     }
@@ -473,12 +494,20 @@ function ChatScreen({
   }, [checkHealth]);
 
   // A down gateway is the one degraded state that heals by itself: the
-  // launcher restarts Hermes without touching this page. Poll only while it
-  // is down (a healthy panel stays idle) and stop as soon as it recovers.
+  // launcher restarts the assistant without touching this page. Poll only
+  // while degraded (a healthy panel stays idle) and stop as soon as it
+  // recovers. A saved-but-unproven configuration also becomes active on its
+  // own after the bounded acceptance convergence, so it polls too.
   const gatewayDown = health?.gateway_running === false;
+  const needsActivation =
+    health !== null &&
+    health.key_configured !== false &&
+    !gatewayDown &&
+    health.runtime_state !== "active";
+  const degraded = gatewayDown || needsActivation;
 
   useEffect(() => {
-    if (!gatewayDown) return;
+    if (!degraded) return;
     const onFocus = () => void checkHealth();
     const interval = window.setInterval(() => void checkHealth(), HEALTH_RECHECK_MS);
     window.addEventListener("focus", onFocus);
@@ -486,7 +515,28 @@ function ChatScreen({
       window.clearInterval(interval);
       window.removeEventListener("focus", onFocus);
     };
-  }, [gatewayDown, checkHealth]);
+  }, [degraded, checkHealth]);
+
+  // Restart ONLY the assistant: the server dispatches the launcher's
+  // `restart-assistant`, so the API and the author's in-flight work survive.
+  // A coalesced request is accepted; the periodic recheck clears the banner
+  // once the runtime is back (background-first).
+  const handleRestartAssistant = useCallback(async () => {
+    setRestarting(true);
+    setRestartFailed(false);
+    try {
+      const result = await restartAssistant();
+      if (!result.accepted) {
+        setRestartFailed(true);
+        return;
+      }
+      await checkHealth();
+    } catch {
+      setRestartFailed(true);
+    } finally {
+      setRestarting(false);
+    }
+  }, [checkHealth]);
 
 
   // Type-to-focus: when the Author starts typing while reading (focus on the
@@ -537,14 +587,27 @@ function ChatScreen({
 
   const { language: appLanguage, t } = useAppLanguage();
 
+  // A refusal a restart cannot fix reports its remedy instead of offering the
+  // restart action (S11d): an unusable configuration, a runtime the server says
+  // cannot be restarted, or no configured credentials (the Profile remedy).
+  const missingCredentials = health?.key_configured === false;
+  const restartBlockedByCause =
+    gatewayDown && recovery !== null && recovery.can_restart === false;
+  const canRestartAssistant =
+    !missingCredentials &&
+    (needsActivation || (gatewayDown && !restartBlockedByCause));
   const healthWarning =
     !healthChecked || health === null
       ? null
       : health.key_configured === false
         ? t("assistant.health.notConfigured")
-        : health.gateway_running === false
-          ? t("assistant.health.gatewayDown")
-          : health.runtime_state === "saved-not-active"
+        : gatewayDown
+          ? restartBlockedByCause
+            ? recovery?.cause === "config_invalid"
+              ? t("assistant.health.configInvalid")
+              : t("assistant.health.unavailable")
+            : t("assistant.health.gatewayDown")
+          : needsActivation
             ? t("assistant.health.pendingReload")
             : null;
   const attachments = activeSession?.attachments ?? [];
@@ -883,14 +946,34 @@ function ChatScreen({
           data-testid="assistant-health-banner"
           className="flex items-start gap-2 border-b border-edge bg-surface-raised px-4 py-2 text-xs text-muted shrink-0"
         >
-          <p className="flex-1">{healthWarning}</p>
-          <button
-            type="button"
-            onClick={() => void checkHealth()}
-            className="shrink-0 rounded-md px-2 py-0.5 font-medium text-primary underline-offset-2 hover:underline"
-          >
-            {t("assistant.health.retry")}
-          </button>
+          <div className="flex-1">
+            <p>{healthWarning}</p>
+            {restartFailed ? (
+              <p data-testid="assistant-health-restart-failed" className="mt-1">
+                {t("assistant.health.restartFailed")}
+              </p>
+            ) : null}
+          </div>
+          {canRestartAssistant ? (
+            <button
+              type="button"
+              onClick={() => void handleRestartAssistant()}
+              disabled={restarting}
+              className="shrink-0 rounded-md px-2 py-0.5 font-medium text-primary underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              {restarting
+                ? t("assistant.health.restarting")
+                : t("assistant.health.restart")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void checkHealth()}
+              className="shrink-0 rounded-md px-2 py-0.5 font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {t("assistant.health.retry")}
+            </button>
+          )}
         </div>
       ) : null}
 

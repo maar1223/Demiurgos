@@ -143,6 +143,12 @@ o se saca del lote.
       (`API_SERVER_ENABLED=true`, `API_SERVER_KEY`); gateway `/health` 200;
       `GET /api/profile/assistant` responde 200 (no 503) con una sesión válida y
       el guardado desde la UI funciona.
+- [ ] Golden set de nivel C contra el install: con el stack arriba, correr
+      `python3 scripts/eval_assistant.py --api http://127.0.0.1:8000 --mundo <mundo> --corpus <corpus local>`
+      y revisar el reporte: cada caso debe responderse desde el mundo y **citar la
+      ficha** (`Fuentes:`). El corpus real es local y gitignored; no se publica con
+      casos rojos de hechos o de citación. Además, `python3 scripts/check_assistant_graph.py`
+      debe dar `VERDICT: PASS`.
 - [ ] Selector de método guiado: solo el método fundacional publicado (hoy 1.3),
       sin "De fábrica"; el método que se envía es la versión publicada.
 - [ ] Menú de escritorio con `Terminal=false`.
