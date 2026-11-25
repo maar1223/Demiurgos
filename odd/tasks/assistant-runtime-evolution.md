@@ -457,3 +457,9 @@ Phase 1 exit gate: **met** — a report produced after more than 64 KB of logs c
 - `scripts/eval_assistant.py`: `ask_product` now returns a typed `timeout`/`transport_error` status instead of letting `TimeoutError`/`URLError` escape (addresses the escalated `R3-timeout-abort` finding). Tests 22 passed.
 - Corpus: `vibrantes-02-atherr-cuevas` refined (dropped the over-specified `Lumnar` group); local digest now `0f337afc0e8fc91a`.
 - Phase 2 exit gate **met**: the runner prints per-case PASS/FAIL, the baseline is recorded (product path 15/16, citation 16/16; case 2 refined so the next run should be 16/16), and the command is in the update checklist.
+
+**L32 (CI red on PR #80, 2026-11-25):** the pushed slice turned one check red, and it was ours, not the environment.
+
+- `Payload audit parity (posix)` failed: `test_posix_no_default_allowlist_still_disables_the_shared_list` asserted the literal `content_scan.py:48: author-path`, but T1.6 added a docstring block above those rule literals, so the scanner now reports them at `:54` and `:79`. The test pinned a line number instead of the invariant it protects (the scanner's own author-path literals are still flagged when the allow-list is disabled).
+- Fix: assert exactly two `author-path` hits from `content_scan.py` regardless of their line numbers. Focused `test_payload_audit.py` + `test_content_scan.py` → 95 passed / 6 skipped. Test-only change, no runtime path, no payload change.
+- The other five failing checks (`Backend wheels-only` ×4 and `Launcher (windows-latest)`) fail identically on `master` (CI run `44982223965`, head `d3b8700`) — pre-existing CI debt, out of this feature's scope; the PR diff touches neither `scripts/install-local.sh` nor the launcher. Recorded so the merge decision is made with that context, not mistaken for a regression from this branch.

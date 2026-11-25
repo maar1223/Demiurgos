@@ -969,4 +969,12 @@ class TestPayloadAuditPortParity:
         root, manifest = _scanner_self_tree(tmp_path)
         result = _run_audit(root, manifest, "--no-default-allowlist")
         assert result.returncode == 1, result.stdout + result.stderr
-        assert "content_scan.py:48: author-path" in result.stdout
+        # The invariant is that the scanner's own author-path rule literals are
+        # still flagged when the allow-list is disabled, not their line numbers:
+        # editing content_scan.py above them must not turn this parity check red.
+        author_path_hits = [
+            line
+            for line in result.stdout.splitlines()
+            if f"{_SCANNER_SELF_FILE}:" in line and line.endswith(": author-path")
+        ]
+        assert len(author_path_hits) == 2, result.stdout
