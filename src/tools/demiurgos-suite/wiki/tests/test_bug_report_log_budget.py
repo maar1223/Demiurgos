@@ -171,3 +171,44 @@ def test_an_archive_beyond_the_live_log_is_read_by_its_numeric_order(
     content = _assemble(tmp_path)["content"]
 
     assert content.index("live") < content.index("archived")
+
+
+def test_redacted_lines_counts_only_the_shipped_placeholders(tmp_path):
+    """Review R3-001: a placeholder the window trimmed away is not counted."""
+    secret = "sk-" + "a" * 40
+    body = f"oldest line {secret}\n".encode() + b"".join(
+        _line(index) for index in range(20000)
+    )
+    _write_logs(tmp_path, {"demiurgos-api.log": body})
+
+    logs = _assemble(tmp_path)
+
+    assert logs["included"] is True
+    assert "[redacted:" not in logs["content"]
+    assert logs["redacted_lines"] == 0
+
+
+def test_a_staging_leftover_is_not_read_as_an_archive(tmp_path):
+    """Review R3-003: the ``.rotating`` name this change introduces is skipped."""
+    _write_logs(
+        tmp_path,
+        {"launcher.log": b"live-line\n", "launcher.log.rotating": b"staged-line\n"},
+    )
+
+    content = _assemble(tmp_path)["content"]
+
+    assert "live-line" in content
+    assert "staged-line" not in content
+
+
+def test_a_symlinked_archive_is_not_read(tmp_path):
+    """Review R3-003: an archive that is a symlink stays out of the bundle."""
+    logs = _write_logs(tmp_path, {"launcher.log": b"live-line\n"})
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"outside-line\n")
+    (logs / "launcher.log.1").symlink_to(outside)
+
+    content = _assemble(tmp_path)["content"]
+
+    assert "live-line" in content
+    assert "outside-line" not in content

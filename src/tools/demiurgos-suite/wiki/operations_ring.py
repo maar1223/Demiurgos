@@ -72,11 +72,17 @@ def recording_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return str(env.get(KILL_SWITCH_ENV, "")).strip().lower() not in KILL_SWITCH_VALUES
 
 
+#: Hex characters kept from the world digest. 32 hex = 128 bits: a low-entropy
+#: world name (people pick words, not random bytes) stays infeasible to recover
+#: by brute force, which a truncated 64-bit digest would not be.
+WORLD_HASH_CHARS = 32
+
+
 def hash_world(world: object) -> str | None:
-    """Stable, non-reversible world identifier (``None`` when absent)."""
+    """Stable world identifier digest (``None`` when absent)."""
     if not isinstance(world, str) or not world.strip():
         return None
-    return hashlib.sha256(world.strip().encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(world.strip().encode("utf-8")).hexdigest()[:WORLD_HASH_CHARS]
 
 
 def default_ring_path() -> Path:

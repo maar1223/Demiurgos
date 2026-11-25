@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import platform as _platform
+import re
 import time
 import unicodedata
 from collections import deque
@@ -101,6 +102,11 @@ _LOGS_MAX_BYTES = 65536
 #: rotated) contributes more than this many bytes, so the newest window always
 #: spans several sources instead of being filled by the first one.
 _LOG_SOURCE_MAX_BYTES = 16384
+
+#: One redaction placeholder as ``content_scan`` writes it. ``redacted_lines``
+#: counts these in the SHIPPED text, so a placeholder that the byte budget
+#: trimmed away is never reported as if it had travelled.
+_REDACTED_PLACEHOLDER = re.compile(r"\[redacted: [^\]]*\]")
 
 
 def _tail_window(text: str, limit: int) -> str:
@@ -713,14 +719,12 @@ def create_bug_report_router(
                 "redacted_lines": 0,
                 "reason": "no logs available",
             }
-        redacted_total = 0
         chunks: List[str] = []
         for _name, text in pairs:
             window = _tail_window(text or "", _LOG_SOURCE_MAX_BYTES)
             if not window:
                 continue
-            redacted_text, hits = content_scan.redact_secrets(window)
-            redacted_total += hits
+            redacted_text, _hits = content_scan.redact_secrets(window)
             candidate = "\n".join(chunks + [redacted_text])
             if len(candidate.encode("utf-8")) <= _LOGS_MAX_BYTES:
                 chunks.append(redacted_text)
@@ -738,13 +742,14 @@ def create_bug_report_router(
             return {
                 "included": False,
                 "content": "",
-                "redacted_lines": redacted_total,
+                "redacted_lines": 0,
                 "reason": "no logs available",
             }
+        content = "\n".join(chunks)
         return {
             "included": True,
-            "content": "\n".join(chunks),
-            "redacted_lines": redacted_total,
+            "content": content,
+            "redacted_lines": len(_REDACTED_PLACEHOLDER.findall(content)),
             "reason": "",
         }
 

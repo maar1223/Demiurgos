@@ -44,6 +44,41 @@ MAX_BYTES = 24 * 1024
 DEFAULT_OPERATIONS = 50
 DEFAULT_TURNS = 20
 
+#: The only keys each journal may contribute. Defense in depth (S6): even a
+#: hand-edited journal or a future writer bug cannot smuggle an unknown field
+#: — world text, a prompt body — into the document that leaves the machine.
+JOURNAL_KEYS = {
+    "operations": frozenset(
+        {
+            "ts",
+            "run_id",
+            "method",
+            "endpoint",
+            "world_hash",
+            "status",
+            "duration_ms",
+            "error_code",
+        }
+    ),
+    "assistant_turns": frozenset(
+        {
+            "ts",
+            "request_id",
+            "run_id",
+            "world_hash",
+            "model",
+            "semantic_state",
+            "semantic_action",
+            "evidence_status",
+            "tools",
+            "stage_timings",
+            "status",
+            "close_reason",
+            "error_code",
+        }
+    ),
+}
+
 
 def _redact_value(value: Any) -> tuple[Any, int]:
     """A redacted copy of ``value`` plus the number of redacted lines.
@@ -70,6 +105,16 @@ def _redact_value(value: Any) -> tuple[Any, int]:
             total += hits
         return items, total
     return value, 0
+
+
+def _only_known_keys(records: list[dict[str, Any]], journal: str) -> list[dict[str, Any]]:
+    """Drop every key the journal's fixed schema does not define."""
+    allowed = JOURNAL_KEYS[journal]
+    return [
+        {key: value for key, value in record.items() if key in allowed}
+        for record in records
+        if isinstance(record, dict)
+    ]
 
 
 def _redact_records(
@@ -134,10 +179,14 @@ def build_diagnostics(
     and the budget is measured against THAT serialization so the written file is
     bounded too, not just the delivered document.
     """
-    raw_operations = operations_ring.recent_operations(
-        path=operations_path, limit=operations_limit
+    raw_operations = _only_known_keys(
+        operations_ring.recent_operations(path=operations_path, limit=operations_limit),
+        "operations",
     )
-    raw_turns = assistant_turns.recent_turns(path=turns_path, limit=turns_limit)
+    raw_turns = _only_known_keys(
+        assistant_turns.recent_turns(path=turns_path, limit=turns_limit),
+        "assistant_turns",
+    )
     operations, operation_hits = _redact_records(raw_operations)
     turns, turn_hits = _redact_records(raw_turns)
     hits_by_journal = {"operations": operation_hits, "assistant_turns": turn_hits}
@@ -186,7 +235,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
-    document = build_diagnostics(indent=2)
+    # The CLI writes the indented form PLUS a trailing newline, so the budget
+    # it enforces leaves room for that byte.
+    document = build_diagnostics(indent=2, max_bytes=MAX_BYTES - 1)
     try:
         Path(args.out).write_text(
             json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n",

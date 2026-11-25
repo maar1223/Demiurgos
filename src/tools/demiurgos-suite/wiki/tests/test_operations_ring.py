@@ -73,7 +73,7 @@ def test_the_world_is_stored_only_as_a_hash(tmp_path):
     assert "Vibrantes" not in raw
     entry = recent_operations(path=ring)[0]
     assert entry["world_hash"] == hash_world("Vibrantes")
-    assert len(entry["world_hash"]) == 16
+    assert len(entry["world_hash"]) == 32
 
 
 def test_no_world_means_no_hash(tmp_path):

@@ -314,13 +314,39 @@ def test_trimming_drops_the_globally_oldest_record_first(tmp_path: Path) -> None
 def test_redaction_walks_nested_lists_and_leaves_keys(tmp_path: Path) -> None:
     """S6: a secret nested in a list of dicts is redacted and counted."""
     secret = "sk-" + "a" * 40
+    turns = _turns_path(tmp_path)
+    assert record_turn(
+        build_turn(
+            request_id="req-secret",
+            run_id="run-secret",
+            completed=True,
+            tools=[{"name": secret, "ok": True, "duration_ms": 1}],
+        ),
+        path=turns,
+    )
+
+    document = diagnostics.build_diagnostics(
+        operations_path=tmp_path / "absent-ops.jsonl",
+        turns_path=turns,
+        generated_at="2026-11-24T00:00:00Z",
+    )
+    dumped = json.dumps(document, ensure_ascii=False)
+    assert secret not in dumped
+    assert "[redacted:" in dumped
+    assert document["redacted_lines"] == 1
+
+
+def test_an_unknown_key_never_reaches_the_document(tmp_path: Path) -> None:
+    """S6 (review R1-pattern-only-redaction): only the journal schema is copied."""
     ops = _ops_path(tmp_path)
     assert append_bounded_record(
         ops,
         {
             "ts": "2026-11-24T00:00:00Z",
             "run_id": "r",
-            "tools": [{"name": secret, "ok": True, "duration_ms": 1}],
+            "endpoint": "/api/{mundo}/import",
+            "note": "Vibrantes secret prose",
+            "world": "Vibrantes",
         },
         max_entries=operations_ring.MAX_ENTRIES,
         max_bytes=operations_ring.MAX_BYTES,
@@ -331,10 +357,11 @@ def test_redaction_walks_nested_lists_and_leaves_keys(tmp_path: Path) -> None:
         turns_path=tmp_path / "absent-turns.jsonl",
         generated_at="2026-11-24T00:00:00Z",
     )
+
     dumped = json.dumps(document, ensure_ascii=False)
-    assert secret not in dumped
-    assert "[redacted:" in dumped
-    assert document["redacted_lines"] == 1
+    assert "Vibrantes" not in dumped
+    record = document["operations"]["records"][0]
+    assert set(record) <= diagnostics.JOURNAL_KEYS["operations"]
 
 
 def test_redacted_lines_counts_only_what_survived_the_trim(tmp_path: Path) -> None:
