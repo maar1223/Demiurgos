@@ -275,13 +275,28 @@ turn answers.
 | `<root>/logs/demiurgos-api.log` | the API child (`uvicorn api_server:app`) | every API request and background job |
 | `<root>/logs/demiurgos-gateway.log` | the gateway child (`hermes gateway run`) | provider calls, run lifecycle, upstream refusals |
 
-Today there is **no rotation** and the bug-report path drops the logs entirely
-once the redacted text exceeds 64 KB (`bug_report.py`, `_LOGS_MAX_BYTES`).
-Phase 1 of `odd/tasks/assistant-runtime-evolution.md` adds size-based rotation,
-a most-recent tail budget instead of an all-or-nothing drop, and a structured
-`diagnostics.json`. Until then, a long-lived install can produce a report with
-logs marked `included: false`; use `scripts/collect-diagnostics.sh` (§6) when
-you need the files themselves.
+Today the three logs **rotate** and a report carries a bounded window instead of
+dropping everything:
+
+- `log_rotation.py` runs from the API's boot thread and archives each live
+  `*.log` as `<log>.N` by copy+truncate (`.1` is the newest archive). It never
+  renames a live file: the launcher's `O_APPEND` handles must keep pointing at
+  it. Bounds and switches: `DEMIURGOS_LOG_MAX_BYTES` (per live file),
+  `DEMIURGOS_LOG_KEEP` (archives kept), `DEMIURGOS_LOG_ROTATE_INTERVAL_SECONDS`,
+  and the kill switch `DEMIURGOS_LOG_ROTATION=0`. The launcher still owns
+  *where* the logs live and exports `DEMIURGOS_LOG_DIR`.
+- A report's `logs` is the newest window, not the history: each source
+  contributes at most 16 KiB of its newest bytes, families are walked
+  newest-first, and the joined payload never exceeds 64 KiB
+  (`bug_report.py`, `_LOGS_MAX_BYTES`). `included: false` now means "no readable
+  source", never "too big".
+- Beside the text logs the API keeps two bounded journals under the state dir:
+  `operations-ring.jsonl` (200 records / 512 KiB; failing and mutating requests;
+  `DEMIURGOS_OPERATIONS_RING=0` disables it) and `assistant-turns.jsonl`
+  (100 turns / 256 KiB; one record per activity turn, **not** the guided turn).
+
+The files themselves are still available through `scripts/collect-diagnostics.sh`
+(§6), which now emits the same `diagnostics.json` as the in-app report.
 
 ---
 
@@ -292,21 +307,31 @@ There are two bundles; know which one you have.
 ### 6.1 In-app report (Perfil → Reporte de errores)
 
 The app posts a JSON bundle to the relay; the relay publishes it to the owner's
-inbox. Payload keys (relay schema in `bug_report.py`):
+inbox. Payload keys (relay schema 3 in `bug_report.py`):
 
 ```
 { schema, app_version, platform{os, os_version, arch, python_version},
-  description, contact, context{...}, logs{included, text, reason, redacted_lines} }
+  description, contact, context{...}, logs{included, text, reason, redacted_lines},
+  diagnostics{schema, ...} }
 ```
 
-- `logs` is default-on but **secret-redacted** with `content_scan.redact_secrets`;
-  a matching line becomes `[redacted: <rule>]` and the raw value is never sent.
-  Redaction covers secrets, **not** world content.
-- `included: false` with a `reason` means the source was unreadable or the
-  redacted text exceeded the 64 KB cap. It is a known limitation, not a silent
-  success (Phase 1 replaces the cap behavior).
-- `context` carries allow-listed platform facts only. There is no structured
-  per-turn record yet (run id, tools, evidence, gate decision): that is Phase 1.
+- `logs` is default-on, **secret-redacted** with `content_scan.redact_secrets`
+  and **content-scrubbed** by default: a matching secret line becomes
+  `[redacted: <rule>]`, and the assistant records' `preview=` payload (the
+  prompt and answer tails) becomes `[content omitted]`. The record keeps its
+  `len=`, session, timing and outcome.
+- Author content travels only when the reporter opts in from the panel
+  (`x-bugreport-content: 1`, off by default and never remembered). Then the
+  shipped window starts with `== content snippets included at the reporter's
+  request ==`, and that label is charged to the same 64 KiB budget. The policy
+  is enforced again server-side on `/submit` and `/fallback`, so it does not
+  depend on the panel. Opting in never disables redaction.
+- `included: false` with a `reason` means the source was unreadable or empty —
+  a bounded window is always attempted first.
+- `context` carries allow-listed platform facts only; `diagnostics` is built
+  server-side (never accepted from the client) and adds the operations ring,
+  the recent assistant turns and the log sources. The relay must accept schema 3;
+  until it does, each report pays one rejected probe before the downgraded retry.
 - The relay implementation lives outside this repository; schema changes need
   its owner.
 
@@ -327,11 +352,15 @@ because the logs may contain local paths and hostnames; review before sharing.
    the user thinks is running. A mismatch invalidates the rest of the analysis.
 2. `logs.included` / `logs.reason`: if logs were dropped, ask for
    `collect-diagnostics.sh` instead of guessing.
-3. Search the gateway log for upstream status codes (401/402/403) before reading
+3. Check whether the window starts with the content marker. Without it, every
+   `preview=` payload is `[content omitted]` by design: ask the reporter to opt
+   in and resend before concluding anything about what the assistant said.
+4. Read `diagnostics.json`: the operations ring says which request failed and
+   with which stable error code; the recent turns say which model, tools,
+   evidence status and timings that turn had.
+5. Search the gateway log for upstream status codes (401/402/403) before reading
    anything else; those explain most "assistant does not answer" reports.
-4. Search the API log for the request id / run id of the failing turn. Without
-   a structured record (Phase 1) this is the only correlation available.
-5. Never copy provider keys, bearer tokens, or world text out of a bundle into
+6. Never copy provider keys, bearer tokens, or world text out of a bundle into
    an issue.
 
 ---
