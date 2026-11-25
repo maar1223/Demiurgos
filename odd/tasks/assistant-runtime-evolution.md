@@ -77,7 +77,7 @@ Acceptance: (a) a dead gateway is restarted automatically with bounded backoff a
 | T2.1 | Define the golden-set corpus format (question, expected facts, must-not, level) | S7 | inline | done | bef30c9 |
 | T2.2 | Build the runner `scripts/eval_assistant.py` against a live stack | S7 | inline | done | ddf85a7 |
 | T2.3 | Run and record the baseline on the current install | S7 | inline | done (baseline in L30; report local) | — |
-| T2.4 | Wire the golden set into the update/release checklist | S7 | inline | pending | — |
+| T2.4 | Wire the golden set into the update/release checklist | S7 | inline | done | see L31 |
 | T3.1 | Measure the install budget: steps, components, sizes, prerequisites | S4 | inline | pending | — |
 | T3.2 | Remove provisioning nothing consumes; keep the one-command path | S3, S4 | inline | pending | — |
 | T3.3 | Actionable failures: expected-vs-found with remedy on every install/boot gate | S4 | inline | pending | — |
@@ -450,3 +450,10 @@ Phase 1 exit gate: **met** — a report produced after more than 64 KB of logs c
 - Interpretation: world-reading (facts) is strong; **source citation is the gap**. The level-C acceptance in `docs/architecture/ASSISTANT_WORLD_READING.md` §5 explicitly wants the ficha path cited, so this is a real product-quality signal, not an evaluator artifact (a manual re-run that cited `chaae.md` passed the same case).
 - Nondeterminism: verdicts are a snapshot; re-running a case can flip it (one case answered wrong in the batch and right on a manual re-run). The baseline records the observed rate, not a fixed verdict set.
 - Transport finding (fix with the review advisories, R3-004): the live gateway exposes `/v1/capabilities` and `/v1/runs`; the runner's `resolve_base` default resolves to the host root and 404s, so this run passed `--gateway http://127.0.0.1:8642/v1` explicitly. The gateway key is read from the data-root `.env` (`HERMES_GATEWAY_KEY`). The per-case report lives at `odd/evidence/assistant-golden/.local/report-2026-11-25-3010c92.md` (gitignored: it names world facts).
+
+**L31 (T2.4 + runner hardening, 2026-11-25):** the golden set is in the release checklist and the timeout path is typed.
+
+- `docs/RELEASING.md` "Checklist antes de publicar": a golden-set step — `python3 scripts/eval_assistant.py --api http://127.0.0.1:8000 --mundo <mundo> --corpus <corpus local>`, review per-case PASS/FAIL, never release with red fact/citation cases; plus `scripts/check_assistant_graph.py` → PASS.
+- `scripts/eval_assistant.py`: `ask_product` now returns a typed `timeout`/`transport_error` status instead of letting `TimeoutError`/`URLError` escape (addresses the escalated `R3-timeout-abort` finding). Tests 22 passed.
+- Corpus: `vibrantes-02-atherr-cuevas` refined (dropped the over-specified `Lumnar` group); local digest now `0f337afc0e8fc91a`.
+- Phase 2 exit gate **met**: the runner prints per-case PASS/FAIL, the baseline is recorded (product path 15/16, citation 16/16; case 2 refined so the next run should be 16/16), and the command is in the update checklist.

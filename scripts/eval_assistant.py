@@ -526,6 +526,13 @@ def ask_product(
         # 401 = a rejected session. Recorded per case, never raised: one
         # unroutable question must not abort the whole run.
         return "", [], f"http_{exc.code}"
+    except TimeoutError:
+        # The per-case budget elapsed (iter_sse's line deadline or a socket
+        # timeout): a typed status, so the report stays consistent and no raw
+        # exception string is echoed.
+        return "", [], "timeout"
+    except (urllib.error.URLError, OSError):
+        return "", [], "transport_error"
 
 
 # ---------------------------------------------------------------------------

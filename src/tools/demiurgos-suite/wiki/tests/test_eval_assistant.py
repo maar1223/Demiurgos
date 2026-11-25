@@ -283,6 +283,31 @@ def test_ask_product_records_an_http_error_as_a_failed_case():
     assert status == "http_503"
 
 
+def test_ask_product_records_a_timeout_as_a_typed_status():
+    m = _load_runner()
+    answer, tools, status = m.ask_product(
+        _FakeOpener(error=TimeoutError("slow")), "http://api.test", "Vibrantes", "q"
+    )
+    assert answer == ""
+    assert tools == []
+    assert status == "timeout"
+
+
+def test_ask_product_records_a_transport_error():
+    import urllib.error
+
+    m = _load_runner()
+    answer, tools, status = m.ask_product(
+        _FakeOpener(error=urllib.error.URLError("down")),
+        "http://api.test",
+        "Vibrantes",
+        "q",
+    )
+    assert answer == ""
+    assert tools == []
+    assert status == "transport_error"
+
+
 def test_evaluate_world_end_to_end_with_fake_answers():
     m = _load_runner()
     world = m.load_world(FIXTURES / "example-chaart")
